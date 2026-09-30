@@ -888,6 +888,11 @@ export function DocumentsWorkspace(
             決定するまで元の版は有効なままです。
           </div>
         )}
+        {requestId && (
+          <div className="note">
+            <b>デイリータスクの文書</b>　作った文書は依頼 #{requestId} の作業に自動で繋がり、進み具合とメールの下書き（依頼者・担当・件名）に使われます。
+          </div>
+        )}
         <p>文書は条件の出力物。相手先も件名も条件と合意から解決するので、入力するのはそこから決まらないものだけ。</p>
       </header>
 

@@ -5,6 +5,7 @@ import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { UploadsPanel } from "./UploadsPanel.js";
 import { RoundPicker, roundTargets } from "./RoundPicker.js";
 import { StatusTag } from "./labels.js";
+import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 /**
  * デイリータスク。docs/v3-request-inbox.md §10（A-064）
@@ -54,6 +55,21 @@ interface Detail {
 interface Staff { id: number; name: string; status?: string }
 interface MatterHit { id: number; matterNo: string | null; title: string; status: string }
 const KIND_LABEL: Record<string, string> = { outsourcing: "業務委託・発注", work: "作品の権利", single: "その他の相談" };
+
+/** 繋ぐ文書を探す。文書番号・件名・取引先名・条件明細（番号・名前）のどれでも当たる。無効にした文書は出さない。 */
+const searchDocuments = async (q: string): Promise<SearchOption[]> => {
+  const r = await api.get<{ documents: Array<{ id: number; documentNo: string | null; templateLabel: string | null; title: string | null;
+                                              counterparty: string | null; status: string; phase: string;
+                                              conditions: Array<{ conditionNo: string | null }> }> }>(
+    `/documents?q=${encodeURIComponent(q)}`);
+  const phase: Record<string, string> = { draft: "下書き", decided: "決定済み", sent: "送信済み", superseded: "訂正版あり" };
+  return r.documents.filter((d) => d.status !== "void").slice(0, 20).map((d) => ({
+    value: String(d.id),
+    label: `${d.documentNo ?? `#${d.id}`}　${d.title ?? d.templateLabel ?? ""}`,
+    hint: [d.counterparty, d.conditions.map((c) => c.conditionNo).filter(Boolean).join("・"), phase[d.phase] ?? d.phase]
+      .filter(Boolean).join(" · ")
+  }));
+};
 
 export function DailyTasksWorkspace(
   { initialId, onOpenMatter, onCompose, onOpenDocument, onOpenLedger, onOpenRequest, onCountsChange }: {
@@ -298,7 +314,6 @@ function TaskPanel(
   const [dueOn, setDueOn] = useState(t.dueOn ?? "");
   const [title, setTitle] = useState(t.title);
   const [requesterEmail, setRequesterEmail] = useState(r.requesterEmail ?? "");
-  const [docNo, setDocNo] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     setAssignee(t.assigneeStaffId ?? ""); setDueOn(t.dueOn ?? ""); setTitle(t.title); setRequesterEmail(r.requesterEmail ?? "");
@@ -441,15 +456,37 @@ function TaskPanel(
                 )}
               </div>
             )}
-            {canWrite && onCompose && detail.conditions.length > 0 && t.status !== "done" && t.purpose !== "royalty" && (
-              <div>
+          </div>
+        )}
+
+        {canWrite && onCompose && t.status !== "done" && (
+          <div className="note stack" style={{ gap: 6 }}>
+            <b>文書を作る</b>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              {detail.conditions.length > 0 && t.purpose !== "royalty" && (
                 <button className="btn btn-sm primary"
                         onClick={() => onCompose(detail.conditions.map((c) => c.id), null, r.id)}>
                   この条件で{label}を作る
                 </button>
-                <span className="faint" style={{ marginLeft: 8 }}>作った{label}は、この作業の進み具合に自動で入ります</span>
-              </div>
-            )}
+              )}
+              {t.purpose === "royalty" && detail.ledgers.length > 0 && onOpenLedger && (
+                <button className="btn btn-sm primary"
+                        onClick={() => onOpenLedger(detail.ledgers[0].workId, detail.ledgers[0].partyId)}>
+                  台帳で計算書を作る
+                </button>
+              )}
+              <button className="btn btn-sm" onClick={() => onCompose([], null, r.id)}>
+                文書の画面で作る（ひな形と条件を選ぶ）
+              </button>
+            </div>
+            <span className="faint">
+              {t.purpose === "royalty"
+                ? "計算書は作品の台帳（回を選んで試算 → 決定）から作ります。作った計算書はこの作業に自動で入ります。"
+                : detail.conditions.length > 0
+                ? `作った${label}は、この作業の進み具合に自動で入ります。`
+                : "ひな形（当社の NDA など）と、載せる条件があれば選んで作ります。作った文書はこの作業に自動で繋がります。"}
+              　送るときは、文書の「送る」からメールの下書きが出ます（宛先・件名・本文はこの作業の依頼者・担当・件名から埋まります）。
+            </span>
           </div>
         )}
 
@@ -473,12 +510,11 @@ function TaskPanel(
             </div>
           )}
           {canWrite && (
-            <div className="row" style={{ gap: 6 }}>
-              <input className="inline-input code" placeholder="文書番号（自動で入らないときに手で繋ぐ）"
-                     value={docNo} onChange={(e) => setDocNo(e.target.value)} />
-              <button className="btn btn-sm" disabled={busy || !docNo.trim()}
-                      onClick={() => call(() => post("documents", { documentNo: docNo.trim() }).then(() => setDocNo("")),
-                                          "文書を繋ぎました")}>繋ぐ</button>
+            <div className="stack" style={{ gap: 2 }}>
+              <SearchSelect value="" search={searchDocuments} disabled={busy}
+                            placeholder="既にある文書を繋ぐ：文書番号・件名・取引先名・条件明細で探す"
+                            onChange={(v) => { if (v) void call(() => post("documents", { documentId: Number(v) }), "文書を繋ぎました"); }} />
+              <span className="faint">自動で入らない文書（この作業より前に作った、別の条件で作った）はここで探して繋ぎます</span>
             </div>
           )}
         </div>
