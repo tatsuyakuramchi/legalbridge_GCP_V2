@@ -147,6 +147,17 @@ export function DocumentsWorkspace(
   /** 開いている下書きの案件。条件の候補をこの案件のぶんに絞る。 */
   const [draftMatterId, setDraftMatterId] = useState<number | null>(null);
   /**
+   * 訂正版の文脈（退かせる元の版と理由）。台帳・案件から来たときは start に、
+   * 文書の画面の「訂正版を作る」や、訂正版の下書きを開き直したときはここに持つ。
+   * 計算書の試算（/statement-documents/preview）と決定は、元の版が結んでいる
+   * 実績を「空いている」として扱うのにこれが要る。無いと
+   * 「実績 #… はすでに別の文書に結ばれています」で止まる。
+   */
+  const [revise, setRevise] = useState<{ ids: number[]; reason: string | null } | null>(null);
+  const reviseCtx = start?.supersedesId
+    ? { ids: [start.supersedesId, ...(start.supersedesExtraIds ?? [])], reason: start.reason ?? null }
+    : revise;
+  /**
    * 基本契約（発注書の準拠契約・条件書の基本契約）。null は「選んだ条件に
    * 付いている契約に従う」。条件に契約が無いときや、別の契約に基づくときに選ぶ。
    */
@@ -578,7 +589,7 @@ export function DocumentsWorkspace(
     let live = true;
     api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview", {
       entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
-      supersedesId: start?.supersedesId ?? null, supersedesExtraIds: start?.supersedesExtraIds ?? [],
+      supersedesId: reviseCtx?.ids[0] ?? null, supersedesExtraIds: reviseCtx?.ids.slice(1) ?? [],
       // 直した見出し（製品名・対象契約）を試算にも効かせる。ここを渡さないと、
       // 画面で直したのに試算と紙で違う文字が出る。
       manualInputs: inputs
@@ -586,7 +597,7 @@ export function DocumentsWorkspace(
       .then((r) => { if (live) { setStmt(r); setStmtError(null); } })
       .catch((e: ApiError) => { if (live) { setStmt(null); setStmtError(e.message); } });
     return () => { live = false; };
-  }, [isStatement, stmtKey, stmtPeriod, JSON.stringify(lines.rs_line_labels ?? null)]);
+  }, [isStatement, stmtKey, stmtPeriod, JSON.stringify(lines.rs_line_labels ?? null), reviseCtx?.ids.join(",")]);
 
   /**
    * 最後に保存した中身。これと違えば「保存していない変更がある」。
@@ -638,7 +649,30 @@ export function DocumentsWorkspace(
     setError(null); setBusy(true);
     try {
       let done: { id: number; documentNo: string };
-      if (draft) {
+      if (isStatement && (reviseCtx || !draft)) {
+        // 計算書は 試算 → 発行 → 確定 を1本にしてある。金額は確定時にもう一度
+        // 計算し直すので、画面に出ている試算の値は送らない。
+        // 訂正版の下書きを開き直したときもこちら（下書きの決定では計算書を結び直せない）。
+        // 元の版に付いた理由が無ければ聞く（訂正版は理由が要る）。
+        let reason = reviseCtx?.reason ?? null;
+        if (reviseCtx && !String(reason ?? "").trim()) {
+          reason = window.prompt("訂正版を出す理由を書いてください");
+          if (reason === null) { setBusy(false); return; }
+        }
+        const result = await api.post<{ document: { id: number; documentNo: string } }>(
+          "/statement-documents", {
+            templateKey, matterId, requestId,
+            manualInputs: inputs,
+            entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
+            // 訂正版：決定の瞬間に元の計算書が退き、実績がこちらへ移る。
+            supersedesId: reviseCtx?.ids[0] ?? null, supersedesExtraIds: reviseCtx?.ids.slice(1) ?? [], reason
+          });
+        done = { id: result.document.id, documentNo: result.document.documentNo };
+        // 開いていた訂正版の下書きは役目を終えたので無効にする（残すと「訂正版の下書きがあります」と出続ける）。
+        if (draft) {
+          await api.post(`/documents/${draft.id}/void`, { reason: `訂正版 ${done.documentNo} を出し直したため` }).catch(() => undefined);
+        }
+      } else if (draft) {
         // 開いている下書きを直してから発行する。発行は下書きに保存された
         // 手入力しか見ないので、先に書き戻す。
         await api.patch(`/documents/${draft.id}/draft`,
@@ -646,18 +680,6 @@ export function DocumentsWorkspace(
         const r = await api.post<{ id: number; documentNo: string }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
         done = { id: r.id, documentNo: r.documentNo };
-      } else if (isStatement) {
-        // 計算書は 試算 → 発行 → 確定 を1本にしてある。金額は確定時にもう一度
-        // 計算し直すので、画面に出ている試算の値は送らない。
-        const result = await api.post<{ document: { id: number; documentNo: string } }>(
-          "/statement-documents", {
-            templateKey, matterId, requestId,
-            manualInputs: inputs,
-            entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
-            // 訂正版：決定の瞬間に元の計算書が退き、実績がこちらへ移る。
-            supersedesId: start?.supersedesId ?? null, supersedesExtraIds: start?.supersedesExtraIds ?? [], reason: start?.reason ?? null
-          });
-        done = { id: result.document.id, documentNo: result.document.documentNo };
       } else {
         // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
         // 途中で落ちたときは下書きごと捨てられる。
@@ -683,7 +705,7 @@ export function DocumentsWorkspace(
       // 項目の一覧は消さない。消すと、続けてもう1枚作るときに空の画面が残る。
       // 日付と金額だけ落として、手で打った文字は次にも使う。
       setManual(keep); setLines({}); setPickedFields(new Set());
-      setDraft(null); setPickedEvents([]); setStmt(null); setStmtPeriod("");
+      setDraft(null); setPickedEvents([]); setStmt(null); setStmtPeriod(""); setRevise(null);
       await reload();
       // 決定した文書は直せない。作成のフォームを開いたままにすると、決定した
       // ものを直せるように見える（直すと失敗する）。フォームを閉じ、決定した
@@ -810,8 +832,13 @@ export function DocumentsWorkspace(
         manualInputs: Record<string, unknown>;
         conditions: Array<{ id: number }>;
         eventIds: number[];
+        supersedesId: number | null; supersedeReason: string | null;
       }>(`/documents/${id}`);
       setDraftMatterId(d.matterId ?? null);
+      // 訂正版の下書きなら、退かせる元の版を持ち直す（試算と決定で元の版の実績を空きとして扱う）。
+      const extra = Array.isArray(d.manualInputs?._supersedesExtra)
+        ? (d.manualInputs._supersedesExtra as unknown[]).map(Number).filter((n) => n > 0) : [];
+      setRevise(d.supersedesId ? { ids: [d.supersedesId, ...extra], reason: d.supersedeReason ?? null } : null);
       setAgreementId(d.agreementId ?? null);
       if (!d.templateKey) {
         throw new ApiError(400, "ひな形を持たない文書は直せません");
@@ -848,7 +875,7 @@ export function DocumentsWorkspace(
 
   /** 下書きから降りる。作りかけの下書きは残るので、あとで開き直せる。 */
   function closeDraft() {
-    setDraft(null); setComposing(false); setRendered(null); setSavedAt("");
+    setDraft(null); setComposing(false); setRendered(null); setSavedAt(""); setRevise(null);
     setManual({}); setLines({}); setPickedFields(new Set()); setPickedEvents([]);
     // ひな形は変わらないので既定の読み込みは走らない。ここで戻しておかないと、
     // 下書きを閉じたあとだけ前回の値が出ない画面になる。
@@ -897,10 +924,10 @@ export function DocumentsWorkspace(
           </div>
         )}
         <h1>文書</h1>
-        {start?.supersedesId && (
+        {reviseCtx && (
           <div className="note warn">
-            <b>計算書の訂正版</b>　元の計算書 {[start.supersedesId, ...(start.supersedesExtraIds ?? [])].map((id) => `#${id}`).join("・")} を退かせて出し直します（理由：{start.reason ?? "—"}）。
-            決定するまで元の版は有効なままです。
+            <b>訂正版</b>　元の文書 {reviseCtx.ids.map((id) => `#${id}`).join("・")} を退かせて出し直します（理由：{reviseCtx.reason ?? "—"}）。
+            決定するまで元の版は有効なままです。元の版が結んでいる実績はこの訂正版に移ります。
           </div>
         )}
         {requestId && (
