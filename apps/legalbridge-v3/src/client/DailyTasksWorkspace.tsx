@@ -5,7 +5,7 @@ import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { UploadsPanel } from "./UploadsPanel.js";
 import { RoundPicker, roundTargets } from "./RoundPicker.js";
 import { StatusTag } from "./labels.js";
-import { SearchSelect, type SearchOption } from "./SearchSelect.js";
+import { SearchSelect, staffOptions, type SearchOption } from "./SearchSelect.js";
 
 /**
  * デイリータスク。docs/v3-request-inbox.md §10（A-064）
@@ -59,7 +59,7 @@ interface Detail {
                   workId: number | null; workTitle: string | null; partyId: number | null; partyName: string | null }>;
   ledgers: Array<{ partyId: number; partyName: string; workId: number; workTitle: string }>;
 }
-interface Staff { id: number; name: string; status?: string }
+interface Staff { id: number; name: string; department?: string | null; status?: string }
 interface MatterHit { id: number; matterNo: string | null; title: string; status: string }
 const KIND_LABEL: Record<string, string> = { outsourcing: "業務委託・発注", work: "作品の権利", single: "その他の相談" };
 
@@ -185,10 +185,11 @@ export function DailyTasksWorkspace(
 
       <div className="row" style={{ gap: 8 }}>
         <span className="faint">担当</span>
-        <select className="inline-input" value={mine} onChange={(e) => { setMine(e.target.value ? Number(e.target.value) : ""); setSelected(undefined); }}>
-          <option value="">全員</option>
-          {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        <div style={{ width: 260 }}>
+          <SearchSelect value={mine === "" ? "" : String(mine)} options={staffOptions(staff)}
+                        emptyLabel="全員" valueLabel="全員" placeholder="氏名・部署で探す"
+                        onChange={(v) => { setMine(v ? Number(v) : ""); setSelected(undefined); }} />
+        </div>
       </div>
 
       <div className="tabs">
@@ -379,11 +380,9 @@ function TaskPanel(
                    onChange={(e) => setRequesterEmail(e.target.value)} />
           </label>
           <label className="field"><span>担当</span>
-            <select value={assignee} disabled={!canWrite || busy}
-                    onChange={(e) => setAssignee(e.target.value ? Number(e.target.value) : "")}>
-              <option value="">未定</option>
-              {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <SearchSelect value={assignee === "" ? "" : String(assignee)} options={staffOptions(staff)}
+                          disabled={!canWrite || busy} emptyLabel="未定" valueLabel="未定" placeholder="氏名・部署で探す"
+                          onChange={(v) => setAssignee(v ? Number(v) : "")} />
           </label>
           <label className="field"><span>期日</span>
             <input type="date" value={dueOn} disabled={!canWrite || busy} onChange={(e) => setDueOn(e.target.value)} />
@@ -708,10 +707,9 @@ function MovePanel(
                 <input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
               {dest === "new" && (
                 <label className="field"><span>法務担当</span>
-                  <select value={owner} onChange={(e) => setOwner(e.target.value ? Number(e.target.value) : "")}>
-                    <option value="">あとで決める</option>
-                    {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                  <SearchSelect value={owner === "" ? "" : String(owner)} options={staffOptions(staff)}
+                                emptyLabel="あとで決める" valueLabel="あとで決める" placeholder="氏名・部署で探す"
+                                onChange={(v) => setOwner(v ? Number(v) : "")} />
                 </label>
               )}
             </div>

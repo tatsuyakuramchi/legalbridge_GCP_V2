@@ -4,6 +4,7 @@ import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { UploadsPanel } from "./UploadsPanel.js";
 import { StatusTag } from "./labels.js";
+import { SearchSelect, staffOptions } from "./SearchSelect.js";
 
 /**
  * 依頼の受付箱。docs/v3-request-inbox.md
@@ -73,7 +74,7 @@ interface Detail {
   requesterEmailGuess?: string | null;
 }
 interface Counts { new: number; onHold: number; updated: number; holdDue: number }
-interface Staff { id: number; name: string; status?: string }
+interface Staff { id: number; name: string; department?: string | null; status?: string }
 interface MatterHit { id: number; matterNo: string | null; title: string; status: string }
 
 const when = (iso: string | null) => (iso ? iso.slice(5, 16).replace("T", " ").replace("-", "/") : "—");
@@ -530,10 +531,9 @@ function Decision(
                 <input value={title} disabled={!canWrite} onChange={(e) => setTitle(e.target.value)} />
               </label>
               <label className="field"><span>担当</span>
-                <select value={owner} disabled={!canWrite} onChange={(e) => setOwner(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">あとで決める</option>
-                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                <SearchSelect value={owner === "" ? "" : String(owner)} options={staffOptions(staff)} disabled={!canWrite}
+                              emptyLabel="あとで決める" valueLabel="あとで決める" placeholder="氏名・部署で探す"
+                              onChange={(v) => setOwner(v ? Number(v) : "")} />
               </label>
               <label className="field"><span>期日</span>
                 <input type="date" value={dueOn} disabled={!canWrite} onChange={(e) => setDueOn(e.target.value)} />
@@ -625,11 +625,10 @@ function Decision(
                 <input value={title} disabled={!canWrite} onChange={(e) => setTitle(e.target.value)} />
               </label>
               <label className="field"><span>法務担当</span>
-                <select value={owner} disabled={!canWrite || dest !== "new"}
-                        onChange={(e) => setOwner(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">あとで決める</option>
-                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                <SearchSelect value={owner === "" ? "" : String(owner)} options={staffOptions(staff)}
+                              disabled={!canWrite || dest !== "new"}
+                              emptyLabel="あとで決める" valueLabel="あとで決める" placeholder="氏名・部署で探す"
+                              onChange={(v) => setOwner(v ? Number(v) : "")} />
               </label>
               <label className="field"><span>期日</span>
                 <input type="date" value={dueOn} disabled={!canWrite} onChange={(e) => setDueOn(e.target.value)} />
