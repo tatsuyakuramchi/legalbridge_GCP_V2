@@ -51,6 +51,8 @@ export interface OpenMatterInput {
   counterpartyWritten: string | null;
   ownerStaffId?: number | null;
   requesterSlackId: string | null;
+  /** 依頼者（事業部の担当者）のメール。文書のメールの下書きの宛先になる。 */
+  requesterEmail?: string | null;
   dueOn: string | null;
   remarks: string;
   createdBy: string;
@@ -68,11 +70,11 @@ export async function openMatter(
 
   const inserted = await client.query(
     `INSERT INTO matters (matter_no, title, kind, status, counterparty_id,
-                                requester_slack_id, due_on, remarks, created_by${input.ownerStaffId ? ", owner_staff_id" : ""})
-           VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, $8${input.ownerStaffId ? ", $9" : ""})
+                                requester_slack_id, requester_email, due_on, remarks, created_by${input.ownerStaffId ? ", owner_staff_id" : ""})
+           VALUES ($1, $2, $3, 'open', $4, $5, $6, $7, $8, $9${input.ownerStaffId ? ", $10" : ""})
            RETURNING id, matter_no`,
     [matterNo, input.title, input.kind, input.counterpartyId,
-     input.requesterSlackId || null, input.dueOn, input.remarks, input.createdBy,
+     input.requesterSlackId || null, input.requesterEmail || null, input.dueOn, input.remarks, input.createdBy,
      ...(input.ownerStaffId ? [input.ownerStaffId] : [])]);
   const row = inserted.rows[0] as { id: number; matter_no: string | null };
   const matterId = Number(row.id);

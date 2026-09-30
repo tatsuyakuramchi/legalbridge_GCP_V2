@@ -15,7 +15,7 @@ import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
-import { DailyTasksWorkspace } from "./DailyTasksWorkspace.js";
+import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 
@@ -132,6 +132,13 @@ export function App() {
     setView(next);
   };
 
+  /**
+   * いま進めているデイリータスク（A-064）。作業の「文書を作る」から作品・条件明細・台帳の
+   * 画面へ移ったあとも持ち続け、そこで作った文書をその作業に繋ぐ（requestId）。
+   * 左のメニューから別の画面を開いたら解除する（作業と関係ない文書まで繋がないように）。
+   */
+  const [taskCtx, setTaskCtx] = useState<TaskCtx | null>(null);
+
   /** 作品の利用許諾計算をこの作家で開く（受付箱の依頼から）。作品画面を離れたら消す。 */
   const [ledgerParty, setLedgerParty] = useState<number | null>(null);
   useEffect(() => { if (view !== "works") setLedgerParty(null); }, [view]);
@@ -189,7 +196,8 @@ export function App() {
     requestId: number | null = null
   ) => {
     setDocBack(back);
-    setCompose({ conditionIds, eventIds, matterId, requestId, templateKey,
+    // 作業から離れて作品・条件明細の画面で作った文書も、その作業に繋ぐ（案件の文書は案件へ）。
+    setCompose({ conditionIds, eventIds, matterId, requestId: requestId ?? (matterId ? null : taskCtx?.requestId ?? null), templateKey,
                  supersedesId: revise?.supersedesIds[0] ?? null, supersedesExtraIds: revise?.supersedesIds.slice(1) ?? [],
                  reason: revise?.reason ?? null });
     setFocus(null);
@@ -251,6 +259,8 @@ export function App() {
                         // 左から開いたときは全社に戻す。案件から開いた絞りが
                         // 残っていると、件数が合わずに見落とす。
                         if (item.view === "drift") setDriftMatter(null);
+                        // 左から開いたら、進めていたデイリータスクとの繋がりは解く。
+                        setTaskCtx(null);
                         setFocus(null);
                         setView(item.view);
                       }}>{item.label}
@@ -283,6 +293,16 @@ export function App() {
             {me.site?.dataAsOf ? `データは ${me.site.dataAsOf} 時点の写しです。` : ""}
           </div>
         )}
+        {taskCtx && view !== "daily" && (
+          <div className="note" style={{ marginBottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span>
+              <b>デイリータスク {taskCtx.requestNo ?? `#${taskCtx.requestId}`}</b>「{taskCtx.title}」の作業中です。
+              ここで作った文書はその作業に自動で繋がります。
+            </span>
+            <button className="btn btn-sm" onClick={() => { setFocus({ view: "daily", id: taskCtx.taskId }); setView("daily"); }}>作業に戻る</button>
+            <button className="linky" onClick={() => setTaskCtx(null)}>繋がずに作る</button>
+          </div>
+        )}
         {view === "home" && (
           <HomeWorkspace intakeCount={intakeCount} dailyCount={dailyCount} onGo={(v, tab) => {
             setOpsTab(tab);
@@ -307,6 +327,16 @@ export function App() {
               setFocus({ view: "works", id: workId }); setView("works");
             }}
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
+            onGo={(ctx, target) => {
+              setTaskCtx(ctx); setConditionId(undefined);
+              if (target.kind === "ledger") {
+                setLedgerParty(target.partyId); setFocus({ view: "works", id: target.workId }); setView("works");
+              } else if (target.kind === "work") {
+                setFocus(target.workId ? { view: "works", id: target.workId } : null); setView("works");
+              } else {
+                if (target.conditionId) openCondition(target.conditionId); else { setFocus(null); setView("conditions"); }
+              }
+            }}
             onCountsChange={(c) => setDailyCount(c.open)} />
         )}
         {view === "matters" && (

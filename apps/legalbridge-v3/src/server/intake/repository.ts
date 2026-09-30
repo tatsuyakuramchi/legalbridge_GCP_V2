@@ -1,6 +1,7 @@
 import { dateStr, type Queryable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { purposeOf } from "../integrations/slack-intake.js";
+import { resolveRequesterEmail } from "./requester.js";
 import {
   isDailyPurpose, isPaymentPurpose, loadProgress, resolvePaymentTarget,
   type DailyPurpose, type PaymentTarget, type RequestProgress
@@ -222,7 +223,9 @@ export class IntakeRepository {
                                                         workId: number | null; workTitle: string | null; partyId: number | null }>;
                                     rounds: IntakeRound[];
                                     ledgers: Array<{ partyId: number; partyName: string; workId: number; workTitle: string }>;
-                                    replies: IntakeReply[] }> {
+                                    replies: IntakeReply[];
+                                    /** 依頼者のメールの見込み（依頼のメール → Slack の ID → 名前 から）。受付の欄の初期値。 */
+                                    requesterEmailGuess: string | null }> {
     try {
       const r = await this.database.query(`${SELECT} WHERE r.id = $1`, [id]);
       const raw = r.rows[0] as any;
@@ -282,6 +285,7 @@ export class IntakeRepository {
       }
       return {
         request, matterCandidates,
+        requesterEmailGuess: await resolveRequesterEmail(this.database, raw),
         duplicateCandidates: await this.duplicateCandidates(request),
         target,
         conditions: linked.map((c) => ({ id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name),

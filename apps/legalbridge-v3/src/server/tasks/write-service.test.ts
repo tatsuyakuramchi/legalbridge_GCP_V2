@@ -63,7 +63,7 @@ test("案件に移す（新規）：案件を立て、原票と条件を案件�
   assert.deepEqual([r.matterId, r.matterNo, r.createdMatter, r.notified], [42, "MTR-2026-00230", true, true]);
   const m = d.find("INSERT INTO matters")!;
   assert.equal(m.params[3], 5, "相手先は依頼のもの");
-  assert.equal(m.params[8], 3, "担当は作業の担当を引き継ぐ");
+  assert.equal(m.params[9], 3, "担当は作業の担当を引き継ぐ");
   const links = d.all("INSERT INTO matter_links");
   assert.ok(links.some((q) => q.text.includes("'backlog_issue'") && q.params[1] === "LEGAL-9001"));
   assert.ok(links.some((q) => q.text.includes("'condition'") && q.params[1] === "11"));

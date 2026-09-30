@@ -129,6 +129,7 @@ export class TaskWriteService {
             counterpartyWritten: row.counterparty_name ?? null,
             ownerStaffId: input.ownerStaffId ?? (task.assignee_staff_id ? Number(task.assignee_staff_id) : null),
             requesterSlackId: row.requester_slack_id ?? null,
+            requesterEmail: row.requester_email ?? null,
             dueOn: dateStr(task.due_at) ?? dateStr(row.due_on),
             remarks, createdBy: actor
           });
