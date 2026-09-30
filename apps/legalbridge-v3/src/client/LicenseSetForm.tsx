@@ -66,12 +66,14 @@ export function LicenseSetForm(
       .then((a) => setAgreements(a.agreements)).catch(() => undefined);
   }, []);
 
-  // 条件名は 作品名｜取引モデル で付く（再許諾は 再許諾先／目的 つき）。打たせない。
+  // 条件名は 作品名｜取引モデル で付く（再許諾で対象の許諾先を選べば 許諾先／目的 が添う）。打たせない。
+  // 対象の許諾先の名前はサーバが引くので、ここでは「（許諾先）」の形だけ見せる。
   const workTitle = (v: Record<string, string>) => works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
   const nameHint = (v: Record<string, string>, usage: typeof GAME_USAGES[number]["value"]) => {
     const made = conditionNameFor({ workTitle: workTitle(v), usageType: usage,
-                                    sublicensee: v.sublicensee, purpose: v.purpose });
-    return made ? `条件名：${made}` : usage === "sublicense" ? "条件名は 作品名｜再許諾（再許諾先／目的）。再許諾先を入れてください" : "作品を選ぶと 作品名｜取引モデル の条件名が付きます";
+                                    sublicensee: usage === "sublicense" && v.targetPartyId ? "選んだ許諾先" : null,
+                                    purpose: usage === "sublicense" ? v.purpose : null });
+    return made ? `条件名：${made}` : "作品を選ぶと 作品名｜取引モデル の条件名が付きます";
   };
   // 利用形態ごとに 料率／独占性／MG／AG。料率が空なら、その形態は作らない。
   // 許諾料の扱い（A-048）が「含む」「無償」なら料率は空でもその形態を作る。
@@ -86,12 +88,17 @@ export function LicenseSetForm(
                 { value: "free", label: "無償" }],
       hint: "発注書の利用許諾条件の「料率・額」に出る" },
     ...(u.value === "sublicense" ? [
-      { name: "sublicensee", label: "再許諾：再許諾先の名称", required: true, placeholder: "Alpha Games",
+      // 対象の許諾先（A-063）。ふつうは空＝一律（その作品の許諾先すべてに効く）。
+      // 契約が特定の許諾先だけ別の料率にしているときだけ選ぶ（許諾先専用）。再許諾先の名称は打たせない。
+      { name: "targetPartyId", label: "再許諾：対象の許諾先（特定の許諾先だけの料率のとき）", type: "search",
+        search: searchParties, placeholder: "空なら一律（その作品の許諾先すべてに効く）",
         visibleWhen: (v) => on(v, "sublicense"),
-        hint: "条件名「作品名｜再許諾（再許諾先／目的）」に入る" } as Field,
+        hint: (v) => v.targetPartyId
+          ? "許諾先専用：この許諾先の報告だけがこの料率で計算されます。一律の条件からはこの許諾先が外れます。条件名に許諾先名が添います"
+          : "一律：この作品の許諾先すべてにこの料率が効きます。特定の許諾先だけ料率が違う契約のときだけ選んでください" } as Field,
       { name: "purpose", label: "再許諾：目的", placeholder: "英語版の製造販売",
         visibleWhen: (v) => on(v, "sublicense"),
-        hint: "空でもよい。入れると条件名に入る" } as Field
+        hint: "空でもよい。入れると条件名に添う（作品名｜再許諾（許諾先／目的））" } as Field
     ] : []),
     { name: `excl_${u.value}`, label: `${u.label}：独占区分`, type: "select",
       options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
@@ -167,7 +174,9 @@ export function LicenseSetForm(
             usageType: u.value, ratePct: r, exclusivity: v[`excl_${u.value}`] || null,
             licenseFeeBasis: basis,
             mgAmount: int(v[`mg_${u.value}`]) ?? null, agAmount: int(v[`ag_${u.value}`]) ?? null,
-            ...(u.value === "sublicense" ? { sublicensee: text(v.sublicensee) ?? null, purpose: text(v.purpose) ?? null } : {})
+            ...(u.value === "sublicense"
+              ? { sublicensee: null, targetPartyId: int(v.targetPartyId) ?? null, purpose: text(v.purpose) ?? null }
+              : {})
           }];
         });
         return {
