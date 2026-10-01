@@ -90,7 +90,7 @@
 <p>許諾者と被許諾者は、両者間の{{#if masterAgreement}}{{masterAgreement}}{{else}}基本契約{{/if}}（以下「基本契約」という。）に基づき、以下のとおり個別の利用許諾条件を定める。本条件書に定めのない事項は基本契約による。</p>
 
 <h2><span class="no">第１条</span>対象著作物</h2>
-<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率は取引形態ごとに許諾者と被許諾者が合意した料率を示し、「—」はその取引形態で当該要素の料率が無いことを示す。最下行の「適用料率」は第４条の計算に用いる料率で、権利許諾（サブライセンス）以外の取引形態では各構成要素の料率の合計とする。地域・言語・根拠文書・条件明細は同じNo.の下の行に示す。</p>
+<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率は取引形態ごとに許諾者と被許諾者が合意した料率を示し、「—」はその取引形態で当該要素の料率が無いことを示す。最下行の「適用料率」は第４条の計算に用いる料率で、権利許諾（サブライセンス）以外の取引形態では各構成要素の料率の合計とする。地域・言語・根拠文書は同じNo.の下の行に示す。</p>
 <table class="list">
   <thead>
     <tr>
@@ -110,7 +110,7 @@
     </tr>
     <tr>
       <td class="c"></td>
-      <td class="note" colspan="{{add (add ../conds.length 1) (or ../showHolder 0)}}"><span class="lbl">地域</span>{{lcRegion}}<span class="lbl">言語</span>{{lcLanguage}}<span class="lbl">根拠文書</span>{{lcSourceDoc}}{{#if lcConditionNos}}<span class="lbl">条件明細</span>{{lcConditionNos}}{{/if}}</td>
+      <td class="note" colspan="{{add (add ../conds.length 1) (or ../showHolder 0)}}"><span class="lbl">地域</span>{{lcRegion}}<span class="lbl">言語</span>{{lcLanguage}}<span class="lbl">根拠文書</span>{{lcSourceDoc}}</td>
     </tr>
   </tbody>
   {{/each}}

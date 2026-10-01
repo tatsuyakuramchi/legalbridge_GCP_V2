@@ -371,12 +371,7 @@ export function materialSeeds(context: Data): Data[] {
       // 構成上の役割。素材の種別から決める。人が直せる。
       role: roleOfPart(head.work ?? {}),
       rates,
-      fixed_rates: fixedRates,
-      /**
-       * この構成要素に載せた条件明細の番号すべて。素材1つに取引形態のぶん
-       * 条件明細が並ぶので、1つ（material_code）では足りない。
-       */
-      condition_nos: group.map((c) => text(c.conditionNo)).filter(Boolean)
+      fixed_rates: fixedRates
     };
   });
 }
@@ -618,9 +613,7 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
           const map = deal.addon ? rates
             : (material.fixed_rates && typeof material.fixed_rates === "object" ? material.fixed_rates as Data : {});
           return percent(number(map[String(deal.id ?? "")]));
-        }),
-        lcConditionNos: (Array.isArray(material.condition_nos) && material.condition_nos.length
-          ? material.condition_nos.map(text) : [text(material.material_code)].filter(Boolean)).join("・")
+        })
       };
     }),
     calcBaseRows: calcBaseRows.length ? calcBaseRows
