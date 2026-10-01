@@ -510,29 +510,26 @@ function TaskPanel(
                   <button className="btn btn-sm" onClick={() => go({ kind: "work", workId })}>作品の画面を開く</button>
                 </>} />
               )}
-              {t.purpose === "template" && (
-                <Route title="定型文書（当社ひな形の NDA など）" steps={[
-                  "文書の画面でひな形を選ぶ（載せる条件があれば選ぶ）",
-                  "決定 → 送る"
+              {(t.purpose === "template" || t.purpose === "other") && (<>
+                {/* 条件から作る文書は、作品があるかで入口が変わる。作品があれば作品の画面
+                    （許諾条件も委託の条件も作品にぶら下がる）、無ければ条件明細の画面。 */}
+                <Route title="作品がある ライセンス・業務委託（利用許諾条件書・基本契約書・発注書）" steps={[
+                  workId ? "作品の画面で条件（許諾セット・業務セット）を登録する" : "作品の画面で作品を探す（無ければ登録する）→ 条件（許諾セット・業務セット）を登録する",
+                  "作品の画面の条件から 条件書・契約書・発注書を作る → 決定 → 送る"
                 ]} buttons={
-                  <button className="btn btn-sm primary" onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
+                  <button className="btn btn-sm primary" onClick={() => go({ kind: "work", workId })}>
+                    {workId ? "作品の画面を開く" : "作品の画面で探す"}
+                  </button>
                 } />
-              )}
-              {t.purpose === "other" && (<>
-                <Route title="利用許諾条件書・基本契約書（ライセンス）" steps={[
-                  "作品の画面で許諾条件（許諾セット）を登録する",
-                  "作品の画面から条件書・契約書を作る → 決定 → 送る"
-                ]} buttons={
-                  <button className="btn btn-sm primary" onClick={() => go({ kind: "work", workId })}>作品の画面を開く</button>
-                } />
-                <Route title="発注書・業務委託・検収書" steps={[
-                  "条件明細（委託料・成果物の条件）を登録する",
-                  "条件明細の画面から発注書・検収書を作る → 決定 → 送る"
-                ]} buttons={
-                  <button className="btn btn-sm primary" onClick={() => go({ kind: "conditions", conditionId })}>条件明細を登録する</button>
-                } />
-                <Route title="定型文書・その他" steps={["文書の画面でひな形を選んで作る → 決定 → 送る"]} buttons={
-                  <button className="btn btn-sm" onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
+                <Route title="作品が無い 業務委託（発注書・検収書）" steps={[
+                  "条件明細の画面で業務セット（委託料・実費・手数料）か条件を 1 本登録する",
+                  "条件明細の画面から 発注書・検収書を作る → 決定 → 送る"
+                ]} buttons={<>
+                  <button className="btn btn-sm primary" onClick={() => go({ kind: "conditions", conditionId: null })}>条件明細を登録する</button>
+                  {conditionId && <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId })}>繋いである条件を開く</button>}
+                </>} />
+                <Route title="条件の無い定型文書（当社ひな形の NDA など）" steps={["文書の画面でひな形を選んで作る → 決定 → 送る"]} buttons={
+                  <button className={`btn btn-sm${t.purpose === "template" ? " primary" : ""}`} onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
                 } />
               </>)}
               <Route title="外で作る文書（ワンオフの覚書・念書・通知書、相手方から届いた文書）" steps={[

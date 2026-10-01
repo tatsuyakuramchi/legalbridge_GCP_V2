@@ -470,7 +470,9 @@ export class DocumentBatchService {
     private readonly database: Transactable,
     private readonly issues: DocumentIssueService,
     private readonly communications: MatterCommunicationService,
-    private readonly pdf: PdfRenderer
+    private readonly pdf: PdfRenderer,
+    /** 作り置き（A-065）。渡されていれば描かずにそこから取る。 */
+    private readonly pdfs: { ensure(documentId: number): Promise<Buffer> } | null = null
   ) {
     this.conditions = new ConditionWriteService(database);
     this.schedules = new ConditionScheduleService(database);
@@ -888,14 +890,16 @@ export class DocumentBatchService {
                          sent: false, reason: "取引先に連絡先のメールが無い" });
           continue;
         }
-        const rendered = await this.issues.renderIssued(d.id);
+        const data = this.pdfs
+          ? await this.pdfs.ensure(d.id)
+          : await this.pdf.render((await this.issues.renderIssued(d.id)).html);
         const r = await this.communications.sendEmail(batch.matterId, {
           to, cc,
           subject: str(input.subject) ?? `${d.documentNo ?? ""} ${d.templateLabel ?? "発注書"} のご確認`.trim(),
           body: str(input.body) ?? `${d.templateLabel ?? "発注書"}をお送りします。内容をご確認のうえ、問題なければご返信ください。`,
           documentId: d.id,
           attachment: { filename: `${d.documentNo ?? `document-${d.id}`}.pdf`,
-                        mimeType: "application/pdf", data: await this.pdf.render(rendered.html) }
+                        mimeType: "application/pdf", data }
         }, actor);
         results.push({ documentId: d.id, documentNo: d.documentNo, partyName: d.counterparty,
                        sent: r.outcome.sent, to,

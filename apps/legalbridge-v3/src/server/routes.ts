@@ -56,6 +56,7 @@ import { DocumentStorageService } from "./documents/storage-service.js";
 import { GoogleDriveStorage, MemoryDriveStorage, type DriveStorage } from "./documents/drive-storage.js";
 import { LocalFileStorage } from "./documents/local-file-storage.js";
 import { IMPORT_KINDS } from "./documents/import-kinds.js";
+import { PdfStore } from "./documents/pdf-store.js";
 import { DocumentImportService } from "./documents/import-service.js";
 import { GoogleMatterDriveFolderService, LocalMatterDriveFolderService } from "./documents/drive-folder.js";
 import { MatterFolderStorageService } from "./matters/drive-folder-service.js";
@@ -152,9 +153,13 @@ export function createRoutes(database: Transactable) {
   const issues = new DocumentIssueService(database);
   const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
     ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
+  // 決定した文書の PDF の作り置き。決定の直後に描いて置き、送る・開くときはそれを返す。
+  const pdfs = new PdfStore(database, pdf, (id) => issues.renderIssued(id),
+    process.env.PDF_RENDERER === "memory" ? "memory" : "chromium");
+  issues.afterIssue = async (id) => { await pdfs.warm(id); };
 
   const drive = buildDrive();
-  const storage = new DocumentStorageService(database, drive, pdf);
+  const storage = new DocumentStorageService(database, drive, pdf, pdfs);
   const documentImports = new DocumentImportService(database, drive);
   const royalty = new RoyaltyStatementService(database);
   const royaltyLedger = new RoyaltyLedgerService(database);
@@ -190,7 +195,7 @@ export function createRoutes(database: Transactable) {
   const dispatch = buildDispatch(database, adapters);
   const communications = new MatterCommunicationService(database, dispatch);
   const sends = new DocumentSendService(database);
-  const batches = new DocumentBatchService(database, issues, communications, pdf);
+  const batches = new DocumentBatchService(database, issues, communications, pdf, pdfs);
   // 検収まで終わっている過去の取引をまとめて入れる（遡及）。名寄せは
   // 発注書の一括作成と同じものを使うので、その束を渡す。
   const settledBatches = new SettledBatchService(
@@ -911,6 +916,15 @@ export function createRoutes(database: Transactable) {
 
   // 工程の節目を依頼者に知らせる。手で1回動かして結果を見るためのもの。
   // 定期実行は /internal/jobs/flow-notice（Cloud Scheduler）。
+  // 決定済みで PDF をまだ置いていない文書を描いて置く（A-065 の入れ始めに古い文書ぶんを埋める）。
+  router.post("/jobs/pdf-warm", requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50) || 50));
+      const ids = await pdfs.missing(limit);
+      const done: number[] = []; const failed: number[] = [];
+      for (const id of ids) (await pdfs.warm(id) ? done : failed).push(id);
+      res.json({ done, failed, remaining: (await pdfs.missing(1)).length > 0 });
+    }));
   router.post("/jobs/flow-notice", requireRole("admin"), requireWritable,
     asyncRoute(async (_req, res) => {
       res.json(await flowNoticeJob(database, dispatch, communications, matterLinks, intakeRequests).run());
@@ -1015,10 +1029,10 @@ export function createRoutes(database: Transactable) {
       if (seen.has(row.documentId)) continue;
       seen.add(row.documentId);
       try {
-        const rendered = await issues.renderIssued(row.documentId);
+        const doc = await documents.find(row.documentId);
         entries.push({
-          name: `${rendered.documentNo ?? row.documentNo ?? `document-${row.documentId}`}.pdf`,
-          data: await pdf.render(rendered.html)
+          name: `${doc?.documentNo ?? row.documentNo ?? `document-${row.documentId}`}.pdf`,
+          data: await pdfs.ensure(row.documentId)
         });
       } catch {
         missing.push(`${label}（PDF を作れませんでした）`);
@@ -3286,11 +3300,16 @@ export function createRoutes(database: Transactable) {
   }));
 
   router.get("/documents/:id/pdf", asyncRoute(async (req, res) => {
-    const rendered = await issues.renderIssued(Number(req.params.id));
-    const buffer = await pdf.render(rendered.html);
+    const id = Number(req.params.id);
+    const document = await documents.find(id);
+    if (!document) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
+    // 決定済みは作り置きから。下書きは本文が変わるので、置かずにその場で描く。
+    const buffer = document.status === "draft"
+      ? await pdf.render((await issues.renderIssued(id)).html)
+      : await pdfs.ensure(id);
     res.type("application/pdf")
        .setHeader("content-disposition",
-         `attachment; filename="${rendered.documentNo ?? `document-${req.params.id}`}.pdf"`);
+         `attachment; filename="${document.documentNo ?? `document-${id}`}.pdf"`);
     res.send(buffer);
   }));
 
@@ -3969,12 +3988,11 @@ export function createRoutes(database: Transactable) {
                       mimeType: file.mimeType, data: file.data }
       };
     }
-    const rendered = await issues.renderIssued(id);
     return {
       document,
       attachment: {
         filename: `${document.documentNo ?? `document-${id}`}.pdf`,
-        mimeType: "application/pdf", data: await pdf.render(rendered.html)
+        mimeType: "application/pdf", data: await pdfs.ensure(id)
       }
     };
   };
@@ -4427,10 +4445,9 @@ export function createRoutes(database: Transactable) {
         if (document.status !== "issued") {
           throw new DomainError("CONFLICT", "決定済みの文書だけを添えられます（下書きは送れません）");
         }
-        const rendered = await issues.renderIssued(input.documentId);
         attachment = {
           filename: `${document.documentNo ?? `document-${input.documentId}`}.pdf`,
-          mimeType: "application/pdf", data: await pdf.render(rendered.html)
+          mimeType: "application/pdf", data: await pdfs.ensure(input.documentId)
         };
       }
       res.json(await communications.sendEmail(Number(req.params.id), {

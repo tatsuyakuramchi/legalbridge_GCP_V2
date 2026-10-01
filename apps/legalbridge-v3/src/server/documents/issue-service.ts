@@ -116,6 +116,12 @@ export class DocumentIssueService {
   private readonly matters: MatterLinkService;
   private readonly conditionWrites: ConditionWriteService;
 
+  /**
+   * 決定の直後に呼ぶ（PDF の作り置きなど）。決定のトランザクションの外で呼ぶので、
+   * 失敗しても決定は取り消さない。
+   */
+  afterIssue: ((documentId: number) => Promise<void>) | null = null;
+
   constructor(private readonly database: Transactable) {
     this.repository = new DocumentRepository(database);
     this.contexts = new DocumentContextRepository(database);
@@ -517,6 +523,9 @@ export class DocumentIssueService {
           issuedAt: new Date(String((updated.rows[0] as { issued_at: string }).issued_at)).toISOString(),
           conditionIds
         };
+      }).then(async (issued) => {
+        if (this.afterIssue) await this.afterIssue(issued.id).catch(() => undefined);
+        return issued;
       });
     } catch (error) { throw translate(error); }
   }

@@ -303,6 +303,10 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 65, 'PDF の作り置き（A-065。表 1 であること）',
+         (SELECT count(*) FROM information_schema.tables
+           WHERE table_schema='v3' AND table_name='document_pdfs')::text
+  UNION ALL
   SELECT 64, 'デイリータスク（A-064。列 5・CHECK 2 で 7 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='tasks'
