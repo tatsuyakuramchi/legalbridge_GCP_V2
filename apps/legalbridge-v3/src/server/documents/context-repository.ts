@@ -49,6 +49,31 @@ function staffOf(row: Record<string, any> | undefined) {
   };
 }
 
+/** 取引先の列（条件の結合でも相手先だけでも同じ形）→ 書類が使う相手先。 */
+function counterpartyOf(row: Record<string, any>) {
+  return {
+    name: str(row.party_name) ?? "",
+    kana: str(row.party_kana),
+    kind: str(row.party_kind),
+    invoiceNo: str(row.party_invoice_no),
+    corporateNo: str(row.party_corporate_no),
+    address: str(row.party_row?.address),
+    phone: str(row.party_row?.phone),
+    email: str(row.party_row?.email),
+    /** 代表者（法人）。宛名・署名欄に出す。 */
+    representativeTitle: str(row.party_row?.representative_title),
+    representativeName: str(row.party_row?.representative_name),
+    withholding: row.party_withholding === true,
+    // 非居住者と租税条約（A-057）。海外の書類の源泉の欄に税率を出す。
+    residency: str(row.party_row?.residency) ?? "resident",
+    residenceCountry: str(row.party_row?.residence_country),
+    treatyRatePct: row.party_row?.treaty_rate_pct === null || row.party_row?.treaty_rate_pct === undefined
+      ? null : Number(row.party_row.treaty_rate_pct),
+    treatyDocsReceivedOn: str(row.party_row?.treaty_docs_received_on)?.slice(0, 10) ?? null,
+    honorific: honorificFor(str(row.party_kind))
+  };
+}
+
 export class DocumentContextRepository {
   constructor(private readonly database: Transactable) {}
 
@@ -67,6 +92,36 @@ export class DocumentContextRepository {
       // 同時に問い合わせられないので、順に読む。
       const agreement = agreementId ? await this.agreement(client, agreementId) : null;
       const matter = matterId ? await this.matter(client, matterId) : null;
+      // 条件の無い文書（基本契約書・NDA を案件や契約から作る）は、相手先を契約か案件から
+      // 引く。以前は条件を 1 本選ばないと相手先（Licensor・受託者）の欄が全部空だった。
+      // 期間は契約の記録（有効期間・終了日・自動更新）から。
+      if (!conditions.length) {
+        const partyIdFallback = agreement?.counterpartyId ?? matter?.counterpartyId ?? null;
+        if (partyIdFallback) {
+          const party = await this.partyOnly(client, partyIdFallback);
+          if (party) {
+            conditions.push({
+              ...party,
+              id: 0, conditionNo: null, name: matter?.title ?? agreement?.title ?? "", direction: "in", kind: "license",
+              currency: "JPY", pricingModel: "none", ratePct: null, unitAmount: null, quantity: null, flatAmount: null,
+              mgAmount: null, agAmount: null, flatAmountMinor: 0,
+              termStart: agreement?.effectiveOn ?? agreement?.executedOn ?? null,
+              termEnd: agreement?.expiresOn ?? null,
+              deliveryDue: null, taxCategory: "taxable", paymentTerms: null, contractForm: null, cycle: null,
+              exclusivity: null, exclusivityLabel: null, sublicensable: null, statementTiming: null, royaltyBase: null,
+              sublicenseConsent: null, autoRenew: agreement ? agreement.autoRenewal : null,
+              renewMonths: agreement?.renewalMonths ?? null, renewStoppedOn: null,
+              notes: null, spec: null, deliverableOwnership: null, orderNo: null, usageType: null,
+              agreementId: agreement?.id ?? null, counterpartyId: partyIdFallback, workId: matter?.workId ?? null, workPartId: null,
+              work: { title: null, code: null, part: null, kind: null, copyrightNotice: null, thirdPartyRights: null, sourceTitle: null, partType: null },
+              scopes: { region: [] as string[], language: [] as string[], media: [] as string[] },
+              index: 1, total: 1,
+              /** 契約・案件から引いた相手先だけの仮の条件。条件の表には無い。 */
+              partyOnly: true
+            } as (typeof conditions)[number] & { partyOnly: boolean });
+          }
+        }
+      }
       const company = await this.company(client);
       const events = input.eventIds?.length ? await this.events(client, input.eventIds) : [];
       // 予定明細。発注書の明細表はここから組む（これから何回いくら払うか）。
@@ -474,6 +529,18 @@ export class DocumentContextRepository {
     });
   }
 
+  /** 相手先だけ（条件の無い文書の基本契約書・NDA 用）。条件と同じ形の counterparty を返す。 */
+  private async partyOnly(client: Queryable, partyId: number) {
+    const r = await client.query(
+      `SELECT p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
+              p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
+              p.withholding AS party_withholding, to_jsonb(p) AS party_row
+         FROM parties p WHERE p.id = $1`, [partyId]);
+    const row = r.rows[0] as Record<string, any> | undefined;
+    if (!row) return null;
+    return { counterparty: counterpartyOf(row) };
+  }
+
   private async conditions(client: Queryable, ids: number[], asOf: string | null = null) {
     if (!ids.length) return [];
     const result = await client.query(
@@ -571,27 +638,7 @@ export class DocumentContextRepository {
          * まとまる。同じ素材に取引形態のぶんだけ条件明細が並ぶのが移行後の形。
          */
         workPartId: int(row.work_part_id),
-        counterparty: {
-          name: str(row.party_name) ?? "",
-          kana: str(row.party_kana),
-          kind: str(row.party_kind),
-          invoiceNo: str(row.party_invoice_no),
-          corporateNo: str(row.party_corporate_no),
-          address: str(row.party_row?.address),
-          phone: str(row.party_row?.phone),
-          email: str(row.party_row?.email),
-          /** 代表者（法人）。宛名・署名欄に出す。 */
-          representativeTitle: str(row.party_row?.representative_title),
-          representativeName: str(row.party_row?.representative_name),
-          withholding: row.party_withholding === true,
-          // 非居住者と租税条約（A-057）。海外の書類の源泉の欄に税率を出す。
-          residency: str(row.party_row?.residency) ?? "resident",
-          residenceCountry: str(row.party_row?.residence_country),
-          treatyRatePct: row.party_row?.treaty_rate_pct === null || row.party_row?.treaty_rate_pct === undefined
-            ? null : Number(row.party_row.treaty_rate_pct),
-          treatyDocsReceivedOn: str(row.party_row?.treaty_docs_received_on)?.slice(0, 10) ?? null,
-          honorific: honorificFor(str(row.party_kind))
-        },
+        counterparty: counterpartyOf(row),
         work: { title: str(row.work_title), code: str(row.work_code), part: str(row.part_name),
                 kind: str(row.work_kind),
                 /** 著作権表示・第三者権利（A-027）。出版条件書の一覧の種。 */
@@ -616,7 +663,7 @@ export class DocumentContextRepository {
     const r = await client.query(
       `SELECT a.id, a.agreement_no, a.title, a.direction, a.status,
               a.executed_on, a.effective_on, a.expires_on,
-              a.auto_renewal, a.renewal_notice_months,
+              a.auto_renewal, a.renewal_notice_months, a.renewal_months, a.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no, p.corporate_no
          FROM agreements a LEFT JOIN parties p ON p.id = a.counterparty_id
@@ -634,6 +681,10 @@ export class DocumentContextRepository {
       expiresOn: dateStr(row.expires_on),
       autoRenewal: row.auto_renewal === true,
       renewalNoticeMonths: int(row.renewal_notice_months),
+      /** 更新の単位（月）。基本契約書の更新条項に出す。 */
+      renewalMonths: int(row.renewal_months),
+      /** 契約の相手先。条件の無い文書（基本契約書）の相手先はここから。 */
+      counterpartyId: int(row.counterparty_id),
       counterparty: {
         name: str(row.party_name) ?? "",
         kana: str(row.party_kana),
@@ -647,7 +698,7 @@ export class DocumentContextRepository {
 
   private async matter(client: Queryable, id: number) {
     const r = await client.query(
-      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, s.name AS owner_name
+      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, m.counterparty_id, s.name AS owner_name
          FROM matters m LEFT JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -656,7 +707,9 @@ export class DocumentContextRepository {
       id: Number(row.id), no: str(row.matter_no), title: String(row.title ?? ""),
       kind: String(row.kind), ownerName: str(row.owner_name),
       /** 作品案件の軸（A-044）。条件に作品が無いときの許諾条件の引き先。 */
-      workId: int(row.work_id)
+      workId: int(row.work_id),
+      /** 案件の相手先。条件の無い文書（基本契約書）の相手先はここから。 */
+      counterpartyId: int(row.counterparty_id)
     };
   }
 
