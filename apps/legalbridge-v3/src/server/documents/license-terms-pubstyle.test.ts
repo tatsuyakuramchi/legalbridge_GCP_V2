@@ -96,11 +96,22 @@ test("試作：加算型の料率は第２条の列に並び、合計が第３�
   assert.match(out, /根拠文書<\/span>本条件書（新規）/);
 });
 
-test("試作：再許諾先が無ければ第５条を出さず、条番号を詰める", () => {
+test("試作：締結時点で再許諾先が無ければ別紙を付けず、条番号は変えない", () => {
   const { out } = renderSample({ sublicensees: [] });
-  assert.doesNotMatch(out, /再許諾先<\/h2>/);
-  assert.match(out, /第５条<\/span>監修・通知先/);
-  assert.match(out, /第６条<\/span>特記事項/);
+  assert.doesNotMatch(out, /class="annex"/);
+  assert.match(out, /第５条<\/span>再許諾/);
+  assert.match(out, /締結時点で再許諾先はない/);
+  assert.match(out, /第６条<\/span>監修・通知先/);
+  assert.match(out, /第７条<\/span>特記事項/);
+});
+
+test("試作：再許諾先は署名欄の後ろの別紙（改ページ）に並び、条番号は変えない", () => {
+  const { out } = renderSample();
+  assert.match(out, /別紙のとおりとする/);
+  assert.match(out, /第６条<\/span>監修・通知先/);
+  assert.ok(out.indexOf('class="sign"') < out.indexOf('class="annex"'), "別紙は署名欄の後");
+  assert.match(out, /別紙　再許諾先一覧/);
+  assert.match(out, /<td class="c">1<\/td><td>サブA社<\/td>/);
 });
 
 test("試作：署名欄=表示しない で末尾の記名欄を消す", () => {

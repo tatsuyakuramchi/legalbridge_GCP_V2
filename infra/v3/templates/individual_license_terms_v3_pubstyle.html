@@ -53,6 +53,10 @@
   .sign > div { flex: 1; border-top: 1px solid #333; padding-top: 2mm; }
   .sign > div .name { font-size: 11pt; }
   .sign .who { font-size: 8.5pt; color: #444; letter-spacing: .1em; }
+  /* 別紙は改ページして本文（署名欄まで）の後ろに付ける。再許諾先は締結後に増えていく。 */
+  .annex { break-before: page; page-break-before: always; }
+  .annex-title { margin-top: 0; }
+  .list th.date { width: 26mm; }
   .footer { margin-top: 3mm; font-size: 8pt; color: #555; text-align: right; }
 </style>
 </head>
@@ -176,28 +180,13 @@
 </table>
 </div>
 
-{{#if sublicensees.length}}
 <div class="art">
-<h2><span class="no">第５条</span>再許諾先</h2>
-<table class="list">
-  <thead>
-    <tr><th>再許諾先</th><th>取引形態</th><th>地域／言語</th><th class="rate">料率</th><th>開始日</th></tr>
-  </thead>
-  {{#each sublicensees}}
-  <tbody>
-    <tr>
-      <td>{{slPartner}}</td><td>{{slCond}}</td><td>{{slRegion}}／{{slLang}}</td>
-      <td class="r">{{#if slRate}}{{slRate}}%{{/if}}</td><td class="c">{{formatDate slDate}}</td>
-    </tr>
-    {{#if slNote}}<tr><td class="note" colspan="5"><span class="lbl">備考</span>{{slNote}}</td></tr>{{/if}}
-  </tbody>
-  {{/each}}
-</table>
+<h2><span class="no">第５条</span>再許諾</h2>
+<p>被許諾者が第三者に再許諾したときは、再許諾先・取引形態・地域・言語・料率・開始日を別紙「再許諾先一覧」に記載する。再許諾先を追加したときは、その都度別紙に行を加え、別紙の更新をもって本条件書の一部とする。{{#if sublicensees.length}}現在の再許諾先は別紙のとおりとする。{{else}}本条件書の締結時点で再許諾先はない。{{/if}}</p>
 </div>
-{{/if}}
 
 <div class="art">
-<h2><span class="no">第{{#if sublicensees.length}}６{{else}}５{{/if}}条</span>監修・通知先</h2>
+<h2><span class="no">第６条</span>監修・通知先</h2>
 <table class="kv">
   {{#if supervisor}}<tr><th>監修者</th><td>{{supervisor}}</td></tr>{{/if}}
   <tr><th>許諾者</th><td>{{licensorContact}}</td></tr>
@@ -207,7 +196,7 @@
 
 {{#if specialExtras.length}}
 <div class="art">
-<h2><span class="no">第{{#if sublicensees.length}}７{{else}}６{{/if}}条</span>特記事項</h2>
+<h2><span class="no">第７条</span>特記事項</h2>
 {{#each specialExtras}}<p>{{#if seId}}（{{seId}}）{{/if}}{{seText}}</p>{{/each}}
 </div>
 {{/if}}
@@ -220,6 +209,29 @@
 {{/unless}}
 
 <div class="footer">{{contractNo}}　個別利用許諾条件書</div>
+
+{{#if sublicensees.length}}
+<div class="annex">
+<h1 class="annex-title">別紙　再許諾先一覧</h1>
+<p class="sub">{{contractNo}}　個別利用許諾条件書 第５条に基づく</p>
+<p class="lead">一覧の1行が再許諾1件。再許諾先を追加したときは、その都度本別紙に行を加える。料率は第３条の取引形態に基づき被許諾者が許諾者に支払う料率を示す。</p>
+<table class="list">
+  <thead>
+    <tr><th class="n">No.</th><th>再許諾先</th><th>取引形態</th><th>地域／言語</th><th class="rate">料率</th><th class="date">開始日</th></tr>
+  </thead>
+  {{#each sublicensees}}
+  <tbody>
+    <tr>
+      <td class="c">{{index1 @index}}</td><td>{{slPartner}}</td><td>{{slCond}}</td><td>{{slRegion}}／{{slLang}}</td>
+      <td class="r">{{#if slRate}}{{slRate}}%{{/if}}</td><td class="c">{{formatDate slDate}}</td>
+    </tr>
+    {{#if slNote}}<tr><td class="c"></td><td class="note" colspan="5"><span class="lbl">備考</span>{{slNote}}</td></tr>{{/if}}
+  </tbody>
+  {{/each}}
+</table>
+<div class="footer">{{contractNo}}　別紙　再許諾先一覧</div>
+</div>
+{{/if}}
 
 </body>
 </html>
