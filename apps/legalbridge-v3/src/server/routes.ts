@@ -2015,7 +2015,7 @@ export function createRoutes(database: Transactable) {
               -- 他社販売の受領価格は、許諾したアウト条件が決めている。
               -- 単価を持つ条件なら、実績の欄の既定値にする。
               c.pricing_model, c.unit_amount, c.currency, c.usage_type,
-              p.name AS party_name, w.title AS work_title,
+              p.name AS party_name, c.counterparty_id, w.title AS work_title,
               (SELECT string_agg(sc.label, '・' ORDER BY sc.scope_type, sc.sort_order, sc.label)
                  FROM condition_scopes sc WHERE sc.condition_id = c.id) AS scopes,
               -- 実績の言語・地域を選ぶ候補（A-061）
@@ -2051,7 +2051,7 @@ export function createRoutes(database: Transactable) {
       total: Number((total.rows[0] as { n: number }).n ?? 0),
       conditions: (r.rows as Array<Record<string, any>>).map((c) => ({
         id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
-        status: String(c.status), partyName: str(c.party_name),
+        status: String(c.status), partyName: str(c.party_name), partyId: int(c.counterparty_id),
         workTitle: str(c.work_title), scopes: str(c.scopes),
         pricingModel: String(c.pricing_model ?? "none"), unitAmount: int(c.unit_amount),
         usageType: str(c.usage_type),

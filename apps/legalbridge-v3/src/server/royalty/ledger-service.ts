@@ -151,12 +151,23 @@ export function buildRounds(input: {
   for (const c of conditions) {
     const events = input.events.filter((e) => e.conditionId === c.id);
     if (c.timing === "event") {
+      // 製造 1 回＝回 1 つ。1 回の製造に、許諾先・言語・前金後金ごとの報告が何件も付く
+      // （英語版 Asmodee の前金・後金、ドイツ語版 MM-Spiele …）。製造日で束ねて
+      // 1 本にし、多明細の計算書 1 枚にする。
+      const byDay = new Map<string, LedgerEvent[]>();
       for (const e of events) {
+        const day = e.occurredOn ?? "";
+        if (!byDay.has(day)) byDay.set(day, []);
+        byDay.get(day)!.push(e);
+      }
+      for (const [day, list] of byDay) {
+        const on = day || null;
         // 支払日は製造日から条件の支払条件（製造月の翌月末など）で決める。
-        parts.push({ conditionId: c.id, scheduleId: null, eventId: e.id, label: e.period,
-          periodFrom: e.occurredOn, closeOn: e.occurredOn,
-          payOn: payOnFor(e.occurredOn, parsePaymentTerms(c.paymentTerms)), events: [e], skipped: false,
-          expected: [], state: e.documentId ? "issued" : "reported" });
+        parts.push({ conditionId: c.id, scheduleId: null, eventId: list[0].id,
+          label: list.find((e) => e.period)?.period ?? null,
+          periodFrom: on, closeOn: on,
+          payOn: payOnFor(on, parsePaymentTerms(c.paymentTerms)), events: list, skipped: false,
+          expected: [], state: list.every((e) => e.documentId) ? "issued" : "reported" });
       }
       continue;
     }
@@ -281,7 +292,9 @@ export function buildRounds(input: {
   for (const p of parts) {
     const c = byCondition.get(p.conditionId)!;
     const day = p.payOn ?? p.closeOn ?? "";
-    const key = p.eventId !== null && c.timing === "event" ? `e:${p.eventId}`
+    // イベント式は製造日で 1 回（同じ作品の別の利用形態の報告も、同じ製造日なら同じ回）。
+    const key = p.eventId !== null && c.timing === "event"
+      ? (input.bundle === "per_party" ? `e:${p.closeOn ?? p.eventId}` : `e:${c.workId ?? 0}:${p.closeOn ?? p.eventId}`)
       : p.eventId !== null ? `x:${p.eventId}`
       : input.bundle === "per_work" ? `p:${c.workId ?? 0}:${day}` : `p:${day}`;
     if (!groups.has(key)) groups.set(key, []);
@@ -589,7 +602,7 @@ export class RoyaltyLedgerService {
       for (const round of settled) {
         const hits = linkedReqs.filter((x) => round.parts.some((p) =>
           (x.target_type === "schedule" && p.scheduleId === Number(x.target_id))
-          || (x.target_type === "event" && p.eventId === Number(x.target_id))));
+          || (x.target_type === "event" && p.events.some((e) => e.id === Number(x.target_id)))));
         round.requests = hits.map(requestOf).filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i);
       }
 

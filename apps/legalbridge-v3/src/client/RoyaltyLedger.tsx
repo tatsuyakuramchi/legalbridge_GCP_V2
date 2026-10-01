@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { ReportAdd, RoundReport, type ReportTarget } from "./RoundReport.js";
+import { BulkReport } from "./BulkReport.js";
 import { RoyaltyCloses } from "./RoyaltyCloses.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { roundTargets, roundTitle } from "./RoundPicker.js";
@@ -120,7 +121,7 @@ export function RoyaltyLedger(
   const [scheduleFor, setScheduleFor] = useState<number | null>(null);
   const [adding, setAdding] = useState<{ mode: "report" | "plan"; conditionId?: number } | null>(null);
   /** イベント式の「製造の報告」。締めを持たず、報告 1 件で回が 1 つ立つので、回の中ではなくここから足す。 */
-  const [addingEvent, setAddingEvent] = useState(false);
+  const [addingEvent, setAddingEvent] = useState<false | "one" | "bulk">(false);
   const [bulkBefore, setBulkBefore] = useState(new Date().toISOString().slice(0, 10));
   async function linkRequest(requestId: number, round: Round, unlink = false) {
     try {
@@ -311,11 +312,22 @@ export function RoyaltyLedger(
                     <b>製造の報告（イベント式）</b>
                     <span className="faint">{view.conditions.filter((c) => c.timing === "event").map((c) => c.usageLabel).join("・")}</span>
                     {canWrite && !addingEvent && (
-                      <button className="btn btn-sm primary" style={{ marginLeft: "auto" }} onClick={() => setAddingEvent(true)}>＋ 製造の報告を追加</button>
+                      <span className="row" style={{ gap: 6, marginLeft: "auto" }}>
+                        {view.conditions.some((c) => c.timing === "event" && (c.usageType === "sublicense" || c.usageType === "oem")) && (
+                          <button className="btn btn-sm primary" onClick={() => setAddingEvent("bulk")}>依頼文からまとめて入れる</button>
+                        )}
+                        <button className="btn btn-sm" onClick={() => setAddingEvent("one")}>＋ 1 件ずつ追加</button>
+                      </span>
                     )}
                   </div>
-                  <span className="faint">製造・刷 1 件が 1 回。締めは要らない。記録すると製造日の回が立ち、その回だけで計算書を出す。</span>
-                  {addingEvent && (
+                  <span className="faint">製造 1 回が 1 回。締めは要らない。同じ製造日の報告（許諾先・言語・前金後金）は 1 つの回にまとまり、計算書 1 枚（多明細）で出す。</span>
+                  {addingEvent === "bulk" && (
+                    <BulkReport eventStyle defaultDate={new Date().toISOString().slice(0, 10)}
+                                targets={view.conditions.filter((c) => c.timing === "event").map((c) => ({ condition: c, scheduleId: null }))}
+                                onCancel={() => setAddingEvent(false)}
+                                onDone={(m) => { setAddingEvent(false); reload(m); }} onError={setError} />
+                  )}
+                  {addingEvent === "one" && (
                     <ReportAdd mode="report" initialConditionId={null}
                                targets={view.conditions.filter((c) => c.timing === "event").map((c): ReportTarget => ({
                                  key: `e:${c.id}`, condition: c, scheduleId: null, closeOn: null, periodFrom: null, label: null }))}

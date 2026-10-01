@@ -263,3 +263,21 @@ test("報告の回を変える：決定した計算書に載った報告・他�
   await assert.rejects(() => new RoyaltyLedgerService(moveDb({ scheduleOk: false })).moveEvent(1, 5, 2, "t"),
     (e: unknown) => e instanceof DomainError && /この条件のものではありません/.test(e.message));
 });
+
+test("イベント式：同じ製造日の報告（許諾先・言語・前金後金、別の利用形態の条件も）は 1 つの回に束ねる", () => {
+  const rounds = buildRounds({
+    conditions: [cond(1, { timing: "event", usageType: "oem" }), cond(2, { timing: "event", usageType: "sublicense" })],
+    schedules: [],
+    events: [
+      ev(1, 1, "2026-10-01", { usageType: "oem", outConditionId: 10, languages: ["英語"] }),
+      ev(2, 1, "2026-10-01", { usageType: "oem", outConditionId: 10, languages: ["英語"] }),
+      ev(3, 2, "2026-10-01", { usageType: "sublicense", outConditionId: 11, languages: ["ドイツ語"] }),
+      ev(4, 1, "2026-11-15", { usageType: "oem", outConditionId: 10, languages: ["英語"] })
+    ],
+    skips: [], outs: [], bundle: "single_work", today: "2026-10-05"
+  });
+  assert.equal(rounds.length, 2, "製造日ごとに 1 回");
+  const oct = rounds.find((r) => r.closeOn === "2026-10-01")!;
+  assert.equal(oct.kind, "event");
+  assert.deepEqual(oct.parts.map((p) => [p.conditionId, p.events.map((e) => e.id)]), [[1, [1, 2]], [2, [3]]]);
+});
