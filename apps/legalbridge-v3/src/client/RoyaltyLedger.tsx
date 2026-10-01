@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { ReportAdd, RoundReport, type ReportTarget } from "./RoundReport.js";
@@ -23,6 +23,9 @@ import type { DocBack } from "./WorksWorkspace.js";
  * 受付箱で「案件にせず処理」した計算書の依頼は、回に付けて見せる。
  * ここで出した計算書で、依頼の工程（作成→送付→支払予定→支払）が進む。
  */
+
+/** 右の欄で「新しい製造の回」を開いているときの選択キー。 */
+const NEW_EVENT = "new-event";
 
 const yen = (n: number | null | undefined, currency = "JPY") =>
   n === null || n === undefined ? "—" : currency === "JPY"
@@ -108,10 +111,17 @@ export function RoyaltyLedger(
     api.get<LedgerView>(`/royalty-ledger?partyId=${partyId}${allWorks ? "" : `&workId=${workId}`}`)
       .then((v) => {
         setView(v);
-        setSelected((cur) => cur && [...v.rounds, ...v.history].some((r) => r.key === cur) ? cur : v.rounds.find((r) => r.state !== "before")?.key ?? v.rounds[0]?.key ?? null);
+        // 新しい製造の回を記録した直後は、その製造日の回を開く。
+        const madeOn = pendingDate.current; pendingDate.current = null;
+        const made = madeOn ? v.rounds.find((r) => r.kind === "event" && r.closeOn === madeOn) : null;
+        setSelected((cur) => made ? made.key
+          : cur === NEW_EVENT || (cur && [...v.rounds, ...v.history].some((r) => r.key === cur)) ? cur
+          : v.rounds.find((r) => r.state !== "before")?.key ?? v.rounds[0]?.key ?? null);
       })
       .catch((e: ApiError) => setError(e.message));
   }, [partyId, allWorks, workId, version]);
+  /** 記録した製造日。読み直したらその回を選ぶ。 */
+  const pendingDate = useRef<string | null>(null);
 
   const reload = (message?: string) => { if (message) setNotice(message); setError(null); setVersion((n) => n + 1); };
   const openRequests = useOpenRequests(version);
@@ -120,8 +130,7 @@ export function RoyaltyLedger(
   /** 「締めを作る」の案内から開いたとき、その条件の締めのフォームを最初から開く。 */
   const [scheduleFor, setScheduleFor] = useState<number | null>(null);
   const [adding, setAdding] = useState<{ mode: "report" | "plan"; conditionId?: number } | null>(null);
-  /** イベント式の「製造の報告」。締めを持たず、報告 1 件で回が 1 つ立つので、回の中ではなくここから足す。 */
-  const [addingEvent, setAddingEvent] = useState<false | "one" | "bulk">(false);
+
   const [bulkBefore, setBulkBefore] = useState(new Date().toISOString().slice(0, 10));
   async function linkRequest(requestId: number, round: Round, unlink = false) {
     try {
@@ -306,35 +315,12 @@ export function RoyaltyLedger(
                 <h2 style={{ margin: 0 }}>回</h2>
                 <span className="faint">支払日でまとめる</span>
               </div>
-              {view.conditions.some((c) => c.timing === "event") && (
-                <div className="note stack" style={{ gap: 4 }}>
-                  <div className="row" style={{ gap: 6, alignItems: "center" }}>
-                    <b>製造の報告（イベント式）</b>
-                    <span className="faint">{view.conditions.filter((c) => c.timing === "event").map((c) => c.usageLabel).join("・")}</span>
-                    {canWrite && !addingEvent && (
-                      <span className="row" style={{ gap: 6, marginLeft: "auto" }}>
-                        {view.conditions.some((c) => c.timing === "event" && (c.usageType === "sublicense" || c.usageType === "oem")) && (
-                          <button className="btn btn-sm primary" onClick={() => setAddingEvent("bulk")}>依頼文からまとめて入れる</button>
-                        )}
-                        <button className="btn btn-sm" onClick={() => setAddingEvent("one")}>＋ 1 件ずつ追加</button>
-                      </span>
-                    )}
-                  </div>
-                  <span className="faint">製造 1 回が 1 回。締めは要らない。同じ製造日の報告（許諾先・言語・前金後金）は 1 つの回にまとまり、計算書 1 枚（多明細）で出す。</span>
-                  {addingEvent === "bulk" && (
-                    <BulkReport eventStyle defaultDate={new Date().toISOString().slice(0, 10)}
-                                targets={view.conditions.filter((c) => c.timing === "event").map((c) => ({ condition: c, scheduleId: null }))}
-                                onCancel={() => setAddingEvent(false)}
-                                onDone={(m) => { setAddingEvent(false); reload(m); }} onError={setError} />
-                  )}
-                  {addingEvent === "one" && (
-                    <ReportAdd mode="report" initialConditionId={null}
-                               targets={view.conditions.filter((c) => c.timing === "event").map((c): ReportTarget => ({
-                                 key: `e:${c.id}`, condition: c, scheduleId: null, closeOn: null, periodFrom: null, label: null }))}
-                               onCancel={() => setAddingEvent(false)}
-                               onAdded={(m) => { setAddingEvent(false); reload(m); }} onError={setError} />
-                  )}
-                </div>
+              {view.conditions.some((c) => c.timing === "event") && canWrite && (
+                <button className={`ledger-round${selected === NEW_EVENT ? " on" : ""}`} aria-pressed={selected === NEW_EVENT}
+                        style={{ display: "block", textAlign: "left", borderStyle: "dashed" }} onClick={() => setSelected(NEW_EVENT)}>
+                  <b>＋ 新しい製造の回</b>
+                  <span className="faint" style={{ display: "block" }}>製造日ごとに 1 回。依頼文を貼ってまとめて入れる</span>
+                </button>
               )}
               {view.rounds.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected}
                                                  onSelect={() => setSelected(r.key)} />)}
@@ -363,7 +349,10 @@ export function RoyaltyLedger(
               )}
               <History view={view} onSelect={(key) => setSelected(key)} selected={selected} />
             </div>
-            {round
+            {selected === NEW_EVENT && view.conditions.some((c) => c.timing === "event")
+              ? <NewEventRound view={view} onError={setError} onCancel={() => setSelected(view.rounds[0]?.key ?? null)}
+                               onAdded={(m, on) => { pendingDate.current = on; reload(m); }} />
+              : round
               ? <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
                              onChanged={reload} onError={setError} onOpenDocument={openDoc}
                              openRequests={openRequests} onLink={linkRequest} onOpenRequest={onOpenRequest}
@@ -443,6 +432,44 @@ function Terms(
                        onCancel={() => setScheduling(null)}
                        onSaved={(m) => { setScheduling(null); onChanged(m); }} />
       )}
+    </div>
+  );
+}
+
+/**
+ * 新しい製造の回（イベント式）。右の欄で開く。依頼文からまとめて入れるのが基本、
+ * 1 件ずつも入れられる。記録するとその製造日の回が立ち、そちらに切り替わる。
+ */
+function NewEventRound({ view, onAdded, onCancel, onError }: {
+  view: LedgerView; onAdded: (message: string, on: string) => void; onCancel: () => void; onError: (m: string) => void;
+}) {
+  const conditions = view.conditions.filter((c) => c.timing === "event");
+  const canBulk = conditions.some((c) => c.usageType === "sublicense" || c.usageType === "oem");
+  const [mode, setMode] = useState<"bulk" | "one">(canBulk ? "bulk" : "one");
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>新しい製造の回</h2>
+        <span className="faint">{conditions.map((c) => c.usageLabel).join("・")}</span>
+        <span className="chips" role="group" aria-label="入れ方" style={{ marginLeft: "auto" }}>
+          {canBulk && <button className="chip" aria-pressed={mode === "bulk"} onClick={() => setMode("bulk")}>依頼文からまとめて</button>}
+          <button className="chip" aria-pressed={mode === "one"} onClick={() => setMode("one")}>1 件ずつ</button>
+        </span>
+      </div>
+      <div className="panel-bd stack">
+        <span className="faint">
+          製造 1 回が 1 回。締めは要らない。同じ製造日の報告（許諾先・言語・前金後金）は 1 つの回にまとまり、計算書 1 枚（多明細）で出す。
+          支払日は条件の支払条件から決まる。すでにある製造日の回に足すときは、左でその回を選んで「報告を追加」。
+        </span>
+        {mode === "bulk"
+          ? <BulkReport eventStyle defaultDate={new Date().toISOString().slice(0, 10)}
+                        targets={conditions.map((c) => ({ condition: c, scheduleId: null }))}
+                        onCancel={onCancel} onDone={onAdded} onError={onError} />
+          : <ReportAdd mode="report" initialConditionId={null}
+                       targets={conditions.map((c): ReportTarget => ({
+                         key: `e:${c.id}`, condition: c, scheduleId: null, closeOn: null, periodFrom: null, label: null }))}
+                       onCancel={onCancel} onAdded={(m, on) => onAdded(m, on ?? "")} onError={onError} />}
+      </div>
     </div>
   );
 }
