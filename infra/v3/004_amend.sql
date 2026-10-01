@@ -2326,6 +2326,24 @@ SELECT 'task', t.id, COALESCE(m.matter_no, r.request_no), t.title,
   LEFT JOIN v3.intake_requests r ON r.id = t.request_id
  WHERE t.due_at IS NOT NULL AND t.status <> 'done';
 
+-- ---------------------------------------------------------------------
+-- A-065 決定した文書の PDF の作り置き（documents/pdf-store.ts）
+--   送るたび・開くたびに Chromium で描いていたので、メールも CloudSign も押してから
+--   10〜20 秒かかっていた。決定した文書の本文は変わらないので、決定した瞬間に 1 度
+--   描いてここに置き、以後はそれを返す。取込文書（Drive のファイルが実体）は置かない。
+--   文書を消せば一緒に消える。無くても動く（次に使うときに描いて置く）。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS v3.document_pdfs (
+  document_id bigint PRIMARY KEY REFERENCES v3.documents(id) ON DELETE CASCADE,
+  data        bytea NOT NULL,
+  bytes       integer NOT NULL,
+  sha256      text NOT NULL,
+  renderer    text,
+  rendered_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE v3.document_pdfs IS '決定した文書の PDF の作り置き。本文は rendered_values とひな形の版で固定なので、1 度描けば変わらない。A-065';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.document_pdfs TO legalbridge_v3_runtime;
+
 COMMIT;
 
 -- 確認
@@ -2654,6 +2672,8 @@ SELECT count(*) AS 表 FROM information_schema.tables
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='conditions' AND column_name='target_party_id';
 
+\echo '--- PDF の作り置き（A-065。表 1 であること） ---'
+SELECT count(*) AS 表 FROM information_schema.tables WHERE table_schema='v3' AND table_name='document_pdfs';
 \echo '--- デイリータスク（A-064。列 5・CHECK 2 で 7 であること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns
          WHERE table_schema='v3' AND table_name='tasks'

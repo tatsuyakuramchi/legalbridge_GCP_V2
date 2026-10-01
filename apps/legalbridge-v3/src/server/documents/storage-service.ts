@@ -33,7 +33,9 @@ export class DocumentStorageService {
   constructor(
     private readonly database: Transactable,
     private readonly drive: DriveStorage | null,
-    private readonly pdf: PdfRenderer
+    private readonly pdf: PdfRenderer,
+    /** 作り置き（A-065）。渡されていれば描かずにそこから取る。 */
+    private readonly pdfs: { ensure(documentId: number): Promise<Buffer> } | null = null
   ) {
     this.repository = new DocumentRepository(database);
     this.issues = new DocumentIssueService(database);
@@ -58,8 +60,9 @@ export class DocumentStorageService {
     }
 
     try {
-      const rendered = await this.issues.renderIssued(documentId);
-      const pdf = await this.pdf.render(rendered.html);
+      const pdf = this.pdfs
+        ? await this.pdfs.ensure(documentId)
+        : await this.pdf.render((await this.issues.renderIssued(documentId)).html);
       const filename = `${safeFilename(document.documentNo ?? `document-${documentId}`)}.pdf`;
 
       const existing = await this.drive.findByDocumentId(documentId);
