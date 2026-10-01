@@ -174,7 +174,14 @@ function TradeFlow(
           <span className="faint">担当 <b>{detail.ownerName ?? "—"}</b></span>
           <button className="linky" onClick={() => onOpenMatter(detail.id)}>案件 {detail.matterNo ?? `#${detail.id}`} を開く</button>
         </>}
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => onCtx(null)}>別の取引を選ぶ</button>
+        <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
+          {detail && (
+            <select value={p} onChange={(e) => onCtx({ pattern: e.target.value as TradePattern, matterId: detail.id })} aria-label="取引の種類">
+              {PATTERNS.map((x) => <option key={x.value} value={x.value}>{x.group} {x.label}</option>)}
+            </select>
+          )}
+          <button className="btn btn-sm" onClick={() => onCtx(null)}>別の取引を選ぶ</button>
+        </span>
       </div>
       {error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}

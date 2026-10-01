@@ -335,7 +335,9 @@ export function App() {
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
             onGo={(ctx, target) => {
               setTaskCtx(ctx); setConditionId(undefined);
-              if (target.kind === "ledger") {
+              if (target.kind === "trade") {
+                setTradeCtx({ pattern: target.pattern, matterId: null }); setFocus(null); setView("trade");
+              } else if (target.kind === "ledger") {
                 setLedgerParty(target.partyId); setFocus({ view: "works", id: target.workId }); setView("works");
               } else if (target.kind === "work") {
                 setFocus(target.workId ? { view: "works", id: target.workId } : null); setView("works");
@@ -359,6 +361,11 @@ export function App() {
             onBulkOrders={startBulkOrders}
             onSettledImport={startSettledImport}
             onRegisterAgreement={startAgreement}
+            onOpenTrade={(m) => {
+              // 案件の種類から取引のパターンを推す。OUT は画面の切替で選ぶ。
+              const pattern = m.kind === "outsourcing" ? "service" : m.businessLine === "publishing" ? "pub_in" : "game_in";
+              setTradeCtx({ pattern, matterId: m.id }); setFocus(null); setView("trade");
+            }}
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
         )}
         {view === "conditions" && (
