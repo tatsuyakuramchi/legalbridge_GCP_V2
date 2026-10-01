@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { CloudSignManual } from "./CloudSignManual.js";
+import { RecipientPicker, type Person } from "./RecipientPicker.js";
 
 /**
  * 決定した文書を「送る」。
@@ -16,10 +17,34 @@ import { CloudSignManual } from "./CloudSignManual.js";
 
 interface Step { key: "mail" | "confirmed" | "cloudsign" | "executed"; name: string; done: boolean; at: string | null; detail: string; optional?: boolean }
 interface Timeline { steps: Step[]; current: Step | null; events: Array<{ at: string; action: string; actor: string }>; hasAgreement?: boolean }
-interface Recipients {
-  owner: { name: string; email: string | null } | null;
-  counterparty: { name: string; email: string | null } | null;
-  contacts: Array<{ name: string | null; email: string; role: string | null }>;
+interface DocRecipients {
+  counterparty: { id: number | null; name: string; email: string | null } | null;
+  contacts: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
+  signers: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
+  signersFrom: "signer" | "primary" | null;
+  requester: Person | null;
+  owner: Person | null;
+  origin: { label: string; no: string | null; title: string | null } | null;
+}
+
+/**
+ * 送っている最中の印。メールは PDF を作って添付するので 10〜20 秒かかることがあり、
+ * 何も出ないと「反応しない」と思って連打される。回る輪と経過秒を出し、ボタンは押せなくする。
+ */
+function Sending({ what }: { what: string }) {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setSec((x) => x + 1), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <div className="sending" role="status" aria-live="polite">
+      <span className="spin" />
+      <span>
+        <b>{what}</b>　{sec} 秒経過。PDF を作って送っているので、しばらくお待ちください（二度押しは要りません）
+      </span>
+    </div>
+  );
 }
 interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; gate: { reasons: string[]; mode: string };
                     preview?: { recipient: string; bodyPreview: string } }
@@ -48,10 +73,12 @@ export function DocumentSend(
   }
 ) {
   const [tl, setTl] = useState<Timeline | null>(null);
-  const [recipients, setRecipients] = useState<Recipients | null>(null);
+  const [docRecipients, setDocRecipients] = useState<DocRecipients | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** いま送っているもの（印の文言）。 */
+  const [sendingWhat, setSendingWhat] = useState<string | null>(null);
   const [open, setOpen] = useState<Step["key"] | null>(null);
   // メール
   const [to, setTo] = useState<string[]>([]);
@@ -66,8 +93,10 @@ export function DocumentSend(
   // 確認
   const [via, setVia] = useState("メールの返信");
   const [confirmNote, setConfirmNote] = useState("");
-  // CloudSign
-  const [signer, setSigner] = useState("");
+  // CloudSign。署名者は複数（並べた順に署名）、確認者・CC は署名せず見るだけ。
+  const [sign, setSign] = useState<Record<string, Person[]>>({ signers: [], reportees: [] });
+  const [signNote, setSignNote] = useState<string | null>(null);
+  const signer = sign.signers[0]?.email ?? "";
 
   const modeOf = (ch: string) => channels.find((c) => c.channel === ch)?.mode ?? "off";
 
@@ -79,13 +108,19 @@ export function DocumentSend(
   useEffect(() => {
     setError(null);
     load().catch((e: ApiError) => setError(e.message));
-    if (matterId) {
-      api.get<Recipients>(`/matters/${matterId}/recipients`).then((r) => {
-        setRecipients(r);
-        if (!signer) setSigner(r.contacts[0]?.email ?? r.counterparty?.email ?? "");
-      }).catch(() => undefined);
-    }
-  }, [documentId, matterId]);
+    // 署名者の候補。取引先の署名者（無ければ主担当）を入れておき、違えば外す。
+    api.get<DocRecipients>(`/documents/${documentId}/recipients`).then((r) => {
+      setDocRecipients(r);
+      setSign((prev) => {
+        if (prev.signers.length || !r.signers.length) return prev;
+        return { ...prev, signers: r.signers.map((c) => ({ email: c.email, name: c.name })) };
+      });
+      setSignNote(r.signers.length
+        ? `署名者に取引先の${r.signersFrom === "signer" ? "署名者" : "主担当"}を入れておきました。違えば外してください`
+        : r.counterparty ? "取引先に署名者・主担当の連絡先が無いので、探して足してください"
+        : "この文書は取引先が決まっていません。署名者を探して足してください");
+    }).catch(() => undefined);
+  }, [documentId]);
 
   async function loadDraft(p: Purpose) {
     setError(null);
@@ -110,11 +145,12 @@ export function DocumentSend(
       : o.preview ? `検証モードのため送っていません。送るなら：${o.preview.recipient} へ`
       : `送りませんでした：${o.gate.reasons.join("／")}`;
 
-  async function run(fn: () => Promise<string>) {
-    setBusy(true); setError(null); setNote(null);
+  async function run(fn: () => Promise<string>, what: string | null = null) {
+    if (busy) return;   // 連打しても二度は送らない
+    setBusy(true); setSendingWhat(what); setError(null); setNote(null);
     try { setNote(await fn()); await load(); onChanged(); }
     catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setSendingWhat(null); }
   }
 
   const sendMail = () => run(async () => {
@@ -122,16 +158,29 @@ export function DocumentSend(
     const r = await api.post<{ outcome: Outcome }>(`/documents/${documentId}/send`,
       { to: all, cc, subject, body, attachPdf: true });
     return describe(r.outcome, "内容確認のメール");
-  });
+  }, "メールを送っています");
   const confirm = () => run(async () => {
     await api.post(`/documents/${documentId}/confirm`, { via, note: confirmNote || null });
     setConfirmNote("");
     return "相手の確認を記録しました";
   });
-  const sign = () => run(async () => {
-    const r = await api.post<{ outcome: Outcome }>(`/documents/${documentId}/sign`, { recipient: signer });
+  const requestSign = () => run(async () => {
+    const r = await api.post<{ outcome: Outcome }>(`/documents/${documentId}/sign`, {
+      signers: sign.signers.map((p) => ({ email: p.email, name: p.name ?? null })),
+      reportees: sign.reportees.map((p) => ({ email: p.email, name: p.name ?? null }))
+    });
     return describe(r.outcome, "CloudSign の署名依頼");
-  });
+  }, "CloudSign に下書きを作っています");
+
+  /** 候補を欄に足す（同じ人は二度入れない。署名者と確認者の両方にも入れない）。 */
+  const addPerson = (key: "signers" | "reportees", p: Person) => {
+    setSign((prev) => {
+      const same = (x: Person) => x.email.toLowerCase() === p.email.toLowerCase();
+      if ((prev[key] ?? []).some(same)) return prev;
+      const other = key === "signers" ? "reportees" : "signers";
+      return { ...prev, [other]: (prev[other] ?? []).filter((x) => !same(x)), [key]: [...(prev[key] ?? []), p] };
+    });
+  };
 
   return (
     <div className="panel">
@@ -143,6 +192,7 @@ export function DocumentSend(
       <div className="panel-bd stack">
         {error && <div className="alert">{error}</div>}
         {note && <div className="note ok">{note}</div>}
+        {sendingWhat && <Sending what={sendingWhat} />}
 
         {tl && (
           <div className="pipe">
@@ -204,7 +254,7 @@ export function DocumentSend(
                 <div className="faint" style={{ marginTop: 3 }}>{documentNo ?? "この文書"} の PDF を添えます</div></div></div>
             <div className="row">
               <button className="btn primary" disabled={busy || !(to.length || extra.trim()) || !subject.trim() || !body.trim()}
-                      onClick={() => void sendMail()}>メールを送る</button>
+                      aria-busy={busy} onClick={() => void sendMail()}>{busy ? "送っています…" : "メールを送る"}</button>
               <button className="linky" onClick={() => setOpen("cloudsign")}>飛ばして CloudSign へ</button>
             </div>
           </div>
@@ -233,23 +283,47 @@ export function DocumentSend(
               <div className="note warn">CloudSign は{modeOf("cloudsign") === "dry_run" ? "検証モード（送らずに宛先を確かめる）" : "無効"}です</div>
             )}
             {!isAdmin && <div className="note warn">署名依頼は admin だけが送れます</div>}
-            <div className="frow"><div className="flabel"><span>署名者</span></div>
-              <div className="fbody">
-                <input value={signer} placeholder="署名する人のメールアドレス" onChange={(e) => setSigner(e.target.value)} />
-                {recipients && recipients.contacts.length > 0 && (
-                  <div className="row" style={{ flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-                    {recipients.contacts.map((c) => (
-                      <button key={c.email} type="button" className="btn btn-sm" onClick={() => setSigner(c.email)}>
-                        {c.name ?? c.email}<span className="faint" style={{ marginLeft: 4 }}>{c.role ?? ""}</span>
-                      </button>
-                    ))}
-                  </div>
+            {signNote && <div className="faint">{signNote}</div>}
+            {/* 候補から一押しで足す。取引先の署名者、事業部の担当者（依頼者）、法務の担当。 */}
+            {docRecipients && (
+              <div className="row" style={{ flexWrap: "wrap", gap: 4 }}>
+                <span className="faint">候補：</span>
+                {docRecipients.contacts.map((c) => (
+                  <span key={c.email} className="row" style={{ gap: 2 }}>
+                    <span className="src suggested">{docRecipients.counterparty?.name ?? "取引先"}</span>
+                    <span style={{ fontSize: 12 }}>{c.name ?? c.email}{c.roles.includes("signer") ? "（署名者）" : c.roles.includes("primary") ? "（主担当）" : ""}</span>
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => addPerson("signers", { email: c.email, name: c.name })}>署名者</button>
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => addPerson("reportees", { email: c.email, name: c.name })}>CC</button>
+                  </span>
+                ))}
+                {docRecipients.requester && (
+                  <span className="row" style={{ gap: 2 }}>
+                    <span className="src auto">事業部担当</span>
+                    <span style={{ fontSize: 12 }}>{docRecipients.requester.name ?? docRecipients.requester.email}</span>
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => addPerson("reportees", docRecipients.requester!)}>CC</button>
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => addPerson("signers", docRecipients.requester!)}>署名者</button>
+                  </span>
                 )}
-                <div className="faint" style={{ marginTop: 3 }}>{documentNo ?? "この文書"} の PDF を CloudSign に<b>下書き</b>として載せます（相手にはまだ届きません）。CloudSign の画面で確かめてから送り、送ったら下の「手で記録する」で「送った」と残します。結果が届くと「締結」が済になります</div>
-              </div></div>
+                {docRecipients.owner && (
+                  <span className="row" style={{ gap: 2 }}>
+                    <span className="src auto">法務担当</span>
+                    <span style={{ fontSize: 12 }}>{docRecipients.owner.name ?? docRecipients.owner.email}</span>
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => addPerson("reportees", docRecipients.owner!)}>CC</button>
+                  </span>
+                )}
+              </div>
+            )}
+            <RecipientPicker value={sign} onChange={setSign}
+              initialKeyword={docRecipients?.counterparty?.name ?? ""}
+              fields={[
+                { key: "signers", label: "署名者", hint: "並べた順に署名を求めます。1人以上。取引先の署名者と当社の署名者を入れます" },
+                { key: "reportees", label: "確認者・CC", hint: "署名はしませんが、書類を見られます（事業部の担当者など）" }
+              ]} />
+            <div className="faint">{documentNo ?? "この文書"} の PDF を CloudSign に<b>下書き</b>として載せます（相手にはまだ届きません）。CloudSign の画面で確かめてから送り、送ったら下の「手で記録する」で「送った」と残します。結果が届くと「締結」が済になります</div>
             <div className="row">
-              <button className="btn primary" disabled={busy || !isAdmin || !signer.trim()} onClick={() => void sign()}>
-                CloudSign に下書きを作る
+              <button className="btn primary" disabled={busy || !isAdmin || sign.signers.length === 0}
+                      aria-busy={busy} onClick={() => void requestSign()}>
+                {busy ? "作っています…" : `CloudSign に下書きを作る（署名者 ${sign.signers.length} 人${sign.reportees.length ? `・CC ${sign.reportees.length} 人` : ""}）`}
               </button>
             </div>
             {/* 予備系では連携が無い。CloudSign の画面から直接送ったぶんを、ここで手で記録する。 */}

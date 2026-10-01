@@ -41,6 +41,8 @@ Driveと同じ Workspace サービスアカウント鍵を再利用できる（`
 
 ## ④-2 CloudSign：電子署名依頼（実装済み・API契約はV1準拠で確定）
 
+> **V3 の 1 枚ずつの署名依頼（`POST /api/v3/documents/:id/sign`）**：署名者は複数（`signers[]`、並べた順に `participants` の order）、確認者・CC は `reportees[]`（署名せず書類を見られる）。`recipient` だけの古い呼び方も受ける。候補は `GET /api/v3/documents/:id/recipients`（取引先の署名者の印が付いた連絡先→無ければ主担当、事業部の担当者＝依頼者、法務の担当）で、案件の無い文書（デイリータスク）でも出る。画面（`DocumentSend.tsx`）は候補の一押しと「探して足す」（`/recipients/search`：取引先の連絡先と自社の社員）で署名者・CC を組む。送信中は輪と経過秒を出し、ボタンは押せない（連打しても二度は送らない）。
+
 確定済み文書のPDF（Drive連携と同じ描画パイプラインで生成）を CloudSign に送り、署名者へ依頼を発行する。**API契約は V1（LegalBridge_AI_GCP）の実動クライアントに突合して確定済み**（スライス5-6）：`POST /token` に **`client_id` のみを form-urlencoded**（client_secret 不要）→ `expires_in` 尊重・401再取得、`POST /documents`（form-urlencoded `title`）→ `POST /documents/:id/files`（multipart `uploadfile`）→ `POST /documents/:id/participants`（form-urlencoded）→ `POST /documents/:id`（送信確定）。
 
 **送信堅牢化（スライス5-7）**：二重依頼防止の冪等履歴 `lb_v2_cloudsign_requests`（`CLOUDSIGN_REQUEST_HISTORY_ENABLED=true`＋grant 022）と、**宛先allowlist `CLOUDSIGN_ALLOWED_RECIPIENTS`**（設定時は全宛先が集合内であることを要求・検証中は必須）。
