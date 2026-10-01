@@ -532,12 +532,28 @@ function TaskPanel(
                   <button className={`btn btn-sm${t.purpose === "template" ? " primary" : ""}`} onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
                 } />
               </>)}
-              <Route title="外で作る文書（ワンオフの覚書・念書・通知書、相手方から届いた文書）" steps={[
-                "法務が Word などで作る文書は「番号を先に取る」→ 番号を本文に書き込む → その文書の「ファイルを付ける」",
-                "相手方から届いた文書はそのまま「外で作った文書を登録」"
-              ]} buttons={
-                <DocumentImport requestId={r.id} onDone={() => onChanged("文書を登録しました")} onOpenDocument={onOpenDocument} />
-              } />
+              {/* 作らずに送るだけ（CloudSign・メール）と、外で作った文書。できている文書を探して
+                  繋いで送るか、外部の文書を登録（番号を先に取る）して送る。 */}
+              <Route title="送るだけ・外で作った文書（CloudSign で署名依頼・メール送付）" steps={[
+                "作成済みの文書を送るなら、下で探して繋ぐ → 開いて「送る」（CloudSign の署名者・CC を選んで下書きを作る）",
+                "相手方から届いた文書は「外で作った文書を登録」→ 開いて「送る」",
+                "法務が Word などで作る文書は「番号を先に取る」→ 番号を本文に書き込む → その文書の「ファイルを付ける」→「送る」"
+              ]} buttons={<>
+                <div style={{ flex: 1, minWidth: 320 }}>
+                  <SearchSelect value="" search={searchDocuments} disabled={busy}
+                                placeholder="作成済みの文書を探して送る：文書番号・件名・取引先名・条件明細"
+                                onChange={(v) => {
+                                  if (!v) return;
+                                  const id = Number(v);
+                                  void call(async () => {
+                                    await post("documents", { documentId: id });
+                                    onOpenDocument?.(id);
+                                  }, "文書を繋ぎました。「送る」から送ってください");
+                                }} />
+                </div>
+                <DocumentImport requestId={r.id} onDone={() => onChanged("文書を登録しました")}
+                                onOpenDocument={onOpenDocument} onRegistered={onOpenDocument} />
+              </>} />
               <span className="faint">
                 どの画面で作っても、ここから移って作った文書はこの作業（{r.requestNo ?? `#${r.id}`}）に自動で繋がります
                 （移った先の画面の上に「作業中」の帯が出ます）。自動で入らなかった文書は下の検索で繋げます。
