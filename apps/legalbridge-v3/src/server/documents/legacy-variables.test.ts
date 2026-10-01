@@ -367,3 +367,11 @@ test("基本契約書の代表者欄：個人で代表者の登録が無けれ�
   const corp = { condition: { counterparty: { name: "甲社", kind: "corporate", representativeName: "甲野 一郎" } } };
   assert.equal(at("Licensor_代表者名", corp), "甲野 一郎");
 });
+
+test("契約番号：計算書は 基本 / 個別 の並び（contractRefText）、無ければ基本契約の番号", () => {
+  const base = { agreement: { no: "CT-2026-00008" } } as never;
+  assert.equal(resolveLegacyVariable("linked_contract_number", base), "CT-2026-00008");
+  assert.equal(resolveLegacyVariable("linked_contract_number",
+    { agreement: { no: "CT-2026-00008" }, contractRefText: "CT-2026-00008 / ARC-LIC-2026-0007" } as never),
+    "CT-2026-00008 / ARC-LIC-2026-0007");
+});
