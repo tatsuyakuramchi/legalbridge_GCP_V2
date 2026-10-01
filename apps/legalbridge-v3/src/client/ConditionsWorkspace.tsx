@@ -16,7 +16,7 @@ import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
-import { ServiceSetForm } from "./ServiceSetForm.js";
+import { ServiceLinesForm } from "./ServiceLinesForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -291,7 +291,7 @@ export function ConditionsWorkspace(
         {!creating && (
           <button className="btn btn-sm" onClick={() => setCreating("service")}
                   title="業務委託の委託料に実費・手数料を組にして1回で作る。発注書はこの組を1枚に載せる">
-            業務セットを登録（業務委託）
+            業務委託の明細を登録（業務委託）
           </button>
         )}
       </div>
@@ -307,7 +307,7 @@ export function ConditionsWorkspace(
           onCancel={() => setCreating(false)} />
       )}
       {creating === "service" && (
-        <ServiceSetForm
+        <ServiceLinesForm
           onDone={(r) => { setCreating(false); reload(r.conditions[0]?.id); }}
           onCancel={() => setCreating(false)} />
       )}

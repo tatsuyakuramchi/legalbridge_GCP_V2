@@ -354,6 +354,7 @@ export function orderLinesFrom(context: Ctx): Row[] {
       deliverable_ownership: ownershipOf(c),
       // 条件に個数があればそれを使う。無ければ「一式1」として出す。
       quantity: c.quantity ?? 1,
+      unit: c.unitLabel ?? null,
       unit_price: c.unitAmount ?? c.flatAmount ?? 0,
       payment_terms: contractFormFor(c.contractForm),
       term_start: c.termStart ?? null,
