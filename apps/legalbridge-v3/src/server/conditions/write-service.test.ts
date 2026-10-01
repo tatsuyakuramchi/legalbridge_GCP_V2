@@ -280,3 +280,32 @@ test("定期課金も金額が要る。空だと毎月の額を持たない条�
     }, "k"),
     /1回あたりの金額を入れてください/);
 });
+
+test("許諾セット：定額の行は flat_amount・計算方式 fixed で、再許諾の可否と計算書の時期を束で持つ", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT title FROM works")) return [{ title: "作品A" }];
+    if (t.includes("FROM parties WHERE id = $1")) return [{ id: 3, name: "権利元" }];
+    if (t.includes("FROM works WHERE id")) return [{ id: 5, title: "作品A" }];
+    if (t.includes("current_value")) return [{ current_value: 1 }];
+    if (t.includes("INSERT INTO conditions")) return [{ id: 1, condition_no: "CL-1" }];
+    return [];
+  });
+  const svc = new ConditionWriteService(db);
+  await svc.createLicenseSet({
+    counterpartyId: 3, workId: 5, sublicensable: true, sublicenseConsentDefault: "covered", statementTiming: "periodic",
+    paymentTerms: "計算書送付後30日以内",
+    rows: [{ usageType: "in_house", ratePct: 0, pricingModel: "fixed", flatAmount: 500000 },
+           { usageType: "sublicense", ratePct: 8 }]
+  }, "a");
+  const inserts = db.all("INSERT INTO conditions");
+  assert.equal(inserts.length, 2);
+  const fixed = inserts[0].params, rate = inserts[1].params;
+  assert.equal(fixed[15], "fixed"); assert.equal(fixed[18], 500000); assert.equal(fixed[16], null);
+  assert.equal(rate[15], "revenue_rate"); assert.equal(rate[16], 80000);
+  assert.equal(fixed[9], true, "sublicensable");
+  assert.equal(fixed[10], "covered", "sublicense_consent の既定");
+  assert.equal(fixed[36], "periodic", "statement_timing");
+  assert.equal(fixed[22], "計算書送付後30日以内");
+  await assert.rejects(() => svc.createLicenseSet({ counterpartyId: 3, workId: 5,
+    rows: [{ usageType: "in_house", ratePct: 0, pricingModel: "fixed", flatAmount: null }] }, "a"), /定額の金額/);
+});

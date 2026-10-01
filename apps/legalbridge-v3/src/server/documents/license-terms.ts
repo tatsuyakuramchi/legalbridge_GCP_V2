@@ -130,6 +130,11 @@ const number = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 const percent = (value: number | null) => (value == null ? "—" : `${+value.toFixed(2)}%`);
+/** 2026-10-01 → 2026年10月1日。日付でなければそのまま。 */
+const japanese = (iso: string): string => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日` : iso;
+};
 const joined = (labels: unknown) => (Array.isArray(labels) ? labels.join("・") : "");
 
 /**
@@ -226,8 +231,12 @@ export function dealSeeds(context: Data): Data[] {
       // 何も当たらないときは3種とも出して、人に選んでもらう。
       return { ...deal, use: assigned.size === 0, reg: deal.maxReg, lang: deal.maxLang };
     }
+    // 計算方式は条件明細の計算方式から。固定値のままだと、定額やサブスクの
+    // 条件でも「基準価格×個数×料率」と刷られる。
+    const calc = calcOfCondition(match, deal);
     return {
       ...deal,
+      ...calc,
       use: true,
       conditionId: match.id,
       conditionNo: matches.map((c) => c.conditionNo).filter(Boolean).join("・") || null,
@@ -252,6 +261,22 @@ export function dealSeeds(context: Data): Data[] {
       cur: match.currency ?? deal.cur
     };
   });
+}
+
+/**
+ * 条件明細の計算方式 → 条件書の計算モデル・基準価格・数量。
+ * 売上料率は形態の既定（基準価格×個数×料率 など）を使い、料率の基準が
+ * 条件に書いてあればそれを基準価格に出す。
+ */
+export function calcOfCondition(condition: Data, deal: Data): Data {
+  const model = String(condition?.pricingModel ?? "");
+  const base = String(condition?.royaltyBase ?? "").trim();
+  if (model === "fixed") {
+    return { calc_type: "FIXED", basePrice: condition.flatAmount != null ? `固定額 ${text(condition.flatAmount)}` : "固定額", qty: "1" };
+  }
+  if (model === "subscription") return { calc_type: "SUBSCRIPTION", basePrice: base || "期間ごとの定額", qty: "1" };
+  if (model === "unit_rate") return { calc_type: "SUPPLY_QTY", basePrice: base || "単価 × 数量", qty: "数量" };
+  return base ? { basePrice: `${base} × ${deal.qty === "数量" ? "数量 × " : ""}料率` } : {};
 }
 
 /**
@@ -326,7 +351,9 @@ export function materialSeeds(context: Data): Data[] {
     }
     return {
       material_code: text(source?.conditionNo ?? head.conditionNo ?? ""),
-      name: text(head.work?.part || head.name || head.work?.title || ""),
+      // 構成要素の名前は素材（パート）の名前。無ければ作品名。条件名は
+      // 「作品名｜取引モデル」なので、ここに出すと構成要素の欄に取引の名前が並ぶ。
+      name: text(head.work?.part || head.work?.title || ""),
       holder: text(head.counterparty?.name ?? ""),
       source_doc: text(source?.agreementNo ?? ""),
       region: joined(head.scopes?.region) || joined(source?.regions) || "全世界",
@@ -384,15 +411,40 @@ export function licenseScopeSentence(context: Data, bound: Data = {}): string {
 
   const product = value("対象製品予定名", "productName");
   const exclusivity = value("独占性", "exclusivity");
-  const sublicensable = context.condition?.sublicensable;
+  const condition = context.condition ?? {};
+  const sublicensable = condition.sublicensable;
 
   const parts: string[] = [];
   parts.push(`本許諾の範囲は、${region || "全世界"}における${language || "全言語"}`
     + `${product ? `の${product}` : ""}とする。`);
   if (exclusivity) parts.push(`本許諾は${exclusivity}とする。`);
+  // 許諾期間と更新。終了日・自動更新は条件明細にある（A-039）。書かないと
+  // 「期間の定めなし」と読まれる。
+  const start = value("許諾開始日") || text(condition.termStart ?? "");
+  const end = text(condition.termEnd ?? "");
+  if (end) {
+    parts.push(`許諾期間は${start ? `${japanese(start)}から` : ""}${japanese(end)}までとする。`);
+    if (condition.autoRenew === true) {
+      const months = Number(condition.renewMonths ?? 12) || 12;
+      const unit = months % 12 === 0 ? `${months / 12}年` : `${months}か月`;
+      parts.push(`期間満了の3か月前までにいずれの当事者からも書面による申出がないときは、同一条件で${unit}間更新され、以後も同様とする。`);
+    }
+  } else if (start) {
+    parts.push(`許諾期間は${japanese(start)}から期間の定めなしとする。`);
+  }
+  // 計算書と支払。計算書の時期（締めごと／製造ごと）と支払条件は条件明細にある。
+  const timing = String(condition.statementTiming ?? "");
+  const payment = text(condition.paymentTerms ?? "").trim();
+  if (timing === "periodic") parts.push("被許諾者は、各計算期間の末日で締め、締め後30日以内に許諾料計算書を許諾者に送付する。");
+  if (timing === "event") parts.push("被許諾者は、対象製品の製造のつど許諾料計算書を許諾者に送付する。");
+  if (payment) parts.push(`許諾料の支払は、${payment}とする。`);
   // 再許諾は「書いていない＝できない」と読まれる。条件明細で決まっているので、
-  // どちらであっても書く。
-  if (sublicensable === true) parts.push("被許諾者は、許諾者の事前の書面による承諾を得て、第三者に再許諾することができる。");
+  // どちらであっても書く。承諾の要否（A-033）で条文を分ける。
+  if (sublicensable === true) {
+    parts.push(condition.sublicenseConsent === "covered"
+      ? "被許諾者は、本許諾の範囲内で第三者に再許諾することができる。"
+      : "被許諾者は、許諾者の事前の書面による承諾を得て、第三者に再許諾することができる。");
+  }
   if (sublicensable === false) parts.push("被許諾者は、第三者に再許諾することができない。");
   return parts.join("");
 }

@@ -356,3 +356,14 @@ test("計算書の件名の原作名：作品をまたいで1枚にまとめた�
   assert.equal(at("originalWork", bundled), "ito・星降る夜のはなし");
   assert.equal(at("原作名", bundled), "ito・星降る夜のはなし");
 });
+
+test("基本契約書の代表者欄：個人で代表者の登録が無ければ出さない（名称と二重に刷られていた）", () => {
+  const person = { condition: { counterparty: { name: "個人 一郎", kind: "individual" } } };
+  for (const name of ["VENDOR_REP", "Licensor_代表者名", "代表者氏名", "受託者代表者"]) {
+    assert.equal(at(name, person), undefined, `${name} は個人には出さない`);
+  }
+  const withRep = { condition: { counterparty: { name: "個人 一郎", kind: "individual", representativeName: "代理 太郎" } } };
+  assert.equal(at("VENDOR_REP", withRep), "代理 太郎");
+  const corp = { condition: { counterparty: { name: "甲社", kind: "corporate", representativeName: "甲野 一郎" } } };
+  assert.equal(at("Licensor_代表者名", corp), "甲野 一郎");
+});
