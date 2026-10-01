@@ -568,6 +568,13 @@ export function bundleLinesPatch(
  * 選んで出すと、載っていない相手の入金を、載っている相手のものとして
  * 読ませることになる。混ざったときは明細の「対象契約」が行ごとに出す。
  */
+/** 入金企業の要約。1 社ならその名前、複数なら「最初の社 ほか N 社」（明細の並び順で最初の社）。 */
+export function payerSummary(names: Array<string | null | undefined>): string {
+  const found = [...new Set(names.map((v) => String(v ?? "").trim()).filter(Boolean))];
+  if (found.length <= 1) return found[0] ?? "";
+  return `${found[0]} ほか${found.length - 1}社`;
+}
+
 function receiptHeader(context: Data, lines: BundleLine[]): Data {
   const same = (values: Array<string | null | undefined>) => {
     const found = [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))];
@@ -579,7 +586,8 @@ function receiptHeader(context: Data, lines: BundleLine[]): Data {
     // 入金企業は「払ってきた相手」＝許諾（アウト）の取引先。
     // payerCompany は自社名の別名として登録されていて、当社の名前が出ていた。
     // 計算書のときだけ、ここで上書きする（他のひな形の自社名は動かさない）。
-    payerCompany: same(lines.map((l) => l.payerName)),
+    // 複数社をまとめた計算書は「最初の社 ほか N 社」（明細の行に各社名が出る）。
+    payerCompany: payerSummary(lines.map((l) => l.payerName)),
     // デザイナー／権利者は作者。＝取得（イン）条件の取引先。
     designerName: String(counterparty.name ?? ""),
     // 入金通貨はアウト条件の通貨。契約が何建てかは、その契約が持っている。
