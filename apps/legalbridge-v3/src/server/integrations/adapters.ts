@@ -55,6 +55,8 @@ export interface DispatchReceipt {
   /** 相手にはまだ届いていない（CloudSign に下書きを作っただけ）。 */
   draft?: boolean;
   raw?: Record<string, unknown>;
+  /** 送れたが確かめておくこと（CloudSign に宛先が入らなかった、など）。画面に出す。 */
+  warnings?: string[];
 }
 
 export interface DispatchAdapter {
@@ -256,17 +258,38 @@ export class CloudSignAdapter implements DispatchAdapter {
       if (!added.ok) return fail("CloudSign", added);
     }
 
+    // 入れた宛先が CloudSign 側に本当に入ったかを読み戻して確かめる。
+    // 黙って落ちていると、下書きを開いて初めて宛先が空だと気づく。
+    const warnings: string[] = [];
+    let confirmed: { participants: string[]; reportees: string[] } | null = null;
+    try {
+      const got = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}`, { headers: auth });
+      if (got.ok) {
+        const doc = await got.json() as { participants?: Array<{ email?: string }>; reportees?: Array<{ email?: string }> };
+        const lower = (xs: Array<{ email?: string }> | undefined) => (xs ?? []).map((x) => String(x.email ?? "").toLowerCase());
+        confirmed = { participants: lower(doc.participants), reportees: lower(doc.reportees) };
+        const missing = [
+          ...signers.filter((x) => !confirmed!.participants.includes(x.email.toLowerCase())).map((x) => x.email),
+          ...(request.reportees ?? []).filter((x) => !confirmed!.reportees.includes(x.email.toLowerCase())).map((x) => `cc:${x.email}`)
+        ];
+        if (missing.length) {
+          warnings.push(`CloudSign の書類に次の宛先が入っていません：${missing.join("、")}。CloudSign の画面で宛先を確かめてください`);
+        }
+      }
+    } catch { /* 確かめられなくても下書きはできている */ }
+
     const raw = { documentId, files: files.length, signers: signers.length,
-                  reportees: (request.reportees ?? []).length };
+                  reportees: (request.reportees ?? []).length,
+                  ...(confirmed ? { confirmed } : {}) };
     if (!this.options.autoSend) {
       // 下書きのまま置く。送信は CloudSign の画面から。
-      return { externalId: documentId, draft: true, raw: { ...raw, draft: true } };
+      return { externalId: documentId, draft: true, raw: { ...raw, draft: true }, ...(warnings.length ? { warnings } : {}) };
     }
     const sent = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}`, {
       method: "POST", headers: auth
     });
     if (!sent.ok) return fail("CloudSign", sent);
-    return { externalId: documentId, raw };
+    return { externalId: documentId, raw, ...(warnings.length ? { warnings } : {}) };
   }
 }
 

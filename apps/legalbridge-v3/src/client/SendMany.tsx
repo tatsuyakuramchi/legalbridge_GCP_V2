@@ -23,7 +23,7 @@ interface Candidate {
 
 interface Doc { id: number; documentNo: string | null; counterparty: string | null }
 interface Outcome {
-  sent: boolean; duplicated?: boolean;
+  sent: boolean; duplicated?: boolean; warnings?: string[];
   gate: { reasons: string[]; mode: string };
   preview?: { recipient: string; bodyPreview: string };
   externalId?: string;
@@ -196,6 +196,7 @@ export function SendMany(
               : outcome.duplicated
                 ? "同じ内容をすでに送っています（二重には送りません）"
                 : `送っていません：${outcome.gate.reasons.join("／")}`}
+            {(outcome.warnings ?? []).map((w) => <div key={w} className="danger" style={{ marginTop: 4 }}>⚠ {w}</div>)}
             {outcome.preview && (
               <div className="faint" style={{ marginTop: 4 }}>
                 宛先 {outcome.preview.recipient}／{outcome.preview.bodyPreview.slice(0, 120)}
