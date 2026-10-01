@@ -117,6 +117,7 @@ export class MailDraftService {
         `SELECT d.id, d.document_no, d.status, d.issued_at, d.matter_id, d.rendered_values,
                 v.counterparty, v.counterparty_id, t.template_key,
                 COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
+                NULLIF(d.manual_inputs->>'_ownerStaffId', '')::bigint AS manual_owner_staff_id,
                 m.matter_no, m.title AS matter_title, m.owner_staff_id, m.requester_email, m.requester_slack_id
            FROM documents d
            LEFT JOIN v_document_display v ON v.document_id = d.id
@@ -137,8 +138,11 @@ export class MailDraftService {
         : await this.originOfRequest(documentId);
       const counterpartyId: number | null = doc.counterparty_id ? Number(doc.counterparty_id) : origin?.counterpartyId ?? null;
       const counterpartyName = str(doc.counterparty) ?? origin?.counterpartyName ?? "";
-      const owner = origin?.ownerStaffId
-        ? (await this.database.query("SELECT name, email FROM staff WHERE id = $1", [origin.ownerStaffId])).rows[0] as any
+      // 当社担当者は 文書の画面で選んだ担当（manual_inputs._ownerStaffId）→ 案件の担当 →
+      // デイリータスクの担当。文書で選び直したのにメールの cc と署名が元の担当のままだった。
+      const ownerStaffId = doc.manual_owner_staff_id ? Number(doc.manual_owner_staff_id) : origin?.ownerStaffId ?? null;
+      const owner = ownerStaffId
+        ? (await this.database.query("SELECT name, email FROM staff WHERE id = $1", [ownerStaffId])).rows[0] as any
         : null;
       const requester = await this.requesterOf(origin);
       const contacts = counterpartyId

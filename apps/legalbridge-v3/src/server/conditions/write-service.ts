@@ -62,6 +62,10 @@ export type PublishingSetResult = Record<PubMedia, { id: number; conditionNo: st
 /** 許諾セットの1行。利用形態ごとの料率と独占性。 */
 export interface LicenseSetRow {
   usageType: ConditionUsageType;
+  /** 計算方式。省略は売上料率。定額なら flatAmount が要る。 */
+  pricingModel?: "revenue_rate" | "fixed" | null;
+  /** 定額（最小通貨単位）。計算方式が定額のとき。 */
+  flatAmount?: number | null;
   /** 料率（%）。 */
   ratePct: number;
   exclusivity?: "exclusive" | "non_exclusive" | null;
@@ -98,6 +102,12 @@ export interface LicenseSetInput {
   currency?: string;
   taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   paymentTerms?: string | null;
+  /** 再許諾の可否（束で 1 つ）。条件書の再許諾条項がここから決まる。 */
+  sublicensable?: boolean | null;
+  /** 再許諾の承諾の要否の既定（行に無いときに使う）。 */
+  sublicenseConsentDefault?: "covered" | "required" | null;
+  /** 計算書の出し方（periodic=締めごと / event=製造ごと）。束で 1 つ。 */
+  statementTiming?: "periodic" | "event" | null;
   notes?: string | null;
   scopes?: ConditionScope[];
   rows: LicenseSetRow[];
@@ -227,6 +237,8 @@ export interface ConditionInput {
   agAmount?: number | null;
   taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   paymentTerms?: string | null;
+  /** 計算書の出し方（periodic=締めごと / event=製造ごと）。許諾料の条件だけが持つ。 */
+  statementTiming?: "periodic" | "event" | null;
   /** 契約形式（請負・委任など）。支払条件とは別のもの。 */
   contractForm?: string | null;
   cycle?: string | null;
@@ -382,6 +394,13 @@ export class ConditionWriteService {
         row.ratePct = Number(row.ratePct) || 0;
         row.mgAmount = null; row.agAmount = null;
       }
+      if (row.pricingModel === "fixed") {
+        if (row.flatAmount == null || !Number.isFinite(Number(row.flatAmount)) || Number(row.flatAmount) < 0) {
+          throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}は定額なので、定額の金額を入れてください`);
+        }
+        row.ratePct = 0;
+        continue;
+      }
       const rate = Number(row.ratePct);
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
         throw new DomainError("VALIDATION", `${conditionUsageLabel(row.usageType)}の料率は 0〜100（%）で入れてください`);
@@ -436,18 +455,21 @@ export class ConditionWriteService {
       renewMonths: input.renewMonths ?? null,
       renewStoppedOn: input.renewStoppedOn ?? null,
       currency: input.currency ?? "JPY",
-      pricingModel: "revenue_rate",
+      pricingModel: row.pricingModel === "fixed" ? "fixed" : "revenue_rate",
       // 画面は % で受け、保存は ppm（百万分率）。11% → 110000
-      ratePpm: Math.round(Number(row.ratePct) * 10000),
+      ratePpm: row.pricingModel === "fixed" ? null : Math.round(Number(row.ratePct) * 10000),
+      flatAmount: row.pricingModel === "fixed" ? Math.round(Number(row.flatAmount)) : null,
       mgAmount: row.mgAmount ?? null,
       agAmount: row.agAmount ?? null,
       taxCategory: input.taxCategory ?? "taxable",
       paymentTerms: input.paymentTerms ?? null,
+      sublicensable: input.sublicensable ?? null,
+      statementTiming: input.statementTiming ?? null,
       notes: input.notes ?? null,
       scopes,
       usageType: row.usageType,
       targetPartyId: row.targetPartyId ?? null,
-      sublicenseConsent: row.sublicenseConsent ?? null,
+      sublicenseConsent: row.sublicenseConsent ?? input.sublicenseConsentDefault ?? null,
       licenseFeeBasis: row.licenseFeeBasis ?? null
     }));
     for (const one of inputs) validateConditionInput(one);
@@ -621,10 +643,10 @@ export class ConditionWriteService {
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type,
                                    auto_renew, renew_months, renew_stopped_on, license_fee_basis,
-                                   target_party_id)
+                                   target_party_id, statement_timing)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
-                   $29, $30, $31, $32, $33, $34, $35, $36)
+                   $29, $30, $31, $32, $33, $34, $35, $36, $37)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -639,7 +661,7 @@ export class ConditionWriteService {
            input.quantity ?? null, readContractForm(input.contractForm), input.usageType ?? null,
            input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null,
            input.licenseFeeBasis ?? "separate",
-           input.targetPartyId ?? null]);
+           input.targetPartyId ?? null, input.statementTiming ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

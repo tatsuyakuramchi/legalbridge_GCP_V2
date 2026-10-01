@@ -58,6 +58,15 @@ export function LicenseSetForm(
 ) {
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
+  // 構成要素（作品のパート）。選んだ作品のぶんを引く。条件書の構成要素の行は
+  // これでまとまる（無いと条件名が構成要素として出る）。
+  const [partsOf, setPartsOf] = useState<{ workId: string; parts: Array<{ id: number; name: string; partType: string }> }>({ workId: "", parts: [] });
+  const loadParts = (workId: string) => {
+    if (!workId || partsOf.workId === workId) return;
+    setPartsOf({ workId, parts: [] });
+    api.get<{ parts: Array<{ id: number; name: string; partType: string }> }>(`/works/${workId}`)
+      .then((w) => setPartsOf({ workId, parts: w.parts ?? [] })).catch(() => undefined);
+  };
 
   useEffect(() => {
     api.get<{ works: Array<{ id: number; title: string }> }>("/works")
@@ -78,10 +87,18 @@ export function LicenseSetForm(
   // 利用形態ごとに 料率／独占性／MG／AG。料率が空なら、その形態は作らない。
   // 許諾料の扱い（A-048）が「含む」「無償」なら料率は空でもその形態を作る。
   const on = (v: Record<string, string>, usage: string) =>
-    String(v[`rate_${usage}`] ?? "").trim() !== "" || ["included", "free"].includes(String(v[`basis_${usage}`] ?? ""));
+    String(v[`rate_${usage}`] ?? "").trim() !== "" || ["included", "free"].includes(String(v[`basis_${usage}`] ?? ""))
+    || (v[`model_${usage}`] === "fixed" && String(v[`flat_${usage}`] ?? "").trim() !== "");
   const usageFields: Field[] = GAME_USAGES.flatMap((u): Field[] => [
     { name: `rate_${u.value}`, label: `${u.label}：料率（%）`, type: "number", placeholder: "2",
+      visibleWhen: (v) => (v[`model_${u.value}`] || "revenue_rate") !== "fixed",
       hint: (v) => `${u.hint}。空ならこの形態の条件は作らない（「含む」「無償」を選べば作る）${on(v, u.value) ? `。${nameHint(v, u.value)}` : ""}` },
+    { name: `model_${u.value}`, label: `${u.label}：計算方式`, type: "select",
+      options: [{ value: "revenue_rate", label: "売上料率（%）" }, { value: "fixed", label: "定額" }],
+      hint: "定額は許諾料を一括・固定で払う形。条件書の算定基準に「固定額」と出る" },
+    { name: `flat_${u.value}`, label: `${u.label}：定額の許諾料`, type: "money",
+      visibleWhen: (v) => v[`model_${u.value}`] === "fixed",
+      hint: (v) => `入れるとこの形態の条件を作る。${minorUnitHint(v.currency || "JPY")}` },
     { name: `basis_${u.value}`, label: `${u.label}：許諾料の扱い`, type: "select",
       options: [{ value: "separate", label: "別途（料率・額で定める）" },
                 { value: "included", label: "業務委託報酬に含む（追加の許諾料なし）" },
@@ -128,6 +145,12 @@ export function LicenseSetForm(
         { name: "workId", label: "原作（Core Logic）／原作を兼ねる作品", type: "search", required: true,
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
           hint: "取得の条件は原作にぶら下げる。原作と同じ名前の自社作品なら、その作品自身を選ぶ（原作を別に登録しない）。条件名は 作品名｜取引モデル で自動で付く" },
+        { name: "workPartId", label: "構成要素（作品のパート）", type: "select",
+          options: [{ value: "", label: partsOf.parts.length ? "（作品全体）" : "（作品にパートが無い。作品の画面で足せる）" },
+                    ...partsOf.parts.map((p) => ({ value: String(p.id),
+                      label: `${p.name}（${p.partType === "game_design" ? "コアロジック" : "サブコンポーネント"}）` }))],
+          visibleWhen: (v) => String(v.workId ?? "").trim() !== "",
+          hint: "条件書の構成要素の行はここでまとまる。原作のゲームデザインがコアロジック、追加のイラスト等がサブコンポーネント。追加要素の条件は要素ごとに別の束で登録する" },
         { name: "agreementId", label: "基本契約（合意）", type: "search",
           options: agreements
             .filter((a) => !preset?.counterpartyId
@@ -150,6 +173,17 @@ export function LicenseSetForm(
           hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" },
         { name: "currency", label: "通貨", type: "select", required: true,
           options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
+        { name: "sublicensable", label: "再許諾", type: "select",
+          options: [{ value: "", label: "（条件書に書かない）" }, { value: "required", label: "可（許諾者の事前の書面承諾を要する）" },
+                    { value: "covered", label: "可（承諾不要。本許諾の範囲内）" }, { value: "no", label: "不可" }],
+          hint: "条件書の再許諾条項がここから決まる。OUT 契約を結ぶならどちらかの「可」" },
+        { name: "statementTiming", label: "計算書の出し方", type: "select",
+          options: [{ value: "", label: "（条件書に書かない）" }, { value: "periodic", label: "締めごと（計算期間の末日で締め、30 日以内に送付）" },
+                    { value: "event", label: "製造ごと" }],
+          hint: "台帳の回の立て方にも使う" },
+        { name: "paymentTerms", label: "支払条件", placeholder: "計算書送付後30日以内",
+          suggestions: ["計算書送付後30日以内", "計算書送付月の翌月末", "締結後30日以内（MG）"],
+          hint: "条件書の支払の文に入る" },
         ...usageFields,
         { name: "taxCategory", label: "税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
@@ -169,9 +203,12 @@ export function LicenseSetForm(
         ];
         const rows = GAME_USAGES.flatMap((u) => {
           const basis = v[`basis_${u.value}`] || "separate";
-          const r = rate(v[`rate_${u.value}`]) ?? (basis === "separate" ? null : 0);
+          const fixed = v[`model_${u.value}`] === "fixed";
+          const flat = fixed ? int(v[`flat_${u.value}`]) ?? null : null;
+          const r = fixed ? (flat === null ? null : 0) : (rate(v[`rate_${u.value}`]) ?? (basis === "separate" ? null : 0));
           return r === null ? [] : [{
             usageType: u.value, ratePct: r, exclusivity: v[`excl_${u.value}`] || null,
+            pricingModel: fixed ? "fixed" : "revenue_rate", flatAmount: flat,
             licenseFeeBasis: basis,
             mgAmount: int(v[`mg_${u.value}`]) ?? null, agAmount: int(v[`ag_${u.value}`]) ?? null,
             ...(u.value === "sublicense"
@@ -183,6 +220,11 @@ export function LicenseSetForm(
           title: null,
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId), matterId: int(v.matterId),
+          workPartId: int(v.workPartId) ?? null,
+          sublicensable: v.sublicensable === "no" ? false : v.sublicensable ? true : null,
+          sublicenseConsentDefault: v.sublicensable === "covered" ? "covered" : v.sublicensable === "required" ? "required" : null,
+          statementTiming: text(v.statementTiming) ?? null,
+          paymentTerms: text(v.paymentTerms) ?? null,
           termStart: text(v.termStart), termEnd: text(v.termEnd),
           autoRenew: v.autoRenew ? true : (text(v.termEnd) ? false : undefined),
           renewMonths: v.autoRenew ? renewMonths(v.renewMonths) : undefined,
@@ -192,6 +234,7 @@ export function LicenseSetForm(
           rows
         };
       }}
+      onValues={(v) => loadParts(String(v.workId ?? ""))}
       onDone={onDone}
       onCancel={onCancel}
     />

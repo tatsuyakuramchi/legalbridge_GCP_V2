@@ -159,3 +159,24 @@ test("送り先の候補：署名者の印が無ければ主担当を署名者�
   assert.deepEqual(r.signers.map((p) => p.email), ["ichiro@kou.example"]);
   assert.equal(r.signersFrom, "primary");
 });
+
+test("当社担当者は文書で選んだ担当（_ownerStaffId）が案件の担当より先", async () => {
+  const db = new FakeDatabase((t, params) => {
+    if (t.includes("FROM documents d")) return [{
+      id: 5, document_no: "ARC-IC-2026-1001", status: "issued", issued_at: "2026-09-27",
+      matter_id: 9, rendered_values: {}, counterparty: "株式会社甲", counterparty_id: 3,
+      template_key: "inspection_certificate", template_label: "検収書",
+      matter_no: "MTR-1", matter_title: "x", owner_staff_id: 1, requester_email: "biz@example.com",
+      manual_owner_staff_id: 7
+    }];
+    if (t.includes("FROM settings")) return [{ key: "company_profile", value: { name: "A" } }];
+    if (t.includes("FROM staff WHERE id")) return params[0] === 7 ? [{ name: "選んだ 担当", email: "chosen@example.com" }] : [{ name: "法務 太郎", email: "legal@example.com" }];
+    if (t.includes("FROM staff WHERE lower(email)")) return [{ name: "事業 花子", email: "biz@example.com" }];
+    if (t.includes("FROM party_contacts")) return [];
+    if (t.includes("FROM parties")) return [{ email: "info@kou.example" }];
+    return undefined;
+  });
+  const d = await new MailDraftService(db).draft(5, "owner_check");
+  assert.deepEqual(d.cc.map((p) => p.email), ["chosen@example.com"]);
+  assert.equal(db.find("FROM staff WHERE id")!.params[0], 7);
+});

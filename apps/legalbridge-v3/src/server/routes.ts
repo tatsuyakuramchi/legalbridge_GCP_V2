@@ -1599,9 +1599,14 @@ export function createRoutes(database: Transactable) {
     print: true, digital: true, sublicense: true, translationPrint: true, translationDigital: true
   }).extend({
     workPartId: z.coerce.number().int().positive().nullable().optional(),
+    sublicensable: z.boolean().nullable().optional(),
+    sublicenseConsentDefault: z.enum(["covered", "required"]).nullable().optional(),
+    statementTiming: z.enum(["periodic", "event"]).nullable().optional(),
     rows: z.array(z.object({
       usageType: z.enum(
         CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),
+      pricingModel: z.enum(["revenue_rate", "fixed"]).nullable().optional(),
+      flatAmount: z.coerce.number().int().min(0).nullable().optional(),
       // 率は「含む」「無償」のとき空でよい（サービス側で 0 にする）。
       ratePct: z.coerce.number().min(0).max(100).default(0),
       exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),

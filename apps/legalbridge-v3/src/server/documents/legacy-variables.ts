@@ -167,9 +167,16 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   //   Licensor_電話・担当者電話番号・取引先電話
   { names: ["VENDOR_SIGNER_NAME", "署名者名"],
     get: (c) => contact(c, "signer")?.name },
+  // 基本契約書（license_master・service_master）の代表者欄。個人で代表者の登録が
+  // 無いときは出さない。本人で埋めると、当事者欄に「氏名」と「代表者 氏名」が
+  // 二つ並ぶ（検収書の「受託者代表者名」は本人のままでよいので、そちらは別）。
   { names: ["VENDOR_REP", "VENDOR_REPRESENTATIVE", "Licensor_代表者名", "代表者氏名",
             "許諾者代表者", "受託者代表者", "representativeName"],
-    get: (c) => representativeName(c) },
+    get: (c) => {
+      const party = c.condition?.counterparty ?? {};
+      if (party.kind === "individual" && !String(party.representativeName ?? "").trim()) return undefined;
+      return representativeName(c);
+    } },
   // V1 はこの欄に「様」まで含めて持っていた（本文は敬称を付けない）。
   // 個人で代表者の欄が無いときは出さない。代表者＝本人なので、宛名の
   // 「氏名 様」の下にもう一度「氏名 様」が刷られていた。

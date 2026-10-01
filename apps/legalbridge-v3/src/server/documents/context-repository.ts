@@ -543,6 +543,10 @@ export class DocumentContextRepository {
         exclusivityLabel: row.exclusivity === "exclusive" ? "独占"
           : row.exclusivity === "non_exclusive" ? "非独占" : null,
         sublicensable: row.sublicensable,
+        /** 計算書の出し方（periodic=締めごと / event=製造ごと）。条件書の文に入る。 */
+        statementTiming: str(row.statement_timing),
+        /** 料率の基準（売上・卸価格・上代など）。条件書の算定基準に入る。 */
+        royaltyBase: str(row.royalty_base),
         // 再許諾の別途合意（A-033）。条件書の条文と一覧の印が出し分かれる。
         sublicenseConsent: str(row.sublicense_consent),
         // 自動更新（A-039）。更新した回数は条件書を組むときに数える。

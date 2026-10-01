@@ -1,9 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds,
-  dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, licenseScopeSentence, licenseTermsPatch,
-  licenseTermsSeeds, licenseTermsSuggestions, materialSeeds
+  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds, dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, licenseScopeSentence, licenseTermsPatch, licenseTermsSeeds, licenseTermsSuggestions, materialSeeds, calcOfCondition
 } from "./license-terms.js";
 
 /**
@@ -368,4 +366,41 @@ test("利用形態の列（A-027）があれば備考の文字列より先に取
     cond({ id: 53, workPartId: 70, usageType: "in_house" })
   ]);
   assert.deepEqual([assigned.get(51), assigned.get(52), assigned.get(53)], [3, 2, 1]);
+});
+
+test("許諾範囲の文：期間・自動更新・計算書の時期・支払条件・再許諾の承諾要否を条件明細から書く", () => {
+  const ctx = {
+    v3_maxRegion: "日本", v3_maxLanguage: "日本語", 対象製品予定名: "製品X", 独占性: "独占",
+    condition: { termStart: "2026-10-01", termEnd: "2029-09-30", autoRenew: true, renewMonths: 12,
+                 statementTiming: "periodic", paymentTerms: "計算書送付後30日以内",
+                 sublicensable: true, sublicenseConsent: "covered" }
+  };
+  const s = licenseScopeSentence(ctx);
+  assert.match(s, /許諾期間は2026年10月1日から2029年9月30日までとする/);
+  assert.match(s, /同一条件で1年間更新され/);
+  assert.match(s, /各計算期間の末日で締め/);
+  assert.match(s, /計算書送付後30日以内とする/);
+  assert.match(s, /本許諾の範囲内で第三者に再許諾することができる/);
+  const strict = licenseScopeSentence({ ...ctx, condition: { ...ctx.condition, sublicenseConsent: "required", autoRenew: false } });
+  assert.match(strict, /事前の書面による承諾を得て/);
+  assert.doesNotMatch(strict, /更新され/);
+  const open = licenseScopeSentence({ ...ctx, condition: { termStart: "2026-10-01" } });
+  assert.match(open, /期間の定めなし/);
+});
+
+test("計算モデルは条件明細の計算方式から（定額・サブスク・単価を固定の『基準価格×個数×料率』にしない）", () => {
+  const deal = FIXED_DEALS[0];
+  assert.equal(calcOfCondition({ pricingModel: "fixed", flatAmount: 500000 }, deal).calc_type, "FIXED");
+  assert.equal(calcOfCondition({ pricingModel: "subscription" }, deal).calc_type, "SUBSCRIPTION");
+  assert.equal(calcOfCondition({ pricingModel: "unit_rate" }, deal).calc_type, "SUPPLY_QTY");
+  assert.deepEqual(calcOfCondition({ pricingModel: "revenue_rate" }, deal), {});
+  assert.equal(calcOfCondition({ pricingModel: "revenue_rate", royaltyBase: "上代" }, deal).basePrice, "上代 × 数量 × 料率");
+});
+
+test("構成要素の名前は素材か作品名。条件名（作品名｜取引モデル）は使わない", () => {
+  const materials = materialSeeds({ conditions: [
+    { id: 1, conditionNo: "CL-1", name: "作品A｜自社製造・自社販売", usageType: "in_house", ratePct: 2,
+      work: { title: "作品A", part: null }, counterparty: { name: "権利元" }, scopes: {} }
+  ] });
+  assert.equal(materials[0].name, "作品A");
 });
