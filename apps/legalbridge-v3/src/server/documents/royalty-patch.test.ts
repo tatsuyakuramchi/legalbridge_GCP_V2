@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   bundleEntriesFrom, bundleStatementPatch, multiStatementPatch, receiptAmountLabel,
-  receiptConversionLabel, receiptJpyBase, royaltyStatementPatch, singleStatementPatch
+  notesWithStages, receiptConversionLabel, receiptJpyBase, royaltyStatementPatch, singleStatementPatch, stageNotesOf
 } from "./royalty-patch.js";
 import { buildTemplateContext } from "./template-context.js";
 
@@ -285,4 +285,28 @@ test("税率 0%（非課税・税込の海外）を 10% にしない。未入力
   assert.equal(taxRateOrDefault(8), 8);
   assert.equal(taxRateOrDefault(undefined), 10);
   assert.equal(taxRateOrDefault(""), 10);
+});
+
+test("前金・後金の説明は区分ごとにまとめ、重複と依頼文の控えを落として備考にする", () => {
+  const notes = stageNotesOf([
+    { paymentStage: "balance", note: "出荷後に受領した残金分" },
+    { paymentStage: "advance", note: "製造時に受領した前払金分" },
+    { paymentStage: "advance", note: "製造時に受領した前払金分" },
+    { paymentStage: "advance", note: "依頼文 1：英語 / Asmodee" },
+    { paymentStage: null, note: "区分なし" },
+    { paymentStage: "balance", note: "後金：書き手が付けた見出し" }
+  ]);
+  assert.equal(notes, "前金：製造時に受領した前払金分\n後金：出荷後に受領した残金分\n後金：書き手が付けた見出し");
+});
+
+test("備考：人が書いた備考の前に前金・後金の説明を足す。同じ文が既にあれば重ねない", () => {
+  assert.equal(notesWithStages("振込手数料は当社負担", "前金：A\n後金：B"), "前金：A\n後金：B\n振込手数料は当社負担");
+  assert.equal(notesWithStages("前金：A\nその他", "前金：A\n後金：B"), "後金：B\n前金：A\nその他");
+  assert.equal(notesWithStages("", ""), "");
+  const patch = royaltyStatementPatch({}, {
+    statementMode: "bundle", rs_bundle_tax: 0, rs_stage_notes: "前金：A",
+    rs_bundle_lines: [{ conditionId: 1, eventId: 1, contractTitle: "x", contractNumber: "", conditionName: "x",
+                        methodLabel: "m", salesJpy: 100, ratePct: 10, paymentJpy: 10, basisNote: "" }]
+  }, 10);
+  assert.equal(patch?.notes, "前金：A", "本文の備考に出る");
 });

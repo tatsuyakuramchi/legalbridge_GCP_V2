@@ -59,6 +59,12 @@ export interface LedgerEvent {
   documentNo?: string | null;
   /** この報告の言語・地域（A-061）。空は指定なし。 */
   languages?: string[]; regions?: string[];
+  /** 前金・後金（入金区分）。null は分けない。 */
+  paymentStage?: string | null;
+  /** 受領額が税込で入っているか（割り戻して算定する）。null は未指定（税抜として扱う）。 */
+  taxIncluded?: boolean | null;
+  /** 報告の備考。前金・後金の報告では計算書の備考に出る説明。 */
+  note?: string | null;
 }
 
 /** 来るはずの行（前の回にあった・生きている許諾先がある）。 */
@@ -460,7 +466,7 @@ export class RoyaltyLedgerService {
         `SELECT e.id, e.condition_id, e.schedule_id, e.event_type, e.occurred_on, e.period, e.usage_type,
                 e.out_condition_id, oc.name AS out_name, e.work_id, ew.title AS work_title,
                 e.quantity, e.unit_amount, e.gross_amount, e.amount, e.document_id, d.status AS document_status, d.document_no,
-                e.scope_languages, e.scope_regions
+                e.scope_languages, e.scope_regions, e.payment_stage, e.tax_included, e.note
            FROM condition_events e
            LEFT JOIN conditions oc ON oc.id = e.out_condition_id
            LEFT JOIN works ew ON ew.id = e.work_id
@@ -479,7 +485,10 @@ export class RoyaltyLedgerService {
           documentId: e.document_id && e.document_status === "issued" ? Number(e.document_id) : null,
           documentNo: e.document_id && e.document_status === "issued" ? str(e.document_no) : null,
           languages: Array.isArray(e.scope_languages) ? e.scope_languages.map(String) : [],
-          regions: Array.isArray(e.scope_regions) ? e.scope_regions.map(String) : []
+          regions: Array.isArray(e.scope_regions) ? e.scope_regions.map(String) : [],
+          paymentStage: str(e.payment_stage),
+          taxIncluded: e.tax_included === null || e.tax_included === undefined ? null : Boolean(e.tax_included),
+          note: str(e.note)
         }))
         : [];
       const skips = ids.length ? ((await q.query(
@@ -635,7 +644,10 @@ export class RoyaltyLedgerService {
   async correct(
     input: { conditionId: number; eventId: number; reason: string;
              quantity?: number | null; unitAmount?: number | null; grossAmount?: number | null; occurredOn?: string | null;
-             languages?: string[] | null; regions?: string[] | null },
+             languages?: string[] | null; regions?: string[] | null;
+             taxIncluded?: boolean | null; paymentStage?: "advance" | "balance" | null; note?: string | null;
+             /** 決定した計算書に載った報告を直せるのは admin だけ。載っていない報告は legal も直せる。 */
+             isAdmin?: boolean },
     events: { amend: (conditionId: number, eventId: number, patch: Record<string, unknown>, reason: string, actor: string)
                 => Promise<{ eventId: number; changed: string[] }> },
     actor: string
@@ -649,7 +661,13 @@ export class RoyaltyLedgerService {
            LEFT JOIN documents d ON d.id = e.document_id
           WHERE e.id = $1 AND e.condition_id = $2 AND e.status = 'active'`, [input.eventId, input.conditionId])).rows[0] as any;
       if (!row) throw new DomainError("NOT_FOUND", `実績 ${input.eventId} が見つかりません`);
+      if (row.document_status === "issued" && input.isAdmin === false) {
+        throw new DomainError("FORBIDDEN", "決定した計算書に載った報告を直せるのは管理者だけです");
+      }
       const patch: Record<string, unknown> = {};
+      if (input.taxIncluded !== undefined) patch.taxIncluded = input.taxIncluded;
+      if (input.paymentStage !== undefined) patch.paymentStage = input.paymentStage;
+      if (input.note !== undefined) patch.note = input.note;
       if (input.quantity !== undefined) patch.quantity = input.quantity;
       if (input.unitAmount !== undefined) patch.unitAmount = input.unitAmount;
       if (input.grossAmount !== undefined) patch.grossAmount = input.grossAmount;
@@ -665,7 +683,8 @@ export class RoyaltyLedgerService {
           quantity: input.quantity !== undefined ? input.quantity : (row.quantity === null ? null : Number(row.quantity)),
           sampleQuantity: row.sample_quantity === null ? null : Number(row.sample_quantity),
           grossAmount: input.grossAmount !== undefined ? input.grossAmount : int(row.gross_amount),
-          paymentStage: row.payment_stage ?? null, taxIncluded: row.tax_included ?? null
+          paymentStage: input.paymentStage !== undefined ? input.paymentStage : (row.payment_stage ?? null),
+          taxIncluded: input.taxIncluded !== undefined ? input.taxIncluded : (row.tax_included ?? null)
         }, "この報告");
         patch.amount = roundRoyalty((basis * ppmToPct(int(row.rate_ppm))) / 100);
       } else if (input.grossAmount !== undefined) {

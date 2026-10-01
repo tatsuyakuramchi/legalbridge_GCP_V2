@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import type { LedgerCondition } from "../server/royalty/ledger-service.js";
 import { parseReportPaste, pickOut, readYen } from "../server/royalty/report-paste.js";
+import { loadStageNote, saveStageNote, STAGE_NOTE_PLACEHOLDER } from "./stage-notes.js";
 
 /**
  * 依頼文から報告をまとめて入れる（製造 1 回ぶん）。
@@ -42,6 +43,9 @@ export function BulkReport({ targets, defaultDate, eventStyle, lockDate = false,
   const [outs, setOuts] = useState<Out[]>([]);
   const [on, setOn] = useState(defaultDate);
   const [taxIncluded, setTaxIncluded] = useState(false);
+  /** 前金・後金の説明。報告の備考に入り、計算書の備考に出る。前に書いた文を初期値にする。 */
+  const [advanceNote, setAdvanceNote] = useState(() => loadStageNote("advance"));
+  const [balanceNote, setBalanceNote] = useState(() => loadStageNote("balance"));
   const [busy, setBusy] = useState(false);
   const usable = targets.filter((t) => t.condition.usageType === "sublicense" || t.condition.usageType === "oem");
 
@@ -115,7 +119,7 @@ export function BulkReport({ targets, defaultDate, eventStyle, lockDate = false,
             languages: r.lang ? [r.lang] : [],
             // 依頼文は言語ごと。地域までは分かれていないので許諾地域すべて（その言語の行をまとめて覆う）。
             regions: o.regions.filter((x) => x !== "全世界"),
-            note: `依頼文 ${r.no}：${r.language} / ${r.company}`
+            note: (stage === "advance" ? advanceNote : balanceNote).trim() || null
           });
           saved.push(stage); made++;
         } catch (e) { err = e instanceof ApiError ? e.message : String(e); failed++; }
@@ -123,6 +127,7 @@ export function BulkReport({ targets, defaultDate, eventStyle, lockDate = false,
       next[i] = { ...r, saved, error: err };
     }
     setRows(next); setBusy(false);
+    saveStageNote("advance", advanceNote); saveStageNote("balance", balanceNote);
     if (!failed) onDone(`${made} 件の報告を入れました（${eventStyle ? `${on} 製造の回` : "この回"}）。この回の計算書で 1 枚にまとめて出せます`, on);
     else onError(`${made} 件入れました。${failed} 件は入れられませんでした（赤い行）。直してもう一度「記録」を押すと、残りだけ入れます`);
   }
@@ -143,7 +148,19 @@ export function BulkReport({ targets, defaultDate, eventStyle, lockDate = false,
         </button>
         <label className="row" style={{ gap: 4 }}><span className="faint">{eventStyle ? "製造日" : "発生日"}</span>
           {lockDate ? <b>{on}（この回）</b> : <input type="date" value={on} onChange={(e) => setOn(e.target.value)} />}</label>
-        <label className="ledger-check"><input type="checkbox" checked={taxIncluded} onChange={(e) => setTaxIncluded(e.target.checked)} /> 金額は税込（割り戻す）</label>
+        <span className="row" style={{ gap: 4 }}>
+          <span className="faint">金額は</span>
+          <span className="chips" role="group" aria-label="税込・税抜">
+            <button type="button" className="chip" aria-pressed={!taxIncluded} onClick={() => setTaxIncluded(false)}>税抜</button>
+            <button type="button" className="chip" aria-pressed={taxIncluded} onClick={() => setTaxIncluded(true)}>税込（1.1 で割り戻す）</button>
+          </span>
+        </span>
+      </div>
+      <div className="form-grid">
+        <label className="field"><span>前金の説明（計算書の備考に出る）</span>
+          <input value={advanceNote} placeholder={STAGE_NOTE_PLACEHOLDER.advance} onChange={(e) => setAdvanceNote(e.target.value)} /></label>
+        <label className="field"><span>後金の説明（計算書の備考に出る）</span>
+          <input value={balanceNote} placeholder={STAGE_NOTE_PLACEHOLDER.balance} onChange={(e) => setBalanceNote(e.target.value)} /></label>
       </div>
       {ratePct !== null && rateMismatch.length > 0 && (
         <div className="note warn">依頼文の料率は {ratePct}% ですが、条件は {rateMismatch.join("・")} です。計算は条件の料率で行います。違うなら条件を直してください。</div>

@@ -281,3 +281,31 @@ test("イベント式：同じ製造日の報告（許諾先・言語・前金�
   assert.equal(oct.kind, "event");
   assert.deepEqual(oct.parts.map((p) => [p.conditionId, p.events.map((e) => e.id)]), [[1, [1, 2]], [2, [3]]]);
 });
+
+const correctDb = (documentStatus: string | null) => new FakeDatabase((t) => {
+  if (t.includes("FROM condition_events e JOIN conditions c")) {
+    return [{ id: 7, condition_id: 1, usage_type: "oem", quantity: null, sample_quantity: null, unit_amount: null,
+              gross_amount: 1_100_000, payment_stage: null, tax_included: false, out_condition_id: 3, rate_ppm: 100000,
+              document_id: documentStatus ? 9 : null, document_no: documentStatus ? "ARC-ROY-1" : null, document_status: documentStatus }];
+  }
+  return undefined;
+});
+
+test("報告を直す：税込にすると割り戻して許諾料を出し直し、前金・後金と説明も付け直せる", async () => {
+  let got: Record<string, unknown> = {};
+  const events = { amend: async (_c: number, _e: number, patch: Record<string, unknown>) => { got = patch; return { eventId: 7, changed: Object.keys(patch) }; } };
+  await new RoyaltyLedgerService(correctDb(null)).correct(
+    { conditionId: 1, eventId: 7, reason: "入力の直し", taxIncluded: true, paymentStage: "advance", note: "製造時の前払金分", isAdmin: false },
+    events, "legal@x");
+  assert.equal(got.taxIncluded, true);
+  assert.equal(got.paymentStage, "advance");
+  assert.equal(got.note, "製造時の前払金分");
+  assert.equal(got.amount, 100000, "1,100,000 ÷ 1.1 × 10%");
+});
+
+test("報告を直す：決定した計算書に載った報告は管理者だけ", async () => {
+  const events = { amend: async () => ({ eventId: 7, changed: [] }) };
+  await assert.rejects(() => new RoyaltyLedgerService(correctDb("issued")).correct(
+    { conditionId: 1, eventId: 7, reason: "x", taxIncluded: true, isAdmin: false }, events, "legal@x"),
+    (e: unknown) => e instanceof DomainError && /管理者だけ/.test(e.message));
+});

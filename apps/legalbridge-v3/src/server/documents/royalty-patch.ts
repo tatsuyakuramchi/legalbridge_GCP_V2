@@ -630,6 +630,33 @@ export function singleNumbersFrom(context: Data, taxRatePct: number): SingleStat
 }
 
 /**
+ * 前金・後金の説明を計算書の備考にする。報告の備考（前金・後金を選んだ報告に
+ * 人が書いた説明）を入金区分ごとにまとめ、重複を落として並べる。
+ *
+ * 一時期、まとめて入れた報告の備考に「依頼文 1：英語 / Asmodee」という控えを
+ * 残していた。相手に見せるものではないので備考には出さない。
+ */
+export function stageNotesOf(events: Array<{ paymentStage?: string | null; note?: string | null }>): string {
+  const out: string[] = [];
+  for (const [stage, label] of [["advance", "前金"], ["balance", "後金"]] as const) {
+    const notes = [...new Set(events.filter((e) => e.paymentStage === stage)
+      .map((e) => String(e.note ?? "").trim())
+      .filter((n) => n && !/^依頼文\s*\d+[：:]/.test(n)))];
+    for (const n of notes) out.push(n.startsWith(label) ? n : `${label}：${n}`);
+  }
+  return out.join("\n");
+}
+
+/** 備考に前金・後金の説明を足す。人が備考に同じ文を入れていれば重ねない。 */
+export function notesWithStages(manualNotes: unknown, stageNotes: unknown): string {
+  const notes = String(manualNotes ?? "").trim();
+  const stages = String(stageNotes ?? "").trim();
+  if (!stages) return notes;
+  const missing = stages.split("\n").filter((l) => l && !notes.includes(l));
+  return [missing.join("\n"), notes].filter(Boolean).join("\n");
+}
+
+/**
  * 計算書のテンプレート変数を組む。
  *
  * 束ね（rs_bundle）→ 多明細（rs_receipts）→ 単票（V3 の試算）の順に見る。
@@ -645,12 +672,14 @@ export function royaltyStatementPatch(
   const computedLines = bundleLinesFrom(manual);
   if (computedLines.length) {
     const total = manual.rs_bundle_tax;
+    const notes = notesWithStages(manual.notes, manual.rs_stage_notes);
     return {
       ...bundleLinesPatch({
         lines: computedLines, taxRatePct: rate,
         taxTotal: total === undefined || total === null ? null : num(total)
       }),
-      ...receiptHeader(context, computedLines)
+      ...receiptHeader(context, computedLines),
+      ...(notes ? { notes } : {})
     };
   }
 

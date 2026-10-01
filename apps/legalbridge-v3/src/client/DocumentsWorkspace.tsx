@@ -436,7 +436,7 @@ export function DocumentsWorkspace(
   const isLicenseTerms = specFresh
     && (spec?.lines ?? []).some((l) => l.name === "v3_conds");
   const [stmtPeriod, setStmtPeriod] = useState("");
-  const [stmt, setStmt] = useState<{ lines: StatementLine[]; totals: StatementTotals } | null>(null);
+  const [stmt, setStmt] = useState<{ lines: StatementLine[]; totals: StatementTotals; stageNotes?: string } | null>(null);
   const [stmtError, setStmtError] = useState<string | null>(null);
   // 条件ごとに実績をまとめる。計算は条件ごと（料率も MG・AG も条件ごとに違う）で、
   // 1枚にまとめるのは印字と支払のまとめ方だけ。
@@ -524,7 +524,9 @@ export function DocumentsWorkspace(
   const previewInputs = useMemo(() => (
     isStatement && stmt
       ? { ...inputs, statementMode: "bundle",
-          rs_bundle_lines: stmt.lines, rs_bundle_tax: stmt.totals.tax }
+          rs_bundle_lines: stmt.lines, rs_bundle_tax: stmt.totals.tax,
+          // 前金・後金の説明。決定のときと同じく備考に足して映す。
+          rs_stage_notes: stmt.stageNotes ?? "" }
       : inputs
   ), [isStatement, stmt, inputs]);
   const body = useMemo(() => ({
@@ -588,7 +590,7 @@ export function DocumentsWorkspace(
   useEffect(() => {
     if (!isStatement || !stmtEntries.length) { setStmt(null); setStmtError(null); return; }
     let live = true;
-    api.post<{ lines: StatementLine[]; totals: StatementTotals }>("/statement-documents/preview", {
+    api.post<{ lines: StatementLine[]; totals: StatementTotals; stageNotes?: string }>("/statement-documents/preview", {
       entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
       supersedesId: reviseCtx?.ids[0] ?? null, supersedesExtraIds: reviseCtx?.ids.slice(1) ?? [],
       // 直した見出し（製品名・対象契約）を試算にも効かせる。ここを渡さないと、

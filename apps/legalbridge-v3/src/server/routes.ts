@@ -67,7 +67,7 @@ import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
-import { applyLineLabels } from "./documents/royalty-patch.js";
+import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
@@ -2335,8 +2335,9 @@ export function createRoutes(database: Transactable) {
   router.get("/conditions/:id/out-reports", asyncRoute(async (req, res) => {
     res.json(await royaltyLedger.outReports(Number(req.params.id)));
   }));
-  // 決定した計算書に載った報告を例外的に直す（admin）。直したあと、台帳から訂正版を出し直す。
-  router.post("/royalty-ledger/corrections", requireRole("admin"), requireWritable,
+  // 報告を直す。決定した計算書に載った報告は admin だけ（直したあと、台帳から訂正版を出し直す）。
+  // 載っていない報告は legal も直せる（前金・後金、税込・税抜の付け違いなど）。
+  router.post("/royalty-ledger/corrections", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({
         conditionId: z.coerce.number().int().positive(),
@@ -2347,9 +2348,13 @@ export function createRoutes(database: Transactable) {
         grossAmount: z.coerce.number().int().nullable().optional(),
         occurredOn: z.string().date().nullable().optional(),
         languages: z.array(z.string().trim().min(1).max(60)).max(30).nullable().optional(),
-        regions: z.array(z.string().trim().min(1).max(60)).max(60).nullable().optional()
+        regions: z.array(z.string().trim().min(1).max(60)).max(60).nullable().optional(),
+        taxIncluded: z.boolean().nullable().optional(),
+        paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
+        note: z.string().trim().max(2000).nullable().optional()
       }).parse(req.body ?? {});
-      res.json(await royaltyLedger.correct(input, conditionEvents, actor(res)));
+      res.json(await royaltyLedger.correct(
+        { ...input, isAdmin: res.locals.currentUser?.role === "admin" }, conditionEvents, actor(res)));
     }));
   // 予定の行（A-062）。この許諾先・言語・地域から from 以降の回に報告が来るはず。
   router.post("/royalty-ledger/plans", requireRole("admin", "legal"), requireWritable,
@@ -3405,7 +3410,8 @@ export function createRoutes(database: Transactable) {
         ...(usageEvents.length
           ? { statementMode: "multi",
               rs_bundle_lines: applyLineLabels(bundleLinesFor(preview), input.manualInputs ?? {}),
-              rs_bundle_tax: preview.fee.tax_amount }
+              rs_bundle_tax: preview.fee.tax_amount,
+              rs_stage_notes: stageNotesOf(preview.events ?? []) }
           : {})
       };
       const draft = await issues.createDraft({
@@ -3486,6 +3492,8 @@ export function createRoutes(database: Transactable) {
       res.json({
         lines: applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {}),
         totals: bundleTotals(previews),
+        // 前金・後金の説明（報告の備考）。計算書の備考に出す。
+        stageNotes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
         previews
       });
     }));
@@ -3517,6 +3525,7 @@ export function createRoutes(database: Transactable) {
           statementMode: "bundle",
           rs_bundle_lines: lines,
           rs_bundle_tax: totals.tax,
+          rs_stage_notes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
           // 2枚目以降の退かせる計算書。決定の瞬間に issue-service が退かせて実績を移す。
           ...(supersedes.length > 1 ? { _supersedesExtra: supersedes.slice(1) } : {})
         },
