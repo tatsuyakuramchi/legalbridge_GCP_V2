@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
-import { RoundReport } from "./RoundReport.js";
+import { ReportAdd, RoundReport, type ReportTarget } from "./RoundReport.js";
 import { RoyaltyCloses } from "./RoyaltyCloses.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { roundTargets, roundTitle } from "./RoundPicker.js";
 import type {
-  LedgerCondition, LedgerView, Round, WorkRoyaltyParty
+  LedgerCondition, LedgerEvent, LedgerView, Round, WorkRoyaltyParty
 } from "../server/royalty/ledger-service.js";
 import type { DocBack } from "./WorksWorkspace.js";
 
@@ -119,6 +119,8 @@ export function RoyaltyLedger(
   /** 「締めを作る」の案内から開いたとき、その条件の締めのフォームを最初から開く。 */
   const [scheduleFor, setScheduleFor] = useState<number | null>(null);
   const [adding, setAdding] = useState<{ mode: "report" | "plan"; conditionId?: number } | null>(null);
+  /** イベント式の「製造の報告」。締めを持たず、報告 1 件で回が 1 つ立つので、回の中ではなくここから足す。 */
+  const [addingEvent, setAddingEvent] = useState(false);
   const [bulkBefore, setBulkBefore] = useState(new Date().toISOString().slice(0, 10));
   async function linkRequest(requestId: number, round: Round, unlink = false) {
     try {
@@ -176,7 +178,9 @@ export function RoyaltyLedger(
               ? <span className="ledger-next">▶ 次：{p.next.label}の回に報告待ちが {p.next.waiting} 行</span>
               : p.noClose.length
                 ? <span className="ledger-next" style={{ color: "var(--warn)" }}>▶ 次：{p.noClose.map((c) => c.usageLabel).join("・")} の締めを作る（回が立ちません）</span>
-                : <span className="faint">▶ 次：{p.nextPayOn ? `締め前（次の支払 ${md(p.nextPayOn)}）。いま入れるものはありません` : "締めがありません（条件と締めの設定…）"}</span>}
+                : <span className="faint">▶ 次：{p.nextPayOn ? `締め前（次の支払 ${md(p.nextPayOn)}）。いま入れるものはありません`
+                    : p.conditions.some((c) => c.timing === "event") ? "製造の報告を足すと、その報告の回が立ちます"
+                    : "締めがありません（条件と締めの設定…）"}</span>}
             <span className="row" style={{ gap: 4 }}>
               <span className="tag">開いている回 {p.openRounds}</span>
               {p.nextPayOn && <span className="tag">次の支払 {md(p.nextPayOn)}</span>}
@@ -228,7 +232,7 @@ export function RoyaltyLedger(
                 </span>
               </div>
               <div className="panel-bd">
-                <Terms conditions={view.conditions} allWorks={allWorks} canWrite={canWrite} onChanged={reload} onError={setError}
+                <Terms conditions={view.conditions} view={view} allWorks={allWorks} canWrite={canWrite} onChanged={reload} onError={setError}
                        initialScheduling={scheduleFor} />
                 {canWrite && oldWaiting > 0 && (
                   <div className="row" style={{ marginTop: 8 }}>
@@ -301,9 +305,34 @@ export function RoyaltyLedger(
                 <h2 style={{ margin: 0 }}>回</h2>
                 <span className="faint">支払日でまとめる</span>
               </div>
+              {view.conditions.some((c) => c.timing === "event") && (
+                <div className="note stack" style={{ gap: 4 }}>
+                  <div className="row" style={{ gap: 6, alignItems: "center" }}>
+                    <b>製造の報告（イベント式）</b>
+                    <span className="faint">{view.conditions.filter((c) => c.timing === "event").map((c) => c.usageLabel).join("・")}</span>
+                    {canWrite && !addingEvent && (
+                      <button className="btn btn-sm primary" style={{ marginLeft: "auto" }} onClick={() => setAddingEvent(true)}>＋ 製造の報告を追加</button>
+                    )}
+                  </div>
+                  <span className="faint">製造・刷 1 件が 1 回。締めは要らない。記録すると製造日の回が立ち、その回だけで計算書を出す。</span>
+                  {addingEvent && (
+                    <ReportAdd mode="report" initialConditionId={null}
+                               targets={view.conditions.filter((c) => c.timing === "event").map((c): ReportTarget => ({
+                                 key: `e:${c.id}`, condition: c, scheduleId: null, closeOn: null, periodFrom: null, label: null }))}
+                               onCancel={() => setAddingEvent(false)}
+                               onAdded={(m) => { setAddingEvent(false); reload(m); }} onError={setError} />
+                  )}
+                </div>
+              )}
               {view.rounds.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected}
                                                  onSelect={() => setSelected(r.key)} />)}
-              {!view.rounds.length && <span className="faint">開いている回はありません。締めを作ると回が出ます。</span>}
+              {!view.rounds.length && (
+                <span className="faint">
+                  {view.conditions.every((c) => c.timing === "event")
+                    ? "開いている回はありません。製造の報告を足すと、その報告の回が立ちます。"
+                    : "開いている回はありません。締めを作ると回が出ます。"}
+                </span>
+              )}
               {view.requests.length > 0 && (
                 <div className="note stack" style={{ gap: 4 }}>
                   <b>回を選んでいない依頼</b>
@@ -337,13 +366,15 @@ export function RoyaltyLedger(
 
 /** この組の条件。料率と出し方（時限式／イベント式）。予定明細が無ければその場で作る。 */
 function Terms(
-  { conditions, allWorks, canWrite, onChanged, onError, initialScheduling = null }: {
-    conditions: LedgerCondition[]; allWorks: boolean; canWrite: boolean;
+  { conditions, view, allWorks, canWrite, onChanged, onError, initialScheduling = null }: {
+    conditions: LedgerCondition[]; view: LedgerView; allWorks: boolean; canWrite: boolean;
     onChanged: (message?: string) => void; onError: (m: string) => void;
     initialScheduling?: number | null;
   }
 ) {
   const [scheduling, setScheduling] = useState<number | null>(initialScheduling);
+  /** 回の整理を開いている条件。 */
+  const [fixing, setFixing] = useState<number | null>(null);
   async function setTiming(c: LedgerCondition, timing: string) {
     try {
       await api.put("/royalty-ledger/timing", { conditionId: c.id, timing: timing || null });
@@ -373,7 +404,7 @@ function Terms(
                 <option value="event">イベント式（製造・刷のたび）</option>
               </select>
             </label>
-            {c.timing === "periodic" && (
+            {c.timing === "periodic" ? (
               <span className="row" style={{ gap: 4 }}>
                 {c.schedules ? <span className="faint">締め {c.schedules} 回</span> : <span className="tag warn">締めなし</span>}
                 {canWrite && (
@@ -382,14 +413,113 @@ function Terms(
                   </button>
                 )}
               </span>
+            ) : (
+              <span className="faint">締めなし（報告 1 件＝回 1 つ）</span>
+            )}
+            {canWrite && (
+              <button className="btn btn-sm" aria-pressed={fixing === c.id} onClick={() => setFixing(fixing === c.id ? null : c.id)}>回の整理…</button>
             )}
           </div>
         ))}
       </div>
+      {fixing && conditions.some((c) => c.id === fixing) && (
+        <RoundFix key={fixing} condition={conditions.find((c) => c.id === fixing)!} view={view}
+                  onChanged={onChanged} onError={onError} onClose={() => setFixing(null)} />
+      )}
       {scheduling && conditions.some((c) => c.id === scheduling) && (
         <RoyaltyCloses key={scheduling} condition={conditions.find((c) => c.id === scheduling)!}
                        onCancel={() => setScheduling(null)}
                        onSaved={(m) => { setScheduling(null); onChanged(m); }} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 回の整理（過去分）。この条件の報告がどの回に入っているかを一覧し、紐づけを変えるだけで直す。
+ *   時限式 … 締めを選ぶ（null＝発生日で振り分け）。
+ *   イベント式 … 報告 1 件＝回 1 つ。締めは持たないので、締めを指している古い報告は「外す」で単独の回にする。
+ * 決定した計算書に載った報告は動かせない。出し方（時限式／イベント式）は上の欄で切り替える。
+ */
+function RoundFix({ condition: c, view, onChanged, onError, onClose }: {
+  condition: LedgerCondition; view: LedgerView;
+  onChanged: (message?: string) => void; onError: (m: string) => void; onClose: () => void;
+}) {
+  const [busy, setBusy] = useState<number | null>(null);
+  const schedules = view.schedules.filter((s) => s.conditionId === c.id)
+    .sort((a, b) => String(a.dueOn).localeCompare(String(b.dueOn)));
+  const events: Array<{ e: LedgerEvent; roundTitle: string; roundKind: "period" | "event"; roundLabel: string | null }> = [];
+  for (const r of [...view.rounds, ...view.history]) {
+    for (const p of r.parts) {
+      if (p.conditionId !== c.id) continue;
+      for (const e of p.events) events.push({ e, roundTitle: roundTitle(r), roundKind: r.kind, roundLabel: p.label });
+    }
+  }
+  events.sort((a, b) => String(a.e.occurredOn).localeCompare(String(b.e.occurredOn)) || a.e.id - b.e.id);
+  async function move(e: LedgerEvent, scheduleId: number | null) {
+    setBusy(e.id);
+    try {
+      await api.put(`/royalty-ledger/events/${e.id}/round`, { conditionId: c.id, scheduleId });
+      onChanged(scheduleId === null ? "締めから外しました" : "締めに付け替えました");
+    } catch (x) { onError((x as ApiError).message); }
+    finally { setBusy(null); }
+  }
+  const scheduleLabel = (id: number | null) => {
+    if (id === null) return null;
+    const s = schedules.find((x) => x.id === id);
+    return s ? `${s.label ?? ""}（締め ${s.dueOn ?? "—"}）` : `締め #${id}`;
+  };
+  return (
+    <div className="note stack" style={{ gap: 6 }}>
+      <div className="row" style={{ gap: 6, alignItems: "center" }}>
+        <b>回の整理：{c.workTitle ?? ""} · {c.usageLabel}</b>
+        <span className="faint">{c.timing === "event" ? "イベント式（報告 1 件＝回 1 つ）" : `時限式（締め ${schedules.length} 回）`}</span>
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>閉じる</button>
+      </div>
+      <span className="faint">
+        {c.timing === "event"
+          ? "報告は締めを持ちません。古い報告が締めを指していれば「外す」で単独の回になります。締めで回したいなら、上の出し方を時限式にしてから締めに付けてください。"
+          : "各報告をどの締めに付けるかを変えられます。「発生日で振り分け」にすると、前の締めの翌日〜その締めの日に入る回へ入ります。決定した計算書に載った報告は動かせません。"}
+      </span>
+      {!events.length && <span className="faint">この条件の報告はまだありません。</span>}
+      {events.length > 0 && (
+        <div className="tablewrap">
+          <table>
+            <thead><tr><th>発生日</th><th>行</th><th className="num">数量</th><th className="num">額</th><th>いまの回</th><th>付け先</th></tr></thead>
+            <tbody>
+              {events.map(({ e, roundTitle: rt, roundKind, roundLabel }) => {
+                const locked = Boolean(e.documentId);
+                return (
+                  <tr key={e.id}>
+                    <td>{e.occurredOn ?? "—"}</td>
+                    <td>{e.outName ?? e.workTitle ?? "—"}{(e.languages ?? []).length ? `（${[...(e.languages ?? []), ...(e.regions ?? [])].join("・")}）` : ""}</td>
+                    <td className="num">{e.quantity ?? ""}</td>
+                    <td className="num">{yen(e.grossAmount ?? e.amount, c.currency)}</td>
+                    <td>
+                      {roundKind === "event" ? `単独（${rt}）` : roundLabel ?? rt}
+                      {e.scheduleId ? <span className="faint">　締め指定</span> : <span className="faint">　発生日で振り分け</span>}
+                      {locked && <span className="tag" style={{ marginLeft: 4 }}>計算書 {e.documentNo ?? ""}</span>}
+                    </td>
+                    <td>
+                      {locked ? <span className="faint">決定済（動かせない）</span>
+                        : c.timing === "event" ? (
+                          e.scheduleId
+                            ? <button className="btn btn-sm" disabled={busy === e.id} onClick={() => void move(e, null)}>締めから外す</button>
+                            : <span className="faint">—</span>
+                        ) : (
+                          <select value={e.scheduleId ?? ""} disabled={busy === e.id}
+                                  onChange={(ev) => void move(e, ev.target.value ? Number(ev.target.value) : null)}>
+                            <option value="">発生日で振り分け</option>
+                            {schedules.map((s) => <option key={s.id} value={s.id}>{scheduleLabel(s.id)}</option>)}
+                          </select>
+                        )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

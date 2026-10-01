@@ -2390,6 +2390,15 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       res.json(await royaltyLedger.setTiming(input.conditionId, input.timing, actor(res)));
     }));
+  // 報告をどの回（締め）に付けるかを変える（過去分の整理）。null で発生日による振り分けに戻す。
+  router.put("/royalty-ledger/events/:id/round", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        conditionId: z.coerce.number().int().positive(),
+        scheduleId: z.coerce.number().int().positive().nullable()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.moveEvent(input.conditionId, Number(req.params.id), input.scheduleId, actor(res)));
+    }));
   router.put("/royalty-ledger/bundle", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({

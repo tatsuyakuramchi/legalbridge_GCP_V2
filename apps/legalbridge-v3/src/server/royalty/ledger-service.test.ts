@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildRounds, settleRound, timingOf, type LedgerCondition, type LedgerEvent, type Round } from "./ledger-service.js";
+import { buildRounds, RoyaltyLedgerService, settleRound, timingOf, type LedgerCondition, type LedgerEvent, type Round } from "./ledger-service.js";
+import { FakeDatabase } from "../core/fake-db.js";
+import { DomainError } from "../core/errors.js";
 
 const cond = (id: number, over: Partial<LedgerCondition> = {}): LedgerCondition => ({
   id, conditionNo: null, name: `c${id}`, usageType: "in_house", usageLabel: "", workId: 1, workTitle: "ito",
@@ -212,4 +214,52 @@ test("1本の許諾で英語・フランス語を出していれば、報告は�
   assert.deepEqual(q2.parts[0].expected.map((x) => x.languages), [["フランス語"]], "英語は来た、フランス語はまだ");
   const q3 = rounds.find((r) => r.payOn === "2026-10-31")!;
   assert.deepEqual(q3.parts[0].expected.map((x) => x.languages?.join("")).sort(), ["フランス語", "英語"]);
+});
+
+test("イベント式の条件は締めを要らず、報告 1 件が 1 回。締めが無くても回が立つ", () => {
+  const rounds = buildRounds({
+    conditions: [cond(1, { timing: "event", usageType: "oem", paymentTerms: "締め月の翌月末払い" })], schedules: [],
+    events: [ev(1, 1, "2026-08-31", { usageType: "oem", eventType: "sales" }), ev(2, 1, "2026-09-10", { usageType: "oem", eventType: "sales" })],
+    skips: [], outs: [], bundle: "single_work", today: "2026-10-05"
+  });
+  assert.deepEqual(rounds.map((r) => [r.kind, r.closeOn, r.payOn]),
+    [["event", "2026-08-31", "2026-09-30"], ["event", "2026-09-10", "2026-10-31"]]);
+});
+
+test("時限式に切り替えると、締めを指す報告はその回、指さない報告は発生日で回に入る（紐づけを変えるだけで整理できる）", () => {
+  const rounds = buildRounds({
+    conditions: [cond(1, { timing: "periodic", usageType: "oem" })], schedules: Q(1),
+    events: [ev(1, 1, "2026-05-10", { usageType: "oem" }), ev(2, 1, "2026-05-20", { usageType: "oem", scheduleId: 2 })],
+    skips: [], outs: [], bundle: "single_work", today: "2026-10-05"
+  });
+  const of = (payOn: string) => rounds.find((r) => r.payOn === payOn)!.parts[0].events.map((e) => e.id);
+  assert.deepEqual(of("2026-07-31"), [1], "発生日 5/10 は 4〜6月の回");
+  assert.deepEqual(of("2026-10-31"), [2], "締めを指す報告はその回（発生日が範囲外でも）");
+});
+
+const moveDb = (over: { documentStatus?: string | null; scheduleOk?: boolean; conditionOk?: boolean } = {}) =>
+  new FakeDatabase((t) => {
+    if (t.includes("FROM condition_events e") && t.includes("FOR UPDATE OF e")) {
+      return [{ id: 5, condition_id: 1, schedule_id: null, document_id: over.documentStatus ? 9 : null,
+                document_status: over.documentStatus ?? null, document_no: over.documentStatus ? "ARC-RS-1" : null, series: 1 }];
+    }
+    if (t.includes("COALESCE(series_id, id) = $2")) return over.conditionOk === false ? [] : [{ "?column?": 1 }];
+    if (t.includes("FROM condition_schedules s JOIN conditions c")) return over.scheduleOk === false ? [] : [{ id: 2, label: "7〜9月", due_on: "2026-09-30" }];
+    if (t.includes("UPDATE condition_events SET schedule_id")) return [];
+    return undefined;
+  });
+
+test("報告の回を変える：締めを指させる・外す。監査に残る", async () => {
+  const db = moveDb();
+  const r = await new RoyaltyLedgerService(db).moveEvent(1, 5, 2, "tester");
+  assert.deepEqual(r, { eventId: 5, scheduleId: 2, changed: true });
+  assert.deepEqual(db.find("UPDATE condition_events SET schedule_id")!.params, [5, 2]);
+  assert.ok(db.find("INSERT INTO audit_events"));
+});
+
+test("報告の回を変える：決定した計算書に載った報告・他の条件の締めは断る", async () => {
+  await assert.rejects(() => new RoyaltyLedgerService(moveDb({ documentStatus: "issued" })).moveEvent(1, 5, 2, "t"),
+    (e: unknown) => e instanceof DomainError && /決定した計算書/.test(e.message));
+  await assert.rejects(() => new RoyaltyLedgerService(moveDb({ scheduleOk: false })).moveEvent(1, 5, 2, "t"),
+    (e: unknown) => e instanceof DomainError && /この条件のものではありません/.test(e.message));
 });

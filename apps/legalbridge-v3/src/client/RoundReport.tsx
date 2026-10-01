@@ -438,20 +438,62 @@ export function RoundReport(
   );
 }
 
-/** 予定にない報告の行を足す：条件（作品・利用形態）→ 許諾先 → 言語 → 地域。 */
+/**
+ * 報告を足す先。時限式はその回（締め・schedule_id）、イベント式は締めを持たず
+ * 「報告 1 件＝回 1 つ」なので scheduleId は null、発生日＝製造日が回の日になる。
+ */
+export interface ReportTarget {
+  key: string; condition: LedgerCondition; scheduleId: number | null;
+  closeOn: string | null; periodFrom: string | null; label: string | null;
+}
+
+/** 回の中から足す（時限式）。報告なしにした回には足さない。計算書済の回には足せる（遅れて来た報告は次の計算書に載る）。 */
 function AddLine(
   { mode, round, view, conditionId, onCancel, onAdded, onError }: {
     mode: "report" | "plan"; round: Round; view: LedgerView; conditionId: number | null; onCancel: () => void;
     onAdded: (message: string) => void; onError: (m: string) => void;
   }
 ) {
-  // 報告なしにした回には足さない。計算書済の回には足せる（遅れて来た報告は次の計算書に載る）。
-  const parts = round.parts.filter((p) => !p.skipped);
-  const first = parts.find((p) => p.conditionId === conditionId) ?? parts[0];
-  const [partKey, setPartKey] = useState(first ? `${first.conditionId}:${first.scheduleId ?? ""}` : "");
+  const targets: ReportTarget[] = round.parts.filter((p) => !p.skipped).flatMap((p) => {
+    const c = view.conditions.find((x) => x.id === p.conditionId);
+    // イベント式の条件は回の中からは足さない（足すと別の回が立つ）。台帳の上の「製造の報告」から。
+    if (!c || c.timing === "event") return [];
+    return [{ key: `${p.conditionId}:${p.scheduleId ?? ""}`, condition: c, scheduleId: p.scheduleId,
+              closeOn: p.closeOn, periodFrom: p.periodFrom, label: p.label }];
+  });
+  if (!targets.length) {
+    return (
+      <div className="note stack" style={{ gap: 4 }}>
+        <b>この回には足せません</b>
+        <span className="faint">
+          {round.kind === "event"
+            ? "イベント式の回は報告 1 件で 1 回です。次の製造・刷の報告は、回の一覧の上の「＋ 製造の報告（イベント式）」から足してください（新しい回が立ちます）。"
+            : "この回の条件はすべて「報告なし」です。取り消してから足すか、別の回を選んでください。"}
+        </span>
+        <button className="btn btn-sm" onClick={onCancel}>閉じる</button>
+      </div>
+    );
+  }
+  return <ReportAdd mode={mode} targets={targets} initialConditionId={conditionId}
+                    onCancel={onCancel} onAdded={onAdded} onError={onError} />;
+}
+
+/**
+ * 報告（または予定）を足す：条件（作品・利用形態）→ 許諾先 → 言語 → 地域 → 数字。
+ * 回の中（時限式）からも、台帳の上（イベント式の製造の報告）からも同じ形で使う。
+ */
+export function ReportAdd(
+  { mode, targets, initialConditionId, onCancel, onAdded, onError }: {
+    mode: "report" | "plan"; targets: ReportTarget[]; initialConditionId: number | null; onCancel: () => void;
+    onAdded: (message: string) => void; onError: (m: string) => void;
+  }
+) {
+  const first = targets.find((t) => t.condition.id === initialConditionId) ?? targets[0];
+  const [targetKey, setTargetKey] = useState(first?.key ?? "");
   const [fromWhen, setFromWhen] = useState<"this" | "next">("this");
-  const part = parts.find((p) => `${p.conditionId}:${p.scheduleId ?? ""}` === partKey) ?? null;
-  const cond = part ? view.conditions.find((c) => c.id === part.conditionId)! : null;
+  const target = targets.find((t) => t.key === targetKey) ?? null;
+  const cond = target?.condition ?? null;
+  const eventStyle = cond?.timing === "event";
   const usage = cond?.usageType && ["sublicense", "oem"].includes(cond.usageType) ? cond.usageType : null;
   const [outs, setOuts] = useState<Array<{ id: number; name: string; partyName: string | null; languages: string[]; regions: string[] }>>([]);
   const [outId, setOutId] = useState("");
@@ -459,7 +501,7 @@ function AddLine(
   /** 報告の地域。相手の報告が地域まで分かれていないことがあるので複数選べる（全部なら許諾地域すべて）。 */
   const [regions, setRegions] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft>({ quantity: "", unit: "", gross: "", taxIncluded: false,
-                                              on: part?.closeOn ?? new Date().toISOString().slice(0, 10), note: "" });
+                                              on: target?.closeOn ?? new Date().toISOString().slice(0, 10), note: "" });
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!cond || !usage) { setOuts([]); return; }
@@ -467,14 +509,15 @@ function AddLine(
       .then((r) => { setOuts(r.conditions); setOutId(String(r.conditions[0]?.id ?? "")); })
       .catch((e: ApiError) => onError(e.message));
   }, [cond?.id, usage]);
+  // 回を変えたら発生日はその回の締め日に（イベント式は製造日を人が入れる）。
+  useEffect(() => { if (target?.closeOn) setDraft((d) => ({ ...d, on: target.closeOn! })); }, [target?.key]);
   const out = outs.find((o) => String(o.id) === outId) ?? null;
   useEffect(() => { setLanguage(out?.languages[0] ?? ""); setRegions(out?.regions[0] ? [out.regions[0]] : []); }, [out?.id]);
   const toggleRegion = (r: string) => setRegions((cur) => cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]);
-  if (!cond || !part) {
+  if (!cond || !target) {
     return (
       <div className="note stack" style={{ gap: 4 }}>
         <b>足せる行がありません</b>
-        <span className="faint">この回の条件はすべて「報告なし」です。取り消してから足すか、別の回を選んでください。</span>
         <button className="btn btn-sm" onClick={onCancel}>閉じる</button>
       </div>
     );
@@ -483,13 +526,13 @@ function AddLine(
   const f = fieldsFor(usage ?? (inHouse ? "in_house" : null), cond.pricingModel, draft.basis);
 
   async function plan() {
-    if (!cond || !part) return;
+    if (!cond || !target) return;
     setBusy(true);
     try {
       // この回から＝この回の期間の始まり（無ければ締め日）。次の回から＝この回の締めの翌日。
       const fromOn = fromWhen === "this"
-        ? (part.periodFrom ?? part.closeOn ?? draft.on)
-        : iso(new Date(new Date(`${part.closeOn ?? draft.on}T00:00:00Z`).getTime() + 86_400_000));
+        ? (target.periodFrom ?? target.closeOn ?? draft.on)
+        : iso(new Date(new Date(`${target.closeOn ?? draft.on}T00:00:00Z`).getTime() + 86_400_000));
       await api.post("/royalty-ledger/plans", {
         conditionId: cond.id, outConditionId: usage ? Number(outId) || null : null,
         languages: language ? [language] : [], regions, fromOn
@@ -499,13 +542,13 @@ function AddLine(
     finally { setBusy(false); }
   }
   async function add() {
-    if (!cond || !part) return;
+    if (!cond || !target) return;
     setBusy(true);
     try {
       const u = usage ?? (inHouse ? "in_house" : null);
       const gross = f.gross ? numOf(draft.gross) : null;
       await api.post(`/conditions/${cond.id}/events`, {
-        eventType: eventTypeFor(u, cond), occurredOn: draft.on, scheduleId: part.scheduleId,
+        eventType: eventTypeFor(u, cond), occurredOn: draft.on, scheduleId: target.scheduleId,
         quantity: f.quantity ? numOf(draft.quantity) || null : null,
         unitAmount: f.unit ? numOf(draft.unit) || null : null,
         grossAmount: gross || null, amount: u ? 0 : (gross ?? 0),
@@ -514,7 +557,7 @@ function AddLine(
         languages: language ? [language] : [], regions,
         note: draft.note.trim() || null
       });
-      onAdded("報告を足しました");
+      onAdded(eventStyle ? "製造の報告を足しました（この報告の回が立ちました）" : "報告を足しました");
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -522,15 +565,20 @@ function AddLine(
   const isPlan = mode === "plan";
   return (
     <div className={`note stack${isPlan ? " pin" : ""}`} style={{ gap: 6 }}>
-      <b>{isPlan ? "予定を作る" : "報告を追加"}</b>
+      <b>{isPlan ? "予定を作る" : eventStyle ? "製造の報告を追加（イベント式）" : "報告を追加"}</b>
       <span className="faint">{isPlan
         ? "数字はまだ無い。この許諾先・言語・地域から報告が来るはず、という行を置く。以後の回でも「来るはず」として待つ。"
+        : eventStyle
+        ? "製造・刷 1 件が 1 回。締めは要らず、記録するとその製造日の回が立ち、支払日は条件の支払条件から決まる。"
         : "記録すると入力済の行になり、以後の回でも「来るはず」として待つ。地域まで分かれていない報告は地域を複数選ぶ（その地域の行がまとめて入力済になる）。"}</span>
       <div className="row" style={{ gap: 8 }}>
         <label className="row" style={{ gap: 4 }}><span className="faint">作品 · 利用形態</span>
-          <select value={partKey} onChange={(e) => setPartKey(e.target.value)}>
-            {parts.map((p) => { const c = view.conditions.find((x) => x.id === p.conditionId)!;
-              return <option key={`${p.conditionId}:${p.scheduleId ?? ""}`} value={`${p.conditionId}:${p.scheduleId ?? ""}`}>{c.workTitle ?? ""} · {c.usageLabel}</option>; })}
+          <select value={targetKey} onChange={(e) => setTargetKey(e.target.value)}>
+            {targets.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.condition.workTitle ?? ""} · {t.condition.usageLabel}{t.label ? `（${t.label}）` : ""}
+              </option>
+            ))}
           </select></label>
         {usage && (
           <label className="row" style={{ gap: 4 }}><span className="faint">許諾先</span>
@@ -564,7 +612,7 @@ function AddLine(
         <div className="row" style={{ gap: 8 }}>
           <label className="row" style={{ gap: 4 }}><span className="faint">いつから</span>
             <select value={fromWhen} onChange={(e) => setFromWhen(e.target.value as "this" | "next")}>
-              <option value="this">この回（{part.label ?? part.closeOn ?? ""}）から</option>
+              <option value="this">この回（{target.label ?? target.closeOn ?? ""}）から</option>
               <option value="next">次の回から</option>
             </select></label>
           <button className="btn btn-sm primary" disabled={busy || (Boolean(usage) && !outId)} onClick={() => void plan()}>予定を置く</button>
@@ -578,7 +626,8 @@ function AddLine(
         {f.unit && <input className="inline-input num" style={{ width: 110 }} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価" value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
         {f.gross && <input className="inline-input num" style={{ width: 130 }} placeholder={f.grossLabel} aria-label={f.grossLabel} value={draft.gross} onChange={(e) => setDraft({ ...draft, gross: e.target.value })} />}
         {f.tax && <label className="ledger-check"><input type="checkbox" checked={draft.taxIncluded} onChange={(e) => setDraft({ ...draft, taxIncluded: e.target.checked })} /> 税込</label>}
-        <input className="inline-input" type="date" value={draft.on} aria-label="発生日" onChange={(e) => setDraft({ ...draft, on: e.target.value })} />
+        <label className="row" style={{ gap: 4 }}>{eventStyle && <span className="faint">製造日</span>}
+          <input className="inline-input" type="date" value={draft.on} aria-label={eventStyle ? "製造日" : "発生日"} onChange={(e) => setDraft({ ...draft, on: e.target.value })} /></label>
         <button className="btn btn-sm primary" disabled={busy || (Boolean(usage) && !outId)} onClick={() => void add()}>記録</button>
         <button className="btn btn-sm" disabled={busy} onClick={onCancel}>やめる</button>
       </div>

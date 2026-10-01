@@ -330,6 +330,8 @@ export interface LedgerView {
   scope: { workId: number; workTitle: string } | null;
   works: Array<{ id: number; title: string; conditions: number }>;
   conditions: LedgerCondition[];
+  /** 時限式の締め（予定明細）。回の整理（報告をどの締めに付けるか）で使う。 */
+  schedules: ScheduleLite[];
   rounds: Round[];
   history: Round[];
   requests: RoundRequest[];
@@ -599,6 +601,7 @@ export class RoyaltyLedgerService {
         scope: work ? { workId: Number(work.id), workTitle: String(work.title) } : null,
         works: worksList,
         conditions,
+        schedules,
         rounds: openRounds,
         history: settled.filter((r) => !r.open).reverse(),
         requests: pendingReqs.map(requestOf)
@@ -828,6 +831,51 @@ export class RoyaltyLedgerService {
         await recordAudit(client, { actor, action: "royalty.skip_before", targetType: "party", targetId: partyId,
           detail: { workId, before, count: targets.length } });
         return { count: targets.length };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 報告をどの回に付けるかを変える（過去分の整理）。
+   *
+   *   時限式 … 締め（schedule_id）を指させる。null にすると発生日で回に振り分ける。
+   *   イベント式 … 報告 1 件＝回 1 つなので締めは持たない（null）。
+   *
+   * 決定した計算書に載った報告は動かせない（紙の根拠が変わる）。締めは同じ条件
+   * （改訂の全版）のものだけ。
+   */
+  async moveEvent(conditionId: number, eventId: number, scheduleId: number | null, actor: string) {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const row = (await client.query(
+          `SELECT e.id, e.condition_id, e.schedule_id, e.document_id, d.status AS document_status, d.document_no,
+                  COALESCE(c.series_id, c.id) AS series
+             FROM condition_events e
+             JOIN conditions c ON c.id = e.condition_id
+             LEFT JOIN documents d ON d.id = e.document_id
+            WHERE e.id = $1 AND e.status = 'active' FOR UPDATE OF e`, [eventId])).rows[0] as any;
+        if (!row) throw new DomainError("NOT_FOUND", `報告 ${eventId} が見つかりません`);
+        const ok = (await client.query(
+          `SELECT 1 FROM conditions WHERE id = $1 AND COALESCE(series_id, id) = $2`, [conditionId, row.series])).rows[0];
+        if (!ok) throw new DomainError("VALIDATION", `報告 ${eventId} は条件 ${conditionId} のものではありません`);
+        if (row.document_status === "issued") {
+          throw new DomainError("CONFLICT",
+            `報告 ${eventId} は決定した計算書 ${row.document_no ?? `#${row.document_id}`} に載っています。` +
+            "回を変えるには、先にその計算書を無効化するか訂正版を出してください");
+        }
+        if (scheduleId !== null) {
+          const sc = (await client.query(
+            `SELECT s.id, s.label, s.due_on FROM condition_schedules s JOIN conditions c ON c.id = s.condition_id
+              WHERE s.id = $1 AND s.trigger_kind = 'periodic' AND COALESCE(c.series_id, c.id) = $2`,
+            [scheduleId, row.series])).rows[0] as any;
+          if (!sc) throw new DomainError("NOT_FOUND", `締め ${scheduleId} はこの条件のものではありません`);
+        }
+        const before = int(row.schedule_id);
+        if (before === scheduleId) return { eventId, scheduleId, changed: false };
+        await client.query(`UPDATE condition_events SET schedule_id = $2 WHERE id = $1`, [eventId, scheduleId]);
+        await recordAudit(client, { actor, action: "royalty.move_event", targetType: "condition",
+          targetId: conditionId, detail: { eventId, from: before, to: scheduleId } });
+        return { eventId, scheduleId, changed: true };
       });
     } catch (error) { throw translate(error); }
   }
