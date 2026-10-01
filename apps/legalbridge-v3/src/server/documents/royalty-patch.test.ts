@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   bundleEntriesFrom, bundleStatementPatch, multiStatementPatch, receiptAmountLabel,
-  notesWithStages, receiptConversionLabel, receiptJpyBase, royaltyStatementPatch, singleStatementPatch, stageNotesOf
+  notesWithStages, payerSummary, receiptConversionLabel, receiptJpyBase, royaltyStatementPatch, singleStatementPatch, stageNotesOf
 } from "./royalty-patch.js";
 import { buildTemplateContext } from "./template-context.js";
 
@@ -260,7 +260,7 @@ test("受領情報：入金企業は許諾先、権利者はイン条件の取�
   assert.equal(patch.royaltyCategory, "", "カテゴリーは使わない");
 });
 
-test("受領情報：許諾先が混ざったら入金企業は空にする", () => {
+test("受領情報：許諾先が混ざったら入金企業は「最初の社 ほか N 社」、通貨は空にする", () => {
   // 紙の見出しは1組しか書けない。1社ぶんを選んで出すと、載っていない相手の
   // 入金を、載っている相手のものとして読ませることになる。
   const line = (payer: string, currency: string) => ({
@@ -274,7 +274,7 @@ test("受領情報：許諾先が混ざったら入金企業は空にする", ()
     rs_bundle_lines: [line("Meanbook Co., Ltd.", "USD"), line("晨光數位出版", "TWD")]
   }, 10);
   assert.ok(patch);
-  assert.equal(patch.payerCompany, "", "混ざったら出さない");
+  assert.equal(patch.payerCompany, "Meanbook Co., Ltd. ほか1社", "混ざったら要約（各社名は明細の行に出る）");
   assert.equal(patch.intakeCurrency, "", "通貨も混ざったら出さない");
 });
 
@@ -309,4 +309,10 @@ test("備考：人が書いた備考の前に前金・後金の説明を足す�
                         methodLabel: "m", salesJpy: 100, ratePct: 10, paymentJpy: 10, basisNote: "" }]
   }, 10);
   assert.equal(patch?.notes, "前金：A", "本文の備考に出る");
+});
+
+test("入金企業：1 社ならその名前、複数なら「最初の社 ほか N 社」", () => {
+  assert.equal(payerSummary(["Asmodee Asia Limited", "Asmodee Asia Limited"]), "Asmodee Asia Limited");
+  assert.equal(payerSummary(["Asmodee Asia Limited", "MM-Spiele", "Don't Panic", "MM-Spiele", ""]), "Asmodee Asia Limited ほか2社");
+  assert.equal(payerSummary([null, ""]), "");
 });
