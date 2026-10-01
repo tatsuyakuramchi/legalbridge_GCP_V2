@@ -20,6 +20,8 @@ export interface DispatchOutcome {
   duplicated?: boolean;
   /** 相手にはまだ届いていない（CloudSign に下書きを作っただけ）。 */
   draft?: boolean;
+  /** 送れたが確かめておくこと。 */
+  warnings?: string[];
 }
 
 /**
@@ -86,9 +88,16 @@ export class DispatchService {
       return { channel: input.channel, sent: false, gate, ...(gate.previewable ? { preview } : {}) };
     }
 
+    // 署名者・確認者を持つ送信（CloudSign）は、その並びもキーに入れる。先頭の署名者だけで
+    // 見ていたので、署名者や CC を足して作り直すと「同じものを送った」として何も作らなかった。
+    const people = input.request.participants?.length || input.request.reportees?.length
+      ? [input.request.recipient,
+         (input.request.participants ?? []).map((p) => p.email.toLowerCase()).join(","),
+         (input.request.reportees ?? []).map((r) => r.email.toLowerCase()).sort().join(",")].join("|")
+      : input.request.recipient;
     const key = DispatchService.idempotencyKey({
       channel: input.channel, targetType: input.targetType, targetId: input.targetId,
-      recipient: input.request.recipient, body: input.request.body
+      recipient: people, body: input.request.body
     });
     const existing = await this.database.query(
       "SELECT detail FROM audit_events WHERE idempotency_key = $1", [key]);
@@ -114,7 +123,10 @@ export class DispatchService {
           ...(receipt.draft ? { draft: true } : {}),
           attachment: files.map((f) => f.filename).join("、") || null,
           // 誰に届いたかを記録に残す。あとから「この1通は誰に行ったか」を辿る。
-          cc: input.request.cc ?? [], bcc: input.request.bcc ?? []
+          cc: input.request.cc ?? [], bcc: input.request.bcc ?? [],
+          ...(input.request.participants?.length ? { participants: input.request.participants.map((p) => p.email) } : {}),
+          ...(input.request.reportees?.length ? { reportees: input.request.reportees.map((r) => r.email) } : {}),
+          ...(receipt.warnings?.length ? { warnings: receipt.warnings } : {})
         }
       });
     } catch (error) {
@@ -128,7 +140,8 @@ export class DispatchService {
     return {
       channel: input.channel, sent: true, gate,
       externalId: receipt.externalId, threadRef: receipt.threadRef ?? null,
-      ...(receipt.draft ? { draft: true } : {})
+      ...(receipt.draft ? { draft: true } : {}),
+      ...(receipt.warnings?.length ? { warnings: receipt.warnings } : {})
     };
   }
 

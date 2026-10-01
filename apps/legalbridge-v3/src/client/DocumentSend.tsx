@@ -46,7 +46,7 @@ function Sending({ what }: { what: string }) {
     </div>
   );
 }
-interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; gate: { reasons: string[]; mode: string };
+interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; warnings?: string[]; externalId?: string; gate: { reasons: string[]; mode: string };
                     preview?: { recipient: string; bodyPreview: string } }
 
 type Purpose = "owner_check" | "party_check" | "delivery";
@@ -138,10 +138,12 @@ export function DocumentSend(
     }
   }, [open]);
 
-  const describe = (o: Outcome, what: string) =>
-    o.sent && o.draft ? `${what}を CloudSign に下書きとして作りました。送信は CloudSign の画面から行い、送ったら手で「送った」と記録してください`
+  const describe = (o: Outcome, what: string) => describeBase(o, what)
+    + (o.warnings?.length ? `\n⚠ ${o.warnings.join("\n⚠ ")}` : "");
+  const describeBase = (o: Outcome, what: string) =>
+    o.sent && o.draft ? `${what}を CloudSign に下書きとして作りました${o.externalId ? `（書類ID ${o.externalId}）` : ""}。送信は CloudSign の画面から行い、送ったら手で「送った」と記録してください`
       : o.sent ? `${what}を送りました`
-      : o.duplicated ? `同じ${what}をすでに送っています（二度は送りません）`
+      : o.duplicated ? `同じ宛先・同じ内容の${what}をすでに作っています（二度は作りません）。宛先を変えたなら、変えた内容で作り直されます`
       : o.preview ? `検証モードのため送っていません。送るなら：${o.preview.recipient} へ`
       : `送りませんでした：${o.gate.reasons.join("／")}`;
 
@@ -191,7 +193,7 @@ export function DocumentSend(
       </div>
       <div className="panel-bd stack">
         {error && <div className="alert">{error}</div>}
-        {note && <div className="note ok">{note}</div>}
+        {note && <div className={`note ${note.includes("⚠") ? "warn" : "ok"}`} style={{ whiteSpace: "pre-line" }}>{note}</div>}
         {sendingWhat && <Sending what={sendingWhat} />}
 
         {tl && (

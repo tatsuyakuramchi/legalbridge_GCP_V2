@@ -110,3 +110,24 @@ test("外部IDの無い受信は受け付けない", async () => {
   const service = new DispatchService(new FakeDatabase(), {}, () => live);
   await assert.rejects(() => service.receiveWebhook({ source: "backlog", externalId: "", payload: {} }));
 });
+
+test("署名依頼は署名者・確認者の並びも冪等キーに入れる（足して作り直せば新しい下書き）", async () => {
+  const keys: string[] = [];
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("FROM audit_events WHERE idempotency_key")) { keys.push(String(params?.[0])); return []; }
+    return undefined;
+  });
+  const service = new DispatchService(db, { gmail: new MemoryAdapter("gmail") }, () => live);
+  const sign = (participants: string[], reportees: string[] = []) => service.dispatch({
+    ...request, request: { recipient: participants[0], subject: "署名", body: "署名をお願いします。",
+      participants: participants.map((email) => ({ email })), reportees: reportees.map((email) => ({ email })) }
+  });
+  await sign(["a@x.test"]);
+  await sign(["a@x.test", "b@x.test"]);
+  await sign(["a@x.test", "b@x.test"], ["cc@x.test"]);
+  await sign(["a@x.test", "b@x.test"], ["cc@x.test"]);
+  assert.equal(new Set(keys).size, 3, "署名者・CC が変われば別のキー、同じなら同じキー");
+  // 宛先の並びの無い送信（メール）は従来どおりのキー。
+  assert.equal(DispatchService.idempotencyKey({ channel: "gmail", targetType: "document", targetId: 6,
+    recipient: "acct@example.test", body: "本文" }).length, 64);
+});

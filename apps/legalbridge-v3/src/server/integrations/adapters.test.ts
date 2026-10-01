@@ -111,3 +111,35 @@ test("CloudSign：書類が無ければ送らない", async () => {
   await assert.rejects(
     () => adapter.send({ recipient: "a@example.com", body: "本文" }), /書類が必要/);
 });
+
+const cloudsignStub = (docOnRead: Record<string, unknown>) => {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const impl = (async (url: string, init: RequestInit = {}) => {
+    calls.push({ url: String(url), init });
+    const u = String(url);
+    const body = u.includes("/token") ? { access_token: "t" }
+      : /\/documents\/doc-1$/.test(u) && !init.method ? docOnRead
+      : u.endsWith("/documents") ? { id: "doc-1" } : {};
+    return { ok: true, json: async () => body } as unknown as Response;
+  }) as unknown as typeof fetch;
+  return { calls, impl };
+};
+const signRequest: DispatchRequest = {
+  recipient: "rep@example.com", subject: "s", body: "b", attachment: pdf("a.pdf"),
+  participants: [{ email: "rep@example.com", name: "代表" }], reportees: [{ email: "cc@arclight.co.jp" }]
+};
+
+test("CloudSign：作ったあと書類を読み戻し、宛先が入っていれば警告しない", async () => {
+  const { impl } = cloudsignStub({ participants: [{ email: "me@arclight.co.jp" }, { email: "REP@example.com" }],
+                                   reportees: [{ email: "cc@arclight.co.jp" }] });
+  const r = await new CloudSignAdapter("client", "https://cs.test", impl).send(signRequest);
+  assert.equal(r.warnings, undefined);
+  assert.deepEqual((r.raw as any).confirmed.participants, ["me@arclight.co.jp", "rep@example.com"]);
+});
+
+test("CloudSign：読み戻して宛先が入っていなければ、どの宛先かを警告する（下書きは残す）", async () => {
+  const { impl } = cloudsignStub({ participants: [{ email: "me@arclight.co.jp" }], reportees: [] });
+  const r = await new CloudSignAdapter("client", "https://cs.test", impl).send(signRequest);
+  assert.equal(r.draft, true);
+  assert.match(r.warnings![0], /rep@example\.com、cc:cc@arclight\.co\.jp/);
+});
