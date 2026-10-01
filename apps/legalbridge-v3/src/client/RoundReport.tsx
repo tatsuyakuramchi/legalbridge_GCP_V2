@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { BulkReport } from "./BulkReport.js";
 import type { LedgerCondition, LedgerEvent, LedgerView, Round, RoundPart } from "../server/royalty/ledger-service.js";
 
 /**
@@ -140,6 +141,13 @@ export function RoundReport(
   }, [lines, view]);
 
   const [editing, setEditing] = useState<string | null>(null);
+  /** 依頼文からまとめて入れる（時限式の回。締めはこの回のもの）。 */
+  const [bulk, setBulk] = useState(false);
+  const bulkTargets = round.parts.filter((p) => !p.skipped && p.scheduleId).flatMap((p) => {
+    const c = view.conditions.find((x) => x.id === p.conditionId);
+    return c && c.timing !== "event" && (c.usageType === "sublicense" || c.usageType === "oem")
+      ? [{ condition: c, scheduleId: p.scheduleId }] : [];
+  });
   const [draft, setDraft] = useState<Draft | null>(null);
   /** 決定した計算書に載った報告の例外修正（admin）。理由が要る。 */
   const [correcting, setCorrecting] = useState<{ key: string; reason: string } | null>(null);
@@ -267,9 +275,17 @@ export function RoundReport(
         <div className="report-actions">
           <button className="btn primary btn-big" onClick={() => setAdding({ mode: "report" })}>＋ 報告を追加</button>
           <button className="btn btn-big" onClick={() => setAdding({ mode: "plan" })}>＋ 予定を作る</button>
+          {round.kind !== "event" && bulkTargets.length > 0 && (
+            <button className="btn btn-big" onClick={() => setBulk(true)}>依頼文からまとめて入れる</button>
+          )}
           <span className="faint">報告を追加＝数字が来た。予定を作る＝まだ数字は無いが、この許諾先から来るはず（以後の回でも待つ）。</span>
           {firstWait && <span className="faint" style={{ marginLeft: "auto" }}>来るはずの行はもう並んでいます。まずは黄色の行へ。</span>}
         </div>
+      )}
+      {bulk && (
+        <BulkReport eventStyle={false} defaultDate={round.closeOn ?? new Date().toISOString().slice(0, 10)}
+                    targets={bulkTargets} onCancel={() => setBulk(false)}
+                    onDone={(m) => { setBulk(false); onChanged(m); }} onError={onError} />
       )}
       {adding && (
         <AddLine key={`${adding.mode}-${adding.conditionId ?? ""}`} mode={adding.mode} round={round} view={view}
