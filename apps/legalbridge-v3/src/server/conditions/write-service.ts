@@ -1,5 +1,6 @@
 import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { ConditionScheduleService, type ScheduleLine } from "./schedule-service.js";
 import { CONDITION_KINDS_BY_MATTER } from "../matters/link-service.js";
 import { recordAudit } from "../core/audit.js";
 import { ConditionRepository } from "./repository.js";
@@ -116,17 +117,47 @@ export interface LicenseSetResult {
   conditions: Array<{ usageType: ConditionUsageType; id: number; conditionNo: string | null }>;
 }
 
-/** 業務セット（業務委託）の1行。委託料・実費・手数料。 */
+/** 業務セット（業務委託）の1行。委託料・実費・手数料。1 行＝条件明細 1 本。 */
 export interface ServiceSetRow {
   kind: "service" | "expense" | "fee";
-  /** 空なら業務名から付ける（「◯◯ 実費」）。 */
+  /** 空なら業務名から付ける（「◯◯ 実費」）。委託料の行が複数なら必須（品目名）。 */
   name?: string | null;
   pricingModel?: "fixed" | "unit_rate";
   flatAmount?: number | null;
   unitAmount?: number | null;
   quantity?: number | null;
+  /** 数量の単位（式・P・個）。A-066 */
+  unitLabel?: string | null;
   spec?: string | null;
   notes?: string | null;
+  /** 行ごとの上書き。空なら束の既定。 */
+  deliveryDue?: string | null;
+  contractForm?: string | null;
+  deliverableOwnership?: "orderer" | "contractor" | null;
+  taxCategory?: "taxable" | "reduced" | "exempt" | "included" | null;
+}
+
+/**
+ * 帰属先が受注者の行があるときの利用許諾条件（当社が成果物を使うための IN 条件）。
+ * mode=none なら立てない（例外用。発注書に許諾条項が出ず、台帳からも見えない）。
+ */
+export interface ServiceLicenseInput {
+  mode: "separate" | "included" | "free" | "none";
+  workId?: number | null;
+  usageType?: ConditionUsageType | null;
+  ratePct?: number | null;
+  flatAmount?: number | null;
+  termStart?: string | null;
+  termEnd?: string | null;
+  scopes?: ConditionScope[];
+}
+
+/** 支払方法。定期払いは委託料の各条件に期ごとの予定明細を立てる。 */
+export interface ServicePaymentInput {
+  mode: "per_delivery" | "periodic" | "lump";
+  periodicFrom?: string | null;
+  periodicTo?: string | null;
+  everyMonths?: number | null;
 }
 export interface ServiceSetInput {
   matterId?: number | null;
@@ -143,6 +174,14 @@ export interface ServiceSetInput {
   contractForm?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
   rows: ServiceSetRow[];
+  license?: ServiceLicenseInput | null;
+  payment?: ServicePaymentInput | null;
+}
+export interface ServiceSetResult extends LicenseSetResult {
+  /** 帰属先＝受注者の行のために立てた（または既にあった）利用許諾条件。 */
+  licenseConditions: Array<{ id: number; conditionNo: string | null; existed: boolean }>;
+  /** 定期払いで立てた予定明細の数。 */
+  scheduled: number;
 }
 
 /**
@@ -232,6 +271,8 @@ export interface ConditionInput {
   unitAmount?: number | null;
   /** 個数。単価と組で持つ。単価×個数が定額の既定値になる。 */
   quantity?: number | null;
+  /** 数量の単位（式・P・個）。発注書の明細に出す（A-066）。 */
+  unitLabel?: string | null;
   flatAmount?: number | null;
   mgAmount?: number | null;
   agAmount?: number | null;
@@ -263,6 +304,7 @@ export interface ConditionInput {
 export interface EconomicsPatch {
   name?: string;
   ratePpm?: number | null;
+  unitLabel?: string | null;
   flatAmount?: number | null;
   unitAmount?: number | null;
   quantity?: number | null;
@@ -304,7 +346,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
   deliveryDue: "delivery_due",
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
-  quantity: "quantity", contractForm: "contract_form",
+  quantity: "quantity", unitLabel: "unit_label", contractForm: "contract_form",
   workId: "work_id", exclusivity: "exclusivity", sublicenseConsent: "sublicense_consent",
   licenseFeeBasis: "license_fee_basis",
   autoRenew: "auto_renew", renewMonths: "renew_months", renewStoppedOn: "renew_stopped_on",
@@ -320,7 +362,7 @@ const COPY_COLUMNS = [
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
-  "quantity", "contract_form", "auto_renew", "renew_months", "renew_stopped_on",
+  "quantity", "unit_label", "contract_form", "auto_renew", "renew_months", "renew_stopped_on",
   // 利用形態も版をまたいで引き継ぐ（落とすと改訂した許諾条件が形態なしになる）。
   "usage_type",
   // 計算書の出し方（A-059）。改訂しても時限式・イベント式は変わらない。
@@ -328,6 +370,31 @@ const COPY_COLUMNS = [
   // 対象の許諾先（A-063）。
   "target_party_id"
 ];
+
+/**
+ * 定期払いの予定明細。from から to まで every か月ごとに 1 回。回ごとの役務提供期間を持ち、
+ * 発生日はその期の末日。支払期日は支払条件から（schedule-service が導く）。
+ */
+export function periodicLines(from: string, to: string, everyMonths: number, amount: number, label: string): ScheduleLine[] {
+  const start = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const lines: ScheduleLine[] = [];
+  let seq = 1;
+  let cursor = new Date(start);
+  while (cursor <= end && lines.length < 120) {
+    const next = new Date(cursor); next.setUTCMonth(next.getUTCMonth() + everyMonths);
+    const periodEnd = new Date(next); periodEnd.setUTCDate(periodEnd.getUTCDate() - 1);
+    const serviceTo = periodEnd > end ? end : periodEnd;
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    lines.push({
+      seq, label: `${label} ${iso(cursor).slice(0, 7)}`, triggerKind: "periodic", plannedAmount: amount,
+      dueOn: iso(serviceTo), payOn: null, serviceFrom: iso(cursor), serviceTo: iso(serviceTo)
+    });
+    seq += 1; cursor = next;
+  }
+  return lines;
+}
 
 export class ConditionWriteService {
   private readonly repository: ConditionRepository;
@@ -559,13 +626,20 @@ export class ConditionWriteService {
    * 実費・手数料を足して N 本。同じトランザクションで作り、案件にも繋ぐ。
    * 発注書はこの組を1枚に載せる。
    */
-  async createServiceSet(input: ServiceSetInput, actor: string): Promise<LicenseSetResult> {
+  async createServiceSet(input: ServiceSetInput, actor: string): Promise<ServiceSetResult> {
     const title = String(input.title ?? "").trim();
     if (!title) throw new DomainError("VALIDATION", "業務名（委託料の条件名）は必須です");
     const rows = (input.rows ?? []).filter((r) => r && r.kind);
-    if (!rows.some((r) => r.kind === "service")) {
+    const serviceRows = rows.filter((r) => r.kind === "service");
+    if (!serviceRows.length) {
       throw new DomainError("VALIDATION", "委託料の行を1つ入れてください（実費・手数料だけの業務は作れません）");
     }
+    // 委託料の行が複数なら、行ごとに品目名が要る（全部が業務名だと見分けられない）。
+    if (serviceRows.length > 1 && serviceRows.some((r) => !String(r.name ?? "").trim())) {
+      throw new DomainError("VALIDATION", "委託料の行が複数あるときは、行ごとに品目名を入れてください");
+    }
+    const ownershipOf = (row: ServiceSetRow) =>
+      row.kind === "service" ? (row.deliverableOwnership ?? input.deliverableOwnership ?? null) : null;
     const inputs = rows.map((row): ConditionInput => {
       const pricing = row.pricingModel ?? "fixed";
       return {
@@ -579,31 +653,101 @@ export class ConditionWriteService {
         workId: input.workId ?? null,
         termStart: input.termStart ?? null,
         termEnd: input.termEnd ?? null,
+        // 納期は行ごと。無ければ束の終了日。
+        deliveryDue: row.deliveryDue ?? input.termEnd ?? null,
         currency: input.currency ?? "JPY",
         pricingModel: pricing,
         flatAmount: row.flatAmount ?? null,
         unitAmount: row.unitAmount ?? null,
         quantity: row.quantity ?? null,
+        unitLabel: row.unitLabel ?? null,
         // 経費は税込の実費で受けるので消費税を重ねない。
-        taxCategory: row.kind === "expense" ? "exempt" : (input.taxCategory ?? "taxable"),
+        taxCategory: row.kind === "expense" ? "exempt" : (row.taxCategory ?? input.taxCategory ?? "taxable"),
         paymentTerms: input.paymentTerms ?? null,
-        contractForm: row.kind === "service" ? (input.contractForm ?? null) : null,
+        contractForm: row.kind === "service" ? (row.contractForm ?? input.contractForm ?? null) : null,
         spec: row.spec ?? null,
-        deliverableOwnership: row.kind === "service" ? (input.deliverableOwnership ?? null) : null,
+        deliverableOwnership: ownershipOf(row),
         notes: row.notes ?? null
       };
     });
     for (const one of inputs) validateConditionInput(one);
+
+    // 帰属先＝受注者の行があれば、当社が使うための利用許諾条件（IN）を同じ作品×受注者に立てる。
+    const contractorRows = rows.filter((r) => ownershipOf(r) === "contractor");
+    const license = input.license ?? null;
+    let licenseInput: ConditionInput | null = null;
+    if (contractorRows.length && license && license.mode !== "none") {
+      const workId = license.workId ?? input.workId ?? null;
+      if (!workId) throw new DomainError("VALIDATION", "受注者帰属の成果物の利用許諾条件には作品が要ります（無ければ作品を登録するか、「条件を立てない」を選ぶ）");
+      const usageType: ConditionUsageType = license.usageType ?? "in_house";
+      const basis: LicenseFeeBasis = license.mode;
+      const ratePct = basis === "separate" ? license.ratePct ?? null : null;
+      const flat = basis === "separate" && ratePct == null ? license.flatAmount ?? null : null;
+      if (basis === "separate" && ratePct == null && flat == null) {
+        throw new DomainError("VALIDATION", "許諾料を別途にするなら、料率か定額を入れてください");
+      }
+      licenseInput = {
+        matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
+        counterpartyId: input.counterpartyId, agreementId: input.agreementId ?? null, workId,
+        usageType, licenseFeeBasis: basis,
+        pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",
+        ratePpm: ratePct != null ? Math.round(ratePct * 10000) : null,
+        flatAmount: flat, currency: input.currency ?? "JPY",
+        termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
+        exclusivity: "non_exclusive",
+        scopes: license.scopes?.length ? license.scopes : undefined,
+        notes: `業務委託（${title}）の成果物の利用許諾。許諾料の扱い：${
+          basis === "separate" ? "別途" : basis === "included" ? "委託報酬に含む" : "無償"}`
+      };
+      validateConditionInput(licenseInput);
+    }
+
+    let result: ServiceSetResult;
     try {
-      return await inTransaction(this.database, async (client) => {
-        const out: LicenseSetResult = { conditions: [] };
+      result = await inTransaction(this.database, async (client) => {
+        const out: ServiceSetResult = { conditions: [], licenseConditions: [], scheduled: 0 };
         for (const [index, one] of inputs.entries()) {
           const made = await this.createWithin(client, one, actor);
           out.conditions.push({ usageType: rows[index].kind as unknown as ConditionUsageType, ...made });
         }
+        if (licenseInput) {
+          const w = await client.query("SELECT title FROM works WHERE id = $1", [licenseInput.workId]);
+          const workTitle = (w.rows[0] as { title?: string } | undefined)?.title ?? null;
+          if (!workTitle) throw new DomainError("NOT_FOUND", `作品 ${licenseInput.workId} が見つかりません`);
+          licenseInput.name = conditionNameFor({ workTitle, usageType: licenseInput.usageType! }) ?? `${workTitle}｜利用許諾`;
+          // 同じ作品 × 受注者 × 利用形態の生きた条件があれば作らず、それを返す。
+          const existing = await client.query(
+            `SELECT id, condition_no FROM conditions
+              WHERE work_id = $1 AND counterparty_id = $2 AND direction = 'in' AND kind = 'license'
+                AND usage_type = $3 AND status IN ('active', 'scheduled') LIMIT 1`,
+            [licenseInput.workId, input.counterpartyId, licenseInput.usageType]);
+          const found = existing.rows[0] as { id: number; condition_no: string | null } | undefined;
+          if (found) out.licenseConditions.push({ id: Number(found.id), conditionNo: found.condition_no, existed: true });
+          else {
+            const made = await this.createWithin(client, licenseInput, actor);
+            out.licenseConditions.push({ ...made, existed: false });
+          }
+        }
         return out;
       });
     } catch (error) { throw translate(error); }
+
+    // 定期払い：委託料の各条件に期ごとの予定明細。条件はもうあるので、別のトランザクションでよい。
+    const payment = input.payment ?? null;
+    if (payment?.mode === "periodic" && payment.periodicFrom && payment.periodicTo) {
+      const every = Math.max(1, Math.trunc(Number(payment.everyMonths ?? 1) || 1));
+      const schedules = new ConditionScheduleService(this.database);
+      for (const [index, row] of rows.entries()) {
+        if (row.kind !== "service") continue;
+        const made = result.conditions[index];
+        const amount = Number(row.flatAmount ?? (Number(row.unitAmount ?? 0) * Number(row.quantity ?? 1))) || 0;
+        const lines = periodicLines(payment.periodicFrom, payment.periodicTo, every, amount, inputs[index].name);
+        if (!lines.length) continue;
+        await schedules.replace(made.id, lines, actor);
+        result.scheduled += lines.length;
+      }
+    }
+    return result;
   }
 
   /** 条件1本の INSERT。トランザクションは呼ぶ側が持つ（セット登録・文書の決定から使う）。 */
@@ -643,10 +787,10 @@ export class ConditionWriteService {
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type,
                                    auto_renew, renew_months, renew_stopped_on, license_fee_basis,
-                                   target_party_id, statement_timing)
+                                   target_party_id, statement_timing, unit_label)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
-                   $29, $30, $31, $32, $33, $34, $35, $36, $37)
+                   $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -661,7 +805,8 @@ export class ConditionWriteService {
            input.quantity ?? null, readContractForm(input.contractForm), input.usageType ?? null,
            input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null,
            input.licenseFeeBasis ?? "separate",
-           input.targetPartyId ?? null, input.statementTiming ?? null]);
+           input.targetPartyId ?? null, input.statementTiming ?? null,
+           String(input.unitLabel ?? "").trim() || null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

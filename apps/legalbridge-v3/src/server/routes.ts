@@ -1640,14 +1640,44 @@ export function createRoutes(database: Transactable) {
       flatAmount: z.coerce.number().int().min(0).nullable().optional(),
       unitAmount: z.coerce.number().int().min(0).nullable().optional(),
       quantity: z.coerce.number().nullable().optional(),
+      unitLabel: z.string().trim().max(20).nullable().optional(),
       spec: z.string().trim().max(4000).nullable().optional(),
-      notes: z.string().trim().max(2000).nullable().optional()
-    })).min(1).max(20)
+      notes: z.string().trim().max(2000).nullable().optional(),
+      deliveryDue: z.string().date().nullable().optional(),
+      contractForm: z.string().trim().max(60).nullable().optional(),
+      deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
+      taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional()
+    })).min(1).max(60),
+    license: z.object({
+      mode: z.enum(["separate", "included", "free", "none"]),
+      workId: z.coerce.number().int().positive().nullable().optional(),
+      usageType: z.enum(
+        CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]).nullable().optional(),
+      ratePct: z.coerce.number().min(0).max(100).nullable().optional(),
+      flatAmount: z.coerce.number().int().min(0).nullable().optional(),
+      termStart: z.string().date().nullable().optional(),
+      termEnd: z.string().date().nullable().optional(),
+      scopes: z.array(z.object({
+        scopeType: z.enum(["region", "language"]), label: z.string().trim().min(1).max(100),
+        code: z.string().trim().max(20).nullable().optional()
+      })).max(100).optional()
+    }).nullable().optional(),
+    payment: z.object({
+      mode: z.enum(["per_delivery", "periodic", "lump"]),
+      periodicFrom: z.string().date().nullable().optional(),
+      periodicTo: z.string().date().nullable().optional(),
+      everyMonths: z.coerce.number().int().min(1).max(24).nullable().optional()
+    }).nullable().optional()
   });
   router.post("/conditions/service-set", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      res.status(201).json(await conditionWrites.createServiceSet(
-        serviceSetSchema.parse(req.body ?? {}), actor(res)));
+      const input = serviceSetSchema.parse(req.body ?? {});
+      res.status(201).json(await conditionWrites.createServiceSet({
+        ...input,
+        license: input.license
+          ? { ...input.license, scopes: input.license.scopes?.map((s) => ({ ...s, code: s.code ?? null })) }
+          : null
+      }, actor(res)));
     }));
 
   router.post("/conditions/license-set", requireRole("admin", "legal"), requireWritable,

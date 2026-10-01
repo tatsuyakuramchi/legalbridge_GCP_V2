@@ -10,7 +10,7 @@ import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { ConditionLabel } from "./ConditionLabel.js";
-import { ServiceSetForm } from "./ServiceSetForm.js";
+import { ServiceLinesForm } from "./ServiceLinesForm.js";
 import { money } from "./api.js";
 
 /**
@@ -178,7 +178,7 @@ export function MatterConditions(
               <button className="btn btn-sm primary"
                       title="委託料に実費・手数料を組にして1回で登録する。発注書はこの組を1枚に載せる"
                       onClick={() => { setMade(null); setMaking("service"); }}>
-                業務セットを登録（委託料＋実費＋手数料）
+                業務委託の明細を登録（委託料＋実費＋手数料）
               </button>
             )}
             <button className={`btn btn-sm${outsourcing ? "" : " primary"}`} disabled={licensing && !work}
@@ -220,7 +220,7 @@ export function MatterConditions(
       )}
 
       {making === "service" && (
-        <ServiceSetForm
+        <ServiceLinesForm
           counterpartyName={detail.counterparty?.name ?? last?.counterparty?.name ?? null}
           preset={{
             matterId: String(detail.id),
@@ -452,7 +452,7 @@ export function MatterConditions(
       ) : !detail.conditions.length ? (
         <div className="faint">
           まだ条件が繋がっていません。
-          {outsourcing ? "「業務セットを登録」で委託料・実費・手数料を組で作るか、" : "「条件を繋ぐ」から選ぶか、"}
+          {outsourcing ? "「業務委託の明細を登録」で委託料・実費・手数料を行で作るか、" : "「条件を繋ぐ」から選ぶか、"}
           条件の画面で作ってください。
         </div>
       ) : null}

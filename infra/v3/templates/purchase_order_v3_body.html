@@ -208,7 +208,7 @@
         {{#if category}}<span class="tag">{{category}}</span>{{/if}}
         <strong style="font-size:10pt;">{{item_name}}</strong>
       </td>
-      <td class="right">{{or quantity qty}}</td>
+      <td class="right">{{or quantity qty}}{{#if unit}} {{unit}}{{/if}}</td>
       <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}{{formatYen (or unit_price unitPrice)}}{{else}}<span style="color:#888;">-</span>{{/if}}{{else}}{{formatYen (or unit_price unitPrice)}}{{/if}}</td>
       <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong><div class="incl-note">{{or reward_label "執筆料"}}（{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}は別途）</div>{{else}}<div class="incl-note">報酬は<br>{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}に含む</div>{{/if}}{{else}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong>{{/if}}</td>
     </tr>

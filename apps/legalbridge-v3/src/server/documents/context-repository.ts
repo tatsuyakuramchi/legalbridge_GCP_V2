@@ -526,6 +526,8 @@ export class DocumentContextRepository {
           ? null : Number(row.rate_ppm) / 10000,
         unitAmount: toMajor(int(row.unit_amount), currency),
         quantity: num(row.quantity),
+        /** 数量の単位（式・P・個）。A-066 */
+        unitLabel: str(row.unit_label),
         flatAmount: toMajor(int(row.flat_amount), currency),
         mgAmount: toMajor(int(row.mg_amount), currency),
         agAmount: toMajor(int(row.ag_amount), currency),

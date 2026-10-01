@@ -2344,6 +2344,14 @@ CREATE TABLE IF NOT EXISTS v3.document_pdfs (
 COMMENT ON TABLE v3.document_pdfs IS '決定した文書の PDF の作り置き。本文は rendered_values とひな形の版で固定なので、1 度描けば変わらない。A-065';
 GRANT SELECT, INSERT, UPDATE, DELETE ON v3.document_pdfs TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-066 業務委託の明細（1 行＝条件明細 1 本）の「単位」
+--   見積書の行（式・P・個）をそのまま条件明細にする。数量・単価は既にあり、
+--   単位だけ置き場が無かった。発注書・検収書の数量の後ろに出す。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS unit_label text;
+COMMENT ON COLUMN v3.conditions.unit_label IS '数量の単位（式・P・個 など）。発注書の明細に出す。A-066';
+
 COMMIT;
 
 -- 確認
@@ -2672,6 +2680,8 @@ SELECT count(*) AS 表 FROM information_schema.tables
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='conditions' AND column_name='target_party_id';
 
+\echo '--- 明細の単位（A-066。列 1 であること） ---'
+SELECT count(*) AS 列 FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions' AND column_name='unit_label';
 \echo '--- PDF の作り置き（A-065。表 1 であること） ---'
 SELECT count(*) AS 表 FROM information_schema.tables WHERE table_schema='v3' AND table_name='document_pdfs';
 \echo '--- デイリータスク（A-064。列 5・CHECK 2 で 7 であること） ---'

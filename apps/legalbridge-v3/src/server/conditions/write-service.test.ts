@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ConditionWriteService } from "./write-service.js";
+import { ConditionWriteService, periodicLines } from "./write-service.js";
 import { DomainError } from "../core/errors.js";
 
 const baseRows = (
@@ -184,7 +184,7 @@ test("改訂は系列を引き継ぐ", async () => {
 
 test("作品と独占性も編集で直せる。無い作品は断る", async () => {
   const rows = baseRows({ events: 0 });
-  const db = new FakeDatabase((t, params) => {
+  const db: FakeDatabase = new FakeDatabase((t, params) => {
     if (t.includes("SELECT id FROM works WHERE id")) return params[0] === 9 ? [{ id: 9 }] : [];
     return rows(t);
   });
@@ -308,4 +308,60 @@ test("許諾セット：定額の行は flat_amount・計算方式 fixed で、�
   assert.equal(fixed[22], "計算書送付後30日以内");
   await assert.rejects(() => svc.createLicenseSet({ counterpartyId: 3, workId: 5,
     rows: [{ usageType: "in_house", ratePct: 0, pricingModel: "fixed", flatAmount: null }] }, "a"), /定額の金額/);
+});
+
+test("業務委託の明細：1 行＝条件 1 本。行の納期・契約形式・帰属・単位が条件に入り、受注者帰属なら利用許諾条件も立つ", async () => {
+  const db: FakeDatabase = new FakeDatabase((t, params) => {
+    if (t.includes("FROM parties WHERE id = $1")) return [{ id: 3, name: "ブエノデザイン" }];
+    if (t.includes("SELECT title FROM works")) return [{ title: "J-TAG" }];
+    if (t.includes("FROM works WHERE id")) return [{ id: 5, title: "J-TAG" }];
+    if (t.includes("current_value")) return [{ current_value: 1 }];
+    if (t.includes("INSERT INTO conditions")) return [{ id: 10 + db.all("INSERT INTO conditions").length, condition_no: "CL-x" }];
+    if (t.includes("usage_type = $3 AND status IN")) return [];
+    return [];
+  });
+  const svc = new ConditionWriteService(db);
+  const r = await svc.createServiceSet({
+    title: "J-TAG Web サイト制作", counterpartyId: 3, workId: 5, contractForm: "請負", deliverableOwnership: "orderer",
+    paymentTerms: "検収後 月末締め翌月末払い",
+    rows: [
+      { kind: "service", name: "TOP デザイン", pricingModel: "unit_rate", unitAmount: 150000, quantity: 1, unitLabel: "式", deliveryDue: "2026-11-14" },
+      { kind: "service", name: "A1 パネル", pricingModel: "unit_rate", unitAmount: 70000, quantity: 1, unitLabel: "式",
+        deliveryDue: "2026-12-05", contractForm: "準委任", deliverableOwnership: "contractor" },
+      { kind: "expense", name: "交通費", pricingModel: "fixed", flatAmount: 5000 }
+    ],
+    license: { mode: "included", usageType: "in_house" },
+    payment: { mode: "per_delivery" }
+  }, "a");
+  const inserts = db.all("INSERT INTO conditions");
+  assert.equal(inserts.length, 4, "委託料 2 本＋実費 1 本＋利用許諾 1 本");
+  const [top, panel, expense, license] = inserts.map((q) => q.params);
+  assert.equal(top[4], "TOP デザイン"); assert.equal(top[13], "2026-11-14", "納期は行ごと（delivery_due）");
+  assert.equal(top[37], "式", "単位");
+  assert.equal(panel[29], "準委任", "行の契約形式が既定に勝つ"); assert.equal(panel[26], "contractor");
+  assert.equal(expense[21], "exempt", "実費は非課税");
+  assert.equal(license[3], "license"); assert.equal(license[4], "J-TAG｜自社製造・自社販売");
+  assert.equal(license[34], "included", "許諾料は委託報酬に含む");
+  assert.equal(license[15], "none", "含むなら計算なし");
+  assert.equal(r.licenseConditions.length, 1); assert.equal(r.licenseConditions[0].existed, false);
+});
+
+test("業務委託の明細：委託料の行が複数なら品目名が要る。受注者帰属で作品が無ければ止める", async () => {
+  const svc = new ConditionWriteService(new FakeDatabase(() => []));
+  await assert.rejects(() => svc.createServiceSet({ title: "x", counterpartyId: 3,
+    rows: [{ kind: "service", flatAmount: 1 }, { kind: "service", flatAmount: 2 }] }, "a"), /行ごとに品目名/);
+  await assert.rejects(() => svc.createServiceSet({ title: "x", counterpartyId: 3, deliverableOwnership: "contractor",
+    rows: [{ kind: "service", flatAmount: 1 }], license: { mode: "included" } }, "a"), /作品が要ります/);
+  await assert.rejects(() => svc.createServiceSet({ title: "x", counterpartyId: 3, workId: 5, deliverableOwnership: "contractor",
+    rows: [{ kind: "service", flatAmount: 1 }], license: { mode: "separate" } }, "a"), /料率か定額/);
+});
+
+test("定期払いの予定明細：from〜to を every か月ごとに 1 回、期の末日が発生日", () => {
+  const lines = periodicLines("2026-11-01", "2027-01-31", 1, 20000, "サーバー管理");
+  assert.equal(lines.length, 3);
+  assert.deepEqual(lines.map((l) => [l.serviceFrom, l.serviceTo, l.dueOn]),
+    [["2026-11-01", "2026-11-30", "2026-11-30"], ["2026-12-01", "2026-12-31", "2026-12-31"], ["2027-01-01", "2027-01-31", "2027-01-31"]]);
+  assert.equal(lines[0].triggerKind, "periodic"); assert.equal(lines[0].plannedAmount, 20000);
+  assert.equal(lines[0].label, "サーバー管理 2026-11");
+  assert.equal(periodicLines("2027-01-01", "2026-01-01", 1, 1, "x").length, 0);
 });

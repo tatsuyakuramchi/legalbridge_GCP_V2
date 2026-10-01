@@ -329,7 +329,7 @@ $q$;
         {{#if category}}<span class="tag">{{category}}</span>{{/if}}
         <strong style="font-size:10pt;">{{item_name}}</strong>
       </td>
-      <td class="right">{{or quantity qty}}</td>
+      <td class="right">{{or quantity qty}}{{#if unit}} {{unit}}{{/if}}</td>
       <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}{{formatMoney (or unit_price unitPrice)}}{{else}}<span style="color:#888;">-</span>{{/if}}{{else}}{{formatMoney (or unit_price unitPrice)}}{{/if}}</td>
       <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}<strong>{{formatMoney (or amount_ex_tax amount)}}</strong><div class="incl-note">{{or reward_label "Fee"}} ({{#if (eq deliverable_ownership "受注者")}}license fee{{else}}incentive fee{{/if}} separately)</div>{{else}}<div class="incl-note">Fee included in the<br>{{#if (eq deliverable_ownership "受注者")}}license fee{{else}}incentive fee{{/if}}</div>{{/if}}{{else}}<strong>{{formatMoney (or amount_ex_tax amount)}}</strong>{{/if}}</td>
     </tr>
