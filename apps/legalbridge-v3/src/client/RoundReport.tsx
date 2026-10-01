@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { BulkReport } from "./BulkReport.js";
+import { loadStageNote, saveStageNote, STAGE_LABEL, STAGE_NOTE_PLACEHOLDER, type Stage } from "./stage-notes.js";
 import type { LedgerCondition, LedgerEvent, LedgerView, Round, RoundPart } from "../server/royalty/ledger-service.js";
 
 /**
@@ -38,6 +39,8 @@ interface Line {
 interface Draft { quantity: string; unit: string; gross: string; taxIncluded: boolean; on: string; note: string;
                   /** 自社製造・他社販売の算定の形。per_unit＝受領価格×製造個数／lump＝受領額×料率（為替で個数建てにできない取引）。 */
                   basis?: "per_unit" | "lump";
+                  /** 前金・後金。説明は note（計算書の備考に出る）。 */
+                  stage?: Stage;
                   /** 例外修正で直す言語・地域（「・」区切り）。 */
                   languages?: string; regions?: string }
 const splitScope = (s: string | undefined) => String(s ?? "").split(/[・,、\s]+/).map((x) => x.trim()).filter(Boolean);
@@ -69,6 +72,41 @@ function BasisSelect({ draft, setDraft }: { draft: Draft; setDraft: (d: Draft) =
       <option value="per_unit">受領価格 × 製造個数</option>
       <option value="lump">受領額 × 料率</option>
     </select>
+  );
+}
+
+/** 前金・後金と、その説明（計算書の備考）。再許諾・自社製造・他社販売だけ。 */
+function StageFields({ draft, setDraft }: { draft: Draft; setDraft: (d: Draft) => void }) {
+  const stage = draft.stage ?? "";
+  return (
+    <span className="stack" style={{ gap: 3, alignItems: "stretch", minWidth: 200 }}>
+      <select className="inline-input" aria-label="前金・後金" value={stage}
+              onChange={(e) => { const next = e.target.value as Stage;
+                setDraft({ ...draft, stage: next, note: next ? (draft.note && draft.stage === next ? draft.note : loadStageNote(next)) : "" }); }}>
+        <option value="">前金・後金に分けない</option>
+        <option value="advance">前金</option>
+        <option value="balance">後金</option>
+      </select>
+      {stage && (
+        <input className="inline-input" value={draft.note} aria-label={`${STAGE_LABEL[stage]}の説明`}
+               placeholder={STAGE_NOTE_PLACEHOLDER[stage]} title="計算書の備考に出ます"
+               onChange={(e) => setDraft({ ...draft, note: e.target.value })} />
+      )}
+    </span>
+  );
+}
+
+/** 報告済の行に、入金区分と税込・税抜を出す（あとから見て分かるように）。 */
+function EventTags({ e, usage }: { e: LedgerEvent; usage: string | null }) {
+  if (usage !== "sublicense" && usage !== "oem") return null;
+  return (
+    <span className="row" style={{ gap: 4, justifyContent: "flex-end", flexWrap: "wrap" }}>
+      {e.paymentStage === "advance" || e.paymentStage === "balance"
+        ? <span className="tag">{STAGE_LABEL[e.paymentStage]}</span> : null}
+      {e.grossAmount !== null && (e.taxIncluded
+        ? <span className="tag warn" title="税込で入れた受領額を 1.1 で割り戻して算定">税込→割戻</span>
+        : <span className="tag" title="税抜の受領額として算定">税抜</span>)}
+    </span>
   );
 }
 
@@ -168,18 +206,20 @@ export function RoundReport(
       .filter((e) => e.conditionId === l.condition.id).slice(-1)[0] : null;
     const basis: Draft["basis"] = lastOem && lastOem.grossAmount && !lastOem.unitAmount ? "lump" : "per_unit";
     setDraft({ quantity: "", unit: basis === "lump" ? "" : String(l.condition.unitAmount ?? lastUnit ?? ""), gross: "", taxIncluded: false,
-               on: l.part.closeOn ?? new Date().toISOString().slice(0, 10), note: "", basis });
+               on: l.part.closeOn ?? new Date().toISOString().slice(0, 10), note: "", basis, stage: "" });
     setEditing(l.key);
   }
 
   function startCorrect(l: Line) {
     const e = l.event!;
     setDraft({ quantity: e.quantity === null ? "" : String(e.quantity), unit: e.unitAmount ? String(e.unitAmount) : "",
-               gross: e.grossAmount === null ? "" : String(e.grossAmount), taxIncluded: false,
-               on: e.occurredOn ?? "", note: "",
+               gross: e.grossAmount === null ? "" : String(e.grossAmount), taxIncluded: Boolean(e.taxIncluded),
+               on: e.occurredOn ?? "", note: e.note ?? "",
+               stage: e.paymentStage === "advance" || e.paymentStage === "balance" ? e.paymentStage : "",
                basis: e.grossAmount && !e.unitAmount ? "lump" : "per_unit",
                languages: (e.languages ?? []).join("・"), regions: (e.regions ?? []).join("・") });
-    setCorrecting({ key: l.key, reason: "" }); setEditing(l.key);
+    // 計算書に載っていない報告は「入力の直し」。載った報告は理由を書かせる（監査に残る・訂正版を出す）。
+    setCorrecting({ key: l.key, reason: e.documentId ? "" : "入力の直し" }); setEditing(l.key);
     // 許諾先の許諾言語・地域を候補に出す（範囲の外は記録で弾かれる）。
     if (l.outConditionId) {
       const usage = l.condition.usageType === "oem" ? "oem" : "sublicense";
@@ -202,8 +242,13 @@ export function RoundReport(
         ...(f.unit ? { unitAmount: numOf(draft.unit) || null } : {}),
         ...(f.gross ? { grossAmount: numOf(draft.gross) || null } : {}),
         occurredOn: draft.on || null,
-        languages: splitScope(draft.languages), regions: splitScope(draft.regions)
+        languages: splitScope(draft.languages), regions: splitScope(draft.regions),
+        ...(f.tax ? { taxIncluded: draft.taxIncluded } : {}),
+        ...(usage === "sublicense" || usage === "oem"
+          ? { paymentStage: draft.stage || null, note: draft.stage ? (draft.note.trim() || null) : (l.event.paymentStage ? null : undefined) }
+          : {})
       });
+      if (draft.stage) saveStageNote(draft.stage, draft.note);
       const reason = correcting.reason.trim();
       setEditing(null); setDraft(null); setCorrecting(null);
       if (r.documentId && onReissue) onReissue(r.documentId, reason);
@@ -234,9 +279,11 @@ export function RoundReport(
         usageType: usage,
         outConditionId: usage === "in_house" ? null : l.outConditionId,
         languages: l.languages, regions: l.regions,
+        paymentStage: (usage === "sublicense" || usage === "oem") && draft.stage ? draft.stage : null,
         note: draft.note.trim() || null
       });
       setEditing(null); setDraft(null);
+      if (draft.stage) saveStageNote(draft.stage, draft.note);
       onChanged("報告を入れました");
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -364,10 +411,11 @@ export function RoundReport(
                                              onChange={(e) => setDraft({ ...draft, gross: e.target.value })} />}
                           {f.tax && <label className="ledger-check"><input type="checkbox" checked={draft.taxIncluded}
                                               onChange={(e) => setDraft({ ...draft, taxIncluded: e.target.checked })} /> 税込</label>}
+                          {(usage === "sublicense" || usage === "oem") && <StageFields draft={draft} setDraft={setDraft} />}
                         </span>
                       </td>
                       <td><input className="inline-input" type="date" value={draft.on} aria-label="発生日" onChange={(e) => setDraft({ ...draft, on: e.target.value })} /></td>
-                      <td><span className="tag accent">{correcting ? "例外修正" : "入力中"}</span></td>
+                      <td><span className="tag accent">{correcting ? (l.event?.documentId ? "例外修正" : "直し中") : "入力中"}</span></td>
                       <td>
                         {correcting?.key === l.key ? (
                           <span className="stack" style={{ gap: 4 }}>
@@ -375,11 +423,13 @@ export function RoundReport(
                                    value={correcting.reason} onChange={(e) => setCorrecting({ key: l.key, reason: e.target.value })} />
                             <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
                               <button className="btn btn-sm primary" disabled={busy || !correcting.reason.trim()} onClick={() => void correct(l)}>
-                                直して訂正版を出す
+                                {l.event?.documentId ? "直して訂正版を出す" : "直す"}
                               </button>
                               <button className="btn btn-sm" disabled={busy} onClick={() => { setEditing(null); setDraft(null); setCorrecting(null); }}>やめる</button>
                             </span>
-                            <span className="faint">許諾料は料率で計算し直します。決定すると元の計算書 {l.event?.documentNo ?? ""} は「訂正版あり」に退きます。</span>
+                            <span className="faint">{l.event?.documentId
+                              ? `許諾料は料率で計算し直します。決定すると元の計算書 ${l.event?.documentNo ?? ""} は「訂正版あり」に退きます。`
+                              : "許諾料は料率で計算し直します（税込→割戻、前金・後金の付け直しも）。"}</span>
                           </span>
                         ) : (
                           <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
@@ -397,7 +447,8 @@ export function RoundReport(
                           ? <>{l.event.unitAmount
                                 ? <span className="faint">{yen(l.event.unitAmount, c.currency)} × {l.event.quantity?.toLocaleString() ?? "—"} = </span> : ""}
                               {l.event.grossAmount !== null ? yen(l.event.grossAmount, c.currency) : ""}
-                              <div className="faint">許諾料 {yen(l.event.amount, c.currency)}</div></>
+                              <div className="faint">許諾料 {yen(l.event.amount, c.currency)}</div>
+                              <EventTags e={l.event} usage={usage} /></>
                           : <span className="faint">—</span>}
                       </td>
                       <td className="code">{l.event?.occurredOn ?? <span className="faint">—</span>}</td>
@@ -407,6 +458,9 @@ export function RoundReport(
                           {l.event?.documentId && (onOpenDocument
                             ? <button className="linky code" onClick={() => onOpenDocument(l.event!.documentId!)}>{l.event.documentNo ?? `#${l.event.documentId}`}</button>
                             : <span className="code">{l.event.documentNo ?? `#${l.event.documentId}`}</span>)}
+                          {canWrite && l.event && !l.event.documentId && (
+                            <button className="btn btn-sm" disabled={busy || editing !== null} onClick={() => startCorrect(l)}>直す</button>
+                          )}
                           {canWrite && l.event && !l.event.documentId && (
                             <button className="btn btn-sm" disabled={busy} onClick={() => void voidEvent(l.event!)}>取り消す</button>
                           )}
@@ -588,9 +642,11 @@ export function ReportAdd(
         grossAmount: gross || null, amount: u ? 0 : (gross ?? 0),
         taxIncluded: f.tax ? draft.taxIncluded : null,
         usageType: u, outConditionId: usage ? Number(outId) || null : null,
+        paymentStage: usage && draft.stage ? draft.stage : null,
         languages: language ? [language] : [], regions,
         note: draft.note.trim() || null
       });
+      if (draft.stage) saveStageNote(draft.stage, draft.note);
       onAdded(eventStyle ? `${draft.on} 製造の回に報告を足しました` : "報告を足しました", draft.on);
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -656,6 +712,7 @@ export function ReportAdd(
       ) : (
       <div className="row" style={{ gap: 8 }}>
         {usage === "oem" && <BasisSelect draft={draft} setDraft={setDraft} />}
+        {usage && <StageFields draft={draft} setDraft={setDraft} />}
         {f.quantity && <input className="inline-input num" style={{ width: 90 }} placeholder="数量" aria-label="数量" value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />}
         {f.unit && <input className="inline-input num" style={{ width: 110 }} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価" value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
         {f.gross && <input className="inline-input num" style={{ width: 130 }} placeholder={f.grossLabel} aria-label={f.grossLabel} value={draft.gross} onChange={(e) => setDraft({ ...draft, gross: e.target.value })} />}

@@ -183,8 +183,12 @@ const AMENDABLE = {
   languages: { column: "scope_languages", kind: "list", money: false },
   regions: { column: "scope_regions", kind: "list", money: false },
   followUpDueOn: { column: "follow_up_due_on", kind: "date", money: false },
+  // 受領額が税込か（割り戻すか）。許諾料が変わるので金額の欄と同じ扱い。
+  taxIncluded: { column: "tax_included", kind: "bool", money: true },
+  // 前金・後金（入金区分）。計算書の方式名と備考の説明が変わる。
+  paymentStage: { column: "payment_stage", kind: "text", money: false },
   note: { column: "note", kind: "text", money: false }
-} as const satisfies Record<string, { column: string; kind: "int" | "num" | "date" | "text" | "list"; money: boolean }>;
+} as const satisfies Record<string, { column: string; kind: "int" | "num" | "date" | "text" | "list" | "bool"; money: boolean }>;
 
 /** 言語・地域の並び。空・重複を落とし、無ければ null（指定なし）。 */
 export function scopeList(v: unknown): string[] | null {
@@ -220,8 +224,9 @@ async function assertEventScope(client: Queryable, outConditionId: number | null
 }
 
 /** 直す値を列の型に寄せる。空文字は「空にする」。 */
-function readAmend(kind: "int" | "num" | "date" | "text" | "list", value: unknown): unknown {
+function readAmend(kind: "int" | "num" | "date" | "text" | "list" | "bool", value: unknown): unknown {
   if (value === null) return null;
+  if (kind === "bool") return value === true || value === "true" || value === 1 || value === "1";
   if (kind === "list") {
     const list = scopeList(value) ?? [];
     return list.length ? list : null;
@@ -578,6 +583,7 @@ export class ConditionEventService {
           const { column, kind } = AMENDABLE[key];
           const next = readAmend(kind, patch[key]);
           const now = kind === "date" ? dateStr(row[column])
+            : kind === "bool" ? (row[column] === null || row[column] === undefined ? null : Boolean(row[column]))
             : kind === "text" ? str(row[column])
             : kind === "list" ? (Array.isArray(row[column]) && row[column].length ? row[column].map(String) : null)
               : num(row[column]);
@@ -585,7 +591,7 @@ export class ConditionEventService {
           before[key] = now;
           after[key] = next;
           params.push(next);
-          sets.push(`${column} = $${params.length}${kind === "date" ? "::date" : kind === "list" ? "::text[]" : ""}`);
+          sets.push(`${column} = $${params.length}${kind === "date" ? "::date" : kind === "list" ? "::text[]" : kind === "bool" ? "::boolean" : ""}`);
         }
         if (!sets.length) return { eventId, changed: [] as string[] };
         // 言語・地域を直すなら、許諾先の許諾範囲の中であること（記録のときと同じ検査）。
