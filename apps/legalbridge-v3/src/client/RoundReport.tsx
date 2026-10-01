@@ -35,19 +35,40 @@ interface Line {
 
 /** 行に打つ数字。利用形態で使う欄が違う。 */
 interface Draft { quantity: string; unit: string; gross: string; taxIncluded: boolean; on: string; note: string;
+                  /** 自社製造・他社販売の算定の形。per_unit＝受領価格×製造個数／lump＝受領額×料率（為替で個数建てにできない取引）。 */
+                  basis?: "per_unit" | "lump";
                   /** 例外修正で直す言語・地域（「・」区切り）。 */
                   languages?: string; regions?: string }
 const splitScope = (s: string | undefined) => String(s ?? "").split(/[・,、\s]+/).map((x) => x.trim()).filter(Boolean);
 
 /** 利用形態ごとに、どの欄を使うか。 */
-function fieldsFor(usage: string | null, pricingModel: string) {
+function fieldsFor(usage: string | null, pricingModel: string, basis: "per_unit" | "lump" = "per_unit") {
   if (usage === "sublicense") return { quantity: false, unit: false, gross: true, tax: true, grossLabel: "受領額" };
-  if (usage === "oem") return { quantity: true, unit: true, gross: true, tax: true, grossLabel: "受領額（数量×単価の代わり）" };
+  // 自社製造・他社販売は契約により「受領価格 × 製造個数」か「受領額 × 料率」。
+  // 両方入れた行はサーバが断るので、選んだ形の欄だけ出す。
+  if (usage === "oem") {
+    return basis === "lump"
+      ? { quantity: false, unit: false, gross: true, tax: true, grossLabel: "受領額" }
+      : { quantity: true, unit: true, gross: false, tax: true, grossLabel: "" };
+  }
   if (usage === "in_house") return { quantity: true, unit: true, gross: false, tax: false, grossLabel: "" };
   // 利用形態なし（出版など）。料率なら報告額、単価なら数量。
   return pricingModel === "unit_rate"
     ? { quantity: true, unit: false, gross: false, tax: false, grossLabel: "" }
     : { quantity: true, unit: false, gross: true, tax: false, grossLabel: "報告額（売上）" };
+}
+
+/** 自社製造・他社販売の「算定の形」。受領額×料率を選べる（為替の都合で個数建てにできない取引）。 */
+function BasisSelect({ draft, setDraft }: { draft: Draft; setDraft: (d: Draft) => void }) {
+  return (
+    <select className="inline-input" aria-label="算定の形" value={draft.basis ?? "per_unit"}
+            onChange={(e) => setDraft({ ...draft, basis: e.target.value as "per_unit" | "lump",
+                                        // 形を変えたら前の形の数字を消す（両方入った行は保存できない）。
+                                        quantity: "", unit: "", gross: "" })}>
+      <option value="per_unit">受領価格 × 製造個数</option>
+      <option value="lump">受領額 × 料率</option>
+    </select>
+  );
 }
 
 export function eventTypeFor(usage: string | null, condition: LedgerCondition): string {
@@ -130,9 +151,13 @@ export function RoundReport(
     // 基準価格は条件が持っていればそれ、無ければ前に打った実績のもの。
     const lastUnit = view.rounds.concat(view.history).flatMap((r) => r.parts).flatMap((p) => p.events)
       .filter((e) => e.conditionId === l.condition.id && e.unitAmount).slice(-1)[0]?.unitAmount ?? null;
-    setDraft({ quantity: "", unit: String(l.condition.unitAmount ?? lastUnit ?? ""), gross: "", taxIncluded: false,
-               on: l.part.closeOn ?? new Date().toISOString().slice(0, 10), note: "" });
-    setEditing(l.key); void usage;
+    // 自社製造・他社販売：前回の報告が受領額建てなら今回もそれで出す。
+    const lastOem = usage === "oem" ? view.rounds.concat(view.history).flatMap((r) => r.parts).flatMap((p) => p.events)
+      .filter((e) => e.conditionId === l.condition.id).slice(-1)[0] : null;
+    const basis: Draft["basis"] = lastOem && lastOem.grossAmount && !lastOem.unitAmount ? "lump" : "per_unit";
+    setDraft({ quantity: "", unit: basis === "lump" ? "" : String(l.condition.unitAmount ?? lastUnit ?? ""), gross: "", taxIncluded: false,
+               on: l.part.closeOn ?? new Date().toISOString().slice(0, 10), note: "", basis });
+    setEditing(l.key);
   }
 
   function startCorrect(l: Line) {
@@ -140,6 +165,7 @@ export function RoundReport(
     setDraft({ quantity: e.quantity === null ? "" : String(e.quantity), unit: e.unitAmount ? String(e.unitAmount) : "",
                gross: e.grossAmount === null ? "" : String(e.grossAmount), taxIncluded: false,
                on: e.occurredOn ?? "", note: "",
+               basis: e.grossAmount && !e.unitAmount ? "lump" : "per_unit",
                languages: (e.languages ?? []).join("・"), regions: (e.regions ?? []).join("・") });
     setCorrecting({ key: l.key, reason: "" }); setEditing(l.key);
     // 許諾先の許諾言語・地域を候補に出す（範囲の外は記録で弾かれる）。
@@ -154,7 +180,7 @@ export function RoundReport(
     if (!draft || !correcting || !l.event) return;
     const c = l.condition;
     const usage = c.usageType && ["in_house", "sublicense", "oem"].includes(c.usageType) ? c.usageType : null;
-    const f = fieldsFor(usage, c.pricingModel);
+    const f = fieldsFor(usage, c.pricingModel, draft.basis);
     if (!correcting.reason.trim()) { onError("修正の理由を書いてください（監査に残ります）"); return; }
     setBusy(true);
     try {
@@ -177,7 +203,7 @@ export function RoundReport(
     if (!draft) return;
     const c = l.condition;
     const usage = c.usageType && ["in_house", "sublicense", "oem"].includes(c.usageType) ? c.usageType : null;
-    const f = fieldsFor(usage, c.pricingModel);
+    const f = fieldsFor(usage, c.pricingModel, draft.basis);
     const quantity = f.quantity ? numOf(draft.quantity) : null;
     const gross = f.gross ? numOf(draft.gross) : null;
     const unit = f.unit ? numOf(draft.unit) : null;
@@ -275,7 +301,7 @@ export function RoundReport(
               ...g.lines.map((l) => {
               const c = l.condition;
               const usage = c.usageType && ["in_house", "sublicense", "oem"].includes(c.usageType) ? c.usageType : null;
-              const f = fieldsFor(usage, c.pricingModel);
+              const f = fieldsFor(usage, c.pricingModel, editing === l.key ? draft?.basis : undefined);
               const st = stateOf(l);
               const isEdit = editing === l.key && draft;
               const head = l.outName ?? l.event?.workTitle ?? c.workTitle ?? "—";
@@ -308,6 +334,7 @@ export function RoundReport(
                       </td>
                       <td className="num">
                         <span className="stack" style={{ gap: 3, alignItems: "flex-end" }}>
+                          {usage === "oem" && <BasisSelect draft={draft} setDraft={setDraft} />}
                           {f.unit && <input className="inline-input num" style={{ width: 110 }} value={draft.unit} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価"
                                             onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
                           {f.gross && <input className="inline-input num" style={{ width: 130 }} value={draft.gross} placeholder={f.grossLabel} aria-label={f.grossLabel}
@@ -451,7 +478,7 @@ function AddLine(
     );
   }
   const inHouse = cond.usageType === "in_house";
-  const f = fieldsFor(usage ?? (inHouse ? "in_house" : null), cond.pricingModel);
+  const f = fieldsFor(usage ?? (inHouse ? "in_house" : null), cond.pricingModel, draft.basis);
 
   async function plan() {
     if (!cond || !part) return;
@@ -536,6 +563,7 @@ function AddLine(
         </div>
       ) : (
       <div className="row" style={{ gap: 8 }}>
+        {usage === "oem" && <BasisSelect draft={draft} setDraft={setDraft} />}
         {f.quantity && <input className="inline-input num" style={{ width: 90 }} placeholder="数量" aria-label="数量" value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />}
         {f.unit && <input className="inline-input num" style={{ width: 110 }} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価" value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
         {f.gross && <input className="inline-input num" style={{ width: 130 }} placeholder={f.grossLabel} aria-label={f.grossLabel} value={draft.gross} onChange={(e) => setDraft({ ...draft, gross: e.target.value })} />}

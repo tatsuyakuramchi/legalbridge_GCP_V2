@@ -90,6 +90,7 @@ export function ConditionEdit(
     agAmount: asMoney(detail.agAmount),
     exclusivity: detail.exclusivity ?? "",
     usageType: detail.usageType ?? "",
+    currency: detail.currency,
     targetPartyId: detail.targetParty ? String(detail.targetParty.id) : "",
     sublicenseConsent: detail.sublicenseConsent ?? "",
     licenseFeeBasis: detail.licenseFeeBasis ?? "separate",
@@ -164,6 +165,7 @@ export function ConditionEdit(
       ["workId", patchInt(v.workId, detail.work?.id ?? null)],
       ["exclusivity", patchText(v.exclusivity, detail.exclusivity)],
       ["usageType", patchText(v.usageType, detail.usageType)],
+      ["currency", patchText(v.currency, detail.currency)],
       ["targetPartyId", patchInt(v.targetPartyId, detail.targetParty?.id ?? null)],
       ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)],
       ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")]
@@ -376,7 +378,18 @@ export function ConditionEdit(
             {field("renewStoppedOn", "更新を止めた日",
               { type: "date", hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" })}
           </>)}
-          {fixed("通貨", detail.currency, "通貨は変えられません。金額の意味が変わるため")}
+          <label className="field">
+            <span>通貨</span>
+            <select value={v.currency} onChange={(e) => set("currency", e.target.value)}>
+              {["JPY", "USD", "EUR"].concat(["JPY", "USD", "EUR"].includes(detail.currency) ? [] : [detail.currency])
+                .map((c) => <option key={c} value={c}>{c === "JPY" ? "JPY 円" : c}</option>)}
+            </select>
+            <small className="faint">
+              {v.currency !== detail.currency
+                ? "金額（単価・定額・MG/AG）はそのままの数字で新しい通貨として読まれる。必要なら一緒に直す"
+                : "実績や支払が付く前だけ変えられる。金額の意味が変わるため"}
+            </small>
+          </label>
           {inPlace
             ? <label className="field">
                 <span>計算方式</span>

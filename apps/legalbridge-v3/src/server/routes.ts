@@ -1717,6 +1717,7 @@ export function createRoutes(database: Transactable) {
 
   const economicsSchema = z.object({
     name: z.string().trim().min(1).max(300).optional(),
+    currency: z.string().trim().toUpperCase().length(3).optional(),
     ratePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
     flatAmount: z.coerce.number().int().nullable().optional(),
     unitAmount: z.coerce.number().int().nullable().optional(),
