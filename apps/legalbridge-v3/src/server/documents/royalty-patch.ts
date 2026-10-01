@@ -506,6 +506,12 @@ export function applyLineLabels(lines: BundleLine[], source: Data): BundleLine[]
   });
 }
 
+/** 方式名から入金区分（前金・後金）を外す。「自社製造・他社販売（前金・受領価格）」→「自社製造・他社販売（受領価格）」 */
+export function withoutStage(label: string): string {
+  return String(label ?? "").replace(/（(前金|後金)・/, "（").replace(/（(前金|後金)）/, "");
+}
+const stageOrder = (label: string) => /（前金/.test(label) ? 0 : /（後金/.test(label) ? 1 : 2;
+
 /**
  * 計算済みの行から束ねの本文変数を組む。描画は多明細（lineGroups）と同じ形。
  * 消費税は行ごとの税区分が違いうるので、合計を渡せるようにしてある。
@@ -515,29 +521,46 @@ export function bundleLinesPatch(
   input: { lines: BundleLine[]; taxRatePct?: number; taxTotal?: number | null }
 ): Data {
   const taxRate = taxRateOrDefault(input.taxRatePct);
-  const lineGroups = input.lines.map((line) => ({
-    contractTitle: line.contractTitle,
-    contractNumber: line.contractNumber,
-    methodLabel: line.methodLabel,
-    conditionId: line.conditionId ?? "",
-    lines: [{
-      productName: line.conditionName || line.contractTitle || line.contractNumber,
-      salesJpy: line.salesJpy,
-      salesJpyStr: fmtYen(line.salesJpy),
-      ratePctResolved: String(line.ratePct),
-      paymentJpy: line.paymentJpy,
-      paymentJpyStr: fmtYen(line.paymentJpy),
-      basisNote: line.basisNote,
-      // 経理提出用の「納品日」「数量」。紙には出さないが、焼き付けた値から
-      // 経理が拾う。
-      occurredOn: line.occurredOn ?? "",
-      quantity: line.quantity ?? ""
-    }],
-    subtotalSales: line.salesJpy,
-    subtotalSalesStr: fmtYen(line.salesJpy),
-    subtotalPayment: line.paymentJpy,
-    subtotalPaymentStr: fmtYen(line.paymentJpy)
-  }));
+  // 同じ契約・同じ製品（許諾先 × 言語）の行は 1 つの組にまとめ、小計を合算する。
+  // 前金と後金は同じ製造回の 1 つの取引なので、別々の小計にすると意味を成さない。
+  // 方式名の「前金・」「後金・」は組の見出しから外し、行の但し書き（前金／後金…）で分ける。
+  const groups: Array<{ key: string; first: BundleLine; lines: BundleLine[] }> = [];
+  for (const line of input.lines) {
+    const key = [line.contractTitle, line.contractNumber, line.conditionName, withoutStage(line.methodLabel)].join("\u0001");
+    const hit = groups.find((g) => g.key === key);
+    if (hit) hit.lines.push(line); else groups.push({ key, first: line, lines: [line] });
+  }
+  const lineGroups = groups.map(({ first, lines }) => {
+    // 前金 → 後金 → 区分なし の順に並べる。
+    const sorted = [...lines].sort((a, b) => stageOrder(a.methodLabel) - stageOrder(b.methodLabel));
+    const sales = sorted.reduce((sum, l) => sum + l.salesJpy, 0);
+    const payment = sorted.reduce((sum, l) => sum + l.paymentJpy, 0);
+    const product = first.conditionName || first.contractTitle || first.contractNumber;
+    return {
+      contractTitle: first.contractTitle,
+      contractNumber: first.contractNumber,
+      methodLabel: sorted.length > 1 ? withoutStage(first.methodLabel) : first.methodLabel,
+      conditionId: first.conditionId ?? "",
+      lines: sorted.map((line, i) => ({
+        // 2 行目からは製品名を繰り返さない（同じ製品の前金・後金）。
+        productName: i === 0 ? product : "同上",
+        salesJpy: line.salesJpy,
+        salesJpyStr: fmtYen(line.salesJpy),
+        ratePctResolved: String(line.ratePct),
+        paymentJpy: line.paymentJpy,
+        paymentJpyStr: fmtYen(line.paymentJpy),
+        basisNote: line.basisNote,
+        // 経理提出用の「納品日」「数量」。紙には出さないが、焼き付けた値から
+        // 経理が拾う。
+        occurredOn: line.occurredOn ?? "",
+        quantity: line.quantity ?? ""
+      })),
+      subtotalSales: sales,
+      subtotalSalesStr: fmtYen(sales),
+      subtotalPayment: payment,
+      subtotalPaymentStr: fmtYen(payment)
+    };
+  });
   const totalSalesJpy = input.lines.reduce((sum, l) => sum + l.salesJpy, 0);
   const totalPaymentJpy = input.lines.reduce((sum, l) => sum + l.paymentJpy, 0);
   const tax = input.taxTotal === null || input.taxTotal === undefined

@@ -225,9 +225,12 @@ test("試算の行を渡せば、プレビューでも明細が出る", () => {
     statementMode: "bundle", rs_bundle_lines: lines, rs_bundle_tax: 12695
   }, 10);
   assert.ok(patch, "明細を渡したのに本文の変数が組めていない");
-  const groups = patch.lineGroups as Array<Record<string, unknown>>;
-  assert.equal(groups.length, 2, "前金・後金で2行");
-  assert.equal(groups[0].methodLabel, "自社製造・他社販売（前金・受領価格）");
+  const groups = patch.lineGroups as Array<Record<string, any>>;
+  assert.equal(groups.length, 1, "同じ契約・製品の前金・後金は 1 つの組");
+  assert.equal(groups[0].lines.length, 2, "行は前金・後金の 2 行");
+  assert.equal(groups[0].methodLabel, "自社製造・他社販売（受領価格）", "見出しから入金区分を外す");
+  assert.equal(groups[0].lines[1].productName, "同上");
+  assert.equal(groups[0].subtotalPaymentStr, "126,941", "小計は前金・後金の合算");
   assert.equal(patch.linesTotalPaymentStr, "126,941");
   assert.equal(patch.linesTaxStr, "12,695", "税は試算の額をそのまま出す");
   assert.equal(patch.linesTotalIncTaxStr, "139,636");
@@ -315,4 +318,19 @@ test("入金企業：1 社ならその名前、複数なら「最初の社 ほ�
   assert.equal(payerSummary(["Asmodee Asia Limited", "Asmodee Asia Limited"]), "Asmodee Asia Limited");
   assert.equal(payerSummary(["Asmodee Asia Limited", "MM-Spiele", "Don't Panic", "MM-Spiele", ""]), "Asmodee Asia Limited ほか2社");
   assert.equal(payerSummary([null, ""]), "");
+});
+
+test("前金・後金の組：製品（言語）が違えば別の組。並びは前金 → 後金", async () => {
+  const { bundleLinesPatch } = await import("./royalty-patch.js");
+  const l = (name: string, stage: string, pay: number) => ({
+    conditionId: 1, eventId: pay, contractTitle: "Asmodee", contractNumber: "CL-1", conditionName: name,
+    methodLabel: `自社製造・他社販売（${stage}・受領価格）`, salesJpy: pay * 10, ratePct: 10, paymentJpy: pay, basisNote: `${stage}　受領価格`
+  });
+  const p = bundleLinesPatch({ lines: [l("英語", "後金", 20), l("英語", "前金", 30), l("簡体中国語", "前金", 5)], taxTotal: 0 });
+  const g = p.lineGroups as Array<Record<string, any>>;
+  assert.equal(g.length, 2);
+  assert.deepEqual(g[0].lines.map((x: any) => x.basisNote), ["前金　受領価格", "後金　受領価格"]);
+  assert.equal(g[0].subtotalPayment, 50);
+  assert.equal(g[1].methodLabel, "自社製造・他社販売（前金・受領価格）", "1 行だけの組は方式名をそのまま");
+  assert.equal(p.linesTotalPaymentStr, "55");
 });
