@@ -56,12 +56,14 @@ function CopyNo({ no }: { no: string }) {
 }
 
 export function DocumentImport(
-  { conditionId, matterId, requestId, onDone, onOpenDocument }: {
+  { conditionId, matterId, requestId, onDone, onOpenDocument, onRegistered }: {
     conditionId?: number; matterId?: number;
     /** デイリータスクの依頼。付けると登録した文書がその作業に繋がる。 */
     requestId?: number;
     onDone: () => void;
     onOpenDocument?: (id: number) => void;
+    /** ファイル付きで登録できた直後に呼ぶ（そのまま「送る」へ進めたいとき）。 */
+    onRegistered?: (id: number) => void;
   }
 ) {
   const [mode, setMode] = useState<"closed" | "import" | "reserve">("closed");
@@ -100,13 +102,14 @@ export function DocumentImport(
       if (matterId) params.set("matterId", String(matterId));
       if (requestId) params.set("requestId", String(requestId));
 
-      const r = await api.postRaw<{ documentNo: string }>(
+      const r = await api.postRaw<{ id: number; documentNo: string }>(
         `/documents/import?${params}`, file, file.type || "application/octet-stream");
       setDone(r.documentNo); setReserved(null);
       setMode("closed"); setFile(null);
       setV({ ...v, title: "", note: "" });
       if (picker.current) picker.current.value = "";
       onDone();
+      onRegistered?.(r.id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
