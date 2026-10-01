@@ -47,11 +47,14 @@ export const CALC_MODEL_LABEL: Record<string, string> = {
   SUBSCRIPTION: "サブスク", SUPPLY_QTY: "供給価格×個数×料率"
 };
 
-/** 許諾内容の条に書く文。取引形態の名前で引く（固定3種）。 */
+/**
+ * 取引モデル（許諾料の算定式のモデル）がどの場面に当たるか。許諾料の条に書く。
+ * 何を許諾するか（許諾内容）とは別の話なので、許諾内容の条には書かない。
+ */
 export const DEAL_DESCRIPTION: Record<string, string> = {
-  "自社製造・自社販売": "被許諾者が対象製品を製造し、自ら販売すること。",
-  "権利許諾（サブライセンス）": "被許諾者が第三者に対象製品の製造・販売を再許諾すること（第５条）。",
-  "自社製造・他社販売": "被許諾者が対象製品を製造し、販売店その他の第三者に供給して販売させること。"
+  "自社製造・自社販売": "被許諾者が対象製品を製造し、自ら販売する場合",
+  "権利許諾（サブライセンス）": "被許諾者が第三者に再許諾し、許諾収入を得る場合",
+  "自社製造・他社販売": "被許諾者が対象製品を製造し、販売店その他の第三者に供給する場合"
 };
 
 /** 加算型の形態。構成要素の料率を合算する側で、料率の列がここの数だけ出る。 */
@@ -347,7 +350,7 @@ export function materialSeeds(context: Data): Data[] {
     groups.get(key)!.push(condition);
   }
 
-  return [...groups.values()].map((group) => {
+  const rows = [...groups.values()].map((group) => {
     const head = group[0];
     const source = acquisitions.find((a) => Number(a.id) === Number(head.id))
       ?? acquisitions.find((a) => a.partName && a.partName === head.work?.part);
@@ -361,9 +364,10 @@ export function materialSeeds(context: Data): Data[] {
     }
     return {
       material_code: text(source?.conditionNo ?? head.conditionNo ?? ""),
-      // 構成要素の名前は素材（パート）の名前。無ければ作品名。条件名は
-      // 「作品名｜取引モデル」なので、ここに出すと構成要素の欄に取引の名前が並ぶ。
-      name: text(head.work?.part || head.work?.title || ""),
+      // 構成要素の名前は「原作名_何の要素か」。素材（パート）の名前は台帳の
+      // 呼び名で、相手方には何を指すのか分からない（重複を見分けるのに残す）。
+      name: componentName(head.work ?? {}, roleOfPart(head.work ?? {})),
+      part_name: text(head.work?.part ?? ""),
       holder: text(head.counterparty?.name ?? ""),
       source_doc: text(source?.agreementNo ?? ""),
       region: joined(head.scopes?.region) || joined(source?.regions) || "全世界",
@@ -374,6 +378,43 @@ export function materialSeeds(context: Data): Data[] {
       fixed_rates: fixedRates
     };
   });
+  // 同じ種別のサブが2つあると同じ名前になる（どちらも「_イラスト・グラフィック等」）。
+  // そのときだけ台帳の素材名を添えて見分ける。
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.name, (counts.get(row.name) ?? 0) + 1);
+  return rows.map((row) => (counts.get(row.name)! > 1 && row.part_name
+    ? { ...row, name: `${row.name}（${row.part_name}）` } : row));
+}
+
+/** オリジナルゲームデザイン一式の定義。コアロジックの行の下に出す。 */
+export const CORE_DEFINITION =
+  "オリジナルゲームデザインとは、本著作物を構成するゲームデザイン、イラスト、グラフィック、コンポーネント等の総称をいう。";
+
+/** サブコンポーネントの名前に付ける「何の要素か」。素材の種別（work_parts.part_type）から。 */
+const SUB_LABEL: Record<string, string> = {
+  illustration: "イラスト・グラフィック等", design: "イラスト・グラフィック等",
+  photo: "写真等", text: "テキスト等", music: "音楽等"
+};
+
+/**
+ * 構成要素の紙の上の名前。原作名（作品が原作ならその名前）に、何の要素かを付ける。
+ *   コアロジック      … ito_オリジナルゲームデザイン一式
+ *   サブコンポーネント … ito_イラスト・グラフィック等
+ * 種別が決まっていないサブは、台帳の素材名から原作名の接頭辞を外して使う。
+ * 素材の指定が無ければ（作品まるごと）作品名だけ。
+ */
+export function componentName(
+  work: { sourceTitle?: string | null; title?: string | null; part?: string | null; partType?: string | null },
+  role: "core" | "sub"
+): string {
+  const base = text(work.sourceTitle || work.title || "").trim();
+  const part = text(work.part ?? "").trim();
+  const ownPart = base && part.startsWith(base) ? part.slice(base.length).replace(/^[_＿\s]+/, "") : part;
+  const label = role === "core" ? "オリジナルゲームデザイン一式"
+    : SUB_LABEL[String(work.partType ?? "").toLowerCase()] ?? ownPart;
+  // 素材の指定が無い条件（作品まるごと）は、作品名だけにする。
+  if (!label) return base;
+  return base ? `${base}_${label}` : label;
 }
 
 /**
@@ -536,10 +577,10 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     ag: text(deal.ag) || "0",
     mg: text(deal.mg) || "0",
     currency: text(deal.cur) || "JPY",
-    /** 許諾内容の条に書く、その取引形態で被許諾者ができること。 */
     // 算定式の文。基準価格の欄に「料率」まで書いてあればそのまま使う。
     condFormula: /料率/.test(text(deal.basePrice)) ? text(deal.basePrice)
       : `${text(deal.basePrice) || "基準価格"} × 料率`,
+    /** 許諾料の条に書く、その取引モデルが当たる場面。 */
     condDesc: DEAL_DESCRIPTION[text(deal.name)] ?? "",
     /** AG・MG は 0 なら紙に書かない（「AG 0 JPY」を並べない）。 */
     hasGuarantee: (number(deal.ag) ?? 0) > 0 || (number(deal.mg) ?? 0) > 0
@@ -587,6 +628,8 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     addonConds: addons.map(({ deal, index }) => ({
       condLabel: conds[index].condLabel, condName: conds[index].condName, appliedRate: appliedRate(deal)
     })),
+    /** 再許諾の取引モデル（非加算型）を載せているか。許諾内容に再許諾を書くかを決める。 */
+    hasSublicense: deals.some((deal) => !deal.addon),
     showHolder,
     scopeColCount: 5 + (showHolder ? 1 : 0),
     rateColCount: 2 + addons.length,
@@ -604,6 +647,8 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
         /** 構成上の役割。本文が出し分けるならこれを見る。 */
         lcRole: material.role === "sub" ? "サブコンポーネント" : "コアロジック",
         lcIsCore: material.role !== "sub",
+        /** 構成要素の説明。コアロジックはオリジナルゲームデザインの定義。 */
+        lcNote: material.role === "sub" ? "" : CORE_DEFINITION,
         addonRates: addons.map(({ deal }) => percent(number(rates[String(deal.id ?? "")]))),
         /**
          * 載せる取引形態すべての列（加算型も非加算型も）。出版等の条件書が

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds, dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, licenseScopeSentence, licenseTermsPatch, licenseTermsSeeds, licenseTermsSuggestions, materialSeeds, calcOfCondition
+  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds, dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, componentName, licenseScopeSentence, licenseTermsPatch, licenseTermsSeeds, licenseTermsSuggestions, materialSeeds, calcOfCondition
 } from "./license-terms.js";
 
 /**
@@ -138,7 +138,9 @@ test("取引形態の種：条件明細の範囲・MG・AG・通貨を重ねる"
 test("構成要素の種：条件明細が指す素材で行を立て、加算型の列にだけ料率を置く", () => {
   const materials = materialSeeds(context);
   assert.equal(materials.length, 2, "条件4本でも素材は2つ");
-  assert.equal(materials[0].name, "ito_イラスト");
+  // 名前は「原作名_何の要素か」。同じ種別のサブが2つあるので台帳の素材名を添えて見分ける。
+  assert.equal(materials[0].name, "ito_イラスト・グラフィック等（ito_イラスト）");
+  assert.equal(materials[1].name, "ito_イラスト・グラフィック等（追加イラスト）");
   assert.equal(materials[0].holder, "株式会社オリジナル");
   assert.equal(materials[0].source_doc, "ARC-ILT-2026-0030");
   // 加算型は 1 と 3。非加算型（2）の 50% はここに入れない。
@@ -397,10 +399,25 @@ test("計算モデルは条件明細の計算方式から（定額・サブス�
   assert.equal(calcOfCondition({ pricingModel: "revenue_rate", royaltyBase: "上代" }, deal).basePrice, "上代 × 数量 × 料率");
 });
 
-test("構成要素の名前は素材か作品名。条件名（作品名｜取引モデル）は使わない", () => {
+test("素材の指定が無い条件の構成要素は作品名。条件名（作品名｜取引モデル）は使わない", () => {
   const materials = materialSeeds({ conditions: [
     { id: 1, conditionNo: "CL-1", name: "作品A｜自社製造・自社販売", usageType: "in_house", ratePct: 2,
       work: { title: "作品A", part: null }, counterparty: { name: "権利元" }, scopes: {} }
   ] });
   assert.equal(materials[0].name, "作品A");
+});
+
+test("構成要素の名前：コアは原作名_オリジナルゲームデザイン一式、サブは原作名_何の要素か", () => {
+  assert.equal(componentName({ title: "ito 新装版", sourceTitle: "ito", part: "ito_原作ゲームデザイン",
+    partType: "game_design" }, "core"), "ito_オリジナルゲームデザイン一式", "原作名があればそちら");
+  assert.equal(componentName({ title: "ito", part: "ito_イラスト", partType: "illustration" }, "sub"),
+    "ito_イラスト・グラフィック等");
+  assert.equal(componentName({ title: "ito", part: "ito_ルールブック文章", partType: "other" }, "sub"),
+    "ito_ルールブック文章", "種別が決まっていなければ素材名から原作名の接頭辞を外す");
+  const patch = licenseTermsPatch(context, { v3_lcs: [
+    { name: "ito_オリジナルゲームデザイン一式", role: "core", rates: { "1": "3" } },
+    { name: "ito_イラスト・グラフィック等", role: "sub", rates: { "1": "2" } }
+  ] });
+  assert.match(patch.lcs[0].lcNote, /^オリジナルゲームデザインとは、本著作物を構成する/);
+  assert.equal(patch.lcs[1].lcNote, "", "サブは名前で何の要素かが分かる");
 });

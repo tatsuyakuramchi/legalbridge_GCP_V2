@@ -78,7 +78,7 @@ test("試作の本文が差す名前は、いまの計算ブロックからす�
   const declared = LICENSE_TERMS_VARIABLES.map((v) => v.name);
   // each の中の名前（lcName・condLabel …）は行の文脈なので外側には無くてよい。
   const rowNames = new Set(["condLabel", "condName", "condType", "calcModel", "basePrice", "appliedRate",
-    "condRegion", "condLang", "ag", "mg", "currency", "condDesc", "condFormula", "hasGuarantee", "dealRates", "lcId", "lcName", "lcRole", "lcHolder",
+    "condRegion", "condLang", "ag", "mg", "currency", "condDesc", "condFormula", "hasGuarantee", "dealRates", "lcNote", "lcId", "lcName", "lcRole", "lcHolder",
     "lcRegion", "lcLanguage", "lcSourceDoc", "addonRates", "edition", "trigger", "note",
     "slPartner", "slCond", "slRegion", "slLang", "slRate", "slDate", "slNote", "seId", "seText"]);
   const blanks = blankPlaceholders(html, values, declared).filter((n) => !rowNames.has(n));
@@ -90,17 +90,32 @@ test("試作：構成要素1行に取引形態ぶんの料率が並び、最下�
   const conds = values.conds as any[];
   const lcs = values.lcs as any[];
   assert.deepEqual(conds.map((c) => c.appliedRate), ["5%", "50%", "5%"]);
-  assert.equal(lcs[0].lcName, "ito_原作ゲームデザイン");
+  assert.equal(lcs[0].lcName, "ito_オリジナルゲームデザイン一式");
+  assert.equal(lcs[1].lcName, "ito_イラスト・グラフィック等");
   assert.deepEqual(lcs[0].dealRates, ["3%", "50%", "3%"], "非加算型の料率も列に出す");
   assert.deepEqual(lcs[1].dealRates, ["2%", "—", "2%"]);
   // 条件明細の番号は社内の管理番号。相手方には意味が無いので紙に出さない。
   assert.doesNotMatch(out, /CL-2026-/);
   assert.match(out, /適用料率<\/td>\s*<td class="c">5%<\/td><td class="c">50%<\/td><td class="c">5%<\/td>/);
-  assert.ok(out.indexOf("ito_原作ゲームデザイン") < out.indexOf("ito_イラスト"));
+  assert.ok(out.indexOf("ito_オリジナルゲームデザイン一式") < out.indexOf("ito_イラスト・グラフィック等"));
+  assert.match(out, /オリジナルゲームデザインとは、本著作物を構成するゲームデザイン、イラスト、グラフィック、コンポーネント等の総称をいう。/);
+  // 構成要素ごとの地域・言語は紙に出さない（第３条の地域・言語と取り違えやすい）。
+  assert.doesNotMatch(out, /<span class="lbl">地域<\/span>/);
   assert.match(out, /根拠文書<\/span>本条件書（新規）/);
   // AG・MG が 0 なら書かない。算定式に「料率」を二重に書かない。
   assert.doesNotMatch(out, /最低保証|前払保証金/);
   assert.doesNotMatch(out, /料率 × 料率/);
+});
+
+test("試作：許諾内容（何を許諾するか）と取引モデル（許諾料の算定式）を分けて書く", () => {
+  const { out } = renderSample();
+  const art = (n: string) => out.indexOf(`第${n}条</span>`);
+  const art2 = out.slice(art("２"), art("３"));
+  const art4 = out.slice(art("４"), art("５"));
+  assert.doesNotMatch(art2, /自社製造・自社販売|自社製造・他社販売/, "許諾内容に取引モデルを並べない");
+  assert.match(art2, /再許諾<\/th>/, "再許諾の取引モデルがあるので再許諾を許諾内容に書く");
+  assert.match(art4, /自社製造・自社販売<\/th><td>被許諾者が対象製品を製造し、自ら販売する場合：上代（MSRP）× 数量 × 料率。/);
+  assert.match(art4, /権利許諾（サブライセンス）<\/th><td>被許諾者が第三者に再許諾し、許諾収入を得る場合：/);
 });
 
 test("試作：締結時点で再許諾先が無ければ別紙を付けず、条番号は変えない", () => {
