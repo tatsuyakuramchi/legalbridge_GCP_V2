@@ -37,7 +37,8 @@
   td.r { text-align: right; white-space: nowrap; }
   .kv th { width: 24mm; }
   .list th.n { width: 9mm; }
-  .list th.rate { width: 19mm; }
+  .list th.rate { width: 24mm; white-space: normal; font-size: 8.5pt; }
+  .list th.holder { width: 34mm; }
   .list tbody { break-inside: avoid; page-break-inside: avoid; }
   .list thead { display: table-header-group; }
   .list td.note { font-size: 9pt; color: #333; }
@@ -88,95 +89,75 @@
 
 <p>許諾者と被許諾者は、両者間の{{#if masterAgreement}}{{masterAgreement}}{{else}}基本契約{{/if}}（以下「基本契約」という。）に基づき、以下のとおり個別の利用許諾条件を定める。本条件書に定めのない事項は基本契約による。</p>
 
-<div class="art">
-<h2><span class="no">第１条</span>対象製品・許諾範囲</h2>
-<table class="kv">
-  <tr><th>対象製品</th><td>{{productName}}</td></tr>
-  <tr><th>定義</th><td>{{productDefinition}}</td></tr>
-  <tr><th>独占性</th><td>{{exclusivity}}</td></tr>
-  <tr><th>地域（上限）</th><td>{{maxRegion}}</td></tr>
-  <tr><th>言語（上限）</th><td>{{maxLanguage}}</td></tr>
-  <tr><th>許諾開始日</th><td>{{formatDate startDate}}</td></tr>
-  {{#if scope}}<tr><th>許諾範囲</th><td>{{scope}}</td></tr>{{/if}}
-</table>
-</div>
-
-<div class="art">
-<h2><span class="no">第２条</span>構成要素と料率</h2>
-<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率の列は第３条の加算型の取引形態ごとの料率で、合計の行がその取引形態の適用料率となる。「—」はその取引形態で当該要素の料率が無いことを示す。地域・言語・根拠文書は同じNo.の下の行に示す。</p>
+<h2><span class="no">第１条</span>対象著作物</h2>
+<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率は取引形態ごとに許諾者と被許諾者が合意した料率を示し、「—」はその取引形態で当該要素の料率が無いことを示す。最下行の「適用料率」は第４条の計算に用いる料率で、権利許諾（サブライセンス）以外の取引形態では各構成要素の料率の合計とする。地域・言語・根拠文書・条件明細は同じNo.の下の行に示す。</p>
 <table class="list">
   <thead>
     <tr>
       <th class="n">No.</th>
       <th>構成要素</th>
-      {{#if showHolder}}<th>権利元</th>{{/if}}
-      {{#each addonConds}}<th class="rate">{{condLabel}}<br>{{condName}}</th>{{/each}}
+      {{#if showHolder}}<th class="holder">権利元</th>{{/if}}
+      {{#each conds}}<th class="rate">{{condName}}</th>{{/each}}
     </tr>
   </thead>
   {{#each lcs}}
   <tbody>
     <tr>
       <td class="c">{{index1 @index}}</td>
-      <td>{{lcName}} <span class="role">（{{lcRole}}）</span>{{#if lcId}}<br><span class="role">{{lcId}}</span>{{/if}}</td>
+      <td>{{lcName}}<br><span class="role">{{lcRole}}</span></td>
       {{#if ../showHolder}}<td>{{lcHolder}}</td>{{/if}}
-      {{#each addonRates}}<td class="r">{{this}}</td>{{/each}}
+      {{#each dealRates}}<td class="c">{{this}}</td>{{/each}}
     </tr>
     <tr>
       <td class="c"></td>
-      <td class="note" colspan="{{add (add ../addonConds.length 1) (or ../showHolder 0)}}"><span class="lbl">地域</span>{{lcRegion}}<span class="lbl">言語</span>{{lcLanguage}}<span class="lbl">根拠文書</span>{{lcSourceDoc}}</td>
+      <td class="note" colspan="{{add (add ../conds.length 1) (or ../showHolder 0)}}"><span class="lbl">地域</span>{{lcRegion}}<span class="lbl">言語</span>{{lcLanguage}}<span class="lbl">根拠文書</span>{{lcSourceDoc}}{{#if lcConditionNos}}<span class="lbl">条件明細</span>{{lcConditionNos}}{{/if}}</td>
     </tr>
   </tbody>
   {{/each}}
-  {{#if addonConds.length}}
+  {{#unless lcs.length}}
+  <tbody><tr><td colspan="{{add (add conds.length 2) (or showHolder 0)}}">（構成要素がありません。条件明細を選んでください）</td></tr></tbody>
+  {{/unless}}
+  {{#if conds.length}}
   <tfoot>
     <tr>
       <td class="c"></td>
-      <td{{#if showHolder}} colspan="2"{{/if}}>合計（適用料率）</td>
-      {{#each addonConds}}<td class="r">{{appliedRate}}</td>{{/each}}
+      <td{{#if showHolder}} colspan="2"{{/if}}>適用料率</td>
+      {{#each conds}}<td class="c">{{appliedRate}}</td>{{/each}}
     </tr>
   </tfoot>
   {{/if}}
 </table>
-</div>
 
 <div class="art">
-<h2><span class="no">第３条</span>取引形態と許諾料</h2>
-<p class="lead">一覧の1行が取引形態1つ。【加算型】の適用料率は第２条の合計、【非加算型】の適用料率は本表に記載の料率とする。許諾料は「算定式」により計算する。</p>
-<table class="list">
-  <thead>
-    <tr>
-      <th class="n">条件</th>
-      <th>取引形態</th>
-      <th>算定式</th>
-      <th class="rate">適用料率</th>
-    </tr>
-  </thead>
+<h2><span class="no">第２条</span>許諾内容</h2>
+<table class="kv">
+  <tr><th>対象製品</th><td>{{productName}}。{{productDefinition}}</td></tr>
   {{#each conds}}
-  <tbody>
-    <tr>
-      <td class="c">{{condLabel}}</td>
-      <td>{{condName}}<br><span class="role">{{condType}}</span></td>
-      <td>{{basePrice}}{{#if calcModel}}<br><span class="role">{{calcModel}}</span>{{/if}}</td>
-      <td class="r">{{appliedRate}}</td>
-    </tr>
-    <tr>
-      <td class="c"></td>
-      <td class="note" colspan="3"><span class="lbl">地域</span>{{condRegion}}<span class="lbl">言語</span>{{condLang}}<span class="lbl">AG</span>{{ag}} {{currency}}<span class="lbl">MG</span>{{mg}} {{currency}}</td>
-    </tr>
-  </tbody>
+  <tr><th>{{condName}}</th><td>{{condDesc}}</td></tr>
   {{/each}}
-  {{#unless conds.length}}
-  <tbody><tr><td colspan="4">（取引形態がありません。条件明細を選んでください）</td></tr></tbody>
-  {{/unless}}
+  {{#if supervisor}}<tr><th>監修</th><td>対象製品の内容は、許諾者の指定する監修者（{{supervisor}}）の監修を受ける。</td></tr>{{/if}}
+  <tr><th>その他の利用</th><td>本条に定めのない利用は本条件書の対象外とし、別途合意による。</td></tr>
 </table>
 </div>
 
 <div class="art">
-<h2><span class="no">第４条</span>算定基準日</h2>
+<h2><span class="no">第３条</span>許諾期間・地域・言語</h2>
 <table class="kv">
-  {{#each calcBaseRows}}
-  <tr><th>{{edition}}</th><td>{{trigger}}{{#if note}}（{{note}}）{{/if}}</td></tr>
+  <tr><th>許諾開始日</th><td>{{formatDate startDate}}</td></tr>
+  <tr><th>独占性</th><td>{{exclusivity}}</td></tr>
+  <tr><th>地域</th><td>{{maxRegion}}（構成要素ごとの地域は第１条一覧による）</td></tr>
+  <tr><th>言語</th><td>{{maxLanguage}}（構成要素ごとの言語は第１条一覧による）</td></tr>
+  {{#if scope}}<tr><th>許諾範囲</th><td>{{scope}}</td></tr>{{/if}}
+</table>
+</div>
+
+<div class="art">
+<h2><span class="no">第４条</span>許諾料</h2>
+<table class="kv">
+  {{#each conds}}
+  <tr><th>{{condName}}</th><td>{{condFormula}}（料率は第１条一覧「{{condName}}」欄の適用料率）。{{#if hasGuarantee}}{{#if (gt ag 0)}}前払保証金 {{ag}} {{currency}}。{{/if}}{{#if (gt mg 0)}}最低保証 {{mg}} {{currency}}。{{/if}}{{/if}}</td></tr>
   {{/each}}
+  <tr><th>算定基準日</th><td>{{#each calcBaseRows}}{{edition}}は{{trigger}}{{#if note}}（{{note}}）{{/if}}{{#unless @last}}、{{/unless}}{{/each}}を基準として算定する。</td></tr>
 </table>
 </div>
 
@@ -186,9 +167,8 @@
 </div>
 
 <div class="art">
-<h2><span class="no">第６条</span>監修・通知先</h2>
+<h2><span class="no">第６条</span>通知先</h2>
 <table class="kv">
-  {{#if supervisor}}<tr><th>監修者</th><td>{{supervisor}}</td></tr>{{/if}}
   <tr><th>許諾者</th><td>{{licensorContact}}</td></tr>
   <tr><th>被許諾者</th><td>{{licenseeContact}}</td></tr>
 </table>
@@ -214,7 +194,7 @@
 <div class="annex">
 <h1 class="annex-title">別紙　再許諾先一覧</h1>
 <p class="sub">{{contractNo}}　個別利用許諾条件書 第５条に基づく</p>
-<p class="lead">一覧の1行が再許諾1件。再許諾先を追加したときは、その都度本別紙に行を加える。料率は第３条の取引形態に基づき被許諾者が許諾者に支払う料率を示す。</p>
+<p class="lead">一覧の1行が再許諾1件。再許諾先を追加したときは、その都度本別紙に行を加える。料率は第１条の取引形態に基づき被許諾者が許諾者に支払う料率を示す。</p>
 <table class="list">
   <thead>
     <tr><th class="n">No.</th><th>再許諾先</th><th>取引形態</th><th>地域／言語</th><th class="rate">料率</th><th class="date">開始日</th></tr>

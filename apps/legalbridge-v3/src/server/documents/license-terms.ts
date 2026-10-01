@@ -47,6 +47,13 @@ export const CALC_MODEL_LABEL: Record<string, string> = {
   SUBSCRIPTION: "サブスク", SUPPLY_QTY: "供給価格×個数×料率"
 };
 
+/** 許諾内容の条に書く文。取引形態の名前で引く（固定3種）。 */
+export const DEAL_DESCRIPTION: Record<string, string> = {
+  "自社製造・自社販売": "被許諾者が対象製品を製造し、自ら販売すること。",
+  "権利許諾（サブライセンス）": "被許諾者が第三者に対象製品の製造・販売を再許諾すること（第５条）。",
+  "自社製造・他社販売": "被許諾者が対象製品を製造し、販売店その他の第三者に供給して販売させること。"
+};
+
 /** 加算型の形態。構成要素の料率を合算する側で、料率の列がここの数だけ出る。 */
 export const addonDeals = (deals: Data[]): Data[] => deals.filter((d) => Boolean(d.addon));
 
@@ -345,9 +352,12 @@ export function materialSeeds(context: Data): Data[] {
     const source = acquisitions.find((a) => Number(a.id) === Number(head.id))
       ?? acquisitions.find((a) => a.partName && a.partName === head.work?.part);
     const rates: Data = {};
+    // 非加算型の料率は合算に混ぜないよう別の置き場所に置く（紙の列に出すだけ）。
+    const fixedRates: Data = {};
     for (const condition of group) {
       const dealId = assigned.get(Number(condition.id));
       if (dealId && addonIds.has(dealId)) rates[String(dealId)] = text(condition.ratePct ?? "");
+      else if (dealId) fixedRates[String(dealId)] = text(condition.ratePct ?? "");
     }
     return {
       material_code: text(source?.conditionNo ?? head.conditionNo ?? ""),
@@ -360,7 +370,13 @@ export function materialSeeds(context: Data): Data[] {
       language: joined(head.scopes?.language) || joined(source?.languages) || "全言語",
       // 構成上の役割。素材の種別から決める。人が直せる。
       role: roleOfPart(head.work ?? {}),
-      rates
+      rates,
+      fixed_rates: fixedRates,
+      /**
+       * この構成要素に載せた条件明細の番号すべて。素材1つに取引形態のぶん
+       * 条件明細が並ぶので、1つ（material_code）では足りない。
+       */
+      condition_nos: group.map((c) => text(c.conditionNo)).filter(Boolean)
     };
   });
 }
@@ -524,7 +540,14 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     quantity: text(deal.qty) || "1",
     ag: text(deal.ag) || "0",
     mg: text(deal.mg) || "0",
-    currency: text(deal.cur) || "JPY"
+    currency: text(deal.cur) || "JPY",
+    /** 許諾内容の条に書く、その取引形態で被許諾者ができること。 */
+    // 算定式の文。基準価格の欄に「料率」まで書いてあればそのまま使う。
+    condFormula: /料率/.test(text(deal.basePrice)) ? text(deal.basePrice)
+      : `${text(deal.basePrice) || "基準価格"} × 料率`,
+    condDesc: DEAL_DESCRIPTION[text(deal.name)] ?? "",
+    /** AG・MG は 0 なら紙に書かない（「AG 0 JPY」を並べない）。 */
+    hasGuarantee: (number(deal.ag) ?? 0) > 0 || (number(deal.mg) ?? 0) > 0
   }));
 
   const addons = deals.map((deal, index) => ({ deal, index })).filter(({ deal }) => Boolean(deal.addon));
@@ -586,7 +609,18 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
         /** 構成上の役割。本文が出し分けるならこれを見る。 */
         lcRole: material.role === "sub" ? "サブコンポーネント" : "コアロジック",
         lcIsCore: material.role !== "sub",
-        addonRates: addons.map(({ deal }) => percent(number(rates[String(deal.id ?? "")])))
+        addonRates: addons.map(({ deal }) => percent(number(rates[String(deal.id ?? "")]))),
+        /**
+         * 載せる取引形態すべての列（加算型も非加算型も）。出版等の条件書が
+         * 紙・電子を列にしているのと同じ形で、構成要素1行に取引形態ぶんの料率が並ぶ。
+         */
+        dealRates: deals.map((deal) => {
+          const map = deal.addon ? rates
+            : (material.fixed_rates && typeof material.fixed_rates === "object" ? material.fixed_rates as Data : {});
+          return percent(number(map[String(deal.id ?? "")]));
+        }),
+        lcConditionNos: (Array.isArray(material.condition_nos) && material.condition_nos.length
+          ? material.condition_nos.map(text) : [text(material.material_code)].filter(Boolean)).join("・")
       };
     }),
     calcBaseRows: calcBaseRows.length ? calcBaseRows
