@@ -69,6 +69,7 @@ import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
+import { undeliverableEmails } from "./integrations/mail-domain.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
@@ -4189,6 +4190,19 @@ export function createRoutes(database: Transactable) {
     }));
 
   /**
+   * CloudSign に出す前に、メールが届くドメインかを見る。届かない宛先は CloudSign が
+   * 「invalid value for email」で断り、宛先の無い下書きが残る。作る前に止めて、どれかを言う。
+   */
+  const assertDeliverable = async (emails: string[]) => {
+    const bad = await undeliverableEmails(emails);
+    if (bad.length) {
+      throw new DomainError("VALIDATION",
+        `${bad.join("、")} はメールが届かないドメインです（メールの受け口が登録されていません）。` +
+        "アドレスの綴り（.co.jp と .jp など）を確かめ、取引先の連絡先を直してから作り直してください");
+    }
+  };
+
+  /**
    * 何枚かの文書を1つの CloudSign の封筒で署名依頼する。
    *
    * 署名者は順番に署名を求める（order）。確認者・CC は署名しないが書類を見られる
@@ -4212,6 +4226,7 @@ export function createRoutes(database: Transactable) {
     requireRole("admin"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = signManySchema.parse(req.body ?? {});
+      await assertDeliverable([...input.signers, ...input.reportees].map((x) => x.email));
       const who = actor(res);
       const loaded = await manyDocuments(input.documentIds);
       const ids = loaded.map((x) => x.document.id);
@@ -4390,6 +4405,7 @@ export function createRoutes(database: Transactable) {
       if (!signers.length) throw new DomainError("VALIDATION", "署名者を 1 人以上入れてください");
       const reportees = (input.reportees ?? [])
         .filter((r) => !signers.some((x) => x.email.toLowerCase() === r.email.toLowerCase()));
+      await assertDeliverable([...signers, ...reportees].map((x) => x.email));
       const { document, attachment } = await pdfOf(id);
       const subject = input.subject ?? document.title ?? document.documentNo ?? "署名のお願い";
       const who = actor(res);

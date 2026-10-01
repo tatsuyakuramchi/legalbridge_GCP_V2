@@ -72,8 +72,12 @@ export interface DispatchAdapter {
  */
 const fail = async (channel: string, response: Response, step?: string): Promise<never> => {
   const detail = (await response.text().catch(() => "")).slice(0, 500);
+  // よくある断られ方には、何を直せばよいかを添える。
+  const hint = /invalid value for email/i.test(detail)
+    ? "。CloudSign がこのメールアドレスを受け付けません（届かないドメインや綴りの誤りが多い）。取引先の連絡先を確かめてください。途中まで作った下書きは CloudSign の画面で消してください"
+    : "";
   throw new DomainError("UNAVAILABLE",
-    `${channel} への送信に失敗しました${step ? `（${step}）` : ""} (${response.status}): ${detail}`);
+    `${channel} への送信に失敗しました${step ? `（${step}）` : ""} (${response.status}): ${detail}${hint}`);
 };
 
 /** Slack。chat.postMessage のみを使う（V2 の Web API アダプタから必要部分を移植）。 */
