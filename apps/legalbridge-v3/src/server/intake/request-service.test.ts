@@ -295,6 +295,23 @@ test("軽微（検収書）は対象の番号から条件を引き当て、依�
   assert.equal(d.find("INSERT INTO tasks")!.params[2], "inspection");
 });
 
+test("支払の書類でも、番号が分からなければ条件なしで登録できる（あとで繋ぐ）", async () => {
+  const d = new FakeDatabase((t) => {
+    if (t.includes("SELECT * FROM intake_requests WHERE id = $1 FOR UPDATE")) {
+      return [open({ source_payload: { purpose: "royalty", targetDocNo: "わからない" } })];
+    }
+    if (t.includes("INSERT INTO tasks")) return [{ id: 101 }];
+    return undefined;
+  });
+  const { svc } = service(d);
+  const r = await svc.accept(7, { mode: "direct", kind: "work" }, "legal@x");
+  assert.equal(r.taskId, 101);
+  assert.equal(d.find("INSERT INTO intake_request_links"), undefined, "条件は繋がない");
+  assert.equal(d.find("WHERE upper(d.document_no) = $1"), undefined, "番号ではない言葉は引き当てに使わない");
+  const payload = JSON.parse(String(d.find("SET state = 'accepted', handling = 'direct'")!.params[5]));
+  assert.equal(payload.targetDocNo, null);
+});
+
 test("軽微にするには種別が要る（Slack の内容にも画面にも無ければ止める）", async () => {
   const d = build({ row: open({ source_payload: {} }) });
   await assert.rejects(service(d).svc.accept(7, { mode: "direct", kind: "single" }, "x"), /種別/);

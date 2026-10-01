@@ -11,7 +11,7 @@ import { attachUploadsToMatter } from "./upload-service.js";
 import { resolveRequesterEmail } from "./requester.js";
 import { recordCommunication } from "../matters/communication-service.js";
 import {
-  isDailyPurpose, isPaymentPurpose, normalizeDocNo, paymentDocLabel, resolvePaymentTarget,
+  isDailyPurpose, isPaymentPurpose, normalizeDocNo, paymentDocLabel, resolvePaymentTarget, splitDocNos,
   type DailyPurpose, type PaymentPurpose, type PaymentTarget
 } from "./payment-request.js";
 
@@ -496,8 +496,11 @@ export class IntakeRequestService {
           throw new DomainError("VALIDATION", "依頼の種別（検収書・計算書・定型文書・その他）を選んでください");
         }
         const payment = isPaymentPurpose(purpose);
-        const targetDocNo = payment ? normalizeDocNo(input.targetDocNo) ?? normalizeDocNo(pay.targetDocNo) : null;
-        const target = payment ? await resolvePaymentTarget(client, purpose, targetDocNo) : null;
+        // 番号は複数書けるし、分からないままでもよい（「わからない」などは番号ではないので落ちる）。
+        // 分からないときは条件なしで作業を起こし、デイリータスクの詳細であとから繋ぐ。
+        const docNos = payment ? (splitDocNos(input.targetDocNo).length ? splitDocNos(input.targetDocNo) : splitDocNos(pay.targetDocNo)) : [];
+        const targetDocNo = docNos.length ? docNos.join(", ") : null;
+        const target = payment && targetDocNo ? await resolvePaymentTarget(client, purpose, targetDocNo) : null;
         if (payment) assertInspectionMatter(purpose, target, input);
 
         // 対象の条件（支払の書類だけ）。画面で選び直していればそれ、無ければ引き当てたもの。
@@ -506,12 +509,6 @@ export class IntakeRequestService {
               ? input.conditionIds : target?.conditions.map((c) => c.id) ?? []).map(Number))]
               .filter((n) => Number.isFinite(n) && n > 0)
           : [];
-        if (payment && !conditionIds.length) {
-          throw new DomainError("VALIDATION", targetDocNo
-            ? `${purpose === "inspection" ? "発注書" : "契約書"}番号 ${targetDocNo} から条件を引き当てられません。`
-              + "番号を直すか、対象の条件を選んでください"
-            : `${purpose === "inspection" ? "発注書" : "契約書"}番号を入れてください（どの契約の支払かが分からないと作れません）`);
-        }
         if (conditionIds.length) {
           const found = await client.query(
             "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [conditionIds]);
@@ -565,7 +562,7 @@ export class IntakeRequestService {
         const label = paymentDocLabel(purpose);
         message = [
           `依頼を受け付けました：*${row.request_no ?? `#${id}`}*`,
-          `${label}を作ります${targetDocNo ? `（対象：${targetDocNo}）` : ""}。`,
+          `${label}を作ります${targetDocNo ? `（対象：${targetDocNo}）` : "（対象の契約は担当が確かめます）"}。`,
           `担当：${owner ?? "（これから決めます）"}`,
           ...(payment ? ["進み具合（作成・送付・支払予定・支払）はこのスレッドでお知らせします。"] : [])
         ].join("\n");
