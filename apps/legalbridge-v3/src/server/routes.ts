@@ -68,6 +68,7 @@ import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
+import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
@@ -2331,6 +2332,11 @@ export function createRoutes(database: Transactable) {
       const input = ledgerSkipSchema.parse(req.query ?? {});
       res.json(await royaltyLedger.skip(input.conditionId, input.scheduleId, null, actor(res), true));
     }));
+  // 条件明細の基本契約・個別契約（条件書）。付け替えは /links（条件の合意・条件の文書）で。
+  router.get("/conditions/:id/contracts", asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    res.json({ ...(await conditionContracts(database, id)), candidates: await contractCandidates(database, id) });
+  }));
   // 許諾先（OUT 条件）から見た報告。台帳で入れた実績は IN 条件に付くので、OUT の画面はここから引く。
   router.get("/conditions/:id/out-reports", asyncRoute(async (req, res) => {
     res.json(await royaltyLedger.outReports(Number(req.params.id)));

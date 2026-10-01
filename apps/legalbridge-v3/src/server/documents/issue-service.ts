@@ -1,5 +1,6 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { ensureAgreementForTerms } from "../agreements/auto.js";
+import { conditionContracts, contractRefText } from "../conditions/contracts.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { MatterLinkService } from "../matters/link-service.js";
@@ -9,7 +10,7 @@ import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
 import {
-  buildTemplateContext, INTL_INSPECTION_KEY, seedLines, suggestionsFor, templateWarnings
+  buildTemplateContext, INTL_INSPECTION_KEY, isStatementTemplate, seedLines, suggestionsFor, templateWarnings
 } from "./template-context.js";
 
 /** 決定したら条件を税込（海外・内税）にするひな形。 */
@@ -975,6 +976,14 @@ export class DocumentIssueService {
       documentNumber
     }, client);
     await this.contexts.attachScopes(client, context.conditions);
+    // 計算書の「契約番号」は 基本契約 / 個別契約（条件書）の番号を並べる。
+    // 発注書など他のひな形は従来どおり基本契約の番号だけ（legacy-variables）。
+    if (isStatementTemplate(input.templateKey) && input.conditionIds.length) {
+      const cc = await conditionContracts(client, input.conditionIds[0]);
+      const masterNo = input.agreementId ? (context.agreement?.no ?? null) : (cc.master?.no ?? null);
+      (context as unknown as Record<string, unknown>).contractRefText =
+        contractRefText(masterNo, cc.terms.find((t) => t.used)?.no ?? null) || null;
+    }
     return context as unknown as Record<string, unknown>;
   }
 

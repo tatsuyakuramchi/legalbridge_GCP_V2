@@ -90,8 +90,10 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["documentDate", "発行日", "発注日", "order_date", "ORDER_DATE", "issue_date", "date"],
     get: (c) => c.document?.issuedOn, noSuffix: ["date", "issue_date", "order_date"] },
   // 準拠する契約の番号。合意から引ける。
+  // 計算書は「基本契約 / 個別契約（条件書）」の番号を並べたもの（issue-service が入れる）。
+  // それ以外は基本契約の番号。
   { names: ["linked_contract_number", "契約番号", "基本契約番号", "parent_contract_number"],
-    get: (c) => c.agreement?.no },
+    get: (c) => (c as { contractRefText?: string | null }).contractRefText ?? c.agreement?.no },
   // 発注書の「基本契約名 / 番号」。準拠契約の条項に差し込むので、番号だけだと
   // 紙に「AGR-2025-0011」としか出ず、何の契約か読めない。
   { names: ["MASTER_CONTRACT_REF", "基本契約名 / 番号"],

@@ -9,6 +9,7 @@ import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
 import { Relations, type EntityKind } from "./Relations.js";
+import { ConditionContracts } from "./ConditionContracts.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
@@ -502,21 +503,9 @@ export function ConditionsWorkspace(
                   )}
                 </div>
                 <div className="panel-bd stack">
-                  {/* 条件は契約の明細。どの契約の行なのかを先に出す。 */}
-                  <div className="note">
-                    {detail.agreementId ? (<>
-                      <b>{detail.agreementTitle ?? `契約 #${detail.agreementId}`}</b> の条件明細です。
-                      {onOpen && (
-                        <button className="btn btn-sm" style={{ marginLeft: 8 }}
-                                onClick={() => onOpen("agreement", detail.agreementId!)}>
-                          契約を開く
-                        </button>
-                      )}
-                    </>) : (<>
-                      どの契約にも載っていない条件明細です。条件は契約の明細なので、
-                      下の「つながり」から契約に載せてください。
-                    </>)}
-                  </div>
+                  {/* 条件は契約の明細。基本契約と個別契約（条件書）を並べ、紙に出る契約番号も見せる。 */}
+                  <ConditionContracts conditionId={detail.id} onOpen={onOpen}
+                    onChanged={() => { refreshFlow(); void api.get<DetailResponse>(`/conditions/${detail.id}`).then(setDetail).catch(() => undefined); }} />
                   <div className="title">{detail.name}</div>
                   <dl className="dl">
                     <dt>相手先</dt><dd>{detail.counterparty?.name ?? "未設定"}</dd>
