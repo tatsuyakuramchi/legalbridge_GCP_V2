@@ -405,7 +405,7 @@ function Decision(
   const payment = isPayment(purpose);
   const matterId = dest === "new" ? null : dest === "pick" ? picked?.id ?? null : Number(dest);
   const acceptable = daily
-    ? Boolean(purpose) && (!payment || conditionIds.length > 0 || docNo.trim() !== "")
+    ? Boolean(purpose)
     : Boolean(kind) && (dest === "new" || matterId);
   const notified = (x: any) => (x?.notified ? "。依頼者に Slack で知らせました" : "");
 
@@ -524,7 +524,9 @@ function Decision(
               {payment && (
                 <label className="field">
                   <span>{purpose === "inspection" ? "発注書番号" : "契約書番号"}</span>
-                  <input value={docNo} disabled={!canWrite} className="code" onChange={(e) => setDocNo(e.target.value)} />
+                  <input value={docNo} disabled={!canWrite} className="code" placeholder="分からなければ空のまま"
+                         onChange={(e) => setDocNo(e.target.value)} />
+                  <small className="faint">複数は「、」で区切る。分からなければ空でも登録できる（あとで繋ぐ）</small>
                 </label>
               )}
               <label className="field"><span>件名</span>
@@ -568,9 +570,9 @@ function Decision(
               ) : (
                 <div className="faint">
                   {docNo.trim()
-                    ? "登録するときに、この番号から条件を引き当てます"
-                    : r.targetDocNo ? `${r.targetDocNo} に当たる発注書・契約書が見つかりません。番号を直してください`
-                    : "番号を入れると、登録するときに条件を引き当てます"}
+                    ? "登録するときに、この番号から条件を引き当てます（当たらなくても登録でき、あとでデイリータスクの詳細で繋げます）"
+                    : r.targetDocNo ? `${r.targetDocNo} に当たる発注書・契約書が見つかりません。番号を直すか、空のまま登録してあとで繋いでください`
+                    : "番号が無くても登録できます。条件はデイリータスクの詳細であとから繋ぎます"}
                 </div>
               )
             )}

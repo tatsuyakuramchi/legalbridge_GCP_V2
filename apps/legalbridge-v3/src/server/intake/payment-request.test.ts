@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { firedKeys, milestoneText, normalizeDocNo, progressOf, type ProgressFacts } from "./payment-request.js";
+import { firedKeys, milestoneText, normalizeDocNo, progressOf, splitDocNos, type ProgressFacts } from "./payment-request.js";
 import { assertInspectionMatter } from "./request-service.js";
 
 const facts = (over: Partial<ProgressFacts> = {}): ProgressFacts => ({
@@ -59,4 +59,12 @@ test("定型文書・その他は 受付 → 作成 → 送付 まで。支払�
   assert.equal(p.complete, false, "送っただけでは完了にしない");
   assert.equal(p.current, null, "段はすべて済んでいる");
   assert.equal(progressOf(facts({ purpose: "other", doneAt: "2026-10-01T00:00:00.000Z" })).complete, true);
+});
+
+test("番号の欄は複数書ける。数字を含まない言葉（わからない）は番号ではない", () => {
+  assert.deepEqual(splitDocNos("ARC-PO-2026-0001、arc-po-2026-0002 / ＡＲＣ－ＬＩＣ－2026－0003"),
+    ["ARC-PO-2026-0001", "ARC-PO-2026-0002", "ARC-LIC-2026-0003"]);
+  assert.deepEqual(splitDocNos("わからない"), []);
+  assert.deepEqual(splitDocNos(""), []);
+  assert.deepEqual(splitDocNos("ARC-PO-2026-0001, ARC-PO-2026-0001"), ["ARC-PO-2026-0001"], "重複は1つ");
 });

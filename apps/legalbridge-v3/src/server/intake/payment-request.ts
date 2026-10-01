@@ -57,6 +57,20 @@ export function normalizeDocNo(value: unknown): string | null {
   return s || null;
 }
 
+/**
+ * 番号の欄を番号の並びに分ける。「A, B／C」のように複数書ける。
+ * 数字を含まないもの（「わからない」「不明」など）は番号ではないので落とす。
+ * 揃えた番号を返す（空なら []）。
+ */
+export function splitDocNos(value: unknown): string[] {
+  const out: string[] = [];
+  for (const raw of String(value ?? "").split(/[,，、;；/／\n\r]+|\s{2,}|\s+(?=[A-Za-z０-９0-9])/)) {
+    const n = normalizeDocNo(raw);
+    if (n && /\d/.test(n) && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 export interface PaymentTarget {
   /** 打たれた番号（揃えたもの）。 */
   docNo: string;
@@ -82,7 +96,9 @@ export interface PaymentTarget {
 export async function resolvePaymentTarget(
   q: Queryable, purpose: PaymentPurpose, rawNo: unknown
 ): Promise<PaymentTarget | null> {
-  const docNo = normalizeDocNo(rawNo);
+  const nos = splitDocNos(rawNo);
+  if (nos.length > 1) return resolveMany(q, purpose, nos);
+  const docNo = nos[0] ?? null;
   if (!docNo) return null;
 
   const docRow = (await q.query(
@@ -168,6 +184,34 @@ export async function resolvePaymentTarget(
     counterpartyName: first?.party_name ?? agreement?.party_name ?? null,
     conditions: conditions.map((c) => ({ id: Number(c.id), conditionNo: c.condition_no ?? null, name: String(c.name) })),
     matter
+  };
+}
+
+/**
+ * 番号が複数のとき。1 本ずつ引き当てて束ねる。条件は和集合、相手先は最初に当たったもの、
+ * 案件は全部が同じ 1 つのときだけ。当たらなかった番号は docNo に残す（人が見て直せる）。
+ */
+async function resolveMany(q: Queryable, purpose: PaymentPurpose, nos: string[]): Promise<PaymentTarget | null> {
+  const hits: PaymentTarget[] = [];
+  for (const no of nos) {
+    const t = await resolvePaymentTarget(q, purpose, no);
+    if (t) hits.push(t);
+  }
+  if (!hits.length) return null;
+  const seen = new Set<number>();
+  const conditions = hits.flatMap((t) => t.conditions).filter((c) => !seen.has(c.id) && seen.add(c.id));
+  const matterIds = new Set(hits.map((t) => t.matter?.id ?? 0));
+  const first = hits[0];
+  return {
+    docNo: nos.join(", "),
+    documentId: hits.length === 1 ? first.documentId : null,
+    documentNo: hits.length === 1 ? first.documentNo : null,
+    agreementId: hits.length === 1 ? first.agreementId : null,
+    agreementNo: hits.length === 1 ? first.agreementNo : null,
+    counterpartyId: hits.find((t) => t.counterpartyId)?.counterpartyId ?? null,
+    counterpartyName: hits.find((t) => t.counterpartyName)?.counterpartyName ?? null,
+    conditions,
+    matter: matterIds.size === 1 && first.matter ? first.matter : null
   };
 }
 
