@@ -27,12 +27,14 @@ export interface BulkTarget { condition: LedgerCondition; scheduleId: number | n
 const yen = (n: number) => `¥${Math.round(n).toLocaleString()}`;
 const amountOf = (s: string) => readYen(s) ?? 0;
 
-export function BulkReport({ targets, defaultDate, eventStyle, onDone, onCancel, onError }: {
+export function BulkReport({ targets, defaultDate, eventStyle, lockDate = false, onDone, onCancel, onError }: {
   /** 報告を付ける IN 条件（再許諾・自社製造・他社販売）。時限式ならその回の締め。 */
   targets: BulkTarget[];
   defaultDate: string;
   eventStyle: boolean;
-  onDone: (message: string) => void; onCancel: () => void; onError: (m: string) => void;
+  /** 日付を変えさせない（既にある回に足すとき。日付を変えると別の回になる）。 */
+  lockDate?: boolean;
+  onDone: (message: string, on: string) => void; onCancel: () => void; onError: (m: string) => void;
 }) {
   const [text, setText] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
@@ -121,7 +123,7 @@ export function BulkReport({ targets, defaultDate, eventStyle, onDone, onCancel,
       next[i] = { ...r, saved, error: err };
     }
     setRows(next); setBusy(false);
-    if (!failed) onDone(`${made} 件の報告を入れました（${eventStyle ? `${on} 製造の回` : "この回"}）。この回の計算書で 1 枚にまとめて出せます`);
+    if (!failed) onDone(`${made} 件の報告を入れました（${eventStyle ? `${on} 製造の回` : "この回"}）。この回の計算書で 1 枚にまとめて出せます`, on);
     else onError(`${made} 件入れました。${failed} 件は入れられませんでした（赤い行）。直してもう一度「記録」を押すと、残りだけ入れます`);
   }
 
@@ -140,7 +142,7 @@ export function BulkReport({ targets, defaultDate, eventStyle, onDone, onCancel,
           {outs.length ? "読み取る" : "許諾先を読み込んでいます…"}
         </button>
         <label className="row" style={{ gap: 4 }}><span className="faint">{eventStyle ? "製造日" : "発生日"}</span>
-          <input type="date" value={on} onChange={(e) => setOn(e.target.value)} /></label>
+          {lockDate ? <b>{on}（この回）</b> : <input type="date" value={on} onChange={(e) => setOn(e.target.value)} />}</label>
         <label className="ledger-check"><input type="checkbox" checked={taxIncluded} onChange={(e) => setTaxIncluded(e.target.checked)} /> 金額は税込（割り戻す）</label>
       </div>
       {ratePct !== null && rateMismatch.length > 0 && (
@@ -151,8 +153,8 @@ export function BulkReport({ targets, defaultDate, eventStyle, onDone, onCancel,
           <div className="tablewrap">
             <table>
               <thead><tr>
-                <th></th><th>No</th><th>依頼文（版・言語 / 入金企業）</th><th>許諾先</th><th>言語</th>
-                <th className="num">前金</th><th className="num">後金</th><th></th>
+                <th></th><th>依頼文</th><th>許諾先</th><th>言語</th>
+                <th className="num">前金</th><th className="num">後金</th>
               </tr></thead>
               <tbody>
                 {rows.map((r) => {
@@ -160,35 +162,34 @@ export function BulkReport({ targets, defaultDate, eventStyle, onDone, onCancel,
                   const t = inFor(o);
                   return (
                     <tr key={r.key} className={r.error ? "overdue" : ""}>
-                      <td><input type="checkbox" checked={r.include} onChange={(e) => set(r.key, { include: e.target.checked })} /></td>
-                      <td>{r.no}</td>
-                      <td><div>{r.language || <span className="danger">言語なし</span>}</div><div className="faint">{r.company || "入金企業なし"}</div></td>
+                      <td style={{ whiteSpace: "nowrap" }}><input type="checkbox" checked={r.include} onChange={(e) => set(r.key, { include: e.target.checked })} /> {r.no}</td>
+                      <td style={{ maxWidth: 150 }}>
+                        <div>{r.language || <span className="danger">言語なし</span>}</div><div className="faint">{r.company || "入金企業なし"}</div>
+                        {r.saved.length > 0 && <span className="tag ok">入力済 {r.saved.map((x) => x === "advance" ? "前金" : "後金").join("・")}</span>}
+                        {r.error && <div className="danger">{r.error}</div>}
+                      </td>
                       <td>
-                        <select value={r.outId} style={{ maxWidth: 320 }}
+                        <select value={r.outId} style={{ width: 220 }} title={o ? `${o.partyName ?? ""}｜${o.name}` : ""}
                                 onChange={(e) => { const no = outs.find((x) => String(x.id) === e.target.value);
                                   set(r.key, { outId: e.target.value, lang: no ? (pickOut({ company: no.partyName ?? no.name, language: r.language }, [no])?.language ?? "") : "" }); }}>
                           <option value="">（選んでください）</option>
-                          {outs.map((x) => <option key={x.id} value={x.id}>{x.partyName ?? "—"}｜{x.name}</option>)}
+                          {outs.map((x) => <option key={x.id} value={x.id}>{x.partyName ?? x.name}{x.languages.length ? `（${x.languages.join("・")}）` : ""}</option>)}
                         </select>
                         {o && !t && <div className="danger">この許諾先の利用形態に合う IN 条件がありません</div>}
                         {o && t && <div className="faint">{t.condition.usageLabel}</div>}
                       </td>
                       <td>
                         {o && o.languages.length > 0 && !o.languages.includes("全言語")
-                          ? <select value={r.lang} onChange={(e) => set(r.key, { lang: e.target.value })}>
+                          ? <select value={r.lang} style={{ width: 120 }} onChange={(e) => set(r.key, { lang: e.target.value })}>
                               <option value="">（選んでください）</option>
                               {o.languages.map((l) => <option key={l} value={l}>{l}</option>)}
                             </select>
                           : <input value={r.lang} style={{ width: 110 }} placeholder={r.language} onChange={(e) => set(r.key, { lang: e.target.value })} />}
                       </td>
-                      <td className="num"><input value={r.advance} style={{ width: 110, textAlign: "right" }} disabled={r.saved.includes("advance")}
+                      <td className="num"><input value={r.advance} style={{ width: 100, textAlign: "right" }} disabled={r.saved.includes("advance")}
                                                  onChange={(e) => set(r.key, { advance: e.target.value })} /></td>
-                      <td className="num"><input value={r.balance} style={{ width: 110, textAlign: "right" }} disabled={r.saved.includes("balance")}
+                      <td className="num"><input value={r.balance} style={{ width: 100, textAlign: "right" }} disabled={r.saved.includes("balance")}
                                                  onChange={(e) => set(r.key, { balance: e.target.value })} /></td>
-                      <td>
-                        {r.saved.length > 0 && <span className="tag ok">入力済 {r.saved.map((x) => x === "advance" ? "前金" : "後金").join("・")}</span>}
-                        {r.error && <div className="danger">{r.error}</div>}
-                      </td>
                     </tr>
                   );
                 })}

@@ -143,11 +143,15 @@ export function RoundReport(
   const [editing, setEditing] = useState<string | null>(null);
   /** 依頼文からまとめて入れる（時限式の回。締めはこの回のもの）。 */
   const [bulk, setBulk] = useState(false);
-  const bulkTargets = round.parts.filter((p) => !p.skipped && p.scheduleId).flatMap((p) => {
-    const c = view.conditions.find((x) => x.id === p.conditionId);
-    return c && c.timing !== "event" && (c.usageType === "sublicense" || c.usageType === "oem")
-      ? [{ condition: c, scheduleId: p.scheduleId }] : [];
-  });
+  const bulkTargets = round.kind === "event"
+    // 製造の回：同じ作品のイベント式の条件すべて（まだ報告の無い利用形態にも足せる）。日付はこの回の製造日。
+    ? eventConditionsOf(round, view).filter((c) => c.usageType === "sublicense" || c.usageType === "oem")
+        .map((c) => ({ condition: c, scheduleId: null }))
+    : round.parts.filter((p) => !p.skipped && p.scheduleId).flatMap((p) => {
+        const c = view.conditions.find((x) => x.id === p.conditionId);
+        return c && c.timing !== "event" && (c.usageType === "sublicense" || c.usageType === "oem")
+          ? [{ condition: c, scheduleId: p.scheduleId }] : [];
+      });
   const [draft, setDraft] = useState<Draft | null>(null);
   /** 決定した計算書に載った報告の例外修正（admin）。理由が要る。 */
   const [correcting, setCorrecting] = useState<{ key: string; reason: string } | null>(null);
@@ -274,16 +278,19 @@ export function RoundReport(
       {canWrite && !adding && (
         <div className="report-actions">
           <button className="btn primary btn-big" onClick={() => setAdding({ mode: "report" })}>＋ 報告を追加</button>
-          <button className="btn btn-big" onClick={() => setAdding({ mode: "plan" })}>＋ 予定を作る</button>
-          {round.kind !== "event" && bulkTargets.length > 0 && (
+          {round.kind !== "event" && <button className="btn btn-big" onClick={() => setAdding({ mode: "plan" })}>＋ 予定を作る</button>}
+          {bulkTargets.length > 0 && (
             <button className="btn btn-big" onClick={() => setBulk(true)}>依頼文からまとめて入れる</button>
           )}
-          <span className="faint">報告を追加＝数字が来た。予定を作る＝まだ数字は無いが、この許諾先から来るはず（以後の回でも待つ）。</span>
+          <span className="faint">{round.kind === "event"
+            ? "この製造の回（同じ製造日）に報告を足す。依頼文があれば「まとめて入れる」。"
+            : "報告を追加＝数字が来た。予定を作る＝まだ数字は無いが、この許諾先から来るはず（以後の回でも待つ）。"}</span>
           {firstWait && <span className="faint" style={{ marginLeft: "auto" }}>来るはずの行はもう並んでいます。まずは黄色の行へ。</span>}
         </div>
       )}
       {bulk && (
-        <BulkReport eventStyle={false} defaultDate={round.closeOn ?? new Date().toISOString().slice(0, 10)}
+        <BulkReport eventStyle={round.kind === "event"} lockDate={round.kind === "event"}
+                    defaultDate={round.closeOn ?? new Date().toISOString().slice(0, 10)}
                     targets={bulkTargets} onCancel={() => setBulk(false)}
                     onDone={(m) => { setBulk(false); onChanged(m); }} onError={onError} />
       )}
@@ -454,6 +461,12 @@ export function RoundReport(
   );
 }
 
+/** 製造の回に足せる条件：その回の作品のイベント式の条件すべて。 */
+function eventConditionsOf(round: Round, view: LedgerView): LedgerCondition[] {
+  return view.conditions.filter((c) => c.timing === "event"
+    && (!round.workIds.length || (c.workId !== null && round.workIds.includes(c.workId))));
+}
+
 /**
  * 報告を足す先。時限式はその回（締め・schedule_id）、イベント式は締めを持たず
  * 「報告 1 件＝回 1 つ」なので scheduleId は null、発生日＝製造日が回の日になる。
@@ -470,9 +483,15 @@ function AddLine(
     onAdded: (message: string) => void; onError: (m: string) => void;
   }
 ) {
+  // 製造の回：この回の製造日で足す（同じ製造日なら同じ回に入る）。予定は製造の回には置かない。
+  if (round.kind === "event") {
+    const targets = eventConditionsOf(round, view).map((c): ReportTarget => ({
+      key: `e:${c.id}`, condition: c, scheduleId: null, closeOn: round.closeOn, periodFrom: round.closeOn, label: null }));
+    return <ReportAdd mode="report" targets={targets} initialConditionId={conditionId} fixedDate={round.closeOn}
+                      onCancel={onCancel} onAdded={onAdded} onError={onError} />;
+  }
   const targets: ReportTarget[] = round.parts.filter((p) => !p.skipped).flatMap((p) => {
     const c = view.conditions.find((x) => x.id === p.conditionId);
-    // イベント式の条件は回の中からは足さない（足すと別の回が立つ）。台帳の上の「製造の報告」から。
     if (!c || c.timing === "event") return [];
     return [{ key: `${p.conditionId}:${p.scheduleId ?? ""}`, condition: c, scheduleId: p.scheduleId,
               closeOn: p.closeOn, periodFrom: p.periodFrom, label: p.label }];
@@ -481,11 +500,7 @@ function AddLine(
     return (
       <div className="note stack" style={{ gap: 4 }}>
         <b>この回には足せません</b>
-        <span className="faint">
-          {round.kind === "event"
-            ? "イベント式の回は報告 1 件で 1 回です。次の製造・刷の報告は、回の一覧の上の「＋ 製造の報告（イベント式）」から足してください（新しい回が立ちます）。"
-            : "この回の条件はすべて「報告なし」です。取り消してから足すか、別の回を選んでください。"}
-        </span>
+        <span className="faint">この回の条件はすべて「報告なし」です。取り消してから足すか、別の回を選んでください。</span>
         <button className="btn btn-sm" onClick={onCancel}>閉じる</button>
       </div>
     );
@@ -499,9 +514,12 @@ function AddLine(
  * 回の中（時限式）からも、台帳の上（イベント式の製造の報告）からも同じ形で使う。
  */
 export function ReportAdd(
-  { mode, targets, initialConditionId, onCancel, onAdded, onError }: {
-    mode: "report" | "plan"; targets: ReportTarget[]; initialConditionId: number | null; onCancel: () => void;
-    onAdded: (message: string) => void; onError: (m: string) => void;
+  { mode, targets, initialConditionId, fixedDate = null, onCancel, onAdded, onError }: {
+    mode: "report" | "plan"; targets: ReportTarget[]; initialConditionId: number | null;
+    /** 日付を変えさせない（既にある製造の回に足すとき。日付を変えると別の回になる）。 */
+    fixedDate?: string | null;
+    onCancel: () => void;
+    onAdded: (message: string, on?: string) => void; onError: (m: string) => void;
   }
 ) {
   const first = targets.find((t) => t.condition.id === initialConditionId) ?? targets[0];
@@ -517,7 +535,7 @@ export function ReportAdd(
   /** 報告の地域。相手の報告が地域まで分かれていないことがあるので複数選べる（全部なら許諾地域すべて）。 */
   const [regions, setRegions] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft>({ quantity: "", unit: "", gross: "", taxIncluded: false,
-                                              on: target?.closeOn ?? new Date().toISOString().slice(0, 10), note: "" });
+                                              on: fixedDate ?? target?.closeOn ?? new Date().toISOString().slice(0, 10), note: "" });
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!cond || !usage) { setOuts([]); return; }
@@ -573,7 +591,7 @@ export function ReportAdd(
         languages: language ? [language] : [], regions,
         note: draft.note.trim() || null
       });
-      onAdded(eventStyle ? "製造の報告を足しました（この報告の回が立ちました）" : "報告を足しました");
+      onAdded(eventStyle ? `${draft.on} 製造の回に報告を足しました` : "報告を足しました", draft.on);
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -585,7 +603,7 @@ export function ReportAdd(
       <span className="faint">{isPlan
         ? "数字はまだ無い。この許諾先・言語・地域から報告が来るはず、という行を置く。以後の回でも「来るはず」として待つ。"
         : eventStyle
-        ? "製造・刷 1 件が 1 回。締めは要らず、記録するとその製造日の回が立ち、支払日は条件の支払条件から決まる。"
+        ? (fixedDate ? `この製造の回（${fixedDate}）に足す。` : "同じ製造日の報告は 1 つの回にまとまる。締めは要らず、支払日は条件の支払条件から決まる。")
         : "記録すると入力済の行になり、以後の回でも「来るはず」として待つ。地域まで分かれていない報告は地域を複数選ぶ（その地域の行がまとめて入力済になる）。"}</span>
       <div className="row" style={{ gap: 8 }}>
         <label className="row" style={{ gap: 4 }}><span className="faint">作品 · 利用形態</span>
@@ -643,7 +661,8 @@ export function ReportAdd(
         {f.gross && <input className="inline-input num" style={{ width: 130 }} placeholder={f.grossLabel} aria-label={f.grossLabel} value={draft.gross} onChange={(e) => setDraft({ ...draft, gross: e.target.value })} />}
         {f.tax && <label className="ledger-check"><input type="checkbox" checked={draft.taxIncluded} onChange={(e) => setDraft({ ...draft, taxIncluded: e.target.checked })} /> 税込</label>}
         <label className="row" style={{ gap: 4 }}>{eventStyle && <span className="faint">製造日</span>}
-          <input className="inline-input" type="date" value={draft.on} aria-label={eventStyle ? "製造日" : "発生日"} onChange={(e) => setDraft({ ...draft, on: e.target.value })} /></label>
+          {fixedDate ? <b>{fixedDate}</b>
+            : <input className="inline-input" type="date" value={draft.on} aria-label={eventStyle ? "製造日" : "発生日"} onChange={(e) => setDraft({ ...draft, on: e.target.value })} />}</label>
         <button className="btn btn-sm primary" disabled={busy || (Boolean(usage) && !outId)} onClick={() => void add()}>記録</button>
         <button className="btn btn-sm" disabled={busy} onClick={onCancel}>やめる</button>
       </div>
