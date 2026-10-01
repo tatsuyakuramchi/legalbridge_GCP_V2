@@ -1,0 +1,225 @@
+<!-- individual_license_terms_v3 pubstyle draft -->
+<!--
+  試作：個別利用許諾条件書V3 を 出版等利用許諾条件書V3（pub_license_terms_v3 r10）の
+  書式に寄せたもの。本番には流していない（検証用）。
+
+  差し込みは licenseTermsPatch（apps/legalbridge-v3/src/server/documents/license-terms.ts）が
+  いま出している名前だけを使う。計算ブロックは1行も変えずに載せ替えられるかの検証を兼ねる。
+  署名欄 は formData をそのまま描画に渡しているので直接参照できる（073 と同じ）。
+-->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>個別利用許諾条件書 {{contractNo}}</title>
+<style>
+  @page { size: A4 portrait; margin: 14mm 16mm; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Noto Serif CJK JP", "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    font-size: 10.5pt; line-height: 1.55; color: #111;
+  }
+  h1 { text-align: center; font-size: 16pt; letter-spacing: .12em; margin: 0 0 2mm; }
+  .sub { text-align: center; font-size: 9pt; color: #444; margin: 0 0 4mm; }
+  .meta { display: flex; gap: 10mm; margin-bottom: 3mm; font-size: 10pt; }
+  .meta span b { font-weight: normal; color: #444; margin-right: 1em; }
+  .parties { display: flex; gap: 6mm; margin-bottom: 3mm; }
+  .party { flex: 1; border: 1px solid #bbb; padding: 2mm 3mm; }
+  .party .role { font-size: 8.5pt; letter-spacing: .1em; color: #444; }
+  .party .name { font-weight: bold; font-size: 11.5pt; }
+  h2 { font-size: 11pt; margin: 4mm 0 1.5mm; padding-bottom: .5mm; border-bottom: 1.2px solid #222; }
+  h2 .no { color: #444; font-weight: normal; margin-right: .6em; }
+  p { margin: 1mm 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  th, td { border: 1px solid #333; padding: 1mm 1.6mm; vertical-align: top; text-align: left; }
+  th { background: #f1efe8; font-weight: bold; white-space: nowrap; }
+  td.c { text-align: center; white-space: nowrap; }
+  td.r { text-align: right; white-space: nowrap; }
+  .kv th { width: 24mm; }
+  .list th.n { width: 9mm; }
+  .list th.rate { width: 19mm; }
+  .list tbody { break-inside: avoid; page-break-inside: avoid; }
+  .list thead { display: table-header-group; }
+  .list td.note { font-size: 9pt; color: #333; }
+  .list td.note .lbl { color: #666; margin-right: .6em; }
+  .list td.note .lbl:not(:first-child) { margin-left: 1em; }
+  .list tfoot td { background: #faf9f5; font-weight: bold; }
+  .role { font-size: 8.5pt; color: #555; }
+  .art { margin-bottom: 3mm; }
+  .art h2 { break-after: avoid; page-break-after: avoid; }
+  .art tr { break-inside: avoid; page-break-inside: avoid; }
+  .lead { font-size: 9pt; color: #444; margin: 0 0 1.5mm; }
+  .sign { display: flex; gap: 10mm; margin-top: 6mm; page-break-inside: avoid; break-inside: avoid; }
+  .sign > div { flex: 1; border-top: 1px solid #333; padding-top: 2mm; }
+  .sign > div .name { font-size: 11pt; }
+  .sign .who { font-size: 8.5pt; color: #444; letter-spacing: .1em; }
+  .footer { margin-top: 3mm; font-size: 8pt; color: #555; text-align: right; }
+</style>
+</head>
+<body>
+
+<h1>個別利用許諾条件書</h1>
+<p class="sub">{{#if masterAgreement}}{{masterAgreement}}に基づく{{/if}}個別許諾条件</p>
+
+<div class="meta">
+  <span><b>発行日</b>{{formatDate issueDate}}</span>
+  <span><b>条件書番号</b>{{contractNo}}</span>
+  {{#if workId}}<span><b>作品ID</b>{{workId}}</span>{{/if}}
+</div>
+
+<div class="parties">
+  <div class="party">
+    <div class="role">許諾者（Licensor）</div>
+    <div class="name">{{licensorName}}</div>
+    <div>{{licensorAddress}}</div>
+    {{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}
+  </div>
+  <div class="party">
+    <div class="role">被許諾者（Licensee）</div>
+    <div class="name">{{licenseeName}}</div>
+    <div>{{licenseeAddress}}</div>
+    {{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}
+  </div>
+</div>
+
+<p>許諾者と被許諾者は、両者間の{{#if masterAgreement}}{{masterAgreement}}{{else}}基本契約{{/if}}（以下「基本契約」という。）に基づき、以下のとおり個別の利用許諾条件を定める。本条件書に定めのない事項は基本契約による。</p>
+
+<div class="art">
+<h2><span class="no">第１条</span>対象製品・許諾範囲</h2>
+<table class="kv">
+  <tr><th>対象製品</th><td>{{productName}}</td></tr>
+  <tr><th>定義</th><td>{{productDefinition}}</td></tr>
+  <tr><th>独占性</th><td>{{exclusivity}}</td></tr>
+  <tr><th>地域（上限）</th><td>{{maxRegion}}</td></tr>
+  <tr><th>言語（上限）</th><td>{{maxLanguage}}</td></tr>
+  <tr><th>許諾開始日</th><td>{{formatDate startDate}}</td></tr>
+  {{#if scope}}<tr><th>許諾範囲</th><td>{{scope}}</td></tr>{{/if}}
+</table>
+</div>
+
+<div class="art">
+<h2><span class="no">第２条</span>構成要素と料率</h2>
+<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率の列は第３条の加算型の取引形態ごとの料率で、合計の行がその取引形態の適用料率となる。「—」はその取引形態で当該要素の料率が無いことを示す。地域・言語・根拠文書は同じNo.の下の行に示す。</p>
+<table class="list">
+  <thead>
+    <tr>
+      <th class="n">No.</th>
+      <th>構成要素</th>
+      {{#if showHolder}}<th>権利元</th>{{/if}}
+      {{#each addonConds}}<th class="rate">{{condLabel}}<br>{{condName}}</th>{{/each}}
+    </tr>
+  </thead>
+  {{#each lcs}}
+  <tbody>
+    <tr>
+      <td class="c">{{index1 @index}}</td>
+      <td>{{lcName}} <span class="role">（{{lcRole}}）</span>{{#if lcId}}<br><span class="role">{{lcId}}</span>{{/if}}</td>
+      {{#if ../showHolder}}<td>{{lcHolder}}</td>{{/if}}
+      {{#each addonRates}}<td class="r">{{this}}</td>{{/each}}
+    </tr>
+    <tr>
+      <td class="c"></td>
+      <td class="note" colspan="{{add (add ../addonConds.length 1) (or ../showHolder 0)}}"><span class="lbl">地域</span>{{lcRegion}}<span class="lbl">言語</span>{{lcLanguage}}<span class="lbl">根拠文書</span>{{lcSourceDoc}}</td>
+    </tr>
+  </tbody>
+  {{/each}}
+  {{#if addonConds.length}}
+  <tfoot>
+    <tr>
+      <td class="c"></td>
+      <td{{#if showHolder}} colspan="2"{{/if}}>合計（適用料率）</td>
+      {{#each addonConds}}<td class="r">{{appliedRate}}</td>{{/each}}
+    </tr>
+  </tfoot>
+  {{/if}}
+</table>
+</div>
+
+<div class="art">
+<h2><span class="no">第３条</span>取引形態と許諾料</h2>
+<p class="lead">一覧の1行が取引形態1つ。【加算型】の適用料率は第２条の合計、【非加算型】の適用料率は本表に記載の料率とする。許諾料は「算定式」により計算する。</p>
+<table class="list">
+  <thead>
+    <tr>
+      <th class="n">条件</th>
+      <th>取引形態</th>
+      <th>算定式</th>
+      <th class="rate">適用料率</th>
+    </tr>
+  </thead>
+  {{#each conds}}
+  <tbody>
+    <tr>
+      <td class="c">{{condLabel}}</td>
+      <td>{{condName}}<br><span class="role">{{condType}}</span></td>
+      <td>{{basePrice}}{{#if calcModel}}<br><span class="role">{{calcModel}}</span>{{/if}}</td>
+      <td class="r">{{appliedRate}}</td>
+    </tr>
+    <tr>
+      <td class="c"></td>
+      <td class="note" colspan="3"><span class="lbl">地域</span>{{condRegion}}<span class="lbl">言語</span>{{condLang}}<span class="lbl">AG</span>{{ag}} {{currency}}<span class="lbl">MG</span>{{mg}} {{currency}}</td>
+    </tr>
+  </tbody>
+  {{/each}}
+  {{#unless conds.length}}
+  <tbody><tr><td colspan="4">（取引形態がありません。条件明細を選んでください）</td></tr></tbody>
+  {{/unless}}
+</table>
+</div>
+
+<div class="art">
+<h2><span class="no">第４条</span>算定基準日</h2>
+<table class="kv">
+  {{#each calcBaseRows}}
+  <tr><th>{{edition}}</th><td>{{trigger}}{{#if note}}（{{note}}）{{/if}}</td></tr>
+  {{/each}}
+</table>
+</div>
+
+{{#if sublicensees.length}}
+<div class="art">
+<h2><span class="no">第５条</span>再許諾先</h2>
+<table class="list">
+  <thead>
+    <tr><th>再許諾先</th><th>取引形態</th><th>地域／言語</th><th class="rate">料率</th><th>開始日</th></tr>
+  </thead>
+  {{#each sublicensees}}
+  <tbody>
+    <tr>
+      <td>{{slPartner}}</td><td>{{slCond}}</td><td>{{slRegion}}／{{slLang}}</td>
+      <td class="r">{{#if slRate}}{{slRate}}%{{/if}}</td><td class="c">{{formatDate slDate}}</td>
+    </tr>
+    {{#if slNote}}<tr><td class="note" colspan="5"><span class="lbl">備考</span>{{slNote}}</td></tr>{{/if}}
+  </tbody>
+  {{/each}}
+</table>
+</div>
+{{/if}}
+
+<div class="art">
+<h2><span class="no">第{{#if sublicensees.length}}６{{else}}５{{/if}}条</span>監修・通知先</h2>
+<table class="kv">
+  {{#if supervisor}}<tr><th>監修者</th><td>{{supervisor}}</td></tr>{{/if}}
+  <tr><th>許諾者</th><td>{{licensorContact}}</td></tr>
+  <tr><th>被許諾者</th><td>{{licenseeContact}}</td></tr>
+</table>
+</div>
+
+{{#if specialExtras.length}}
+<div class="art">
+<h2><span class="no">第{{#if sublicensees.length}}７{{else}}６{{/if}}条</span>特記事項</h2>
+{{#each specialExtras}}<p>{{#if seId}}（{{seId}}）{{/if}}{{seText}}</p>{{/each}}
+</div>
+{{/if}}
+
+{{#unless (eq 署名欄 "表示しない")}}
+<div class="sign">
+  <div><div class="who">許諾者</div><div class="name">{{licensorName}}{{#if licensorIsCorp}}{{#if licensorRep}}　{{licensorRep}}{{/if}}{{/if}}</div></div>
+  <div><div class="who">被許諾者</div><div class="name">{{licenseeName}}{{#if licenseeRep}}　{{licenseeRep}}{{/if}}</div></div>
+</div>
+{{/unless}}
+
+<div class="footer">{{contractNo}}　個別利用許諾条件書</div>
+
+</body>
+</html>
