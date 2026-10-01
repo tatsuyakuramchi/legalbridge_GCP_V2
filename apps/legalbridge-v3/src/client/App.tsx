@@ -16,10 +16,11 @@ import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
+import { TradeWorkspace, type TradeCtx } from "./TradeWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "agreements" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "trade" | "agreements" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -34,7 +35,10 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     // 軽微ならデイリータスク、大きければ案件。どちらも作業テーブルは tasks。
     { view: "intake", label: "受付箱" },
     { view: "daily", label: "デイリータスク" },
-    { view: "matters", label: "案件" }
+    { view: "matters", label: "案件" },
+    // 取引の種類（ボードゲーム・出版の IN／OUT、業務委託）を選んで、基礎情報 → 契約 →
+    // 条件 → 文書 → 送信 を 1 枚で進める（docs/v3-request-inbox.md §11）。
+    { view: "trade", label: "取引を進める" }
   ] },
   { section: "横断で見る", items: [
     // 契約が器で、条件はその明細。並びもその順にする。
@@ -138,6 +142,8 @@ export function App() {
    * 左のメニューから別の画面を開いたら解除する（作業と関係ない文書まで繋がないように）。
    */
   const [taskCtx, setTaskCtx] = useState<TaskCtx | null>(null);
+  /** 「取引を進める」で開いている取引。文書の画面へ行って戻っても続きから。 */
+  const [tradeCtx, setTradeCtx] = useState<TradeCtx | null>(null);
 
   /** 作品の利用許諾計算をこの作家で開く（受付箱の依頼から）。作品画面を離れたら消す。 */
   const [ledgerParty, setLedgerParty] = useState<number | null>(null);
@@ -338,6 +344,13 @@ export function App() {
               }
             }}
             onCountsChange={(c) => setDailyCount(c.open)} />
+        )}
+        {view === "trade" && (
+          <TradeWorkspace ctx={tradeCtx} onCtx={setTradeCtx}
+            onCompose={(conditionIds, eventIds, matterId, templateKey) => startCompose(conditionIds, eventIds ?? [], matterId ?? null, templateKey ?? null)}
+            onOpenDocument={openDocumentAt}
+            onOpenMatter={(id) => openEntity("matter", id)}
+            onRegisterAgreement={startAgreement} />
         )}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}

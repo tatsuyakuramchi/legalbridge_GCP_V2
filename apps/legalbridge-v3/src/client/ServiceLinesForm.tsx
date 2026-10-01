@@ -59,9 +59,11 @@ function parsePaste(raw: string): Line[] {
 }
 
 export function ServiceLinesForm(
-  { preset, counterpartyName, onDone, onCancel }: {
+  { preset, counterpartyName, initialTitle, onDone, onCancel }: {
     preset?: Partial<Record<"counterpartyId" | "agreementId" | "matterId" | "workId", string>>;
     counterpartyName?: string | null;
+    /** 件名の初期値（進行画面の案件名など）。 */
+    initialTitle?: string | null;
     onDone: (created: ServiceLinesCreated) => void;
     onCancel: () => void;
   }
@@ -69,7 +71,7 @@ export function ServiceLinesForm(
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [partyId, setPartyId] = useState(preset?.counterpartyId ?? "");
   const [partyLabel, setPartyLabel] = useState<string | null>(counterpartyName ?? null);
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle ?? "");
   const [agreementId, setAgreementId] = useState(preset?.agreementId ?? "");
   const [workId, setWorkId] = useState(preset?.workId ?? "");
   const [contractForm, setContractForm] = useState("");
