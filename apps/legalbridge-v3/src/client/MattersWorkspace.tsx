@@ -81,7 +81,7 @@ const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
 export function MattersWorkspace(
-  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onSettledImport, onFixDrift, onRegisterAgreement }: {
+  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onSettledImport, onFixDrift, onRegisterAgreement, onOpenTrade }: {
     onOpenCondition: (id: number) => void;
     initialId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -98,6 +98,8 @@ export function MattersWorkspace(
     onFixDrift?: (matterId: number) => void;
     /** 契約の画面へ、この案件の相手先を入れた状態で登録を開く。 */
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
+    /** 「取引を進める」画面をこの案件で開く（基本契約 → 条件 → 文書 → 送信）。 */
+    onOpenTrade?: (matter: { id: number; kind: string; businessLine: string | null }) => void;
   }
 ) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
@@ -439,13 +441,20 @@ export function MattersWorkspace(
                   <MatterKindTags m={detail} />
                   <StatusTag kind="matter" value={detail.status} />
                   {detail.mergedIntoId && <span className="tag warn">統合済み</span>}
-                  {!detail.mergedIntoId && !merging && (
-                    <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                  {!detail.mergedIntoId && !merging && (<>
+                    {onOpenTrade && detail.kind !== "single" && (
+                      <button className="btn btn-sm primary" style={{ marginLeft: "auto" }}
+                              title="基本契約 → 条件 → 文書 → 送信 を 1 枚で進める"
+                              onClick={() => onOpenTrade({ id: detail.id, kind: detail.kind, businessLine: detail.businessLine })}>
+                        取引を進める
+                      </button>
+                    )}
+                    <button className="btn btn-sm" style={onOpenTrade && detail.kind !== "single" ? undefined : { marginLeft: "auto" }}
                             title="同じ仕事の案件が2つできたとき、片方にまとめる。中身は統合先へ移り、取り消せる"
                             onClick={() => { setMerging(true); setMergeInto(null); }}>
                       別の案件に統合する
                     </button>
-                  )}
+                  </>)}
                 </div>
                 <div className="panel-bd stack">
                   {/* 統合済みの案件。中身は統合先にあるので、そちらへ誘導する。 */}
