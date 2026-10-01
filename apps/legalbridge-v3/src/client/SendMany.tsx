@@ -88,6 +88,7 @@ export function SendMany(
   const label = { off: "止めています", dry_run: "検証（送りません）", live: "送ります" } as const;
 
   async function send() {
+    if (busy) return;   // 連打しても二度は送らない
     setBusy(true); setError(null); setOutcome(null);
     try {
       const r = way === "mail"
@@ -179,6 +180,12 @@ export function SendMany(
           </div>
         )}
 
+        {busy && (
+          <div className="sending" role="status" aria-live="polite">
+            <span className="spin" />
+            <span><b>{way === "mail" ? "メールを送っています" : "CloudSign に下書きを作っています"}</b>　PDF を作って送っているので、しばらくお待ちください（二度押しは要りません）</span>
+          </div>
+        )}
         {error && <div className="alert">{error}</div>}
         {outcome && (
           <div className={outcome.sent ? "note ok" : "note warn"}>

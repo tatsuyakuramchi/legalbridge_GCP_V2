@@ -139,3 +139,23 @@ test("案件にもデイリータスクにも繋がっていなければ、そ�
   assert.deepEqual(d.to, []);
   assert.match(d.warnings[0], /案件にもデイリータスクにも繋がっていない/);
 });
+
+test("送り先の候補：署名者の印が付いた連絡先を署名者に、依頼者と法務の担当も出す", async () => {
+  const r = await new MailDraftService(build({ contacts: [
+    { name: "甲 一郎", email: "ichiro@kou.example", roles: ["primary"], department: "営業" },
+    { name: "甲 社長", email: "ceo@kou.example", roles: ["signer"], department: null }
+  ] })).recipients(5);
+  assert.deepEqual(r.signers.map((p) => p.email), ["ceo@kou.example"]);
+  assert.equal(r.signersFrom, "signer");
+  assert.equal(r.contacts.length, 2);
+  assert.equal(r.requester?.email, "biz@example.com");
+  assert.equal(r.owner?.email, "legal@example.com");
+  assert.equal(r.counterparty?.name, "株式会社甲");
+  assert.equal(r.origin?.label, "案件");
+});
+
+test("送り先の候補：署名者の印が無ければ主担当を署名者の候補にする", async () => {
+  const r = await new MailDraftService(build()).recipients(5);
+  assert.deepEqual(r.signers.map((p) => p.email), ["ichiro@kou.example"]);
+  assert.equal(r.signersFrom, "primary");
+});

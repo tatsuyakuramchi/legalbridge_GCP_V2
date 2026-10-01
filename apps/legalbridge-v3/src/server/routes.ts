@@ -3935,6 +3935,11 @@ export function createRoutes(database: Transactable) {
     const purpose = z.enum(["owner_check", "party_check", "delivery"]).parse(String(req.query.purpose ?? ""));
     res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose));
   }));
+  // 送り先の候補（CloudSign の署名者・確認者）。取引先の署名者と事業部の担当者を、
+  // 案件の無い文書（デイリータスク）でも出す。連絡先は個人の情報なので admin・legal だけ。
+  router.get("/documents/:id/recipients", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await new MailDraftService(database).recipients(Number(req.params.id)));
+  }));
 
   router.get("/documents/:id/sends", asyncRoute(async (req, res) => {
     res.json(await sends.timeline(Number(req.params.id)));
@@ -4282,32 +4287,55 @@ export function createRoutes(database: Transactable) {
     res.send(Buffer.from(buildZip(entries)));
   }));
 
-  // 署名依頼。書類の実体が要るので PDF は必ず付ける。
+  /**
+   * 署名依頼。書類の実体が要るので PDF は必ず付ける。
+   * 署名者は複数（並べた順に署名を求める）。確認者・CC は署名しないが書類を見られる
+   * （CloudSign の reportees）。recipient だけの古い呼び方も受ける。
+   */
+  const signPerson = z.object({
+    email: z.string().trim().email(),
+    name: z.string().trim().max(120).nullable().optional(),
+    organization: z.string().trim().max(200).nullable().optional()
+  });
   router.post("/documents/:id/sign",
     requireRole("admin"), requireWritable,
     asyncRoute(async (req, res) => {
       const id = Number(req.params.id);
       const input = z.object({
-        recipient: z.string().trim().email(),
+        recipient: z.string().trim().email().optional(),
+        signers: z.array(signPerson).max(10).optional(),
+        reportees: z.array(signPerson).max(10).optional(),
         subject: z.string().trim().max(300).optional()
       }).parse(req.body ?? {});
+      const signers = (input.signers?.length ? input.signers
+        : input.recipient ? [{ email: input.recipient, name: null, organization: null }] : []);
+      if (!signers.length) throw new DomainError("VALIDATION", "署名者を 1 人以上入れてください");
+      const reportees = (input.reportees ?? [])
+        .filter((r) => !signers.some((x) => x.email.toLowerCase() === r.email.toLowerCase()));
       const { document, attachment } = await pdfOf(id);
       const subject = input.subject ?? document.title ?? document.documentNo ?? "署名のお願い";
       const who = actor(res);
       const outcome = await dispatch.dispatch({
         channel: "cloudsign", targetType: "document", targetId: id, actor: who,
-        request: { recipient: input.recipient, subject, body: "署名をお願いします。", attachment }
+        request: {
+          recipient: signers[0].email, subject, body: "署名をお願いします。", attachment,
+          participants: signers.map((x, i) => ({ email: x.email, name: x.name ?? null,
+                                                 organization: x.organization ?? null, order: i + 1 })),
+          reportees: reportees.map((x) => ({ email: x.email, name: x.name ?? null }))
+        }
       });
+      const counterpart = [...signers.map((x) => x.email), ...reportees.map((x) => `cc:${x.email}`)].join(", ");
       if (outcome.sent && document.matterId) {
         await inTransaction(database, async (client) => {
           await recordCommunication(client, {
             matterId: document.matterId!, channel: "cloudsign", direction: "out", actor: who,
-            counterpart: input.recipient, subject,
+            counterpart, subject,
             body: outcome.draft
               ? `${document.documentNo ?? ""} の署名依頼を CloudSign に下書きとして作った（送信は CloudSign の画面から）`
               : `${document.documentNo ?? ""} の署名依頼を CloudSign で送った`,
             externalRef: outcome.externalId ?? null, documentId: id,
-            evidence: { cloudSignDocumentId: outcome.externalId ?? null }
+            evidence: { cloudSignDocumentId: outcome.externalId ?? null,
+                        signers: signers.map((x) => x.email), reportees: reportees.map((x) => x.email) }
           });
         });
       }

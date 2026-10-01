@@ -715,6 +715,10 @@ table.compact th,table.compact td{padding:4px 8px}
 .exporting .bar{display:inline-block;width:120px;height:6px;border-radius:3px;background:var(--sunken);overflow:hidden}
 .exporting .bar i{display:block;height:100%;background:var(--accent);transition:width .2s}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* 送っている最中の印（メール・CloudSign）。輪と経過秒。 */
+.sending{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent-soft);font-size:12.5px}
+.sending .spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--accent);animation:spin .8s linear infinite;flex:none}
+@media (prefers-reduced-motion: reduce){.sending .spin{animation:none}}
 @media (prefers-reduced-motion: reduce){.exporting .spin{animation:none;border-top-color:var(--line-strong)}}
 
 /* ── 許諾料の台帳（作品 › 利用許諾計算。A-059）─────────────────────────── */

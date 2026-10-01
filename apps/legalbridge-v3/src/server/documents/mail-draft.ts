@@ -35,6 +35,19 @@ interface Origin {
   label: string;
 }
 
+export interface DocumentRecipients {
+  counterparty: { id: number | null; name: string; email: string | null } | null;
+  contacts: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
+  /** 署名者の候補。署名者の印が付いた連絡先、無ければ主担当。 */
+  signers: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
+  signersFrom: "signer" | "primary" | null;
+  /** 事業部の担当者（依頼者）。 */
+  requester: Person | null;
+  /** 法務の担当（案件の担当かデイリータスクの担当）。 */
+  owner: Person | null;
+  origin: { label: string; no: string | null; title: string | null } | null;
+}
+
 export interface MailDraft {
   purpose: MailPurpose;
   kind: MailTemplateKind;
@@ -70,8 +83,36 @@ const japaneseDate = (iso: string | null) => {
 export class MailDraftService {
   constructor(private readonly database: Queryable) {}
 
-  async draft(documentId: number, purpose: MailPurpose): Promise<MailDraft> {
+  /**
+   * 送り先の候補（CloudSign の署名者・確認者、メールの宛先を人が選ぶとき）。
+   * 署名者＝取引先の連絡先のうち署名者の印が付いた人（無ければ主担当）、
+   * 事業部の担当者＝依頼者（案件・デイリータスクの依頼者のメール）、法務の担当。
+   */
+  async recipients(documentId: number): Promise<DocumentRecipients> {
     try {
+      const c = await this.loadContext(documentId);
+      const person = (p: any): Person | null => (p?.email ? { name: str(p.name), email: String(p.email) } : null);
+      const roles = (x: any) => (Array.isArray(x.roles) ? x.roles.map(String) : []) as string[];
+      const contacts = c.contacts.map((x) => ({
+        name: str(x.name), email: String(x.email), roles: roles(x), department: str(x.department)
+      }));
+      const signers = contacts.filter((x) => x.roles.includes("signer"));
+      const primaries = contacts.filter((x) => x.roles.includes("primary"));
+      return {
+        counterparty: c.counterpartyId || c.counterpartyName
+          ? { id: c.counterpartyId, name: c.counterpartyName, email: c.partyEmail } : null,
+        contacts,
+        signers: signers.length ? signers : primaries,
+        signersFrom: signers.length ? "signer" : primaries.length ? "primary" : null,
+        requester: person(c.requester),
+        owner: person(c.owner),
+        origin: c.origin ? { label: c.origin.label, no: c.origin.no, title: c.origin.title } : null
+      };
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 文書の出どころ（案件かデイリータスク）と、相手先・担当・依頼者。下書きと候補の両方が使う。 */
+  private async loadContext(documentId: number) {
       const head = await this.database.query(
         `SELECT d.id, d.document_no, d.status, d.issued_at, d.matter_id, d.rendered_values,
                 v.counterparty, v.counterparty_id, t.template_key,
@@ -96,6 +137,24 @@ export class MailDraftService {
         : await this.originOfRequest(documentId);
       const counterpartyId: number | null = doc.counterparty_id ? Number(doc.counterparty_id) : origin?.counterpartyId ?? null;
       const counterpartyName = str(doc.counterparty) ?? origin?.counterpartyName ?? "";
+      const owner = origin?.ownerStaffId
+        ? (await this.database.query("SELECT name, email FROM staff WHERE id = $1", [origin.ownerStaffId])).rows[0] as any
+        : null;
+      const requester = await this.requesterOf(origin);
+      const contacts = counterpartyId
+        ? (await this.database.query(
+            `SELECT name, email, roles, department FROM party_contacts
+              WHERE party_id = $1 AND email IS NOT NULL AND email <> '' ORDER BY id`, [counterpartyId])).rows as any[]
+        : [];
+      const partyEmail = counterpartyId
+        ? str(((await this.database.query("SELECT email FROM parties WHERE id = $1", [counterpartyId])).rows[0] as any)?.email)
+        : null;
+      return { doc, origin, counterpartyId, counterpartyName, owner, requester, contacts, partyEmail };
+  }
+
+  async draft(documentId: number, purpose: MailPurpose): Promise<MailDraft> {
+    try {
+      const { doc, origin, counterpartyName, owner, requester, contacts, partyEmail } = await this.loadContext(documentId);
 
       const settings = await this.database.query(
         "SELECT key, value FROM settings WHERE key = ANY($1::text[])", [[MAIL_TEMPLATES_KEY, "company_profile"]]);
@@ -103,19 +162,6 @@ export class MailDraftService {
         (settings.rows as Array<{ key: string; value: unknown }>).find((r) => r.key === key)?.value;
       const templates = readMailTemplates(setting(MAIL_TEMPLATES_KEY));
       const company = String((setting("company_profile") as Record<string, unknown> | undefined)?.name ?? "").trim();
-
-      const owner = origin?.ownerStaffId
-        ? (await this.database.query("SELECT name, email FROM staff WHERE id = $1", [origin.ownerStaffId])).rows[0] as any
-        : null;
-      const requester = await this.requesterOf(origin);
-      const contacts = counterpartyId
-        ? (await this.database.query(
-            `SELECT name, email, roles FROM party_contacts
-              WHERE party_id = $1 AND email IS NOT NULL AND email <> '' ORDER BY id`, [counterpartyId])).rows as any[]
-        : [];
-      const partyEmail = counterpartyId
-        ? str(((await this.database.query("SELECT email FROM parties WHERE id = $1", [counterpartyId])).rows[0] as any)?.email)
-        : null;
 
       const person = (p: any): Person | null => (p?.email ? { name: str(p.name), email: String(p.email) } : null);
       const withRole = (role: string) => contacts.filter((c) => Array.isArray(c.roles) && c.roles.includes(role)).map(person)
