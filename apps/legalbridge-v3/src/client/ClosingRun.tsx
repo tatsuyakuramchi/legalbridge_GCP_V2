@@ -9,10 +9,12 @@ import type { ClosePreview, CloseResult } from "./closing-types.js";
  * 押す前に何が起きるかを全部出す。枚数・使うことになる番号・合計・支払期日の
  * 根拠まで。押したあとに「思っていたのと違う」が起きないようにする。
  */
-export function ClosingRun({ scheduleIds, onRan, onDone, onCancel }: {
+export function ClosingRun({ scheduleIds, onRan, onResult, onDone, onCancel }: {
   scheduleIds: number[];
   /** 締め終わった直後。下に出したままの表を引き直す合図。 */
   onRan?: () => void;
+  /** 結果そのもの（通しで進める画面が「送る」の段で文書を並べるのに使う）。 */
+  onResult?: (result: CloseResult) => void;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -40,7 +42,7 @@ export function ClosingRun({ scheduleIds, onRan, onDone, onCancel }: {
     api.post<CloseResult>("/closing/run", { scheduleIds })
       // 結果を出したあと、下の表も引き直す。「締めました」の下に締める前の
       // 行が残っていると、効かなかったように読める。
-      .then((r) => { setResult(r); onRan?.(); })
+      .then((r) => { setResult(r); onResult?.(r); onRan?.(); })
       .catch((e: ApiError) => setError(e.message))
       .finally(() => setBusy(false));
   };
