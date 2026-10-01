@@ -420,14 +420,20 @@ export function ConditionEdit(
                 ? `消化済み ${money(detail.balance.agConsumed, detail.currency)}／残 ${money(detail.balance.agRemaining, detail.currency)}`
                 : "累積で充当する。消化しきるまで実額が出ない" })}
           </>)}
-          {detail.kind === "license" && detail.direction === "in" && (
+          {detail.kind === "license" && (
             <label className="field">
               <span>利用形態</span>
               <select value={v.usageType} onChange={(e) => set("usageType", e.target.value)}>
                 <option value="">—</option>
-                {CONDITION_USAGE_TYPES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                {/* OUT（許諾先）は当社が相手に出す形。「自社製造・自社販売」は IN 専用。 */}
+                {CONDITION_USAGE_TYPES.filter((u) => detail.direction === "in" || u.value !== "in_house")
+                  .map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
               </select>
-              <small className="faint">条件書の行・計算書の製品名はこれで決まる。1本に1つ</small>
+              <small className="faint">
+                {detail.direction === "in"
+                  ? "条件書の行・計算書の製品名はこれで決まる。1本に1つ"
+                  : "再許諾の実績はこの形の許諾先にしか付かない。作品画面の一覧にもこれが出る"}
+              </small>
             </label>
           )}
           {detail.kind === "license" && detail.direction === "in" && (v.usageType === "sublicense" || v.usageType === "oem") && (
