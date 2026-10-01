@@ -54,6 +54,30 @@ test("実績が無い条件は、金額をその場で書き換えられる（V2
   assert.equal(db.all("INSERT INTO conditions").length, 0, "改訂行は作らない");
 });
 
+test("通貨は、実績も支払も付いていなければその場で変えられる", async () => {
+  const base = baseRows({ events: 0 });
+  const db = new FakeDatabase((text) => {
+    if (text.includes("AS events") && text.includes("AS payments")) return [{ events: 0, payments: 0 }];
+    return base(text);
+  });
+  await new ConditionWriteService(db).updateEconomics(1, { currency: "USD" }, "tester");
+  const update = db.find("UPDATE conditions SET currency");
+  assert.ok(update, "その場で更新する");
+  assert.deepEqual(update!.params, [1, "USD"]);
+});
+
+test("通貨は、実績か支払が付いていると変えられない（記録済みの金額が別の通貨として読まれる）", async () => {
+  const base = baseRows({ events: 2 });
+  const db = new FakeDatabase((text) => {
+    if (text.includes("AS events") && text.includes("AS payments")) return [{ events: 2, payments: 1 }];
+    return base(text);
+  });
+  await assert.rejects(
+    () => new ConditionWriteService(db).updateEconomics(1, { currency: "USD" }, "tester"),
+    (e: unknown) => e instanceof DomainError && /通貨は変えられません/.test(e.message));
+  assert.equal(db.all("INSERT INTO conditions").length, 0, "改訂にもしない");
+});
+
 test("実績がある条件は改訂になり、旧版は superseded として残る", async () => {
   const db = new FakeDatabase(baseRows({ events: 2 }));
   const result = await new ConditionWriteService(db)

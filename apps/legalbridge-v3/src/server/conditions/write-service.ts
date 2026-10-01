@@ -303,6 +303,8 @@ export interface ConditionInput {
 
 export interface EconomicsPatch {
   name?: string;
+  /** 通貨（ISO 4217）。実績・支払が付く前だけ変えられる（金額の意味が変わるため）。 */
+  currency?: string;
   ratePpm?: number | null;
   unitLabel?: string | null;
   flatAmount?: number | null;
@@ -342,7 +344,7 @@ export interface EconomicsPatch {
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   kind: "kind", pricingModel: "pricing_model",
-  name: "name", ratePpm: "rate_ppm", flatAmount: "flat_amount", unitAmount: "unit_amount",
+  name: "name", currency: "currency", ratePpm: "rate_ppm", flatAmount: "flat_amount", unitAmount: "unit_amount",
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
   deliveryDue: "delivery_due",
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
@@ -946,6 +948,11 @@ export class ConditionWriteService {
           const w = await client.query("SELECT id FROM works WHERE id = $1", [patch.workId]);
           if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${patch.workId} が見つかりません`);
         }
+        // 通貨は、その条件（版をまたいで）に実績や支払が付いていない間だけ変えられる。
+        // 付いたあとに変えると、記録済みの金額が別の通貨として読まれる。
+        if (patch.currency !== undefined && patch.currency !== before.currency) {
+          await this.assertCurrencyChangeable(client, id, before.series_id ?? null);
+        }
 
         // 直接編集：実績や文書があっても改訂にせず、その場で書き換える。
         // 台帳の整理（移行データの直し）のための口。支払が立っている条件は断る
@@ -1267,6 +1274,26 @@ export class ConditionWriteService {
         throw new DomainError("VALIDATION",
           `案件 ${m.matter_no ?? ""} では ${kind} の条件は使えません（使えるのは ${allowed.map((k) => k.label).join("・")}）`);
       }
+    }
+  }
+
+  /** 通貨を変えてよいか。版をまたいで実績（有効）か支払（取消以外）があれば断る。 */
+  private async assertCurrencyChangeable(client: Queryable, id: number, seriesId: number | null): Promise<void> {
+    const r = await client.query(
+      `WITH versions AS (
+         SELECT x.id FROM conditions x WHERE COALESCE(x.series_id, x.id) = COALESCE($2::bigint, $1::bigint)
+       )
+       SELECT (SELECT count(*)::int FROM condition_events e
+                WHERE e.condition_id IN (SELECT id FROM versions) AND e.status = 'active') AS events,
+              (SELECT count(DISTINCT y.id)::int FROM payment_allocations al
+                 JOIN payments y ON y.id = al.payment_id
+                WHERE y.status <> 'canceled' AND al.condition_id IN (SELECT id FROM versions)) AS payments`,
+      [id, seriesId]);
+    const row = (r.rows[0] ?? { events: 0, payments: 0 }) as { events: number; payments: number };
+    if (Number(row.events) > 0 || Number(row.payments) > 0) {
+      throw new DomainError("CONFLICT",
+        `実績 ${row.events} 件・支払 ${row.payments} 件が付いているので通貨は変えられません。` +
+        "通貨が違う取引は、この条件を無効化して新しい条件を登録してください");
     }
   }
 
