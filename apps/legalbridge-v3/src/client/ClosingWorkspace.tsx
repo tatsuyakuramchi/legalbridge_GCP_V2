@@ -4,6 +4,7 @@ import { SearchSelect, searchParties, type SearchOption } from "./SearchSelect.j
 import { PRICING_MODEL_LABEL } from "./labels.js";
 import { ClosingRows } from "./ClosingRows.js";
 import { ClosingRun } from "./ClosingRun.js";
+import { ClosingFlow } from "./ClosingFlow.js";
 import { ClosingSchedule } from "./ClosingSchedule.js";
 import {
   monthLabel, shiftMonth, thisMonth,
@@ -36,6 +37,8 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
   const [view, setView] = useState<MonthView | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [closing, setClosing] = useState(false);
+  /** 通しで進める（実績 → 決済文書と支払 → 送る）。 */
+  const [flowing, setFlowing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
 
@@ -82,14 +85,20 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
             )}
           </div>
 
-          {closing
+          {flowing && view
+            ? <ClosingFlow rows={view.rows.filter((r) => r.scheduleId !== null && selected.has(r.scheduleId))}
+                onOpenDocument={onOpenDocument} onRan={refresh}
+                onDone={() => { setFlowing(false); setSelected(new Set()); }}
+                onCancel={() => setFlowing(false)} />
+            : closing
             ? <ClosingRun scheduleIds={[...selected]} onRan={refresh}
                 onDone={() => setClosing(false)}
                 onCancel={() => setClosing(false)} />
             : selected.size > 0 && (
               <div className="bulkbar">
                 <strong>{selected.size} 行</strong>を選択中
-                <button className="btn btn-sm" onClick={() => setClosing(true)}>まとめて締める</button>
+                <button className="btn btn-sm primary" onClick={() => setFlowing(true)}>通しで進める（実績 → 文書 → 送信 → 支払）</button>
+                <button className="btn btn-sm" onClick={() => setClosing(true)}>予定どおりにまとめて締める</button>
                 <button className="btn btn-sm" onClick={() => setSelected(new Set())}>選び直す</button>
               </div>
             )}
@@ -140,6 +149,7 @@ function FindPanel({ onOpenCondition, onOpenDocument, onRecord }: {
   const [building, setBuilding] = useState<CandidateRow | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [closing, setClosing] = useState(false);
+  const [flowing, setFlowing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -306,7 +316,12 @@ function FindPanel({ onOpenCondition, onOpenDocument, onRecord }: {
             </span>
           </div>
           <div className="panel-bd stack">
-            {closing
+            {flowing
+              ? <ClosingFlow rows={picked.rows.filter((r) => r.scheduleId !== null && selected.has(r.scheduleId))}
+                  onOpenDocument={onOpenDocument} onRan={() => open(picked.condition.id)}
+                  onDone={() => { setFlowing(false); setSelected(new Set()); }}
+                  onCancel={() => setFlowing(false)} />
+              : closing
               ? <ClosingRun scheduleIds={[...selected]}
                   onRan={() => open(picked.condition.id)}
                   onDone={() => setClosing(false)}
@@ -314,7 +329,8 @@ function FindPanel({ onOpenCondition, onOpenDocument, onRecord }: {
               : selected.size > 0 && (
                 <div className="bulkbar">
                   <strong>{selected.size} 行</strong>を選択中
-                  <button className="btn btn-sm" onClick={() => setClosing(true)}>まとめて締める</button>
+                  <button className="btn btn-sm primary" onClick={() => setFlowing(true)}>通しで進める（実績 → 文書 → 送信 → 支払）</button>
+                  <button className="btn btn-sm" onClick={() => setClosing(true)}>予定どおりにまとめて締める</button>
                 </div>
               )}
             <ClosingRows rows={picked.rows} showParty={false}
