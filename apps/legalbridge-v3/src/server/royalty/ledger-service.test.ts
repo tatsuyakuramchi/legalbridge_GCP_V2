@@ -83,6 +83,19 @@ test("来るはずの行：前の回の地域なしの行は許諾先の地域�
     ["フランス語×欧州", "英語×欧州"], "前の回から来た英語の行は 欧州 で埋まり、行は2本だけ");
 });
 
+test("来るはずの行：地域を複数持つ報告（地域まで分かれていない売上）は、その地域の行をまとめて覆う", () => {
+  const out = { id: 66, name: "ito｜英語｜中国・韓国・台湾｜Asmodee", usageType: "oem", workId: 1,
+                termStart: null, languages: ["英語"], regions: ["中国", "韓国", "台湾"] };
+  const q = buildRounds({
+    conditions: [cond(1, { usageType: "oem" })], schedules: Q(1),
+    events: [ev(1, 1, "2026-06-10", { usageType: "oem", outConditionId: 66, outName: out.name,
+                                       languages: ["英語"], regions: ["中国", "韓国"] })],
+    skips: [], outs: [out], bundle: "single_work", today: "2026-10-05"
+  }).find((r) => r.payOn === "2026-07-31")!;
+  assert.deepEqual(q.parts[0].expected.map((x) => `${x.languages?.join("")}×${x.regions?.join("")}`),
+    ["英語×台湾"], "中国・韓国の行は 1 本の報告で入力済になり、台湾だけ待つ");
+});
+
 test("来るはずの行：途中で許諾言語・地域を変えたら、前の回から来た古い行は落とし、いまの範囲で待つ", () => {
   // 前の回：英語×北米で報告があった。その後、許諾先を フランス語×フランス だけに変えた。
   const out = { id: 65, name: "ホラー｜フランス語｜フランス｜DPG", usageType: "sublicense", workId: 1,

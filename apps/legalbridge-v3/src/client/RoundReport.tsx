@@ -456,7 +456,8 @@ function AddLine(
   const [outs, setOuts] = useState<Array<{ id: number; name: string; partyName: string | null; languages: string[]; regions: string[] }>>([]);
   const [outId, setOutId] = useState("");
   const [language, setLanguage] = useState("");
-  const [region, setRegion] = useState("");
+  /** 報告の地域。相手の報告が地域まで分かれていないことがあるので複数選べる（全部なら許諾地域すべて）。 */
+  const [regions, setRegions] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft>({ quantity: "", unit: "", gross: "", taxIncluded: false,
                                               on: part?.closeOn ?? new Date().toISOString().slice(0, 10), note: "" });
   const [busy, setBusy] = useState(false);
@@ -467,7 +468,8 @@ function AddLine(
       .catch((e: ApiError) => onError(e.message));
   }, [cond?.id, usage]);
   const out = outs.find((o) => String(o.id) === outId) ?? null;
-  useEffect(() => { setLanguage(out?.languages[0] ?? ""); setRegion(out?.regions[0] ?? ""); }, [out?.id]);
+  useEffect(() => { setLanguage(out?.languages[0] ?? ""); setRegions(out?.regions[0] ? [out.regions[0]] : []); }, [out?.id]);
+  const toggleRegion = (r: string) => setRegions((cur) => cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]);
   if (!cond || !part) {
     return (
       <div className="note stack" style={{ gap: 4 }}>
@@ -490,7 +492,7 @@ function AddLine(
         : iso(new Date(new Date(`${part.closeOn ?? draft.on}T00:00:00Z`).getTime() + 86_400_000));
       await api.post("/royalty-ledger/plans", {
         conditionId: cond.id, outConditionId: usage ? Number(outId) || null : null,
-        languages: language ? [language] : [], regions: region ? [region] : [], fromOn
+        languages: language ? [language] : [], regions, fromOn
       });
       onAdded("予定を置きました");
     } catch (e) { onError((e as ApiError).message); }
@@ -509,7 +511,7 @@ function AddLine(
         grossAmount: gross || null, amount: u ? 0 : (gross ?? 0),
         taxIncluded: f.tax ? draft.taxIncluded : null,
         usageType: u, outConditionId: usage ? Number(outId) || null : null,
-        languages: language ? [language] : [], regions: region ? [region] : [],
+        languages: language ? [language] : [], regions,
         note: draft.note.trim() || null
       });
       onAdded("報告を足しました");
@@ -523,7 +525,7 @@ function AddLine(
       <b>{isPlan ? "予定を作る" : "報告を追加"}</b>
       <span className="faint">{isPlan
         ? "数字はまだ無い。この許諾先・言語・地域から報告が来るはず、という行を置く。以後の回でも「来るはず」として待つ。"
-        : "記録すると入力済の行になり、以後の回でも「来るはず」として待つ。"}</span>
+        : "記録すると入力済の行になり、以後の回でも「来るはず」として待つ。地域まで分かれていない報告は地域を複数選ぶ（その地域の行がまとめて入力済になる）。"}</span>
       <div className="row" style={{ gap: 8 }}>
         <label className="row" style={{ gap: 4 }}><span className="faint">作品 · 利用形態</span>
           <select value={partKey} onChange={(e) => setPartKey(e.target.value)}>
@@ -544,10 +546,18 @@ function AddLine(
             </select></label>
         )}
         {out && out.regions.length > 0 && (
-          <label className="row" style={{ gap: 4 }}><span className="faint">地域</span>
-            <select value={region} onChange={(e) => setRegion(e.target.value)}>
-              {out.regions.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select></label>
+          <span className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <span className="faint">地域</span>
+            {out.regions.map((r) => (
+              <label key={r} className="ledger-check" style={{ whiteSpace: "nowrap" }}>
+                <input type="checkbox" checked={regions.includes(r)} onChange={() => toggleRegion(r)} /> {r}
+              </label>
+            ))}
+            <button type="button" className="btn btn-sm"
+                    onClick={() => setRegions(regions.length === out.regions.length ? [out.regions[0]] : [...out.regions])}>
+              {regions.length === out.regions.length ? "1 つに戻す" : "すべて（地域が分からない）"}
+            </button>
+          </span>
         )}
       </div>
       {isPlan ? (
