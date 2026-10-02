@@ -84,6 +84,7 @@ import {
   V1_ACCOUNTING_HEADERS, v1AccountingCells, v1FileStem, v1SheetName
 } from "./exports/accounting.js";
 import { buildXlsx } from "./exports/xlsx.js";
+import { buildAccountingBundle } from "./exports/accounting-bundle.js";
 import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
@@ -153,13 +154,7 @@ export function createRoutes(database: Transactable) {
   const matters = new MatterRepository(database);
   const works = new WorkRepository(database);
   const documents = new DocumentRepository(database);
-  const issues = new DocumentIssueService(database);
-  const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
-    ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
-  // 決定した文書の PDF の作り置き。決定の直後に描いて置き、送る・開くときはそれを返す。
-  const pdfs = new PdfStore(database, pdf, (id) => issues.renderIssued(id),
-    process.env.PDF_RENDERER === "memory" ? "memory" : "chromium");
-  issues.afterIssue = async (id) => { await pdfs.warm(id); };
+  const { issues, pdf, pdfs } = pdfServicesFor(database);
 
   const drive = buildDrive();
   const storage = new DocumentStorageService(database, drive, pdf, pdfs);
@@ -969,16 +964,7 @@ export function createRoutes(database: Transactable) {
       const found = await database.query("SELECT id FROM staff WHERE id = $1", [staffId]);
       if (!found.rows.length) throw new DomainError("NOT_FOUND", `担当者 ${staffId} が見つかりません`);
     }
-    const updated = await database.query(
-      `UPDATE documents
-          SET manual_inputs = CASE WHEN $2::bigint IS NULL THEN manual_inputs - '_accountOwnerStaffId'
-                                   ELSE jsonb_set(manual_inputs, '{_accountOwnerStaffId}', to_jsonb($2::bigint)) END
-        WHERE id = $1 RETURNING id`, [id, staffId]);
-    if (!updated.rows.length) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
-    await recordAudit(database, {
-      action: "document.account_owner", targetType: "document", targetId: id,
-      actor: actor(res), detail: { staffId }
-    });
+    await assignAccountOwner(database, id, staffId, actor(res));
     res.json({ ok: true, staffId });
   }));
 
@@ -4697,6 +4683,44 @@ function flowNoticeJob(
 }
 
 /** Webhook 受信。ユーザー認証は通さず、共有シークレットと署名で守る。 */
+/**
+ * 社内の担当者（経理提出用。紙には出さない）を書類に付ける・外す。
+ * V3 の経理提出の画面と、searchAPI の「支払Excel発行」の両方から呼ぶ。
+ */
+async function assignAccountOwner(database: Transactable, documentId: number, staffId: number | null, by: string) {
+  const updated = await database.query(
+    `UPDATE documents
+        SET manual_inputs = CASE WHEN $2::bigint IS NULL THEN manual_inputs - '_accountOwnerStaffId'
+                                 ELSE jsonb_set(manual_inputs, '{_accountOwnerStaffId}', to_jsonb($2::bigint)) END
+      WHERE id = $1 RETURNING id`, [documentId, staffId]);
+  if (!updated.rows.length) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+  await recordAudit(database, {
+    action: "document.account_owner", targetType: "document", targetId: documentId,
+    actor: by, detail: { staffId }
+  });
+}
+
+/**
+ * 文書の決定と PDF の作り置き。画面の経路と内部の経路（searchAPI の経理提出）で
+ * 同じものを使う（PDF を描くブラウザを2つ立てない）。
+ */
+const pdfServices = new WeakMap<object, { issues: DocumentIssueService; pdf: PdfRenderer; pdfs: PdfStore }>();
+function pdfServicesFor(database: Transactable) {
+  let found = pdfServices.get(database);
+  if (!found) {
+    const issues = new DocumentIssueService(database);
+    const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
+      ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
+    // 決定した文書の PDF の作り置き。決定の直後に描いて置き、送る・開くときはそれを返す。
+    const pdfs = new PdfStore(database, pdf, (id) => issues.renderIssued(id),
+      process.env.PDF_RENDERER === "memory" ? "memory" : "chromium");
+    issues.afterIssue = async (id) => { await pdfs.warm(id); };
+    found = { issues, pdf, pdfs };
+    pdfServices.set(database, found);
+  }
+  return found;
+}
+
 export function createWebhookRouter(database: Transactable) {
   const router = Router();
   // 受信の記録と送信は同じ設定で動かす（画面側と食い違わせない）。
@@ -4811,6 +4835,100 @@ export function createWebhookRouter(database: Transactable) {
     catch { return res.status(400).json({ error: "本文を読み取れません" }); }
 
     res.json(await job(body));
+  }));
+
+  // ---------------------------------------------------------------------
+  // searchAPI の「支払Excel発行」（legalbridge.arclight.co.jp/payments/excel-export）
+  // から読む口。V3 の経理提出と同じ行・同じ Excel・同じ PDF を返す（二重に組まない）。
+  // 共有シークレット（WEBHOOK_TOKEN、定期実行と同じもの）で守る。誰の分を返すかは
+  // searchAPI がログイン者で決めて ownerEmail で渡す。
+  // ---------------------------------------------------------------------
+  const internalAccounting = new AccountingExportRepository(database);
+  const { pdfs: internalPdfs } = pdfServicesFor(database);
+  const tokenOk = (req: { header: (n: string) => string | undefined }) =>
+    Boolean(config.webhookToken) && req.header("x-lb-webhook-token") === config.webhookToken;
+  const internalQuery = z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    basis: z.enum(["due", "paid"]).optional(),
+    // 既定は出力済みも含める（searchAPI は参照用に何度でも出し直せる画面）。
+    includeExported: z.enum(["0", "1"]).optional(),
+    // 指定があれば、その人が担当の支払だけ（searchAPI の一般担当者）。
+    ownerEmail: z.string().trim().toLowerCase().max(200).optional(),
+    // "1" なら担当者が決まっていない支払だけ（searchAPI の管理者の「担当者未設定」）。
+    unset: z.enum(["0", "1"]).optional()
+  });
+  const internalRows = async (query: z.infer<typeof internalQuery>) => {
+    const result = await internalAccounting.build({
+      from: query.from, to: query.to, basis: query.basis ?? "due",
+      includeExported: query.includeExported !== "0"
+    });
+    return result.groups.flatMap((g) => g.rows.map((row) => ({ row, group: g })))
+      .filter(({ row }) => !query.ownerEmail || (row.ownerEmail ?? "").toLowerCase() === query.ownerEmail)
+      .filter(({ row }) => query.unset !== "1" || !row.ownerName);
+  };
+
+  router.get("/exports/accounting", asyncRoute(async (req, res) => {
+    if (!tokenOk(req)) return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+    const query = internalQuery.parse(req.query);
+    const rows = await internalRows(query);
+    res.json({
+      rows: rows.map(({ row, group }) => ({
+        paymentId: row.paymentId, paymentNo: row.paymentNo,
+        documentId: row.documentId, documentNo: row.documentNo,
+        category: row.category, entity: row.entity,
+        title: row.title, vendorName: row.vendorName, paymentDate: row.paymentDate,
+        currency: row.currency, subtotal: row.subtotal, consumptionTax: row.consumptionTax,
+        withholdingTax: row.withholdingTax, netTransfer: row.netTransfer,
+        owner: row.ownerName ?? null, ownerEmail: row.ownerEmail ?? null,
+        contents: [...row.slots, ...(row.moreSlots ?? []).flat()].map((x) => x.content).filter(Boolean),
+        flags: row.flags, groupKey: group.key
+      }))
+    });
+  }));
+
+  router.get("/exports/accounting/bundle", asyncRoute(async (req, res) => {
+    if (!tokenOk(req)) return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+    const query = internalQuery.extend({
+      paymentIds: z.string().regex(/^\d+(,\d+)*$/),
+      withPdf: z.enum(["0", "1"]).optional()
+    }).parse(req.query);
+    const wanted = new Set(query.paymentIds.split(",").map(Number));
+    if (wanted.size > 200) throw new DomainError("VALIDATION", "一度に出せるのは 200 件までです");
+    // 期間と担当の絞り込みは一覧と同じ。見えない支払の id を混ぜても入らない。
+    const rows = (await internalRows(query)).map(({ row }) => row).filter((r) => wanted.has(r.paymentId));
+    if (!rows.length) return res.status(404).json({ error: "対象の支払がありません（読み込み直してください）" });
+    const bundle = await buildAccountingBundle(rows,
+      { pdf: async (id) => await internalPdfs.ensure(id) }, { withPdf: query.withPdf !== "0" });
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("content-type", "application/zip");
+    res.setHeader("content-disposition",
+      `attachment; filename="payment_export.zip"; filename*=UTF-8''${encodeURIComponent(bundle.name)}`);
+    res.setHeader("x-pdf-failures", String(bundle.missing.length));
+    res.setHeader("x-payment-count", String(rows.length));
+    res.send(Buffer.from(bundle.data));
+  }));
+
+  // 社内の担当者を付ける（searchAPI の管理者の「担当者を設定」）。担当者はメールで指す。
+  router.post("/documents/:id/account-owner", asyncRoute(async (req, res) => {
+    if (!tokenOk(req)) return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+    let body: any = {};
+    try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; }
+    catch { return res.status(400).json({ error: "本文を読み取れません" }); }
+    const { staffEmail, by } = z.object({
+      staffEmail: z.string().trim().toLowerCase().email().nullable(),
+      by: z.string().trim().max(200).optional()
+    }).parse(body);
+    let staffId: number | null = null;
+    if (staffEmail) {
+      const found = await database.query("SELECT id FROM staff WHERE lower(email) = $1 ORDER BY id LIMIT 1", [staffEmail]);
+      if (!found.rows.length) throw new DomainError("NOT_FOUND", `担当者 ${staffEmail} が V3 の担当者に見つかりません`);
+      staffId = Number((found.rows[0] as { id: number }).id);
+    }
+    await assignAccountOwner(database, id, staffId, by ? `searchapi:${by}` : "searchapi");
+    res.json({ ok: true, staffId });
   }));
 
   router.post("/webhooks/:source", asyncRoute(async (req, res) => {

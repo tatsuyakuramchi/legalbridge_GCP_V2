@@ -89,7 +89,7 @@ const PAYMENTS_SQL = `
          -- 列を振込名義の照合に使う。口座が無いときだけ取引先のカナで代える。
          b.account_holder_kana,
          m.matter_no, m.title AS matter_title,
-         s.name AS owner_name, s.department AS owner_department
+         s.name AS owner_name, s.department AS owner_department, s.email AS owner_email
     FROM payments y
     JOIN parties p ON p.id = y.party_id
     LEFT JOIN party_bank_accounts b ON b.party_id = p.id
@@ -352,12 +352,12 @@ export class AccountingExportRepository {
       }
       // 案件の担当が無い支払は、書類の担当者で代える（計算書を台帳から出すと案件が無い）。
       const ownerIds = [...new Set([...docOwner.values(), ...accountOwner.values()])];
-      const staffById = new Map<number, { name: string; department: string | null }>();
+      const staffById = new Map<number, { name: string; department: string | null; email: string | null }>();
       if (ownerIds.length) {
         const staff = await this.database.query(
-          "SELECT id, name, department FROM staff WHERE id = ANY($1::bigint[])", [ownerIds]);
+          "SELECT id, name, department, email FROM staff WHERE id = ANY($1::bigint[])", [ownerIds]);
         for (const s of staff.rows as any[]) {
-          staffById.set(Number(s.id), { name: String(s.name ?? ""), department: str(s.department) });
+          staffById.set(Number(s.id), { name: String(s.name ?? ""), department: str(s.department), email: str(s.email) });
         }
       }
       const kindsOf = new Map<number, string[]>();
@@ -393,6 +393,8 @@ export class AccountingExportRepository {
         const ownerName = assigned?.name || str(r.owner_name) || docStaff?.name || null;
         const ownerDepartment = assigned ? assigned.department
           : str(r.owner_name) ? str(r.owner_department) : docStaff?.department ?? null;
+        const ownerEmail = assigned ? assigned.email
+          : str(r.owner_name) ? str(r.owner_email) : docStaff?.email ?? null;
         owners.set(id, ownerName ?? "(担当者未設定)");
         const source: AccountingSource = {
           paymentId: id,
@@ -413,6 +415,7 @@ export class AccountingExportRepository {
           },
           ownerName,
           ownerDepartment,
+          ownerEmail,
           matterNo: str(r.matter_no),
           matterTitle: str(r.matter_title),
           lines: byPayment.get(id) ?? [],

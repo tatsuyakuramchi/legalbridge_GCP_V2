@@ -340,3 +340,18 @@ V3 は工程を保存しないので、「工程が進んだ」という出来�
 - **支払内容（G 列以降の組）**：計算書は小計の括り 1 つ＝1 組（入金企業・言語）。金額は小計。前金・後金を別の小計にしていた頃の
   計算書も、同じ入金企業・言語の組は 1 組に寄せる。9 組目以降は次の行に続ける（件名・取引先は同じ、金額の欄は 1 行目だけ）。
   入金企業と言語は、決定時に `lineGroups[].payerName`・`languageLabel` として焼き付ける（前の版は対象契約と製品名の括弧から拾う）。
+
+### 13.1 searchAPI の「支払Excel発行」から読む口（`/internal/exports/accounting*`）
+
+searchAPI（legalbridge.arclight.co.jp/payments/excel-export）は V1 の文書の表しか読んでおらず、V3 で出した
+検収書・計算書が出なかった。V3 の経理提出と同じ行・Excel・PDF を searchAPI へ返す口を足した（二重に組まない）。
+
+| 口 | 中身 |
+|---|---|
+| `GET /internal/exports/accounting?from&to[&ownerEmail][&unset=1][&includeExported=0]` | 支払の一覧（件名・取引先・支払日・金額・担当・支払内容）。既定で出力済みも含む |
+| `GET /internal/exports/accounting/bundle?from&to&paymentIds=1,2[&ownerEmail][&withPdf=0]` | 選んだ支払の zip（種別 × 個人／法人 × 支払日ごとの V1 形式 xlsx ＋ 各書類の PDF）。一覧と同じ絞り込みを通すので、見えない支払は入らない |
+| `POST /internal/documents/:id/account-owner` `{ staffEmail, by }` | 社内の担当者を付ける（`_accountOwnerStaffId`）。担当者はメールで指す |
+
+- 守り：`x-lb-webhook-token`（`WEBHOOK_TOKEN`、定期実行と同じ）。Cloudflare Access の外（`/internal`）。
+- 誰の分か：searchAPI がログイン者で決める（一般担当者は `ownerEmail` に自分のメール、管理者は全件か `unset=1`）。
+- zip は `exports/accounting-bundle.ts`。PDF は画面と同じ作り置き（`pdfServicesFor` でブラウザを共有）。
