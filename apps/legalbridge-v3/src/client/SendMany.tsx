@@ -31,7 +31,7 @@ interface Outcome {
 }
 
 export function SendMany(
-  { documents, channels, isAdmin, initialWay, prefillSigners, title, onDone, onClose }: {
+  { documents, channels, isAdmin, initialWay, prefillSigners, prefillMail, title, onDone, onClose }: {
     documents: Doc[];
     channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
     isAdmin: boolean;
@@ -39,6 +39,11 @@ export function SendMany(
     initialWay?: "mail" | "cloudsign";
     /** 相手先の署名者（無ければ主担当）を署名者に入れておく。相手先が 1 つのときだけ効く。 */
     prefillSigners?: boolean;
+    /**
+     * 内容確認のメールの宛先を入れておく（To＝取引先の主担当、無ければ署名者／Cc＝当社担当者・事業部の担当者）。
+     * 1 枚目の文書の送り先候補から引く。
+     */
+    prefillMail?: boolean;
     title?: string;
     onDone: () => void;
     onClose: () => void;
@@ -83,6 +88,29 @@ export function SendMany(
       .catch(() => { if (live) setPrefilled(null); });
     return () => { live = false; };
   }, [prefillSigners, onePartyName]);
+
+  // 内容確認のメール：To に取引先（主担当、無ければ署名者）、Cc に当社担当者・事業部の担当者。
+  useEffect(() => {
+    if (!prefillMail || !documents[0]) return;
+    let live = true;
+    type P = { name: string | null; email: string | null; roles?: string[] } | null;
+    api.get<{ contacts: Array<{ name: string | null; email: string; roles: string[] }>; signers: Array<{ name: string | null; email: string }>;
+              owner: P; requester: P }>(`/documents/${documents[0].id}/recipients`)
+      .then((r) => {
+        if (!live) return;
+        const primaries = r.contacts.filter((c) => c.roles.includes("primary"));
+        const to = (primaries.length ? primaries : r.signers).filter((c) => c.email).map((c) => ({ email: c.email, name: c.name }));
+        const cc = [r.owner, r.requester].filter((x): x is NonNullable<P> => Boolean(x?.email))
+          .map((x) => ({ email: x.email!, name: x.name }))
+          .filter((x, i, a) => a.findIndex((y) => y.email === x.email) === i && !to.some((t) => t.email === x.email));
+        setMail((prev) => prev.to.length || prev.cc.length ? prev : { ...prev, to, cc });
+        setPrefilled(to.length || cc.length
+          ? "宛先に取引先の主担当、Cc に当社担当者・事業部の担当者を入れておきました。違えば外してください"
+          : "取引先・担当者の連絡先が見つからないので、探して足してください");
+      })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [prefillMail, documents[0]?.id]);
 
   const modeOf = (ch: string) => channels.find((c) => c.channel === ch)?.mode ?? "off";
   const label = { off: "止めています", dry_run: "検証（送りません）", live: "送ります" } as const;

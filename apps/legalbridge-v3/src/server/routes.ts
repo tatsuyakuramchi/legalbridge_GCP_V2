@@ -70,6 +70,7 @@ import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
 import { undeliverableEmails } from "./integrations/mail-domain.js";
+import { issueDocumentSet } from "./documents/document-set.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
@@ -3284,6 +3285,46 @@ export function createRoutes(database: Transactable) {
     }
     return issued;
   };
+
+  /**
+   * 文書をまとめて作る（基本契約書＋条件書・追加／基本契約書＋発注書・追加）。
+   * 1 つのフォームで入れたものを、基本契約の記録 → 条件の載せ替え → 事前の確かめ →
+   * 基本契約書 → 条件書・発注書の順に決定する（documents/document-set.ts）。
+   */
+  const setDocSchema = z.object({
+    templateKey: z.string().trim().min(1).max(60),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
+    manualInputs: z.record(z.string(), z.unknown()).default({}),
+    role: z.enum(["main", "extra"]).default("main")
+  });
+  router.post("/document-sets",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        domain: z.enum(["license", "service"]),
+        counterpartyId: z.coerce.number().int().positive(),
+        matterId: z.coerce.number().int().positive().nullable().optional(),
+        master: z.object({
+          existingAgreementId: z.coerce.number().int().positive().nullable().optional(),
+          templateKey: z.string().trim().max(60).nullable().optional(),
+          title: z.string().trim().max(200).nullable().optional(),
+          manualInputs: z.record(z.string(), z.unknown()).default({})
+        }).nullable().optional(),
+        docs: z.array(setDocSchema).max(10).default([])
+      }).parse(req.body ?? {});
+      const who = actor(res);
+      res.json(await issueDocumentSet({
+        db: database,
+        preview: async (x) => {
+          const r = await issues.preview({ ...x, eventIds: [] });
+          return { missing: r.binding.missing as Array<{ name: string; label?: string | null }>, templateLabel: r.templateLabel };
+        },
+        createDraft: (x) => issues.createDraft(x, who),
+        issue: (id) => issueOne(id, [], who) as unknown as Promise<{ documentNo?: string | null }>,
+        createAgreement: (x) => agreements.create(x, who)
+      }, { domain: input.domain, counterpartyId: input.counterpartyId, matterId: input.matterId ?? null,
+           master: input.master ?? null, docs: input.docs }, who));
+    }));
 
   router.post("/documents/:id/issue",
     requireRole("admin", "legal"), requireWritable,
