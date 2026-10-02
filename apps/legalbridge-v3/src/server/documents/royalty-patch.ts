@@ -376,6 +376,8 @@ export interface BundleLine {
   payerName?: string | null;
   /** 相手から入ってきた通貨（アウト条件の通貨）。紙の「入金通貨」に出す。 */
   intakeCurrency?: string | null;
+  /** その報告の言語。経理提出用の支払内容（入金企業・言語）に出す。紙には出さない。 */
+  languageLabel?: string | null;
   /** その実績の発生日。経理提出用の「納品日」になる。 */
   occurredOn?: string | null;
   /**
@@ -401,6 +403,7 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     basisNote: String(row.basisNote ?? ""),
     payerName: String(row.payerName ?? ""),
     intakeCurrency: String(row.intakeCurrency ?? ""),
+    languageLabel: String(row.languageLabel ?? ""),
     occurredOn: String(row.occurredOn ?? ""),
     quantity: num(row.quantity) || null
   }));
@@ -421,7 +424,7 @@ export function usageBundleLines(
     productName?: string | null; methodLabel?: string | null; basisNote?: string | null;
     outConditionNo?: string | null; outAgreementNo?: string | null; outConditionName?: string | null;
     outPartyName?: string | null; outScopes?: string | null;
-    outCurrency?: string | null;
+    outCurrency?: string | null; outLanguages?: string | null;
     basis: number; ratePct?: number | null; amount?: number | null;
     period?: string | null; occurredOn?: string | null;
     quantity?: number | null; sampleQuantity?: number | null;
@@ -442,6 +445,7 @@ export function usageBundleLines(
       .map((x) => String(x ?? "").trim()).filter(Boolean).join("・"),
     payerName: e.outPartyName ?? "",
     intakeCurrency: e.outCurrency ?? "",
+    languageLabel: e.outLanguages ?? "",
     occurredOn: e.occurredOn ?? "",
     // 見本は作者に払わない分なので引く。紙の但し書きと同じ数にする。
     quantity: Number(e.quantity ?? 0) > 0
@@ -541,6 +545,9 @@ export function bundleLinesPatch(
       contractNumber: first.contractNumber,
       methodLabel: sorted.length > 1 ? withoutStage(first.methodLabel) : first.methodLabel,
       conditionId: first.conditionId ?? "",
+      // 経理提出用の支払内容（小計 1 つ＝1 行）。紙には出さない。
+      payerName: first.payerName ?? "",
+      languageLabel: first.languageLabel ?? "",
       lines: sorted.map((line, i) => ({
         // 2 行目からは製品名を繰り返さない（同じ製品の前金・後金）。
         productName: i === 0 ? product : "同上",
