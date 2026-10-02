@@ -97,6 +97,13 @@ export interface AccountingRow {
   vendorName: string;
   vendorNameKana: string;
   slots: AccountingSlot[];        // 常に8要素
+  /**
+   * 9組目以降（8組ずつ）。経理提出の表では次の行に続けて載せる（sheetRows）。
+   * 続きの行は金額の欄（小計・消費税・源泉税…）を空にする。同じ支払を二重に数えないため。
+   */
+  moreSlots?: AccountingSlot[][];
+  /** 続きの行（sheetRows が作る）。金額の欄を空にして出す。 */
+  continuation?: boolean;
   reimbursement: number;          // 立替金（非課税・不課税）
   subtotal: number;               // 課税対象の税抜小計
   consumptionTax: number;
@@ -171,8 +178,23 @@ const unitPriceFor = (
 ): number | "" => (held === null || held === undefined ? unitPriceOf(amount, quantity) : held);
 
 /**
- * 9件目以降は8件目に束ねる（V1 と同じ）。
+ * 8組ごとに分ける。9組目以降は次の行（続きの行）に載せる。
+ * 1組目の行は 8 組に足りなければ空の組で埋める。
+ */
+export function pageSlots(slots: AccountingSlot[]): AccountingSlot[][] {
+  const pages: AccountingSlot[][] = [];
+  for (let i = 0; i < Math.max(slots.length, 1); i += ACCOUNTING_SLOT_COUNT) {
+    const page = slots.slice(i, i + ACCOUNTING_SLOT_COUNT);
+    while (page.length < ACCOUNTING_SLOT_COUNT) page.push(emptySlot());
+    pages.push(page);
+  }
+  return pages;
+}
+
+/**
+ * 9件目以降は8件目に束ねる（合計行など、1行に収めたいとき）。
  * 落とすと合計が合わなくなるので、内容を連結して金額を足す。
+ * 経理提出の行は束ねずに続きの行へ送る（pageSlots・sheetRows）。
  */
 export function fitSlots(slots: AccountingSlot[]): AccountingSlot[] {
   const fitted = slots.slice(0, ACCOUNTING_SLOT_COUNT);
@@ -240,7 +262,7 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
   // 支払内容は書類の明細をそのまま出す（V1・V2 と同じ）。経理は「何に対する
   // 支払か」で照合するので、条件の名前では足りない。書類が無い支払だけ、
   // 割当から組む。
-  const slots = fitSlots(source.documentLines?.length
+  const pages = pageSlots(source.documentLines?.length
     ? source.documentLines.map((l) => ({
         content: l.content || "（内容未設定）",
         unitPrice: unitPriceFor(l.unitPrice, l.amount, l.quantity),
@@ -255,11 +277,14 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
         amount: l.amount,
         deliveryDate: l.occurredOn ?? ""
       })));
+  const slots = pages[0]!;
+  const moreSlots = pages.slice(1);
 
   return {
     paymentId: source.paymentId,
     paymentNo: source.paymentNo,
     currency: source.currency,
+    ...(moreSlots.length ? { moreSlots } : {}),
     // 件名は元の書類（検収書・計算書）に刷った件名。経理は紙と帳票を突き合わせるので、
     // 紙と同じ件名にする。書類が無い支払だけ案件名 → 条件名で代える。
     title: source.documentTitle || source.matterTitle || source.lines[0]?.name || source.paymentNo || "",
@@ -346,6 +371,21 @@ export function groupAccounting(rows: AccountingRow[], owners: Map<number, strin
 
 const slotOf = (row: AccountingRow, i: number): AccountingSlot => row.slots[i] ?? emptySlot();
 
+/**
+ * 表に出す行。支払内容が 9 組以上ある支払は、9 組目から次の行に続ける
+ * （件名・支払日・取引先は同じものを出し、金額の欄は空）。
+ */
+export function sheetRows(rows: AccountingRow[]): AccountingRow[] {
+  return rows.flatMap((row) => [
+    row,
+    ...(row.moreSlots ?? []).map((slots) => ({ ...row, slots, moreSlots: undefined, continuation: true }))
+  ]);
+}
+
+/** 続きの行は金額の欄を空にする。 */
+const money = (pick: (r: AccountingRow) => number) =>
+  (r: AccountingRow): number | "" => (r.continuation ? "" : pick(r));
+
 const FLAG_LABEL: Record<string, string> = {
   unallocated: "割当なし",
   allocationMismatch: "割当が支払額と不一致",
@@ -368,17 +408,17 @@ export const ACCOUNTING_COLUMNS: Array<XlsColumn<AccountingRow>> = [
     { header: `金額（${i + 1}）`, value: (r: AccountingRow) => slotOf(r, i).amount },
     { header: `納品日(${i + 1})`, value: (r: AccountingRow) => slotOf(r, i).deliveryDate }
   ])).flat(),
-  { header: "立替金", value: (r) => r.reimbursement },
-  { header: "小計", value: (r) => r.subtotal },
-  { header: "消費税", value: (r) => r.consumptionTax },
-  { header: "源泉税", value: (r) => r.withholdingTax },
-  { header: "税引後", value: (r) => r.afterTax },
-  { header: "差引振込額", value: (r) => r.netTransfer },
+  { header: "立替金", value: money((r) => r.reimbursement) },
+  { header: "小計", value: money((r) => r.subtotal) },
+  { header: "消費税", value: money((r) => r.consumptionTax) },
+  { header: "源泉税", value: money((r) => r.withholdingTax) },
+  { header: "税引後", value: money((r) => r.afterTax) },
+  { header: "差引振込額", value: money((r) => r.netTransfer) },
   { header: "インボイス登録", value: (r) => r.invoiceRegistration },
-  { header: "課税対象（10%）税抜", value: (r) => r.taxable10 },
-  { header: "課税対象（8%）税抜", value: (r) => r.reduced8 },
-  { header: "非課税・不課税", value: (r) => r.exempt },
-  { header: "税込（海外・内税）", value: (r) => r.taxIncluded },
+  { header: "課税対象（10%）税抜", value: money((r) => r.taxable10) },
+  { header: "課税対象（8%）税抜", value: money((r) => r.reduced8) },
+  { header: "非課税・不課税", value: money((r) => r.exempt) },
+  { header: "税込（海外・内税）", value: money((r) => r.taxIncluded) },
   { header: "通貨", value: (r) => r.currency },
   { header: "支払番号", value: (r) => r.paymentNo ?? "" },
   // 経理が受け取った表の中で「確かめるべき行」が分かるようにする。
@@ -454,15 +494,17 @@ export const V1_ACCOUNTING_HEADERS: string[] = [
 /** 1 行分のセル。空の欄は空のまま（0 を入れない）、金額は数値のまま。 */
 export function v1AccountingCells(row: AccountingRow): Array<string | number | null> {
   const cell = (v: string | number | ""): string | number | null => (v === "" ? null : v);
+  // 続きの行（9 組目以降）は金額の欄を空にする。同じ支払を二重に数えないため。
+  const amount = (v: number): number | null => (row.continuation ? null : v);
   return [
     row.title, row.paymentDate, row.department, row.vendorCode, row.vendorName, row.vendorNameKana,
     ...row.slots.flatMap((s) => [
       cell(s.content), cell(s.unitPrice), cell(s.quantity), cell(s.amount), cell(s.deliveryDate)
     ]),
-    row.reimbursement,
+    amount(row.reimbursement),
     // 小計は税込（消費税の列が無いので、ここに含める）。
-    row.subtotal + row.consumptionTax,
-    row.withholdingTax, row.afterTax, row.netTransfer,
+    amount(row.subtotal + row.consumptionTax),
+    amount(row.withholdingTax), amount(row.afterTax), amount(row.netTransfer),
     cell(row.invoiceRegistration)
   ];
 }

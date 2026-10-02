@@ -15,7 +15,7 @@ interface Row {
   paymentId: number; paymentNo: string | null; vendorName: string; title: string;
   subtotal: number; consumptionTax: number; withholdingTax: number; withholdingExpected: number;
   reimbursement: number; netTransfer: number; currency: string;
-  slots: Array<{ content: string }>; flags: string[];
+  slots: Array<{ content: string }>; moreSlots?: Array<Array<{ content: string }>>; flags: string[];
   category: string; entity: string; documentNo: string | null; documentId: number | null;
 }
 interface Group {
@@ -155,8 +155,14 @@ export function AccountingExport() {
                     <td>{r.title || "—"}</td>
                     <td>{r.vendorName}</td>
                     <td className="faint">
-                      {r.slots.filter((x) => x.content).map((x, i) => <div key={i}>{x.content}</div>)}
+                      {[...r.slots, ...(r.moreSlots ?? []).flat()].filter((x) => x.content)
+                        .map((x, i) => <div key={i}>{x.content}</div>)}
                       {!r.slots.some((x) => x.content) && "—"}
+                      {(r.moreSlots?.length ?? 0) > 0 && (
+                        <div className="tag ghost" title="9 組目からは Excel の次の行に続けて載せます（金額の欄は 1 行目だけ）">
+                          Excel {1 + (r.moreSlots?.length ?? 0)} 行
+                        </div>
+                      )}
                     </td>
                     <td>
                       {r.documentId
