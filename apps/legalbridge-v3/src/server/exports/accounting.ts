@@ -71,6 +71,8 @@ export interface AccountingSource {
   documentLines?: DocumentLine[];
   /** 元になった書類（1件に決まるときだけ）。V1 形式の種別と PDF の同梱に使う。 */
   document?: { id: number; number: string | null; templateKey: string | null } | null;
+  /** 元になった書類の件名（紙に刷った件名）。あれば帳票の件名はこれにする。 */
+  documentTitle?: string | null;
   /** 割当の条件の種類（license／service …）。書類が無い支払の種別を決める。 */
   conditionKinds?: string[];
 }
@@ -258,8 +260,9 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
     paymentId: source.paymentId,
     paymentNo: source.paymentNo,
     currency: source.currency,
-    // 件名は案件名を優先する。経理は「何の支払か」で照合するため。
-    title: source.matterTitle || source.lines[0]?.name || source.paymentNo || "",
+    // 件名は元の書類（検収書・計算書）に刷った件名。経理は紙と帳票を突き合わせるので、
+    // 紙と同じ件名にする。書類が無い支払だけ案件名 → 条件名で代える。
+    title: source.documentTitle || source.matterTitle || source.lines[0]?.name || source.paymentNo || "",
     paymentDate: source.paidOn ?? source.dueOn ?? "",
     department: source.ownerDepartment ?? "",
     vendorCode: source.party.code ?? "",

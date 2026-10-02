@@ -409,10 +409,16 @@ export function DocumentsWorkspace(
    * manual_inputs の _ownerStaffId として文書に残り、プレビュー・保存・決定で同じ人が差される。
    */
   const [ownerStaffId, setOwnerStaffId] = useState<number | "">("");
-  const [staff, setStaff] = useState<Array<{ id: number; name: string; department?: string | null; status?: string }>>([]);
+  const [staff, setStaff] = useState<Array<{ id: number; name: string; department?: string | null; status?: string; email?: string | null }>>([]);
   useEffect(() => {
     api.get<{ staff: typeof staff }>("/staff")
       .then((r) => setStaff(r.staff.filter((x) => (x.status ?? "active") === "active"))).catch(() => setStaff([]));
+  }, []);
+  // 自分（ログインしている人）のメール。担当者が自動で決まらないときの既定に使う。
+  const [myEmail, setMyEmail] = useState<string | null>(null);
+  useEffect(() => {
+    api.get<{ user?: { email?: string } }>("/me")
+      .then((r) => setMyEmail(r.user?.email?.toLowerCase() ?? null)).catch(() => undefined);
   }, []);
   const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}) }),
                          [manual, lines, ownerStaffId]);
@@ -564,6 +570,23 @@ export function DocumentsWorkspace(
       .catch(() => undefined);
     return () => { live = false; };
   }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id]);
+
+  /**
+   * 担当者が案件にも作業にも繋がっていない（台帳から出す計算書など）ときは、
+   * 作っている本人を担当者の既定にする。空のまま決定すると、本文の担当者欄も
+   * 経理提出用の担当者も「未設定」になる。選び直せば、その人が勝つ。
+   * 文書と ひな形 の組ごとに 1 回だけ（人が空に戻したら追いかけない）。
+   */
+  const ownerDefaulted = useRef("");
+  useEffect(() => {
+    if (!spec || specKey !== templateKey || spec.owner || ownerStaffId !== "" || !myEmail) return;
+    const key = `${draft?.id ?? "new"}:${templateKey}`;
+    if (ownerDefaulted.current === key) return;
+    const me = staff.find((x) => (x as { email?: string | null }).email?.toLowerCase() === myEmail);
+    if (!me) return;
+    ownerDefaulted.current = key;
+    setOwnerStaffId(me.id);
+  }, [spec, specKey, templateKey, ownerStaffId, myEmail, staff, draft?.id]);
 
   // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
   useEffect(() => {
@@ -1075,7 +1098,7 @@ export function DocumentsWorkspace(
                 {(() => {
                   const auto = spec?.owner && spec.owner.source !== "manual"
                     ? `自動：${spec.owner.name}（${spec.owner.source === "task" ? "デイリータスクの担当" : "案件の担当"}）`
-                    : "自動（案件か作業に繋がっていないので空欄になります。選んでください）";
+                    : "自動（案件か作業に繋がっていないので空欄になります。選んでください。ふつうは作っている本人が入ります）";
                   return (
                     <SearchSelect value={ownerStaffId === "" ? "" : String(ownerStaffId)} options={staffOptions(staff)}
                                   emptyLabel={auto} valueLabel={auto} placeholder="氏名・部署で探す"
