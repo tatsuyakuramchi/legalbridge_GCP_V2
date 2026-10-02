@@ -25,6 +25,8 @@ export interface PeriodRow {
   documentNo: string | null;
   documentStatus: string | null;
   documentLabel: string;
+  /** 決済文書を送った日時（メール・CloudSign）。まだなら null。 */
+  documentSentAt: string | null;
   paymentId: number | null;
   paymentNo: string | null;
   paymentStatus: string | null;
@@ -82,21 +84,31 @@ export interface RoyaltyGap {
   schedulable: boolean; monthSpan: number | null;
 }
 
+/** 決済文書のまとめ方。条件ごと、または相手先ごと。 */
+export type CloseBundle = "condition" | "party";
+
+/** 締める前に直す実績の額（回の id → 額・理由）。 */
+export type CloseOverrides = Record<number, { amount?: number | null; note?: string | null }>;
+
 export interface ClosePreview {
   targets: Array<{
     scheduleId: number; conditionId: number; conditionName: string;
     seq: number | null; label: string | null; closingOn: string | null;
     party: { id: number; name: string } | null;
     willRecordEvent: boolean; amount: number | null;
+    plannedAmount: number | null; overridden: boolean;
     documentLabel: string; dueOn: string | null; dueSource: string; dueLabel: string;
   }>;
   skipped: Array<{ scheduleId: number; conditionName: string; seq: number | null;
                    reason: string; label: string }>;
-  documents: Array<{ conditionId: number; conditionName: string; templateKey: string;
+  documents: Array<{ conditionId: number; conditionName: string;
+                     conditionIds: number[]; conditionNames: string[];
+                     party: { id: number; name: string } | null; templateKey: string;
                      documentLabel: string; scheduleIds: number[]; issuedOn: string | null;
                      amount: number; willCreatePayment: boolean }>;
   numbers: Array<{ templateKey: string; label: string; prefix: string; year: number;
                    count: number; from: string; to: string }>;
+  bundle: CloseBundle;
   summary: { rows: number; parties: number; events: number; documents: number;
              payments: number; total: number; dueByLimit: number };
 }
