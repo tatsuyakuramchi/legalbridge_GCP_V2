@@ -329,9 +329,8 @@ test("数量が無ければ単価は出さない。金額をそのまま単価�
   assert.equal(row.slots[0].unitPrice, "");
 });
 
-test("計算書の明細は、前金・後金がそのまま経理の行になる", () => {
-  // 紙は2行、経理は合計の1行、という状態だった。計算書の明細は検収書と
-  // 作りが違う（delivery_line_items ではなく lineGroups）ので読めていなかった。
+test("計算書の明細は、小計の括り（入金企業・言語）1つで経理の1組になる（前金・後金は合わせる）", () => {
+  // 前金と後金を別の小計にしていた頃の計算書。経理は入金企業・言語の単位で突き合わせる。
   const lines = documentLinesFrom({
     lineGroups: [
       { contractTitle: "Meanbook Co., Ltd.　タイ語版", contractNumber: "CL-2026-00443",
@@ -344,12 +343,9 @@ test("計算書の明細は、前金・後金がそのまま経理の行にな�
                   occurredOn: "2026-08-31" }] }
     ]
   });
-  assert.equal(lines.length, 2, "前金と後金で2行");
-  assert.equal(lines[0].content,
-    "自社製造・他社販売（前金・受領価格）　トーネードスプラッシュ",
-    "方式名だけだと2行が同じ文字になる");
-  assert.equal(lines[0].amount, 73680);
-  assert.equal(lines[1].amount, 53261);
+  assert.equal(lines.length, 1, "前金と後金で1組");
+  assert.equal(lines[0].content, "Meanbook Co., Ltd.・タイ語版");
+  assert.equal(lines[0].amount, 73680 + 53261);
   assert.equal(lines[0].deliveryDate, "2026-08-31");
   // 単価は経理側が 金額 ÷ 数量 で出す。ここでは渡さない。
   assert.equal(lines[0].unitPrice, null);

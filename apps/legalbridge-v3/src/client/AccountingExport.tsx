@@ -16,7 +16,7 @@ interface Row {
   subtotal: number; consumptionTax: number; withholdingTax: number; withholdingExpected: number;
   reimbursement: number; netTransfer: number; currency: string;
   slots: Array<{ content: string }>; flags: string[];
-  category: string; entity: string; documentNo: string | null;
+  category: string; entity: string; documentNo: string | null; documentId: number | null;
 }
 interface Group {
   key: string; paymentDate: string; owner: string; currency: string;
@@ -46,6 +46,22 @@ export function AccountingExport() {
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
+  const [staff, setStaff] = useState<Array<{ id: number; name: string; status?: string }>>([]);
+  useEffect(() => {
+    api.get<{ staff: typeof staff }>("/staff")
+      .then((r) => setStaff(r.staff.filter((x) => (x.status ?? "active") === "active"))).catch(() => setStaff([]));
+  }, []);
+
+  /** 社内の担当者（経理提出用）を付け替える。紙（PDF）は変わらない。 */
+  async function assign(row: Row, staffId: string) {
+    if (!row.documentId) return;
+    setBusy(`owner:${row.paymentId}`); setError(null);
+    try {
+      await api.put(`/documents/${row.documentId}/account-owner`, { staffId: staffId ? Number(staffId) : null });
+      load();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(""); }
+  }
 
   const query = () =>
     `from=${from}&to=${to}&basis=${basis}${includeExported ? "&includeExported=true" : ""}`;
@@ -127,7 +143,7 @@ export function AccountingExport() {
           </div>
           <div className="tablewrap">
             <table>
-              <thead><tr><th>支払番号</th><th>種別</th><th>件名</th><th>取引先</th><th>支払内容</th>
+              <thead><tr><th>支払番号</th><th>種別</th><th>件名</th><th>取引先</th><th>支払内容</th><th>社内担当</th>
                 <th className="right">小計</th><th className="right">消費税</th>
                 <th className="right">源泉税</th><th className="right">差引振込額</th><th>要確認</th></tr></thead>
               <tbody>
@@ -138,7 +154,20 @@ export function AccountingExport() {
                       {!r.documentNo && <div className="faint">書類なし</div>}</td>
                     <td>{r.title || "—"}</td>
                     <td>{r.vendorName}</td>
-                    <td className="faint">{r.slots[0]?.content || "—"}</td>
+                    <td className="faint">
+                      {r.slots.filter((x) => x.content).map((x, i) => <div key={i}>{x.content}</div>)}
+                      {!r.slots.some((x) => x.content) && "—"}
+                    </td>
+                    <td>
+                      {r.documentId
+                        ? <select aria-label="社内担当" value="" disabled={busy === `owner:${r.paymentId}`}
+                            title="経理提出用の担当者。紙（PDF）には出ません"
+                            onChange={(e) => void assign(r, e.target.value)}>
+                            <option value="">{g.owner === "(担当者未設定)" ? "担当を付ける…" : "付け替える…"}</option>
+                            {staff.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                          </select>
+                        : <span className="faint">—</span>}
+                    </td>
                     <td className="right">{r.subtotal.toLocaleString("ja-JP")}</td>
                     <td className="right">{r.consumptionTax.toLocaleString("ja-JP")}</td>
                     <td className="right">

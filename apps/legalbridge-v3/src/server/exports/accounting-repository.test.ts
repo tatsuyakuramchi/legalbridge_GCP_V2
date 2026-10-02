@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { AccountingExportRepository, documentTitleFrom } from "./accounting-repository.js";
+import { AccountingExportRepository, documentLinesFrom, documentTitleFrom, statementGroupLabel } from "./accounting-repository.js";
 
 /** 台帳から出した計算書の支払。案件が無く、実績も計算書に結ばれていない。 */
 const payment = {
@@ -30,7 +30,7 @@ test("実績から書類に辿れない支払は、支払を立てたときの�
     "a.action = 'payment.create'": [{
       payment_id: 41, documents: 1, document_id: 900, document_no: "ARC-RS-2026-0123",
       template_key: "royalty_statement", owner_staff_id: 5,
-      rendered_values: { 件名: "ゲームブック 利用許諾料のご報告" }
+      rendered_values: { originalWork: "ゲームブック" }
     }]
   }));
   const out = await repo.build({ from: "2026-10-01", to: "2026-10-31" });
@@ -53,7 +53,7 @@ test("案件の担当があればそちらが勝つ", async () => {
   const repo = new AccountingExportRepository(db({
     "FROM payments y": [{ ...payment, owner_name: "南", owner_department: "法務", matter_title: "案件A" }],
     "a.action = 'payment.create'": [{ payment_id: 41, documents: 1, document_id: 900, document_no: "ARC-RS-1",
-      template_key: "royalty_statement", owner_staff_id: 5, rendered_values: { title: "紙の件名" } }]
+      template_key: "inspection_certificate", owner_staff_id: 5, rendered_values: { title: "紙の件名" } }]
   }));
   const out = await repo.build({ from: "2026-10-01", to: "2026-10-31" });
   assert.equal(out.groups[0]!.owner, "南");
@@ -61,9 +61,38 @@ test("案件の担当があればそちらが勝つ", async () => {
   assert.equal(out.groups[0]!.rows[0]!.title, "紙の件名");
 });
 
-test("書類の件名は件名らしい欄を順に見る。無ければ原作名から作る", () => {
-  assert.equal(documentTitleFrom({ PROJECT_TITLE: "保守", title: "" }), "保守");
-  assert.equal(documentTitleFrom({ originalWork: "ゲームブック" }), "ゲームブック 利用許諾料");
+test("書類の件名：検収書は件名らしい欄を順に、計算書は紙の件名「◯◯ 利用許諾料のご報告」", () => {
+  assert.equal(documentTitleFrom({ PROJECT_TITLE: "保守", title: "" }, "inspection_certificate"), "保守");
   assert.equal(documentTitleFrom({}), null);
   assert.equal(documentTitleFrom(null), null);
+  assert.equal(documentTitleFrom({ originalWork: "ゲームブック", contractTitle: "Hachette" }, "royalty_statement"),
+    "ゲームブック 利用許諾料のご報告");
+  assert.equal(documentTitleFrom({}, "royalty_statement"), "利用許諾料のご報告");
+});
+
+test("社内の担当者を付け替えてあれば、案件の担当より優先する", async () => {
+  const repo = new AccountingExportRepository(db({
+    "FROM payments y": [{ ...payment, owner_name: "南", owner_department: "法務" }],
+    "a.action = 'payment.create'": [{ payment_id: 41, documents: 1, document_id: 900, document_no: "ARC-RS-1",
+      template_key: "royalty_statement", owner_staff_id: null, account_owner_staff_id: 5, rendered_values: {} }]
+  }));
+  const out = await repo.build({ from: "2026-10-01", to: "2026-10-31" });
+  assert.equal(out.groups[0]!.owner, "加来 健");
+  assert.equal(out.groups[0]!.rows[0]!.department, "ライセンス部");
+});
+
+test("計算書の支払内容は小計の括り（入金企業・言語）1つで1組", () => {
+  const values = { lineGroups: [
+    { contractTitle: "Hachette　仏語版", payerName: "Hachette", languageLabel: "フランス語", subtotalPayment: 300,
+      lines: [{ productName: "X（フランス語）", paymentJpy: 100, occurredOn: "2026-09-01" },
+              { productName: "同上", paymentJpy: 200, occurredOn: "2026-09-30" }] },
+    // 前の版で決定した計算書（入金企業・言語を持っていない）
+    { contractTitle: "Planeta　西語版", subtotalPayment: 50,
+      lines: [{ productName: "X（スペイン語）", paymentJpy: 50, occurredOn: "2026-09-30" }] }
+  ] };
+  const lines = documentLinesFrom(values);
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines[0], { content: "Hachette・フランス語", unitPrice: null, quantity: 1, amount: 300, deliveryDate: "2026-09-30" });
+  assert.equal(lines[1]!.content, "Planeta・スペイン語");
+  assert.equal(statementGroupLabel({ contractTitle: "", contractNumber: "C-1" }, [{ productName: "" }]), "C-1");
 });

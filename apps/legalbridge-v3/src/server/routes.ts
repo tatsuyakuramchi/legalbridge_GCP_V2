@@ -958,6 +958,30 @@ export function createRoutes(database: Transactable) {
     res.json(await accounting.build(accountingSchema.parse(req.query)));
   }));
 
+  // 社内の担当者（経理提出用）を付け替える。紙（PDF）には出さない。
+  // 台帳から出した計算書は案件に繋がっておらず、担当者が「未設定」の束に落ちる。
+  // 書類を作り直さずに、経理提出の画面からここで担当を持たせる。
+  router.put("/documents/:id/account-owner", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    const { staffId } = z.object({ staffId: z.coerce.number().int().positive().nullable() }).parse(req.body ?? {});
+    if (staffId !== null) {
+      const found = await database.query("SELECT id FROM staff WHERE id = $1", [staffId]);
+      if (!found.rows.length) throw new DomainError("NOT_FOUND", `担当者 ${staffId} が見つかりません`);
+    }
+    const updated = await database.query(
+      `UPDATE documents
+          SET manual_inputs = CASE WHEN $2::bigint IS NULL THEN manual_inputs - '_accountOwnerStaffId'
+                                   ELSE jsonb_set(manual_inputs, '{_accountOwnerStaffId}', to_jsonb($2::bigint)) END
+        WHERE id = $1 RETURNING id`, [id, staffId]);
+    if (!updated.rows.length) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
+    await recordAudit(database, {
+      action: "document.account_owner", targetType: "document", targetId: id,
+      actor: actor(res), detail: { staffId }
+    });
+    res.json({ ok: true, staffId });
+  }));
+
   // 束ね1つ分の Excel。groupKey は preview の key をそのまま渡す。
   router.get("/exports/accounting.xls", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
