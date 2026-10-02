@@ -60,6 +60,8 @@ export interface AccountingSource {
   };
   ownerName: string | null;
   ownerDepartment: string | null;
+  /** 担当者のメール。searchAPI の「自分の担当分だけ」に使う（帳票には出さない）。 */
+  ownerEmail?: string | null;
   matterNo: string | null;
   matterTitle: string | null;
   lines: AllocationLine[];
@@ -104,6 +106,9 @@ export interface AccountingRow {
   moreSlots?: AccountingSlot[][];
   /** 続きの行（sheetRows が作る）。金額の欄を空にして出す。 */
   continuation?: boolean;
+  /** 担当者（帳票には出さない。searchAPI の一覧と絞り込みに使う）。 */
+  ownerName?: string | null;
+  ownerEmail?: string | null;
   reimbursement: number;          // 立替金（非課税・不課税）
   subtotal: number;               // 課税対象の税抜小計
   consumptionTax: number;
@@ -284,6 +289,8 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
     paymentId: source.paymentId,
     paymentNo: source.paymentNo,
     currency: source.currency,
+    ownerName: source.ownerName,
+    ownerEmail: source.ownerEmail ?? null,
     ...(moreSlots.length ? { moreSlots } : {}),
     // 件名は元の書類（検収書・計算書）に刷った件名。経理は紙と帳票を突き合わせるので、
     // 紙と同じ件名にする。書類が無い支払だけ案件名 → 条件名で代える。
