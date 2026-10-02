@@ -294,6 +294,11 @@ export function statementGroupLabel(group: Record<string, any>, rows: Array<Reco
     const m = product.match(/（([^（）]+)）\s*$/);
     language = m ? m[1]!.trim() : text(group.payerName) ? "" : tail.join("　").trim();
   }
+  // 製品名の括弧は言語と地域を並べている（「英語・中国・アメリカ合衆国…」）。
+  // 支払内容に出すのは言語だけ。「◯◯語」が1つも無いときはそのまま出す。
+  const parts = language.split("・").map((x) => x.trim()).filter(Boolean);
+  const languages = parts.filter((x) => /語(版)?$/.test(x));
+  if (languages.length) language = languages.join("・");
   const label = [payer, language].filter(Boolean).join("・");
   return label || text(rows[0]?.productName) || text(group.contractNumber);
 }
