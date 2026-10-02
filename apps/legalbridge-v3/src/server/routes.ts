@@ -80,7 +80,7 @@ import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.j
 import { filename, withBom } from "./exports/csv.js";
 import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
 import {
-  ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow,
+  ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow, sheetRows,
   V1_ACCOUNTING_HEADERS, v1AccountingCells, v1FileStem, v1SheetName
 } from "./exports/accounting.js";
 import { buildXlsx } from "./exports/xlsx.js";
@@ -993,7 +993,8 @@ export function createRoutes(database: Transactable) {
 
     const breakdown = req.query.layout === "breakdown";
     // 束ごとに合計行を挟む。V1 も束ごとに1ファイルだった。
-    const rows = groups.flatMap((g) => [...g.rows, totalRow(g)]);
+    // 内訳一覧は 1 支払 1 行のまま。経理提出用は 9 組目から続きの行へ。
+    const rows = groups.flatMap((g) => [...(breakdown ? g.rows : sheetRows(g.rows)), totalRow(g)]);
     const label = breakdown ? "内訳一覧" : "経理提出用";
     const sheet = groups.length === 1
       ? `${label}_${groups[0].paymentDate || "期日未設定"}`
@@ -1036,7 +1037,7 @@ export function createRoutes(database: Transactable) {
     const stem = v1FileStem(query.category, query.entity, group.paymentDate);
     const xlsx = buildXlsx([{
       name: v1SheetName(query.category, query.entity),
-      rows: [V1_ACCOUNTING_HEADERS, ...rows.map(v1AccountingCells)]
+      rows: [V1_ACCOUNTING_HEADERS, ...sheetRows(rows).map(v1AccountingCells)]
     }]);
     const disposition = (name: string) =>
       `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;

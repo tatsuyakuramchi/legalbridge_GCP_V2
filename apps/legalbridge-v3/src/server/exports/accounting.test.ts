@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ACCOUNTING_COLUMNS, ACCOUNTING_SLOT_COUNT, buildAccountingRow, expectedWithholding,
-  fitSlots, groupAccounting, totalRow, type AccountingSource, type AllocationLine
+  fitSlots, groupAccounting, sheetRows, totalRow, v1AccountingCells, type AccountingSource, type AllocationLine
 } from "./accounting.js";
 import { documentLinesFrom } from "./accounting-repository.js";
 import { toXls, xlsFilename } from "./xls.js";
@@ -51,6 +51,28 @@ test("9件目以降は8件目に束ねる。落とすと合計が合わなくな
   assert.equal(fitted[7].content, "明細8／明細9／明細10");
   const total = fitted.reduce((s, x) => s + (Number(x.amount) || 0), 0);
   assert.equal(total, 1000, "束ねても合計は変わらない");
+});
+
+test("支払内容が9組以上なら、9組目から次の行に続ける（金額の欄は1行目だけ）", () => {
+  const documentLines = Array.from({ length: 10 }, (_, i) => ({
+    content: `入金企業${i + 1}・言語`, unitPrice: null, quantity: 1, amount: 100, deliveryDate: "2026-09-30"
+  }));
+  const row = buildAccountingRow(source({ documentLines }));
+  assert.equal(row.slots.length, 8);
+  assert.equal(row.slots[7].content, "入金企業8・言語", "8組目は束ねない");
+  assert.equal(row.moreSlots?.length, 1);
+  const rows = sheetRows([row]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].slots[0].content, "入金企業9・言語");
+  assert.equal(rows[1].slots[1].content, "入金企業10・言語");
+  assert.equal(rows[1].slots[2].content, "", "残りは空の組");
+  assert.equal(rows[1].title, row.title, "件名・取引先は同じものを出す");
+  // V1 形式：続きの行は金額の欄が空（同じ支払を二重に数えない）。
+  const cells = v1AccountingCells(rows[1]);
+  assert.deepEqual(cells.slice(-6, -1), [null, null, null, null, null], "立替金・小計・源泉税・税引後・差引振込額");
+  assert.notEqual(v1AccountingCells(rows[0]).at(-5), null, "1行目は小計が入る");
+  // 8組以下なら続きの行は無い。
+  assert.equal(sheetRows([buildAccountingRow(source())]).length, 1);
 });
 
 test("源泉は税込ベース。100万円超は二段階（V1 と同じ）", () => {
