@@ -8,6 +8,8 @@ import { OutConditionForm } from "./OutConditionForm.js";
 import { ServiceLinesForm } from "./ServiceLinesForm.js";
 import { StatusTag } from "./labels.js";
 import type { MatterDetail } from "../server/core/model.js";
+import { DocumentSet } from "./DocumentSet.js";
+import { SendMany } from "./SendMany.js";
 
 /**
  * 取引を進める画面（docs/v3-request-inbox.md §11）。
@@ -46,6 +48,8 @@ const DOCS: Record<TradePattern, Array<{ key: string; label: string; conditions:
             { key: "pub_license_terms_v3_annex", label: "出版等利用許諾条件書（別紙形式）", conditions: "license_out" }],
   service: [{ key: "purchase_order", label: "発注書", conditions: "service" }]
 };
+/** まとめて作るに対応する取引（出版 IN は出版許諾契約書そのものが基本契約を兼ねるので対象外）。 */
+const SET_PATTERNS = new Set<TradePattern>(["game_in", "game_out", "pub_out", "service"]);
 const MASTER: Record<TradePattern, { key: string; label: string }> = {
   game_in: { key: "license_master", label: "利用許諾基本契約書" }, pub_in: { key: "license_master", label: "利用許諾基本契約書" },
   game_out: { key: "license_master", label: "利用許諾基本契約書" }, pub_out: { key: "license_master", label: "利用許諾基本契約書" },
@@ -112,6 +116,16 @@ function TradeFlow(
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  /** 文書をまとめて作る（基本契約書＋条件書・追加／基本契約書＋発注書・追加）。 */
+  const [setOpen, setSetOpen] = useState(false);
+  /** 送信・締結：決定した文書をまとめて送る（① メール 1 通 → ② CloudSign 1 封筒）。 */
+  const [sendingAll, setSendingAll] = useState<null | "mail" | "cloudsign">(null);
+  const [channels, setChannels] = useState<Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    api.get<{ channels?: typeof channels }>("/integrations").then((r) => setChannels(r.channels ?? [])).catch(() => undefined);
+    api.get<{ user?: { role: string } }>("/me").then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => undefined);
+  }, []);
 
   async function load(id: number) {
     try {
@@ -283,11 +297,27 @@ function TradeFlow(
             </div>
           )}
 
-          {stage === 3 && detail && (
+          {stage === 3 && detail && setOpen && party && SET_PATTERNS.has(p) && (
+            <DocumentSet domain={p === "service" ? "service" : "license"} matterId={detail.id} partyId={party.id} partyName={party.name}
+              masterKey={MASTER[p].key} masterLabel={MASTER[p].label}
+              termsOptions={p === "service" ? [{ key: "purchase_order", label: "発注書" }, { key: "intl_purchase_order", label: "発注書（海外）" }] : DOCS[p]}
+              conditions={mine.map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name, work: c.work ? { id: c.work.id, title: c.work.title } : null }))}
+              agreements={agreements} channels={channels} isAdmin={isAdmin}
+              onIssued={() => void load(detail.id)} onOpenDocument={onOpenDocument} onClose={() => setSetOpen(false)} />
+          )}
+          {stage === 3 && detail && !setOpen && (
             <div className="panel">
               <div className="panel-hd"><h2>{stages[3].name}</h2><span className="faint">条件 {mine.length} 本から作る</span></div>
               <div className="panel-bd stack">
                 {!mine.length && <div className="note warn">先に{stages[2].name}を登録してください（文書は条件から作ります）</div>}
+                {SET_PATTERNS.has(p) && party && (
+                  <div className="note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button className="btn primary" disabled={!mine.length} onClick={() => setSetOpen(true)}>
+                      {MASTER[p].label}と{p === "service" ? "発注書" : "条件書"}をまとめて作る
+                    </button>
+                    <span className="faint">1 つのフォームで、基本契約・{p === "service" ? "発注書・追加の発注書" : "条件書・追加の条件書"}をスイッチで選んで作り、まとめて送ります</span>
+                  </div>
+                )}
                 <div className="row" style={{ flexWrap: "wrap" }}>
                   {DOCS[p].map((d) => (
                     <button key={d.key} className="btn primary" disabled={!mine.length}
@@ -319,6 +349,26 @@ function TradeFlow(
               <div className="panel-hd"><h2>{stages[4].name}</h2></div>
               <div className="panel-bd stack">
                 {!issued.length && <div className="note warn">決定した文書がまだありません</div>}
+                {(() => {
+                  // 基本契約書も含めて、この案件で決定した文書をまとめて送る。
+                  const all = [...masterDocs, ...myDocs].filter((d) => d.status === "issued");
+                  if (all.length < 2) return null;
+                  return (
+                    <div className="note stack" style={{ gap: 6 }}>
+                      <b>まとめて送る（{all.length} 枚：{all.map((d) => d.documentNo ?? `#${d.id}`).join("・")}）</b>
+                      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <button className="btn primary" onClick={() => setSendingAll("mail")}>① 内容確認のメールを 1 通で送る</button>
+                        <button className="btn" disabled={!isAdmin} onClick={() => setSendingAll("cloudsign")}>② CloudSign を 1 封筒で作る（締結）</button>
+                      </div>
+                      <span className="faint">① 当社担当者・事業部の担当者と取引先に内容確認（PDF を全部添付）→ 確認が取れたら ② 全部を 1 つの封筒で署名依頼</span>
+                      {sendingAll && (
+                        <SendMany key={sendingAll} documents={all.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty }))}
+                                  channels={channels} isAdmin={isAdmin} initialWay={sendingAll} prefillSigners={sendingAll === "cloudsign"} prefillMail={sendingAll === "mail"}
+                                  onDone={() => void load(detail.id)} onClose={() => setSendingAll(null)} />
+                      )}
+                    </div>
+                  );
+                })()}
                 {issued.map((d) => (
                   <div key={d.id} className="row" style={{ gap: 8 }}>
                     <button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
