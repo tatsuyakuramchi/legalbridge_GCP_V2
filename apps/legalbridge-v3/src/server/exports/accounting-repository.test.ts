@@ -96,3 +96,12 @@ test("計算書の支払内容は小計の括り（入金企業・言語）1つ�
   assert.equal(lines[1]!.content, "Planeta・スペイン語");
   assert.equal(statementGroupLabel({ contractTitle: "", contractNumber: "C-1" }, [{ productName: "" }]), "C-1");
 });
+
+test("支払内容の言語は「◯◯語」だけ（製品名の括弧に並ぶ地域は落とす）", () => {
+  assert.equal(statementGroupLabel({ contractTitle: "Asmodee Asia Limited　英語版" },
+    [{ productName: "トーネードスプラッシュ（英語・中国・アメリカ合衆国・韓国）" }]), "Asmodee Asia Limited・英語");
+  assert.equal(statementGroupLabel({ contractTitle: "MM-Spiele　独語版" },
+    [{ productName: "X（ドイツ語・ドイツ・オーストリア・スイス）" }]), "MM-Spiele・ドイツ語");
+  // 言語が無く地域だけなら、そのまま出す。
+  assert.equal(statementGroupLabel({ contractTitle: "A社" }, [{ productName: "X（北米）" }]), "A社・北米");
+});
