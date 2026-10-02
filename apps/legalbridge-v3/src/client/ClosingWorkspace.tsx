@@ -6,9 +6,10 @@ import { ClosingRows } from "./ClosingRows.js";
 import { ClosingRun } from "./ClosingRun.js";
 import { ClosingFlow } from "./ClosingFlow.js";
 import { ClosingSchedule } from "./ClosingSchedule.js";
+import { flowStepsOf, nextActionOf, notYet, StepBar, type FlowStep } from "./ClosingSteps.js";
 import {
   monthLabel, shiftMonth, thisMonth,
-  type CandidateRow, type MonthView, type PeriodsView, type RoyaltyGap, type StrayView
+  type CandidateRow, type MonthView, type PeriodRow, type PeriodsView, type RoyaltyGap, type StrayView
 } from "./closing-types.js";
 
 /**
@@ -41,6 +42,8 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
   const [flowing, setFlowing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  /** 進み具合のバーで選んだ段。その段の回だけ表に出す。 */
+  const [step, setStep] = useState<FlowStep | null>(null);
 
   const refresh = useCallback(() => setVersion((n) => n + 1), []);
 
@@ -57,8 +60,9 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
       <header className="workspace-head">
         <h1>支払文書処理</h1>
         <p>
-          予定を立てて、回ごとに実績を記録し、決済文書を出し、支払を立てる。
-          この4手を月ごとに、案件をまたいでまとめて進めます。定期課金も料率も同じ表に並びます。
+          検収書・計算書はここから出します。回ごとに「① 実績 → ② 検収書 → ③ 送る → ④ 支払」の順に進み、
+          上の帯で各段に何件残っているかが分かります。行の「次にやること」を押せば、その手へ進みます。
+          ほかの画面で作った検収書も、実績に結びついていればここに反映されます。
         </p>
       </header>
 
@@ -77,13 +81,16 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
             <strong>{monthLabel(month)}</strong>
             <button className="btn btn-sm" onClick={() => setMonth(shiftMonth(month, 1))}>›</button>
             <button className="btn btn-sm" onClick={() => setMonth(thisMonth())}>今月</button>
-            {view && (
-              <span className="faint">
-                実績待ち {view.counts.event}／文書待ち {view.counts.document}／
-                支払待ち {view.counts.payment}／締め済 {view.counts.done}
-              </span>
-            )}
           </div>
+
+          {view && <StepBar rows={view.rows} active={step} onPick={setStep} />}
+          {view && step && !flowing && !closing && (
+            <StepHint step={step} rows={view.rows.filter((r) => flowStepsOf(r).includes(step))}
+              onBulk={(ids, how) => {
+                setSelected(new Set(ids));
+                if (how === "flow") setFlowing(true); else setClosing(true);
+              }} />
+          )}
 
           {flowing && view
             ? <ClosingFlow rows={view.rows.filter((r) => r.scheduleId !== null && selected.has(r.scheduleId))}
@@ -92,7 +99,9 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
                 onCancel={() => setFlowing(false)} />
             : closing
             ? <ClosingRun scheduleIds={[...selected]} onRan={refresh}
-                onDone={() => setClosing(false)}
+                onOpenDocument={onOpenDocument}
+                // 締め終わったら次の段（③ 送る）を見せる。② の段のままだと空の表になる。
+                onDone={() => { setClosing(false); if (step === "document" || step === "payment") setStep("send"); }}
                 onCancel={() => setClosing(false)} />
             : selected.size > 0 && (
               <div className="bulkbar">
@@ -104,10 +113,29 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
             )}
 
           {view && (
-            <ClosingRows rows={view.rows} selected={selected} onSelect={setSelected}
+            <ClosingRows rows={step ? view.rows.filter((r) => flowStepsOf(r).includes(step)) : view.rows}
+              selected={selected} onSelect={setSelected}
               onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
               onRecord={onRecord}
-              empty={`${monthLabel(month)}に締め日が来る回はありません。予定がまだ無いものは「支払文書をつくる」から探せます。`} />
+              onNext={(row, action) => {
+                if (action === "send") { onOpenDocument(row.documentId!); return; }
+                if (row.scheduleId === null) return;
+                // 実績はこの画面の中で入れる（条件の画面へ行き来しない）。
+                // 検収書・支払は締めの試算から（相手先ごとにまとめるかもそこで選ぶ）。
+                if (action === "record") {
+                  setSelected(new Set([row.scheduleId]));
+                  setFlowing(true);
+                  return;
+                }
+                // 同じ相手先で同じ手を待っている回も一緒に選ぶ。1 枚の検収書・1 件の支払に
+                // まとめられる（試算で「条件ごと」に戻すこともできる）。
+                const same = view!.rows.filter((r) => r.scheduleId !== null
+                  && r.party?.id === row.party?.id && nextActionOf(r) === action)
+                  .map((r) => r.scheduleId!);
+                setSelected(new Set(row.party ? same : [row.scheduleId]));
+                setClosing(true);
+              }}
+              empty={step ? "この段に残っている回はありません。上の帯で次の段を選んでください。" : `${monthLabel(month)}に締め日が来る回はありません。予定がまだ無いものは「支払文書をつくる」から探せます。`} />
           )}
         </div>
       )}
@@ -122,6 +150,40 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
           onRecord={onRecord} />
       )}
     </section>
+  );
+}
+
+/** 選んだ段で、まとめて押せること。 */
+function StepHint({ step, rows, onBulk }: {
+  step: FlowStep; rows: PeriodRow[];
+  onBulk: (scheduleIds: number[], how: "flow" | "close") => void;
+}) {
+  const ready = rows.filter((r) => r.scheduleId !== null && !!r.closingOn && !notYet(r.closingOn))
+    .map((r) => r.scheduleId!);
+  const text: Record<FlowStep, string> = {
+    event: "実績（料率は売上報告）をこの画面で入れて、そのまま検収書・支払まで進めます。",
+    document: "検収書（計算書）を出して支払を立てます。同じ相手先の条件は 1 枚にまとめられます。",
+    send: "出した文書を開いて、メールまたは CloudSign で送ります。行の「③ 送る」から開けます。",
+    payment: "文書は出ています。支払を立てます（支払済みにはしません）。",
+    done: "この段で残っていることはありません。"
+  };
+  const action: Record<FlowStep, { how: "flow" | "close"; label: string } | null> = {
+    event: { how: "flow", label: "実績を入れて進める" },
+    document: { how: "close", label: "検収書を出して支払を立てる" },
+    send: null,
+    payment: { how: "close", label: "支払を立てる" },
+    done: null
+  };
+  const a = action[step];
+  return (
+    <div className="bulkbar">
+      <span>{text[step]}</span>
+      {a && ready.length > 0 && (
+        <button className="btn btn-sm primary" onClick={() => onBulk(ready, a.how)}>
+          {ready.length} 行を{a.label}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -323,7 +385,7 @@ function FindPanel({ onOpenCondition, onOpenDocument, onRecord }: {
                   onCancel={() => setFlowing(false)} />
               : closing
               ? <ClosingRun scheduleIds={[...selected]}
-                  onRan={() => open(picked.condition.id)}
+                  onRan={() => open(picked.condition.id)} onOpenDocument={onOpenDocument}
                   onDone={() => setClosing(false)}
                   onCancel={() => setClosing(false)} />
               : selected.size > 0 && (

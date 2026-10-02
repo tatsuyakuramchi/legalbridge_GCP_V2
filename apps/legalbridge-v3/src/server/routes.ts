@@ -1907,13 +1907,20 @@ export function createRoutes(database: Transactable) {
 
   // まとめて締める。何が起きるかを先に出してから実行する。
   const closeSchema = z.object({
-    scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(200)
+    scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+    // 相手先ごとに1枚にまとめる。省略すれば条件ごと（これまでどおり）。
+    bundle: z.enum(["condition", "party"]).optional(),
+    // 締める前に直した実績の額（回の id → 額・理由）。
+    overrides: z.record(z.string(), z.object({
+      amount: z.coerce.number().positive().nullable().optional(),
+      note: z.string().max(500).nullable().optional()
+    })).optional()
   });
   router.post("/closing/preview",
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
-      const { scheduleIds } = closeSchema.parse(req.body ?? {});
-      res.json(await closingClose.preview(scheduleIds));
+      const { scheduleIds, ...options } = closeSchema.parse(req.body ?? {});
+      res.json(await closingClose.preview(scheduleIds, options));
     }));
 
   // 1件でも止まったら終わり、にはしない。できたものはでき、落ちたものは
@@ -1921,8 +1928,8 @@ export function createRoutes(database: Transactable) {
   router.post("/closing/run",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { scheduleIds } = closeSchema.parse(req.body ?? {});
-      res.json(await closingClose.run(scheduleIds, actor(res)));
+      const { scheduleIds, ...options } = closeSchema.parse(req.body ?? {});
+      res.json(await closingClose.run(scheduleIds, actor(res), options));
     }));
 
   // 月の表からこぼれるもの（締め日を過ぎた回・予定の無い実績）。
