@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { DocumentFields, type Candidate, type FormField } from "./DocumentFields.js";
 import { SendMany } from "./SendMany.js";
 import { useDebounced } from "./ListTools.js";
+import { canonicalField, expandShared } from "../server/documents/field-synonyms.js";
 
 /**
  * 文書をまとめて作る（1 つのフォーム）。
@@ -69,7 +70,8 @@ export function DocumentSet({
     ...(makeMaster ? [{ uid: "master", role: "master" as Role, templateKey: masterKey, conditionIds: [] as number[] }] : []),
     ...active.map((d) => ({ uid: d.uid, role: d.role as Role, templateKey: d.templateKey, conditionIds: d.conditionIds }))
   ], [makeMaster, masterKey, active.map((d) => `${d.uid}:${d.templateKey}:${d.conditionIds.join(",")}`).join("|")]);
-  const inputsFor = (u: string) => ({ ...shared, ...(own[u] ?? {}) });
+  // 共通の欄は組の名前で持ち、文書に渡すときに組のすべての欄の名前へ開く。
+  const inputsFor = (u: string) => ({ ...expandShared(shared), ...(own[u] ?? {}) });
   const agreementForPreview = (role: Role, key: string) =>
     role === "master" ? null : masterMode === "existing" && !/terms/.test(key) ? existingId : null;
 
@@ -100,15 +102,17 @@ export function DocumentSet({
     const kinds = new Map<string, Set<string>>();
     for (const p of plan) for (const f of ok(p.uid)?.fields ?? []) {
       if (f.source === "computed") continue;
-      if (!kinds.has(f.name)) kinds.set(f.name, new Set());
-      kinds.get(f.name)!.add(p.templateKey);
+      const k = canonicalField(f.name);
+      if (!kinds.has(k)) kinds.set(k, new Set());
+      kinds.get(k)!.add(p.templateKey);
     }
     return new Set([...kinds.entries()].filter(([, ks]) => ks.size >= 2).map(([name]) => name));
   }, [previews, plan]);
   const sharedFields = useMemo(() => {
     const seen = new Set<string>(); const out: FormField[] = [];
     for (const p of plan) for (const f of ok(p.uid)?.fields ?? []) {
-      if (sharedNames.has(f.name) && !seen.has(f.name)) { seen.add(f.name); out.push({ ...f, group: "共通" }); }
+      const k = canonicalField(f.name);
+      if (sharedNames.has(k) && !seen.has(k)) { seen.add(k); out.push({ ...f, name: k, group: "共通" }); }
     }
     return out;
   }, [sharedNames, previews, plan]);
@@ -268,7 +272,7 @@ export function DocumentSet({
         {/* 文書ごとの欄 */}
         {tabs.map((t) => {
           const p = previews[t.uid];
-          const fields = p && !("error" in p) ? p.fields.filter((f) => !sharedNames.has(f.name)) : [];
+          const fields = p && !("error" in p) ? p.fields.filter((f) => !sharedNames.has(canonicalField(f.name))) : [];
           const miss = p && !("error" in p) ? p.missing.length : 0;
           return (
             <details key={t.uid} open={miss > 0}>
