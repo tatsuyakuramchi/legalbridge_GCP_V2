@@ -26,7 +26,12 @@ export function translate(error: unknown): unknown {
   const e = error as { code?: string; column?: string; constraint?: string; detail?: string; message?: string };
   const code = e?.code;
   if (code === "42501") return new DomainError("DB_FORBIDDEN", "この操作の権限が付与されていません");
-  if (code === "42P01") return new DomainError("DB_FORBIDDEN", "対象のテーブルがまだ作られていません");
+  if (code === "42P01") {
+    // どの表が無いかを言う（relation "v3.term_events" does not exist）。無いと直しようがない。
+    const table = /relation "([^"]+)"/.exec(e.message ?? "")?.[1];
+    return new DomainError("DB_FORBIDDEN",
+      `対象のテーブルがまだ作られていません${table ? `（${table}）` : ""}。ops upgrade で台帳を最新にしてください`);
+  }
   // 台帳の制約に当たったときは、何に当たったかを言う。「サーバ内部でエラー」だけだと
   // 直しようがない（実際、改訂の番号がぶつかった一意制約がそう見えていた）。
   if (code === "42703") {
