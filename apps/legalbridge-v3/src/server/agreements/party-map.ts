@@ -1,0 +1,385 @@
+import { type Transactable, inTransaction, dateStr, int, str } from "../core/db.js";
+import { DomainError, translate } from "../core/errors.js";
+import { recordAudit } from "../core/audit.js";
+import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.js";
+
+/**
+ * 取引先 ⇔ 基本契約のマップ。
+ *
+ * 取引先と基本契約を結ぶ専用の表は無い。どの画面も agreements.counterparty_id から
+ * その場で導いていて、導き方が画面ごとに違う（統合を辿る／辿らない、補助文書を
+ * 親に寄せる／寄せない、種類・状態で絞る／絞らない）。同じ取引先の基本契約が
+ * 画面によって違って見えるのはそのため。
+ *
+ * ここでは取引先ひとつぶんの契約を、統合元も含めて全部引き、
+ *   基本契約・単体契約 → その下の補助文書・解除合意
+ * の木にして見せる。木にならないもの（親の無い補助文書、相手先の違う親、
+ * 種別の無い基本契約、同じ種別の基本契約が並んでいる …）は「ずれ」として出し、
+ * その場で種類・親・種別・方向・相手先を付け替えられるようにする。
+ *
+ * 表は増やさない。直すのは agreements の列だけ（番号は振り直さない）。
+ */
+
+export type MapIssueCode =
+  | "orphan" | "parent_party_mismatch" | "parent_not_master" | "master_with_parent"
+  | "no_domain" | "duplicate_master";
+
+export interface MapIssue {
+  code: MapIssueCode;
+  agreementId: number;
+  message: string;
+}
+
+export interface MapAgreement {
+  id: number;
+  agreementNo: string | null;
+  title: string;
+  kind: AgreementKind;
+  domain: AgreementDomain | null;
+  direction: "in" | "out";
+  status: string;
+  parentId: number | null;
+  executedOn: string | null;
+  terminatedOn: string | null;
+  /** 契約が指している取引先（統合元のこともある）。 */
+  counterparty: { id: number; name: string; merged: boolean };
+  /** 親の契約の取引先を統合で辿った先。親が無ければ null。 */
+  parentResolvedPartyId: number | null;
+  parentKind: AgreementKind | null;
+  conditionCount: number;
+  documentCount: number;
+}
+
+export interface MapNode extends MapAgreement {
+  children: MapAgreement[];
+  /** 他の画面が「この取引先の基本契約」として選ぶ1本か（domain × direction ごと）。 */
+  primary: boolean;
+}
+
+export interface PartyMap {
+  party: { id: number; name: string };
+  /** 基本契約・単体契約と、その下に正しくぶら下がっているもの。 */
+  roots: MapNode[];
+  /** 木に入らない補助文書・解除合意（親が無い・親が別の取引先・親が基本契約でない）。 */
+  loose: MapAgreement[];
+  /** 文書だけ（NDA など）。 */
+  documents: MapAgreement[];
+  issues: MapIssue[];
+}
+
+const isRootKind = (kind: AgreementKind) => kind === "master" || kind === "standalone";
+const isChildKind = (kind: AgreementKind) => kind === "supplement" || kind === "termination";
+
+export const DOMAIN_LABEL: Record<AgreementDomain, string> = { service: "業務委託", license: "ライセンス" };
+const DIRECTION_LABEL = { in: "IN", out: "OUT" } as const;
+
+const tag = (a: Pick<MapAgreement, "agreementNo" | "id">) => a.agreementNo ?? `#${a.id}`;
+
+/** 生きている基本契約か。締結済みで、解除されていない。 */
+const isLive = (a: MapAgreement) => a.status === "executed" && !a.terminatedOn;
+
+/**
+ * 取引先ひとつぶんの契約を木にする。DB を読まない（テストできるように）。
+ *
+ * primary は「その domain × direction で他の画面が拾うべき1本」。締結済み・未解除の
+ * 基本契約（無ければ単体契約）のうち、締結日の新しいもの。
+ */
+export function buildPartyMap(party: { id: number; name: string }, rows: MapAgreement[]): PartyMap {
+  const issues: MapIssue[] = [];
+  const roots: MapNode[] = [];
+  const loose: MapAgreement[] = [];
+  const documents: MapAgreement[] = [];
+
+  for (const a of rows) {
+    if (isRootKind(a.kind)) {
+      if (a.parentId) {
+        issues.push({ code: "master_with_parent", agreementId: a.id,
+          message: `${tag(a)} は${KIND_LABEL[a.kind]}なのに親の契約を持っています（親を外すか、補助文書にしてください）` });
+      }
+      if (!a.domain) {
+        issues.push({ code: "no_domain", agreementId: a.id,
+          message: `${tag(a)} は種別（業務委託／ライセンス）が未設定です。画面によって拾われたり拾われなかったりします` });
+      }
+      roots.push({ ...a, children: [], primary: false });
+    } else if (a.kind === "document") {
+      documents.push(a);
+    }
+  }
+  const rootIds = new Set(roots.map((r) => r.id));
+
+  for (const a of rows) {
+    if (!isChildKind(a.kind)) continue;
+    if (!a.parentId) {
+      issues.push({ code: "orphan", agreementId: a.id,
+        message: `${tag(a)}（${KIND_LABEL[a.kind]}）に親の契約がありません` });
+      loose.push(a);
+      continue;
+    }
+    if (a.parentResolvedPartyId !== null && a.parentResolvedPartyId !== party.id) {
+      issues.push({ code: "parent_party_mismatch", agreementId: a.id,
+        message: `${tag(a)} の親の契約は別の取引先のものです` });
+      loose.push(a);
+      continue;
+    }
+    if (a.parentKind && !isRootKind(a.parentKind)) {
+      issues.push({ code: "parent_not_master", agreementId: a.id,
+        message: `${tag(a)} の親が${KIND_LABEL[a.parentKind]}です（親にできるのは基本契約か単体契約だけ）` });
+      loose.push(a);
+      continue;
+    }
+    const root = rootIds.has(a.parentId) ? roots.find((r) => r.id === a.parentId)! : null;
+    if (root) root.children.push(a);
+    else loose.push(a);
+  }
+
+  // domain × direction ごとに、他の画面が拾うべき1本と、並んでいる生きた基本契約。
+  const groups = new Map<string, MapNode[]>();
+  for (const r of roots) {
+    const key = `${r.domain ?? "-"}:${r.direction}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  for (const list of groups.values()) {
+    const live = list.filter(isLive);
+    const masters = live.filter((r) => r.kind === "master");
+    const pool = masters.length ? masters : live;
+    const pick = [...pool].sort((x, y) =>
+      String(y.executedOn ?? "").localeCompare(String(x.executedOn ?? "")) || y.id - x.id)[0];
+    if (pick) pick.primary = true;
+    if (masters.length > 1 && pick) {
+      const label = `${pick.domain ? DOMAIN_LABEL[pick.domain] : "種別未設定"}・${DIRECTION_LABEL[pick.direction]}`;
+      for (const m of masters) {
+        if (m.id === pick.id) continue;
+        issues.push({ code: "duplicate_master", agreementId: m.id,
+          message: `${label} の生きた基本契約が ${masters.length} 本あります。画面により ${tag(m)} と ${tag(pick)} のどちらが出るかが変わります（古い方を解除するか、種別・方向を直してください）` });
+      }
+    }
+  }
+
+  roots.sort((x, y) =>
+    Number(y.primary) - Number(x.primary) ||
+    String(x.domain ?? "~").localeCompare(String(y.domain ?? "~")) ||
+    x.direction.localeCompare(y.direction) || x.id - y.id);
+  for (const r of roots) r.children.sort((x, y) => x.id - y.id);
+
+  return { party, roots, loose, documents, issues };
+}
+
+// ---------------------------------------------------------------------------
+// 付け替えの検査（DB を読まない）
+// ---------------------------------------------------------------------------
+
+export interface RemapInput {
+  kind?: AgreementKind;
+  domain?: AgreementDomain | null;
+  direction?: "in" | "out";
+  parentId?: number | null;
+  counterpartyId?: number;
+}
+
+export interface RemapCurrent {
+  id: number; kind: AgreementKind; domain: AgreementDomain | null; direction: "in" | "out";
+  parentId: number | null; counterpartyId: number; resolvedPartyId: number; childCount: number;
+}
+
+export interface RemapParent {
+  id: number; kind: AgreementKind; resolvedPartyId: number;
+}
+
+/**
+ * 付け替えたあとの形を決め、通らなければ理由を投げる。
+ * 基本契約・単体契約・文書だけに変えたら、親は自動で外す（親を持てない種類なので）。
+ */
+export function planRemap(
+  current: RemapCurrent, input: RemapInput,
+  parent: RemapParent | null, targetResolvedPartyId: number
+): { kind: AgreementKind; domain: AgreementDomain | null; direction: "in" | "out";
+     parentId: number | null; counterpartyId: number } {
+  const kind = input.kind ?? current.kind;
+  const domain = input.domain !== undefined ? input.domain : current.domain;
+  const direction = input.direction ?? current.direction;
+  const counterpartyId = input.counterpartyId ?? current.counterpartyId;
+  let parentId = input.parentId !== undefined ? input.parentId : current.parentId;
+  if (!isChildKind(kind)) parentId = null;
+
+  if (current.childCount > 0 && !isRootKind(kind)) {
+    throw new DomainError("VALIDATION",
+      `補助文書・解除合意が ${current.childCount} 件ぶら下がっています。先にそちらの親を付け替えてください`);
+  }
+  if (current.childCount > 0 && targetResolvedPartyId !== current.resolvedPartyId) {
+    throw new DomainError("VALIDATION",
+      "ぶら下がる補助文書・解除合意があるので、相手先は変えられません（子の相手先とずれます）");
+  }
+  if (isRootKind(kind) && !domain) {
+    throw new DomainError("VALIDATION", "基本契約・単体契約には種別（業務委託／ライセンス）を選んでください");
+  }
+  if (isChildKind(kind)) {
+    if (!parentId) throw new DomainError("VALIDATION", "補助文書・解除合意は親の契約を選んでください");
+    if (parentId === current.id) throw new DomainError("VALIDATION", "自分自身は親にできません");
+    if (!parent) throw new DomainError("NOT_FOUND", `親の契約 ${parentId} が見つかりません`);
+    if (!isRootKind(parent.kind)) {
+      throw new DomainError("VALIDATION", "親にできるのは基本契約か単体契約だけです");
+    }
+    if (parent.resolvedPartyId !== targetResolvedPartyId) {
+      throw new DomainError("VALIDATION", "親の契約と相手先が違います");
+    }
+  }
+  return { kind, domain, direction, parentId, counterpartyId };
+}
+
+// ---------------------------------------------------------------------------
+// DB
+// ---------------------------------------------------------------------------
+
+export interface MapPartyRow {
+  id: number; name: string;
+  total: number; roots: number; documents: number;
+  /** SQL で数えられるずれ（親なし・親の相手先違い・種別なし）。重複は詳細で見る。 */
+  issues: number;
+}
+
+const MAP_SELECT = `
+  SELECT a.id, a.agreement_no, a.title, a.kind, a.domain, a.direction, a.status, a.parent_id,
+         a.executed_on, a.terminated_on,
+         a.counterparty_id, p.name AS party_name, (r.party_id <> r.resolved_id) AS party_merged,
+         pr.resolved_id AS parent_resolved_id, pa.kind AS parent_kind,
+         (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
+         (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count
+    FROM agreements a
+    JOIN parties p ON p.id = a.counterparty_id
+    JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+    LEFT JOIN agreements pa ON pa.id = a.parent_id
+    LEFT JOIN v_party_resolved pr ON pr.party_id = pa.counterparty_id`;
+
+export function mapAgreementRow(row: any): MapAgreement {
+  return {
+    id: Number(row.id), agreementNo: str(row.agreement_no), title: String(row.title ?? ""),
+    // 移行した行は kind が空のことがある。他の画面と同じく基本契約とみなす。
+    kind: (str(row.kind) ?? "master") as AgreementKind,
+    domain: (str(row.domain) as AgreementDomain | null) ?? null,
+    direction: row.direction === "out" ? "out" : "in",
+    status: String(row.status ?? ""),
+    parentId: int(row.parent_id),
+    executedOn: dateStr(row.executed_on), terminatedOn: dateStr(row.terminated_on),
+    counterparty: { id: Number(row.counterparty_id), name: String(row.party_name ?? ""),
+                    merged: row.party_merged === true },
+    parentResolvedPartyId: int(row.parent_resolved_id),
+    parentKind: row.parent_id ? ((str(row.parent_kind) ?? "master") as AgreementKind) : null,
+    conditionCount: Number(row.condition_count ?? 0),
+    documentCount: Number(row.document_count ?? 0)
+  };
+}
+
+export class PartyAgreementMapService {
+  constructor(private readonly database: Transactable) {}
+
+  /** 契約を持つ取引先の一覧（統合先でまとめる）。ずれのあるものを上に。 */
+  async parties(query: { keyword?: string; issuesOnly?: boolean } = {}): Promise<MapPartyRow[]> {
+    const q = String(query.keyword ?? "").trim();
+    try {
+      const r = await this.database.query(
+        `WITH x AS (
+           SELECT r.resolved_id AS party_id, r.resolved_name AS name,
+                  count(*)::int AS total,
+                  count(*) FILTER (WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone'))::int AS roots,
+                  count(*) FILTER (WHERE a.kind = 'document')::int AS documents,
+                  count(*) FILTER (
+                    WHERE (a.kind IN ('supplement', 'termination') AND a.parent_id IS NULL)
+                       OR (a.parent_id IS NOT NULL AND pr.resolved_id IS DISTINCT FROM r.resolved_id)
+                       OR (COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.domain IS NULL)
+                       OR (COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.parent_id IS NOT NULL)
+                  )::int AS issues
+             FROM agreements a
+             JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+             LEFT JOIN agreements pa ON pa.id = a.parent_id
+             LEFT JOIN v_party_resolved pr ON pr.party_id = pa.counterparty_id
+            GROUP BY r.resolved_id, r.resolved_name)
+         SELECT * FROM x
+          WHERE ($1 = '' OR x.name ILIKE $1)
+            AND ($2::boolean = false OR x.issues > 0)
+          ORDER BY (x.issues > 0) DESC, x.name
+          LIMIT 500`,
+        [q ? `%${q}%` : "", query.issuesOnly === true]);
+      return (r.rows as any[]).map((row) => ({
+        id: Number(row.party_id), name: String(row.name ?? ""),
+        total: Number(row.total ?? 0), roots: Number(row.roots ?? 0),
+        documents: Number(row.documents ?? 0), issues: Number(row.issues ?? 0)
+      }));
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 取引先ひとつぶんのマップ。統合元に付いている契約も含める（件数の上限なし）。 */
+  async forParty(partyId: number): Promise<PartyMap | null> {
+    try {
+      const pr = await this.database.query(
+        "SELECT resolved_id, resolved_name FROM v_party_resolved WHERE party_id = $1", [partyId]);
+      const head = pr.rows[0] as any;
+      if (!head) return null;
+      const resolvedId = Number(head.resolved_id);
+      const r = await this.database.query(
+        `${MAP_SELECT}
+          WHERE r.resolved_id = $1
+          ORDER BY COALESCE(a.parent_id, a.id), a.parent_id NULLS FIRST, a.id`, [resolvedId]);
+      return buildPartyMap({ id: resolvedId, name: String(head.resolved_name ?? "") },
+                           (r.rows as any[]).map(mapAgreementRow));
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 種類・親・種別・方向・相手先を付け替える。番号は振り直さない。 */
+  async remap(id: number, input: RemapInput, actor: string): Promise<void> {
+    try {
+      await inTransaction(this.database, async (client) => {
+        const cr = await client.query(
+          `SELECT a.id, a.kind, a.domain, a.direction, a.parent_id, a.counterparty_id,
+                  r.resolved_id,
+                  (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count
+             FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+            WHERE a.id = $1 FOR UPDATE OF a`, [id]);
+        const row = cr.rows[0] as any;
+        if (!row) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
+        const current: RemapCurrent = {
+          id, kind: (str(row.kind) ?? "master") as AgreementKind,
+          domain: (str(row.domain) as AgreementDomain | null) ?? null,
+          direction: row.direction === "out" ? "out" : "in",
+          parentId: int(row.parent_id), counterpartyId: Number(row.counterparty_id),
+          resolvedPartyId: Number(row.resolved_id), childCount: Number(row.child_count ?? 0)
+        };
+
+        let targetResolved = current.resolvedPartyId;
+        if (input.counterpartyId !== undefined && input.counterpartyId !== current.counterpartyId) {
+          const tr = await client.query(
+            "SELECT resolved_id FROM v_party_resolved WHERE party_id = $1", [input.counterpartyId]);
+          if (!tr.rows[0]) throw new DomainError("NOT_FOUND", `取引先 ${input.counterpartyId} が見つかりません`);
+          targetResolved = Number((tr.rows[0] as any).resolved_id);
+        }
+
+        const parentId = input.parentId !== undefined ? input.parentId : current.parentId;
+        let parent: RemapParent | null = null;
+        if (parentId) {
+          const pr = await client.query(
+            `SELECT a.id, a.kind, r.resolved_id
+               FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+              WHERE a.id = $1`, [parentId]);
+          const p = pr.rows[0] as any;
+          if (p) parent = { id: Number(p.id), kind: (str(p.kind) ?? "master") as AgreementKind,
+                            resolvedPartyId: Number(p.resolved_id) };
+        }
+
+        const next = planRemap(current, input, parent, targetResolved);
+        await client.query(
+          `UPDATE agreements
+              SET kind = $2, domain = $3, direction = $4, parent_id = $5, counterparty_id = $6,
+                  updated_at = now()
+            WHERE id = $1`,
+          [id, next.kind, next.domain, next.direction, next.parentId, next.counterpartyId]);
+        await recordAudit(client, {
+          actor, action: "agreement.remap", targetType: "agreement", targetId: id,
+          detail: {
+            before: { kind: current.kind, domain: current.domain, direction: current.direction,
+                      parentId: current.parentId, counterpartyId: current.counterpartyId },
+            after: next
+          }
+        });
+      });
+    } catch (error) { throw translate(error); }
+  }
+}

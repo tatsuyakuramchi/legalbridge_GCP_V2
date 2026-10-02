@@ -26,6 +26,7 @@ export function taxRateOrDefault(value: unknown): number {
   return Number.isFinite(n) ? n : 10;
 }
 import { taxOf } from "../royalty/rounding.js";
+import { statementModelPatch } from "../royalty/statement-model.js";
 
 type Data = Record<string, unknown>;
 
@@ -87,8 +88,11 @@ export function singleStatementPatch(n: SingleStatementNumbers): Data {
     calcType: n.calcType,
     msrpStr: fmtYen(n.msrp),
     quantity: n.quantity ? String(n.quantity) : "",
-    sampleQuantity: String(n.sampleQuantity),
-    billableQuantity: String(Math.max(0, n.quantity - n.sampleQuantity)),
+    // 数量の欄は製造時等だけ。時限式（売上・受領額）で "0" を渡すと本文の
+    // {{#if}} が真になり、意味の無い「0個」が出る。
+    sampleQuantity: n.calcType === "manufacturing" ? String(n.sampleQuantity) : "",
+    billableQuantity: n.calcType === "manufacturing"
+      ? String(Math.max(0, n.quantity - n.sampleQuantity)) : "",
     royaltyRatePct: String(n.ratePct || 0),
     taxRate: String(n.taxRatePct),
     grossRoyaltyStr: fmtYen(n.grossExTax),
@@ -387,6 +391,8 @@ export interface BundleLine {
    * 経理の側で 1 を置く（単価 × 数量 = 金額 を崩さないため）。
    */
   quantity?: number | null;
+  /** 行の利用形態（取引モデル）。計算書の出し分け（statement-model.ts）に使う。紙には出さない。 */
+  usageType?: string | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -405,7 +411,8 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     intakeCurrency: String(row.intakeCurrency ?? ""),
     languageLabel: String(row.languageLabel ?? ""),
     occurredOn: String(row.occurredOn ?? ""),
-    quantity: num(row.quantity) || null
+    quantity: num(row.quantity) || null,
+    usageType: String(row.usageType ?? "") || null
   }));
 }
 
@@ -428,6 +435,7 @@ export function usageBundleLines(
     basis: number; ratePct?: number | null; amount?: number | null;
     period?: string | null; occurredOn?: string | null;
     quantity?: number | null; sampleQuantity?: number | null;
+    usageType?: string | null;
   }>
 ): BundleLine[] {
   return events.map((e) => ({
@@ -449,7 +457,8 @@ export function usageBundleLines(
     occurredOn: e.occurredOn ?? "",
     // 見本は作者に払わない分なので引く。紙の但し書きと同じ数にする。
     quantity: Number(e.quantity ?? 0) > 0
-      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null
+      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null,
+    usageType: e.usageType ?? null
   }));
 }
 
@@ -717,6 +726,8 @@ export function royaltyStatementPatch(
         taxTotal: total === undefined || total === null ? null : num(total)
       }),
       ...receiptHeader(context, computedLines),
+      // 取引モデル（利用形態）で、そのモデルに要らない欄を空にする。
+      ...statementModelPatch(computedLines.map((l) => l.usageType)),
       ...(notes ? { notes } : {})
     };
   }

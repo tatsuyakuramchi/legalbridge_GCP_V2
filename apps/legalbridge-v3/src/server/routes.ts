@@ -49,6 +49,8 @@ import { diffSettled } from "./documents/settled-diff.js";
 import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
 import { AgreementService, termInputForCondition } from "./agreements/service.js";
+import { PartyAgreementMapService } from "./agreements/party-map.js";
+import { STATEMENT_MODELS } from "./royalty/statement-model.js";
 import { termHistory } from "./agreements/term-history.js";
 import { ConditionDuplicateService } from "./conditions/duplicates.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
@@ -176,6 +178,7 @@ export function createRoutes(database: Transactable) {
   const receivables = new ReceivableRepository(database);
   const contractCheck = new ContractCheckRepository(database);
   const agreements = new AgreementService(database);
+  const agreementMap = new PartyAgreementMapService(database);
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
@@ -283,6 +286,36 @@ export function createRoutes(database: Transactable) {
   router.get("/parties/:id/agreements", asyncRoute(async (req, res) => {
     res.json({ agreements: await agreements.candidatesFor(Number(req.params.id)) });
   }));
+
+  // ---- 取引先 ⇔ 基本契約のマップ ----
+  //
+  // 取引先ごとに 基本契約 → 補助文書・解除合意 の木を出し、木にならないもの
+  // （親なし・相手先違い・種別なし・基本契約の重複）をその場で付け替える。
+  router.get("/agreement-map/parties", asyncRoute(async (req, res) => {
+    res.json({ parties: await agreementMap.parties({
+      keyword: String(req.query.q ?? ""),
+      issuesOnly: String(req.query.issues ?? "") === "1"
+    }) });
+  }));
+
+  router.get("/agreement-map/parties/:id", asyncRoute(async (req, res) => {
+    const map = await agreementMap.forParty(Number(req.params.id));
+    if (!map) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(map);
+  }));
+
+  router.patch("/agreement-map/agreements/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        kind: z.enum(["master", "standalone", "supplement", "termination", "document"]).optional(),
+        domain: z.enum(["service", "license"]).nullable().optional(),
+        direction: z.enum(["in", "out"]).optional(),
+        parentId: z.coerce.number().int().positive().nullable().optional(),
+        counterpartyId: z.coerce.number().int().positive().optional()
+      }).parse(req.body ?? {});
+      await agreementMap.remap(Number(req.params.id), input, actor(res));
+      res.json({ ok: true });
+    }));
 
   const agreementBody = z.object({
     counterpartyId: z.coerce.number().int().positive(),
@@ -2329,6 +2362,11 @@ export function createRoutes(database: Transactable) {
     res.json(await royaltyLedger.forWork(Number(req.params.id)));
   }));
   // 台帳。workId を付ければ作家 × その作品、付けなければ作家 × 全作品。
+  /** 取引モデル（利用形態）ごとの計算書の出し分け表。運用の画面が見せる。 */
+  router.get("/royalty/statement-models", (_req, res) => {
+    res.json({ models: STATEMENT_MODELS });
+  });
+
   router.get("/royalty-ledger", asyncRoute(async (req, res) => {
     const input = z.object({
       partyId: z.coerce.number().int().positive(),
