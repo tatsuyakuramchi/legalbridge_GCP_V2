@@ -194,3 +194,33 @@ test("何も変わらなければ書かない。試算は書いてから巻き�
   assert.ok(db.find("UPDATE agreements"), "検証のため書く");
   assert.equal(db.texts.at(-1), "ROLLBACK", "試算は巻き戻す");
 });
+
+test("取引先の一覧：名称・コード・カナ・別名で探し、統合先で出す。契約の無い取引先も未紐づけの数を持つ", async () => {
+  const db = new FakeDatabase((t) => t.includes("WITH matched AS") ? [
+    { party_id: 7, name: "石野謙介", total: 0, roots: 0, documents: 0, issues: 0, unlinked: 2 }
+  ] : []);
+  const rows = await new PartyAgreementMapService(db).parties({ keyword: "イシノ" });
+  assert.deepEqual(rows, [{ id: 7, name: "石野謙介", total: 0, roots: 0, documents: 0, issues: 0, unlinked: 2 }]);
+  const q = db.find("WITH matched AS")!;
+  assert.equal(q.params[0], "%イシノ%");
+  for (const col of ["p.name ILIKE", "party_code", "name_kana", "unnest(p.aliases)"]) assert.ok(q.text.includes(col), col);
+  assert.ok(q.text.includes("d.agreement_id IS NULL"), "契約に繋がっていない文書を数える");
+  assert.ok(q.text.includes("'purchase_order'") && q.text.includes("'royalty_statement'"), "発注書・計算書は数えない");
+});
+
+test("取引先のマップに、契約に繋がっていない契約文書を並べる", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT resolved_id, resolved_name FROM v_party_resolved")) return [{ resolved_id: 7, resolved_name: "石野謙介" }];
+    if (t.includes("FROM agreements a")) return [];
+    if (t.includes("d.agreement_id IS NULL")) return [
+      { id: 50, document_no: "LIC-2025-0007", status: "issued", issued_at: "2025-07-31", title: null,
+        manual_title: "利用許諾契約書（おたずねマもの村）", label: "利用許諾契約書" }
+    ];
+    return [];
+  });
+  const map = (await new PartyAgreementMapService(db).forParty(7))!;
+  assert.equal(map.roots.length, 0);
+  assert.deepEqual(map.unlinked, [{ id: 50, documentNo: "LIC-2025-0007", label: "利用許諾契約書",
+    title: "利用許諾契約書（おたずねマもの村）", status: "issued", issuedOn: "2025-07-31" }]);
+  assert.deepEqual(db.find("d.agreement_id IS NULL")!.params, [7]);
+});

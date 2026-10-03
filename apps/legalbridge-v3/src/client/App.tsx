@@ -405,7 +405,8 @@ export function App() {
         )}
         {view === "agreement-map" && (
           <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? 0}`}
-            initialPartyId={focusFor("agreement-map")} onOpen={openEntity} />
+            initialPartyId={focusFor("agreement-map")} onOpen={openEntity}
+            onRegisterAgreement={startAgreement} />
         )}
         {view === "closing" && (
           <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}

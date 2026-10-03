@@ -68,7 +68,33 @@ export interface PartyMap {
   /** 文書だけ（NDA など）。 */
   documents: MapAgreement[];
   issues: MapIssue[];
+  /**
+   * 契約に繋がっていない文書（契約書・覚書・NDA など、契約にあたるもの）。
+   * 取り込んだだけで契約（合意）に載っていない紙を、ここから契約に繋ぐ。
+   */
+  unlinked: UnlinkedDocument[];
 }
+
+export interface UnlinkedDocument {
+  id: number; documentNo: string | null; label: string; title: string | null;
+  status: string; issuedOn: string | null;
+}
+
+/**
+ * 契約にあたる文書。発注書・検収書・納品書・計算書は契約の下の個別の取引で、
+ * もともと契約（合意）に繋がない（agreements/service.ts の③）ので数えない。
+ */
+const CONTRACT_DOCUMENT_SQL = `(
+  (t.template_key IS NULL
+     AND COALESCE(d.manual_inputs->>'documentKind', '') NOT IN ('発注書', '発注請書', '検収書', '通知書'))
+  OR t.template_key NOT IN ('purchase_order', 'intl_purchase_order', 'inspection_certificate',
+                            'intl_inspection_certificate', 'delivery_note', 'acceptance_certificate',
+                            'royalty_statement'))`;
+
+/** 契約に繋がっていない契約文書の共通の条件（d・t・v を使う）。 */
+const UNLINKED_WHERE = `d.agreement_id IS NULL
+  AND d.status NOT IN ('void', 'superseded', 'draft')
+  AND ${CONTRACT_DOCUMENT_SQL}`;
 
 const isRootKind = (kind: AgreementKind) => kind === "master" || kind === "standalone";
 const isChildKind = (kind: AgreementKind) => kind === "supplement" || kind === "termination";
@@ -164,7 +190,7 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
     x.direction.localeCompare(y.direction) || x.id - y.id);
   for (const r of roots) r.children.sort((x, y) => x.id - y.id);
 
-  return { party, roots, loose, documents, issues };
+  return { party, roots, loose, documents, issues, unlinked: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +313,8 @@ export interface MapPartyRow {
   total: number; roots: number; documents: number;
   /** SQL で数えられるずれ（親なし・親の相手先違い・種別なし）。重複は詳細で見る。 */
   issues: number;
+  /** 契約に繋がっていない契約文書の数。 */
+  unlinked: number;
 }
 
 const MAP_SELECT = `
@@ -328,9 +356,18 @@ export class PartyAgreementMapService {
   async parties(query: { keyword?: string; issuesOnly?: boolean } = {}): Promise<MapPartyRow[]> {
     const q = String(query.keyword ?? "").trim();
     try {
+      // 取引先の検索は取引先の画面と同じ（名称・取引先コード・カナ・別名）。統合元に当たっても
+      // 統合先を出す。打たずに開いたときは、契約か契約に繋がっていない文書のある取引先だけ。
+      // 打ったときは契約の無い取引先も出す（そこから契約を登録し、文書を繋ぐ）。
       const r = await this.database.query(
-        `WITH x AS (
-           SELECT r.resolved_id AS party_id, r.resolved_name AS name,
+        `WITH matched AS (
+           SELECT DISTINCT r.resolved_id
+             FROM parties p JOIN v_party_resolved r ON r.party_id = p.id
+            WHERE $1 = '' OR p.name ILIKE $1 OR COALESCE(p.party_code, '') ILIKE $1
+               OR COALESCE(p.name_kana, '') ILIKE $1
+               OR EXISTS (SELECT 1 FROM unnest(p.aliases) al WHERE al ILIKE $1)),
+         x AS (
+           SELECT r.resolved_id AS party_id,
                   count(*)::int AS total,
                   count(*) FILTER (WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone'))::int AS roots,
                   count(*) FILTER (WHERE a.kind = 'document')::int AS documents,
@@ -344,17 +381,34 @@ export class PartyAgreementMapService {
              JOIN v_party_resolved r ON r.party_id = a.counterparty_id
              LEFT JOIN agreements pa ON pa.id = a.parent_id
              LEFT JOIN v_party_resolved pr ON pr.party_id = pa.counterparty_id
-            GROUP BY r.resolved_id, r.resolved_name)
-         SELECT * FROM x
-          WHERE ($1 = '' OR x.name ILIKE $1)
-            AND ($2::boolean = false OR x.issues > 0)
-          ORDER BY (x.issues > 0) DESC, x.name
+            GROUP BY r.resolved_id),
+         u AS (
+           SELECT r.resolved_id AS party_id, count(*)::int AS unlinked
+             FROM documents d
+             JOIN v_document_display v ON v.document_id = d.id
+             JOIN v_party_resolved r ON r.party_id = v.counterparty_id
+             LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+             LEFT JOIN document_templates t ON t.id = tv.template_id
+            WHERE ${UNLINKED_WHERE}
+            GROUP BY r.resolved_id)
+         SELECT rp.id AS party_id, rp.name,
+                COALESCE(x.total, 0) AS total, COALESCE(x.roots, 0) AS roots,
+                COALESCE(x.documents, 0) AS documents, COALESCE(x.issues, 0) AS issues,
+                COALESCE(u.unlinked, 0) AS unlinked
+           FROM matched m
+           JOIN parties rp ON rp.id = m.resolved_id
+           LEFT JOIN x ON x.party_id = m.resolved_id
+           LEFT JOIN u ON u.party_id = m.resolved_id
+          WHERE ($1 <> '' OR COALESCE(x.total, 0) > 0 OR COALESCE(u.unlinked, 0) > 0)
+            AND ($2::boolean = false OR COALESCE(x.issues, 0) > 0 OR COALESCE(u.unlinked, 0) > 0)
+          ORDER BY (COALESCE(x.issues, 0) > 0 OR COALESCE(u.unlinked, 0) > 0) DESC, rp.name
           LIMIT 500`,
         [q ? `%${q}%` : "", query.issuesOnly === true]);
       return (r.rows as any[]).map((row) => ({
         id: Number(row.party_id), name: String(row.name ?? ""),
         total: Number(row.total ?? 0), roots: Number(row.roots ?? 0),
-        documents: Number(row.documents ?? 0), issues: Number(row.issues ?? 0)
+        documents: Number(row.documents ?? 0), issues: Number(row.issues ?? 0),
+        unlinked: Number(row.unlinked ?? 0)
       }));
     } catch (error) { throw translate(error); }
   }
@@ -371,8 +425,23 @@ export class PartyAgreementMapService {
         `${MAP_SELECT}
           WHERE r.resolved_id = $1
           ORDER BY COALESCE(a.parent_id, a.id), a.parent_id NULLS FIRST, a.id`, [resolvedId]);
-      return buildPartyMap({ id: resolvedId, name: String(head.resolved_name ?? "") },
-                           (r.rows as any[]).map(mapAgreementRow));
+      const map = buildPartyMap({ id: resolvedId, name: String(head.resolved_name ?? "") },
+                                (r.rows as any[]).map(mapAgreementRow));
+      const docs = await this.database.query(
+        `SELECT d.id, d.document_no, d.status, d.issued_at, v.title, d.manual_inputs->>'title' AS manual_title,
+                COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label
+           FROM documents d
+           JOIN v_document_display v ON v.document_id = d.id
+           JOIN v_party_resolved r ON r.party_id = v.counterparty_id
+           LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+           LEFT JOIN document_templates t ON t.id = tv.template_id
+          WHERE r.resolved_id = $1 AND ${UNLINKED_WHERE}
+          ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [resolvedId]);
+      map.unlinked = (docs.rows as any[]).map((d) => ({
+        id: Number(d.id), documentNo: str(d.document_no), label: String(d.label ?? "文書"),
+        title: str(d.manual_title) ?? str(d.title), status: String(d.status ?? ""), issuedOn: dateStr(d.issued_at)
+      }));
+      return map;
     } catch (error) { throw translate(error); }
   }
 
