@@ -353,5 +353,8 @@ searchAPI（legalbridge.arclight.co.jp/payments/excel-export）は V1 の文書�
 | `POST /internal/documents/:id/account-owner` `{ staffEmail, by }` | 社内の担当者を付ける（`_accountOwnerStaffId`）。担当者はメールで指す |
 
 - 守り：`x-lb-webhook-token`（`WEBHOOK_TOKEN`、定期実行と同じ）。Cloudflare Access の外（`/internal`）。
+- 経路：searchAPI → **口（legalbridge-v3-gateway）** → V3 本体。V3 本体には IAP が付いていて、searchAPI の
+  サービスアカウントの ID トークンは 401 で断られる。口は IAP 用の JWT を自分で署名して通す（定期実行と同じ経路）。
+  searchAPI の `V3_INTERNAL_URL` は口の URL にする。
 - 誰の分か：searchAPI がログイン者で決める（一般担当者は `ownerEmail` に自分のメール、管理者は全件か `unset=1`）。
 - zip は `exports/accounting-bundle.ts`。PDF は画面と同じ作り置き（`pdfServicesFor` でブラウザを共有）。
