@@ -4,6 +4,7 @@ import { recordAudit } from "../core/audit.js";
 import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.js";
 import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { agreementDatedTitle } from "../documents/legacy-variables.js";
+import type { AgreementCsvRow } from "./csv.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -182,7 +183,20 @@ export interface RemapInput {
    * 「交渉中」のままだと、締結済みだけを拾う画面に出てこない）。
    */
   executedOn?: string | null;
+  /** 以下は CSV の一括修正から。画面の編集は使わない。 */
+  title?: string;
+  effectiveOn?: string | null;
+  expiresOn?: string | null;
+  autoRenewal?: boolean;
+  counterpartyRefNo?: string | null;
 }
+
+/** 試算（書き込まずに検証だけ）のとき、トランザクションを巻き戻すための合図。 */
+class DryRunRollback extends Error {
+  constructor(readonly changed: string[]) { super("dry-run"); }
+}
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface RemapCurrent {
   id: number; kind: AgreementKind; domain: AgreementDomain | null; direction: "in" | "out";
@@ -363,6 +377,62 @@ export class PartyAgreementMapService {
   }
 
   /**
+   * CSV の一括修正用に書き出す行。全件（取引先を渡せばその取引先の分）。
+   * ずれと既定は画面と同じ判定（buildPartyMap）を取引先ごとに通して付ける。
+   */
+  async exportRows(query: { partyId?: number | null } = {}): Promise<AgreementCsvRow[]> {
+    try {
+      const resolvedId = query.partyId
+        ? int(((await this.database.query(
+            "SELECT resolved_id FROM v_party_resolved WHERE party_id = $1", [query.partyId])).rows[0] as any)?.resolved_id)
+        : null;
+      if (query.partyId && !resolvedId) throw new DomainError("NOT_FOUND", `取引先 ${query.partyId} が見つかりません`);
+      const r = await this.database.query(
+        `SELECT a.id, a.agreement_no, a.title, a.kind, a.domain, a.direction, a.status, a.parent_id,
+                a.executed_on, a.effective_on, a.expires_on, a.auto_renewal, a.counterparty_ref_no,
+                a.terminated_on, a.counterparty_id, p.name AS party_name,
+                (r.party_id <> r.resolved_id) AS party_merged,
+                r.resolved_id, r.resolved_name, rp.party_code AS resolved_code,
+                pa.agreement_no AS parent_no, pr.resolved_id AS parent_resolved_id, pa.kind AS parent_kind
+           FROM agreements a
+           JOIN parties p ON p.id = a.counterparty_id
+           JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+           JOIN parties rp ON rp.id = r.resolved_id
+           LEFT JOIN agreements pa ON pa.id = a.parent_id
+           LEFT JOIN v_party_resolved pr ON pr.party_id = pa.counterparty_id
+          WHERE ($1::bigint IS NULL OR r.resolved_id = $1)
+          ORDER BY r.resolved_name, COALESCE(a.parent_id, a.id), a.parent_id NULLS FIRST, a.id`,
+        [resolvedId]);
+      const rows = r.rows as any[];
+      // 取引先ごとに画面と同じ判定を通す。
+      const byParty = new Map<number, any[]>();
+      for (const row of rows) {
+        const key = Number(row.resolved_id);
+        byParty.set(key, [...(byParty.get(key) ?? []), row]);
+      }
+      const primary = new Set<number>();
+      const issues = new Map<number, string[]>();
+      for (const [pid, list] of byParty) {
+        const map = buildPartyMap({ id: pid, name: String(list[0].resolved_name ?? "") }, list.map(mapAgreementRow));
+        for (const root of map.roots) if (root.primary) primary.add(root.id);
+        for (const i of map.issues) issues.set(i.agreementId, [...(issues.get(i.agreementId) ?? []), i.message]);
+      }
+      return rows.map((row) => {
+        const a = mapAgreementRow(row);
+        return {
+          id: a.id, agreementNo: a.agreementNo,
+          partyName: String(row.resolved_name ?? ""), partyCode: str(row.resolved_code),
+          title: a.title, kind: a.kind, domain: a.domain, direction: a.direction,
+          parentNo: str(row.parent_no) ?? (a.parentId ? `#${a.parentId}` : null),
+          executedOn: a.executedOn, effectiveOn: dateStr(row.effective_on), expiresOn: dateStr(row.expires_on),
+          autoRenewal: row.auto_renewal === true, counterpartyRefNo: str(row.counterparty_ref_no),
+          status: a.status, primary: primary.has(a.id), issues: issues.get(a.id) ?? []
+        };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 文書フォームで選ぶ値。基本契約（このマップの木の根）・発注書番号・個別契約番号。
    *
    * 文書フォームはこれまで契約一覧を 300 件取ってから画面で取引先に絞っていた
@@ -406,13 +476,19 @@ export class PartyAgreementMapService {
     } catch (error) { throw translate(error); }
   }
 
-  /** 種類・親・種別・方向・相手先を付け替える。番号は振り直さない。 */
-  async remap(id: number, input: RemapInput, actor: string): Promise<void> {
+  /**
+   * 種類・親・種別・方向・相手先・締結日（CSV からは件名・期間なども）を直す。番号は振り直さない。
+   * 変わった項目の名前を返す。何も変わらなければ書かない（監査にも残さない）。
+   * dryRun は同じ検証と書き込みを通してから巻き戻す（CSV の試算）。
+   */
+  async remap(id: number, input: RemapInput, actor: string, options: { dryRun?: boolean } = {})
+    : Promise<string[]> {
     try {
-      await inTransaction(this.database, async (client) => {
+      return await inTransaction(this.database, async (client) => {
         const cr = await client.query(
           `SELECT a.id, a.kind, a.domain, a.direction, a.parent_id, a.counterparty_id,
-                  a.status, a.executed_on, r.resolved_id,
+                  a.status, a.executed_on, a.title, a.effective_on, a.expires_on, a.auto_renewal,
+                  a.counterparty_ref_no, r.resolved_id,
                   (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count
              FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
             WHERE a.id = $1 FOR UPDATE OF a`, [id]);
@@ -447,14 +523,47 @@ export class PartyAgreementMapService {
         }
 
         const next = planRemap(current, input, parent, targetResolved);
+        const executed = input.executedOn !== undefined
+          ? executedChange(String(row.status ?? ""), input.executedOn) : null;
+        for (const [name, value] of [["有効開始日", input.effectiveOn], ["終了日", input.expiresOn]] as const) {
+          if (value && !DATE.test(value)) throw new DomainError("VALIDATION", `${name}は YYYY-MM-DD で入れてください`);
+        }
+        if (input.title !== undefined && !String(input.title).trim()) {
+          throw new DomainError("VALIDATION", "件名を空にはできません");
+        }
+        const extra = {
+          title: input.title !== undefined ? String(input.title).trim() : String(row.title ?? ""),
+          effectiveOn: input.effectiveOn !== undefined ? input.effectiveOn : dateStr(row.effective_on),
+          expiresOn: input.expiresOn !== undefined ? input.expiresOn : dateStr(row.expires_on),
+          autoRenewal: input.autoRenewal !== undefined ? input.autoRenewal : row.auto_renewal === true,
+          counterpartyRefNo: input.counterpartyRefNo !== undefined
+            ? str(input.counterpartyRefNo) : str(row.counterparty_ref_no)
+        };
+
+        const changed = [
+          next.kind !== current.kind && "種類",
+          next.domain !== current.domain && "種別",
+          next.direction !== current.direction && "方向",
+          next.parentId !== current.parentId && "親契約",
+          next.counterpartyId !== current.counterpartyId && "相手先",
+          executed && executed.executedOn !== dateStr(row.executed_on) && "締結日",
+          executed && executed.status !== String(row.status ?? "") && "状態",
+          extra.title !== String(row.title ?? "") && "件名",
+          extra.effectiveOn !== dateStr(row.effective_on) && "有効開始日",
+          extra.expiresOn !== dateStr(row.expires_on) && "終了日",
+          extra.autoRenewal !== (row.auto_renewal === true) && "自動更新",
+          extra.counterpartyRefNo !== str(row.counterparty_ref_no) && "相手方番号"
+        ].filter((x): x is string => Boolean(x));
+        if (!changed.length) return [];
+
         await client.query(
           `UPDATE agreements
               SET kind = $2, domain = $3, direction = $4, parent_id = $5, counterparty_id = $6,
-                  updated_at = now()
+                  title = $7, effective_on = $8::date, expires_on = $9::date, auto_renewal = $10,
+                  counterparty_ref_no = $11, updated_at = now()
             WHERE id = $1`,
-          [id, next.kind, next.domain, next.direction, next.parentId, next.counterpartyId]);
-        const executed = input.executedOn !== undefined
-          ? executedChange(String(row.status ?? ""), input.executedOn) : null;
+          [id, next.kind, next.domain, next.direction, next.parentId, next.counterpartyId,
+           extra.title, extra.effectiveOn, extra.expiresOn, extra.autoRenewal, extra.counterpartyRefNo]);
         if (executed) {
           await client.query(
             `UPDATE agreements
@@ -468,10 +577,16 @@ export class PartyAgreementMapService {
             before: { kind: current.kind, domain: current.domain, direction: current.direction,
                       parentId: current.parentId, counterpartyId: current.counterpartyId,
                       status: String(row.status ?? ""), executedOn: dateStr(row.executed_on) },
-            after: { ...next, ...(executed ?? {}) }
+            after: { ...next, ...(executed ?? {}), ...extra },
+            changed
           }
         });
+        if (options.dryRun) throw new DryRunRollback(changed);
+        return changed;
       });
-    } catch (error) { throw translate(error); }
+    } catch (error) {
+      if (error instanceof DryRunRollback) return error.changed;
+      throw translate(error);
+    }
   }
 }

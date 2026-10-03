@@ -127,7 +127,7 @@ test("付け替えは agreements の列を書き、前後を監査に残す", as
   });
   await new PartyAgreementMapService(db).remap(10, { parentId: 1 }, "legal@example.test");
   const up = db.find("UPDATE agreements")!;
-  assert.deepEqual(up.params, [10, "supplement", "license", "out", 1, 5]);
+  assert.deepEqual(up.params.slice(0, 6), [10, "supplement", "license", "out", 1, 5]);
   assert.ok(db.queries.some((q) => q.params.includes("agreement.remap")));
 });
 
@@ -175,4 +175,20 @@ test("文書フォームの選択肢：基本契約は締結日付きの呼び�
   assert.deepEqual(refs.purchaseOrders.map((d) => d.documentNo), ["ARC-PO-2026-0032"]);
   assert.deepEqual(refs.terms.map((d) => d.documentNo), ["ARC-ILT-D-2026-0001"]);
   assert.deepEqual(db.find("FROM documents d")!.params[0], 5, "統合先で引く");
+});
+
+test("何も変わらなければ書かない。試算は書いてから巻き戻す", async () => {
+  const row = { id: 1, kind: "master", domain: "license", direction: "out", parent_id: null, counterparty_id: 5,
+                resolved_id: 5, child_count: 0, status: "executed", executed_on: "2024-04-01",
+                title: "利用許諾基本契約", effective_on: "2024-04-01", expires_on: null,
+                auto_renewal: true, counterparty_ref_no: null };
+  const db = new FakeDatabase((t) => (t.includes("FOR UPDATE OF a") ? [row] : []));
+  const svc = new PartyAgreementMapService(db);
+  assert.deepEqual(await svc.remap(1, { title: "利用許諾基本契約", executedOn: "2024-04-01", autoRenewal: true }, "who"), []);
+  assert.equal(db.find("UPDATE agreements"), undefined);
+
+  const changed = await svc.remap(1, { title: "利用許諾基本契約（改）", expiresOn: "2029-03-31" }, "who", { dryRun: true });
+  assert.deepEqual(changed, ["件名", "終了日"]);
+  assert.ok(db.find("UPDATE agreements"), "検証のため書く");
+  assert.equal(db.texts.at(-1), "ROLLBACK", "試算は巻き戻す");
 });
