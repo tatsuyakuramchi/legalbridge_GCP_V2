@@ -178,8 +178,8 @@ export const STATEMENT_LABEL_COLUMNS: Column[] = [
   { name: "productName", label: "製品名",
     helpText: "紙の「製品名」に出る。既定は作品名" },
   { name: "contractTitle", label: "対象契約",
-    helpText: "許諾先の取引先名と条件名。既定はアウト条件から入る" },
-  { name: "contractNumber", label: "契約番号", helpText: "既定はアウト条件の番号" }
+    helpText: "空ならイン側（作者との）基本契約・個別契約が入る。アウト側の契約は出さない" },
+  { name: "contractNumber", label: "契約番号", helpText: "空ならイン側の「基本契約番号 / 個別条件書番号」が入る" }
 ];
 
 export const EXPENSE_COLUMNS: Column[] = [

@@ -133,11 +133,11 @@ export function statementLabelRows(context: Ctx): Row[] {
         eventId: event.id,
         // 利用形態で決まる（自社販売＝当社作品名、再許諾・他社販売＝条件名）。
         productName: event.productName ?? out.workTitle ?? condition.work?.title ?? "",
-        contractTitle: [out.partyName, out.name]
-          .map((x: unknown) => String(x ?? "").trim()).filter(Boolean).join("　"),
-        // 相手に見せる「契約番号」。合意があればその番号、無ければ条件番号
-        // （条件番号を契約番号として刷ると、相手が持つ契約書と突き合わない）。
-        contractNumber: out.agreementNo ?? out.conditionNo ?? ""
+        // 対象契約・契約番号は空で出す。空のままならイン側（作者との）基本契約・個別契約が
+        // 入る（royalty/in-contract.ts）。ここにアウト側の値を入れておくと、そのまま
+        // 保存されて作者の知らない契約が紙に出る。
+        contractTitle: "",
+        contractNumber: ""
       };
     });
 }
