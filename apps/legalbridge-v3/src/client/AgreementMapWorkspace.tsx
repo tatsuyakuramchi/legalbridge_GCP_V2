@@ -170,7 +170,7 @@ function PartyMapView(
           <h2>{map.party.name}</h2>
           {onOpen && <button className="linky" onClick={() => onOpen("party", map.party.id)}>取引先を開く</button>}
           <span className="faint" style={{ marginLeft: "auto" }}>
-            既定＝他の画面がこの取引先の基本契約として拾う1本（種別 × 方向ごと）
+            既定＝他の画面がこの取引先の基本契約として拾う1本（種別 × 方向ごと。基本契約だけで、単体契約は既定にしません）
           </span>
         </div>
         <div className="panel-bd">

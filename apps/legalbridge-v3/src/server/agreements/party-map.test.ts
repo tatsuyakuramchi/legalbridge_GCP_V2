@@ -62,12 +62,14 @@ test("同じ種別・方向の生きた基本契約が2本あれば、新しい�
   assert.deepEqual(map.issues.map((i) => `${i.code}:${i.agreementId}`), ["duplicate_master:1"]);
 });
 
-test("生きた基本契約が無ければ単体契約を既定にする。未締結は既定にしない", () => {
-  const map = buildPartyMap(party, [
+test("既定は基本契約だけ。単体契約しか無ければ既定なし。未締結も既定にしない", () => {
+  const onlyStandalone = buildPartyMap(party, [
     a({ id: 1, status: "negotiating" }),
     a({ id: 2, kind: "standalone" })
   ]);
-  assert.deepEqual(map.roots.filter((r) => r.primary).map((r) => r.id), [2]);
+  assert.deepEqual(onlyStandalone.roots.filter((r) => r.primary).map((r) => r.id), []);
+  const both = buildPartyMap(party, [a({ id: 1 }), a({ id: 2, kind: "standalone", executedOn: "2025-01-01" })]);
+  assert.deepEqual(both.roots.filter((r) => r.primary).map((r) => r.id), [1], "新しい単体契約より基本契約");
 });
 
 const current: RemapCurrent = {

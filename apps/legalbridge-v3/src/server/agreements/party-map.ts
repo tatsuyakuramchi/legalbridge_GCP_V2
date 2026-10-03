@@ -85,7 +85,8 @@ const isLive = (a: MapAgreement) => a.status === "executed" && !a.terminatedOn;
  * 取引先ひとつぶんの契約を木にする。DB を読まない（テストできるように）。
  *
  * primary は「その domain × direction で他の画面が拾うべき1本」。締結済み・未解除の
- * 基本契約（無ければ単体契約）のうち、締結日の新しいもの。
+ * 基本契約のうち、締結日の新しいもの。単体契約は既定にしない（その作品・その取引
+ * だけの契約で、取引先全体の準拠契約ではない）。単体契約しか無ければ既定なし。
  */
 export function buildPartyMap(party: { id: number; name: string }, rows: MapAgreement[]): PartyMap {
   const issues: MapIssue[] = [];
@@ -144,8 +145,7 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
   for (const list of groups.values()) {
     const live = list.filter(isLive);
     const masters = live.filter((r) => r.kind === "master");
-    const pool = masters.length ? masters : live;
-    const pick = [...pool].sort((x, y) =>
+    const pick = [...masters].sort((x, y) =>
       String(y.executedOn ?? "").localeCompare(String(x.executedOn ?? "")) || y.id - x.id)[0];
     if (pick) pick.primary = true;
     if (masters.length > 1 && pick) {
