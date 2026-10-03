@@ -105,3 +105,17 @@ test("支払内容の言語は「◯◯語」だけ（製品名の括弧に並�
   // 言語が無く地域だけなら、そのまま出す。
   assert.equal(statementGroupLabel({ contractTitle: "A社" }, [{ productName: "X（北米）" }]), "A社・北米");
 });
+
+test("計算書の支払内容：対象契約（イン側の契約）を入金企業として拾わない。前の版の計算書だけ拾う", () => {
+  const rows = [{ productName: "おたずねマもの村（日本語・日本）" }];
+  // 自社製造・自社販売：入金企業は空。対象契約はイン側の契約。
+  assert.equal(statementGroupLabel({ contractTitle: "2025年7月31日付利用許諾契約書", contractNumber: "ARC-ILT-2026-0037",
+                                     payerName: "", languageLabel: "日本語" }, rows), "日本語");
+  // 再許諾：入金企業は許諾先。
+  assert.equal(statementGroupLabel({ contractTitle: "2024年4月1日付利用許諾基本契約 / 2025年7月31日付利用許諾契約書",
+                                     payerName: "Korea Board games Co., Ltd.", languageLabel: "韓国語" }, rows),
+               "Korea Board games Co., Ltd.・韓国語");
+  // 入金企業を持たない前の版：対象契約の先頭（入金企業）から拾う。
+  assert.equal(statementGroupLabel({ contractTitle: "Asmodee Asia Limited　英語版" }, [{ productName: "" }]),
+               "Asmodee Asia Limited・英語版");
+});

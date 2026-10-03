@@ -285,7 +285,11 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
  */
 export function statementGroupLabel(group: Record<string, any>, rows: Array<Record<string, any>>): string {
   const text = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
-  const [head, ...tail] = text(group.contractTitle).split("\u3000");
+  // 対象契約から入金企業を拾うのは、組が入金企業（payerName）を持っていない前の版の計算書だけ。
+  // 今の計算書の対象契約はイン側（作者との）契約で、入金企業ではない。自社製造・自社販売の組は
+  // 入金企業が空（相手がいない）なので、拾うと「2025年7月31日付◯◯契約書・日本語」になっていた。
+  const legacy = !("payerName" in group);
+  const [head, ...tail] = legacy ? text(group.contractTitle).split("\u3000") : [""];
   const payer = text(group.payerName) || text(head);
   let language = text(group.languageLabel);
   if (!language) {
