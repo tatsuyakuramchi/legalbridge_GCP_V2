@@ -21,7 +21,12 @@
 --   発行済みの文書は中身を凍らせてあるので、過去の PDF は変わらない。
 --
 --   ファイルをそのまま流してよい（書き換えは要らない）。
---   目印がそれぞれ本文に「ちょうど1回」あるときだけ改訂する。0回や2回以上なら
+--   本文には「受領情報（サブライセンス入金）」が2か所ある。
+--     {{#if receiptRows}} 側 … サブライセンシーごとの受領明細の表（旧方式の手入力）。
+--                              本当にサブライセンス入金の表なので、変えない
+--     {{else}} 側           … 入金企業／デザイナー・権利者／入金通貨の表。ここを変える
+--   見出しの直後に「入金企業」の項目名が続く並び（間は空白とタグだけ）を目印にして、
+--   2つ目だけに当てる。目印がちょうど1回あるときだけ改訂し、0回や2回以上なら
 --   本文の作りが想定と違うので、何もせずに【1】の結果で知らせる。
 --   何度流しても同じ結果になる（改訂済みなら何もしない）。
 --
@@ -33,15 +38,16 @@
 
 -- ---------------------------------------------------------------------
 -- 【1】いまの本文の目印を数える。何も変えない。
---      見出し・項目名がともに 1 なら【2】で改訂される。
+--      「変える表の数」が 1 なら【2】で改訂される。
 -- ---------------------------------------------------------------------
+\set mark '■ 受領情報（サブライセンス入金）(</div>\\s*<table[^>]*>\\s*<tr>\\s*<td class="label"[^>]*>)入金企業(</td>)'
+
 SELECT t.template_key                                                    AS キー,
        v.id                                                              AS 版id,
        v.version_no                                                      AS 版番号,
-       (length(v.html_source) - length(replace(v.html_source, '受領情報（サブライセンス入金）', '')))
-         / length('受領情報（サブライセンス入金）')                          AS 見出しの数,
-       (length(v.html_source) - length(replace(v.html_source, '>入金企業<', '')))
-         / length('>入金企業<')                                            AS 項目名の数,
+       (SELECT count(*) FROM regexp_matches(v.html_source, '受領情報（サブライセンス入金）', 'g'))
+                                                                         AS 見出しの数,
+       (SELECT count(*) FROM regexp_matches(v.html_source, :'mark', 'g'))  AS 変える表の数,
        (position('>取引モデル概要<' in v.html_source) > 0)                  AS 既に改訂済み
   FROM v3.document_templates t
   JOIN v3.document_template_versions v ON v.id = t.current_version_id
@@ -63,19 +69,13 @@ made AS (
   SELECT s.template_id,
          (SELECT COALESCE(max(x.version_no), 0) + 1
             FROM v3.document_template_versions x WHERE x.template_id = s.template_id),
-         replace(
-           replace(s.html_source,
-             '受領情報（サブライセンス入金）', '取引モデル'),
-           '>入金企業<', '>取引モデル概要<'),
+         regexp_replace(s.html_source, :'mark', '■ 取引モデル\1取引モデル概要\2'),
          s.variables,
-         '受領情報（サブライセンス入金）→取引モデル、入金企業→取引モデル概要',
+         '受領情報（サブライセンス入金）→取引モデル、入金企業→取引モデル概要（receiptRows の明細表はそのまま）',
          'infra/v3/157'
     FROM src s
-   -- 目印がちょうど1回ずつのときだけ作る。
-   WHERE (length(s.html_source) - length(replace(s.html_source, '受領情報（サブライセンス入金）', '')))
-           = length('受領情報（サブライセンス入金）')
-     AND (length(s.html_source) - length(replace(s.html_source, '>入金企業<', '')))
-           = length('>入金企業<')
+   -- 目印がちょうど1回のときだけ作る。
+   WHERE (SELECT count(*) FROM regexp_matches(s.html_source, :'mark', 'g')) = 1
      -- 既に改訂してあれば作らない。
      AND position('>取引モデル概要<' in s.html_source) = 0
   RETURNING id, template_id, version_no
@@ -89,19 +89,19 @@ pointed AS (
 SELECT p.template_key AS キー, p.new_version::text AS 新しい版id, p.version_no::text AS 版番号
   FROM pointed p
 UNION ALL
-SELECT '—', '0 件', '既に改訂済みか、目印の数が1ではありません（【1】の結果を見てください）'
+SELECT '—', '0 件', '既に改訂済みか、変える表の数が1ではありません（【1】の結果を見てください）'
  WHERE NOT EXISTS (SELECT 1 FROM pointed);
 
 
 -- ---------------------------------------------------------------------
--- 【3】確認。いま使っている版で、古い文言が消え、新しい文言が入っているか。
+-- 【3】確認。見出しは receiptRows の明細表の1か所だけ残り、表は取引モデルになっているか。
 -- ---------------------------------------------------------------------
 SELECT t.template_key                                                  AS キー,
        v.id                                                            AS 版id,
        v.version_no                                                    AS 版番号,
-       (position('受領情報（サブライセンス入金）' in v.html_source) = 0)  AS 古い見出しは無い,
-       (position('■ 取引モデル' in v.html_source) > 0
-        OR position('取引モデル<' in v.html_source) > 0)                AS 新しい見出し,
+       (SELECT count(*) FROM regexp_matches(v.html_source, '受領情報（サブライセンス入金）', 'g'))
+                                                                       AS 残る見出しの数_1なら正しい,
+       (position('■ 取引モデル<' in v.html_source) > 0)                 AS 新しい見出し,
        (position('>取引モデル概要<' in v.html_source) > 0)              AS 取引モデル概要,
        (position('{{payerCompany}}' in v.html_source) > 0)             AS 変数は残っている
   FROM v3.document_templates t
