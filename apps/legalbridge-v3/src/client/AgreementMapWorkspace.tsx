@@ -10,7 +10,7 @@ import { DocumentImport } from "./DocumentImport.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
-import type { MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap } from "../server/agreements/party-map.js";
+import type { MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -31,7 +31,11 @@ const KIND_LABEL: Record<AgreementKind, string> = {
 const DOMAIN_LABEL: Record<AgreementDomain, string> = { service: "業務委託", license: "ライセンス" };
 
 export function AgreementMapWorkspace(
-  { initialPartyId, onOpen }: { initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void }
+  { initialPartyId, onOpen, onRegisterAgreement }: {
+    initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void;
+    /** 契約の登録へ（相手先を入れた状態で開く）。契約の無い取引先から始めるとき。 */
+    onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
+  }
 ) {
   const [parties, setParties] = useState<MapPartyRow[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -102,11 +106,16 @@ export function AgreementMapWorkspace(
         <div className="panel">
           <div className="panel-hd" style={{ flexWrap: "wrap", gap: 6 }}>
             <h2>取引先</h2>
-            <ListSearch value={keyword} onChange={setKeyword} placeholder="取引先名" label="取引先を絞り込む" />
+            <div style={{ flex: "1 1 100%" }}>
+              <ListSearch value={keyword} onChange={setKeyword} placeholder="名称・コード・カナ・別名" label="取引先を絞り込む" />
+            </div>
             <label className="faint" style={{ display: "flex", gap: 4, alignItems: "center" }}>
               <input type="checkbox" checked={issuesOnly} onChange={(e) => setIssuesOnly(e.target.checked)} />
-              ずれのあるものだけ{issueCount > 0 && !issuesOnly ? `（${issueCount}）` : ""}
+              ずれ・未紐づけのあるものだけ{issueCount > 0 && !issuesOnly ? `（${issueCount}）` : ""}
             </label>
+            <span className="faint" style={{ flexBasis: "100%" }}>
+              {keyword.trim() ? "契約の無い取引先も出します" : "契約か、契約に繋がっていない文書のある取引先。名前で探すと全取引先から"}
+            </span>
           </div>
           <div className="ledger-tree">
             {parties.map((p) => (
@@ -114,6 +123,7 @@ export function AgreementMapWorkspace(
                       onClick={() => { setPartyId(p.id); setNotice(null); setError(null); }}>
                 <span className="grow">{p.name}</span>
                 {p.issues > 0 && <span className="tag warn">ずれ {p.issues}</span>}
+                {p.unlinked > 0 && <span className="tag warn">未紐づけ {p.unlinked}</span>}
                 <span className="faint">{p.roots}本</span>
               </button>
             ))}
@@ -124,7 +134,7 @@ export function AgreementMapWorkspace(
         <div className="stack">
           {!map && <div className="note">左から取引先を選んでください。</div>}
           {map && (
-            <PartyMapView map={map} onOpen={onOpen}
+            <PartyMapView map={map} onOpen={onOpen} onRegisterAgreement={onRegisterAgreement}
               onChanged={(msg) => { setNotice(msg); setError(null); bump(); }}
               onError={setError} />
           )}
@@ -135,8 +145,9 @@ export function AgreementMapWorkspace(
 }
 
 function PartyMapView(
-  { map, onOpen, onChanged, onError }: {
+  { map, onOpen, onRegisterAgreement, onChanged, onError }: {
     map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
+    onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
     onChanged: (msg: string) => void; onError: (msg: string) => void;
   }
 ) {
@@ -172,6 +183,9 @@ function PartyMapView(
         <div className="panel-hd">
           <h2>{map.party.name}</h2>
           {onOpen && <button className="linky" onClick={() => onOpen("party", map.party.id)}>取引先を開く</button>}
+          {onRegisterAgreement && (
+            <button className="btn btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => onRegisterAgreement(map.party.id, map.party.name)}>契約を登録</button>
+          )}
           <span className="faint" style={{ marginLeft: "auto" }}>
             既定＝他の画面がこの取引先の基本契約として拾う1本（種別 × 方向ごと。基本契約だけで、単体契約は既定にしません）
           </span>
@@ -188,11 +202,19 @@ function PartyMapView(
                   )}
                 </div>
               ))}
-              {!map.roots.length && <div className="faint">基本契約・単体契約はありません</div>}
+              {!map.roots.length && (
+                <div className="faint">
+                  基本契約・単体契約はありません。{map.unlinked.length > 0 && "「契約を登録」で契約を立てると、下の文書を繋げます。"}
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      {map.unlinked.length > 0 && (
+        <UnlinkedDocuments docs={map.unlinked} map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+      )}
 
       {map.loose.length > 0 && (
         <div className="panel">
@@ -211,6 +233,78 @@ function PartyMapView(
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * 契約に繋がっていない文書（契約書・覚書・NDA など）。取り込んだだけで、契約（合意）に
+ * 載っていない紙。選んだ契約に繋ぐ（文書のつながり「契約（合意）」と同じ）。
+ */
+function UnlinkedDocuments(
+  { docs, map, onOpen, onChanged, onError }: {
+    docs: UnlinkedDocument[]; map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
+    onChanged: (msg: string) => void; onError: (msg: string) => void;
+  }
+) {
+  const readOnly = useReadOnly();
+  const targets = [
+    ...map.roots.flatMap((r) => [r as MapAgreement, ...r.children]), ...map.loose, ...map.documents
+  ];
+  const [choice, setChoice] = useState<Record<number, string>>({});
+  const [busy, setBusy] = useState<number | null>(null);
+  async function link(doc: UnlinkedDocument) {
+    const target = Number(choice[doc.id] ?? "");
+    if (!target) return;
+    setBusy(doc.id);
+    try {
+      await api.post(`/links/document/${doc.id}/agreement`, { targetId: target });
+      const a = targets.find((t) => t.id === target);
+      onChanged(`${doc.documentNo ?? `#${doc.id}`} を ${a?.agreementNo ?? `#${target}`} に繋ぎました`);
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setBusy(null); }
+  }
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>契約に繋がっていない文書</h2>
+        <span className="tag warn">{docs.length}</span>
+        <span className="faint">契約書・覚書・NDA など。発注書・検収書・計算書は契約に繋がないので出しません</span>
+      </div>
+      <div className="tablewrap">
+        <table>
+          <thead><tr><th>文書番号</th><th>種別・件名</th><th>日付</th><th>繋ぐ契約</th><th></th></tr></thead>
+          <tbody>
+            {docs.map((d) => (
+              <tr key={d.id}>
+                <td className="code">
+                  {onOpen ? <button className="linky" onClick={() => onOpen("document", d.id)}>{d.documentNo ?? `#${d.id}`}</button>
+                          : d.documentNo ?? `#${d.id}`}
+                </td>
+                <td>{d.label}{d.title ? `（${d.title}）` : ""}</td>
+                <td className="faint" style={{ whiteSpace: "nowrap" }}>{d.issuedOn ?? "—"}</td>
+                <td>
+                  {targets.length
+                    ? <select value={choice[d.id] ?? ""} disabled={readOnly} style={{ maxWidth: 320 }}
+                              onChange={(e) => setChoice((c) => ({ ...c, [d.id]: e.target.value }))}>
+                        <option value="">選んでください</option>
+                        {targets.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.agreementNo ?? `#${a.id}`} {a.title}（{KIND_LABEL[a.kind]}）
+                          </option>
+                        ))}
+                      </select>
+                    : <span className="faint">先に「契約を登録」</span>}
+                </td>
+                <td>
+                  <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || !choice[d.id] || busy === d.id}
+                          onClick={() => void link(d)}>繋ぐ</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
