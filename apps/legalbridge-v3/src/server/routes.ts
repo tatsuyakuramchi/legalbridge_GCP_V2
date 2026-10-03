@@ -2517,6 +2517,15 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       res.json(await royaltyLedger.setBundle(input.partyId, input.bundle, actor(res)));
     }));
+  /** 計算書に取引モデルを混ぜるか（既定は取引モデルごとに分ける）。 */
+  router.put("/royalty-ledger/mix-models", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(),
+        mix: z.boolean()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.setMixModels(input.partyId, input.mix, actor(res)));
+    }));
 
   router.get("/works/:id", asyncRoute(async (req, res) => {
     const work = await works.find(Number(req.params.id));

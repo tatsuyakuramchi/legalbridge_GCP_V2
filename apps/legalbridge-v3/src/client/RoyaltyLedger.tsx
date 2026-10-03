@@ -88,6 +88,11 @@ export function RoyaltyLedger(
   const [allWorks, setAllWorks] = useState(false);
   const [view, setView] = useState<LedgerView | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * ① 取引モデル（利用形態）。選ぶと、その取引モデルの回だけを並べ、新しい回も
+   * その取引モデルで立てる（イベント式なら製造の回、時限式なら締めの回）。null はすべて。
+   */
+  const [model, setModel] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -150,6 +155,22 @@ export function RoyaltyLedger(
   const oldWaiting = view ? view.rounds.flatMap((r) => r.parts).filter((p) => p.state === "waiting").length : 0;
   const party = parties?.find((p) => p.id === partyId) ?? null;
   const round = [...(view?.rounds ?? []), ...(view?.history ?? [])].find((r) => r.key === selected) ?? null;
+  /** 取引モデルの札。条件の利用形態ごとに1枚。イベント式の条件が1本でもあればイベント式。 */
+  const models = view ? [...new Map(view.conditions.map((c) => [c.usageType ?? "-", c])).values()].map((c) => {
+    const same = view.conditions.filter((x) => (x.usageType ?? "-") === (c.usageType ?? "-"));
+    return { usageType: c.usageType ?? "-", label: c.usageLabel || "利用形態なし",
+             rates: [...new Set(same.map((x) => x.pricingModel === "unit_rate" ? yen(x.unitAmount, x.currency) : pct(x.ratePpm)))].join("・"),
+             timing: same.some((x) => x.timing === "event") ? "event" as const : "periodic" as const };
+  }) : [];
+  const chosenModel = models.find((m) => m.usageType === model) ?? null;
+  /** 選んだ取引モデルの回か。混ぜる設定の作家は、その取引モデルの行を含む回。 */
+  const usageOf = (conditionId: number) => view?.conditions.find((c) => c.id === conditionId)?.usageType ?? "-";
+  const inModel = (r: Round) => !model ? true
+    : view?.party.mixModels ? r.parts.some((p) => usageOf(p.conditionId) === model) : (r.usageType ?? "-") === model;
+  const shownView = view && model
+    ? { ...view, rounds: view.rounds.filter(inModel), history: view.history.filter(inModel) } : view;
+  /** 新しい製造の回で使える条件（選んだ取引モデルのイベント式の条件）。 */
+  const eventConditions = view ? view.conditions.filter((c) => c.timing === "event" && (!model || (c.usageType ?? "-") === model)) : [];
   /** 文書の画面から戻る先。この作家 × この作品。 */
   const back: DocBack | null = view ? { label: `${view.party.name} × ${view.scope?.workTitle ?? "全作品"}`, workId, partyId: view.party.id } : null;
   const openDoc = onOpenDocument ? (id: number) => onOpenDocument(id, back) : undefined;
@@ -157,6 +178,14 @@ export function RoyaltyLedger(
     ? (ids: number[], events: number[], key: string | null, revise?: { supersedesIds: number[]; reason: string } | null) =>
         onCompose(ids, events, key, back, revise)
     : undefined;
+
+  async function setMixModels(mix: boolean) {
+    if (!view) return;
+    try {
+      await api.put("/royalty-ledger/mix-models", { partyId: view.party.id, mix });
+      reload(mix ? "計算書に取引モデルを混ぜるようにしました" : "計算書を取引モデルごとに分けるようにしました");
+    } catch (e) { setError((e as ApiError).message); }
+  }
 
   async function setBundle(bundle: "per_work" | "per_party") {
     if (!view) return;
@@ -181,7 +210,7 @@ export function RoyaltyLedger(
       <div className="ledger-parties">
         {(parties ?? []).map((p) => (
           <button key={p.id} className="ledger-party" aria-pressed={p.id === partyId}
-                  onClick={() => { setPartyId(p.id); setSelected(p.next?.roundKey ?? null); }}>
+                  onClick={() => { setPartyId(p.id); setModel(null); setSelected(p.next?.roundKey ?? null); }}>
             <b>{p.name}</b>
             <span className="faint">{p.conditions.map((c) => `${c.usageLabel} ${pct(c.ratePpm)}${c.targetPartyName ? `（${c.targetPartyName} 専用）` : ""}`).join("・")}</span>
             {p.next
@@ -239,6 +268,11 @@ export function RoyaltyLedger(
                     <button className="chip" disabled={!canWrite} aria-pressed={view.party.bundle === "per_work"} onClick={() => void setBundle("per_work")}>作品ごと</button>
                     <button className="chip" disabled={!canWrite} aria-pressed={view.party.bundle === "per_party"} onClick={() => void setBundle("per_party")}>作家でまとめる</button>
                   </span>
+                  {/* 1枚に取引モデルを混ぜると、計算書の日付見出し・取引モデル概要が1つに決まらない。 */}
+                  <span className="chips" role="group" aria-label="取引モデル">
+                    <button className="chip" disabled={!canWrite} aria-pressed={!view.party.mixModels} onClick={() => void setMixModels(false)}>取引モデルごと</button>
+                    <button className="chip" disabled={!canWrite} aria-pressed={view.party.mixModels} onClick={() => void setMixModels(true)}>取引モデルを混ぜる</button>
+                  </span>
                 </span>
               </div>
               <div className="panel-bd">
@@ -259,6 +293,27 @@ export function RoyaltyLedger(
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* ① 取引モデル。選ぶとその取引モデルの回だけになり、新しい回もその取引モデルで立てる。 */}
+          {models.length > 0 && (
+            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+              <b>① 取引モデル</b>
+              <span className="chips" role="group" aria-label="取引モデル">
+                <button className="chip" aria-pressed={!model} onClick={() => { setModel(null); setSelected(null); }}>すべて</button>
+                {models.map((m) => (
+                  <button key={m.usageType} className="chip" aria-pressed={model === m.usageType}
+                          onClick={() => { setModel(m.usageType); setSelected(null); }}>
+                    {m.label} {m.rates}・{m.timing === "event" ? "イベント式（製造の回）" : "時限式（締めの回）"}
+                  </button>
+                ))}
+              </span>
+              <span className="faint">
+                {view.party.mixModels
+                  ? "この作家は計算書に取引モデルを混ぜる設定です（条件と締めの設定…）"
+                  : "計算書は取引モデルごとに1枚。日付の見出し・取引モデル概要がその取引モデルで決まります"}
+              </span>
             </div>
           )}
 
@@ -315,18 +370,25 @@ export function RoyaltyLedger(
                 <h2 style={{ margin: 0 }}>回</h2>
                 <span className="faint">支払日でまとめる</span>
               </div>
-              {view.conditions.some((c) => c.timing === "event") && canWrite && (
+              {/* ② 回を立てる。イベント式は製造の回をここで立てる。時限式は締め（予定明細）から立つ。 */}
+              {eventConditions.length > 0 && canWrite && (
                 <button className={`ledger-round${selected === NEW_EVENT ? " on" : ""}`} aria-pressed={selected === NEW_EVENT}
                         style={{ display: "block", textAlign: "left", borderStyle: "dashed" }} onClick={() => setSelected(NEW_EVENT)}>
-                  <b>＋ 新しい製造の回</b>
+                  <b>＋ 新しい製造の回{chosenModel ? `（${chosenModel.label}）` : ""}</b>
                   <span className="faint" style={{ display: "block" }}>製造日ごとに 1 回。依頼文を貼ってまとめて入れる</span>
                 </button>
               )}
-              {view.rounds.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected}
+              {chosenModel?.timing === "periodic" && (
+                <div className="note" style={{ fontSize: 12 }}>
+                  {chosenModel.label} は時限式です。締めの回は、条件の締め（予定明細）から自動で立ちます。
+                  締めが無ければ「条件と締めの設定…」で作ってください。
+                </div>
+              )}
+              {shownView!.rounds.map((r) => <RoundCard key={r.key} round={r} view={view} selected={r.key === selected}
                                                  onSelect={() => setSelected(r.key)} />)}
-              {!view.rounds.length && (
+              {!shownView!.rounds.length && (
                 <span className="faint">
-                  {view.conditions.every((c) => c.timing === "event")
+                  {(chosenModel ? chosenModel.timing === "event" : view.conditions.every((c) => c.timing === "event"))
                     ? "開いている回はありません。製造の報告を足すと、その報告の回が立ちます。"
                     : "開いている回はありません。締めを作ると回が出ます。"}
                 </span>
@@ -347,10 +409,10 @@ export function RoyaltyLedger(
                   ))}
                 </div>
               )}
-              <History view={view} onSelect={(key) => setSelected(key)} selected={selected} />
+              <History view={shownView!} onSelect={(key) => setSelected(key)} selected={selected} />
             </div>
-            {selected === NEW_EVENT && view.conditions.some((c) => c.timing === "event")
-              ? <NewEventRound view={view} onError={setError} onCancel={() => setSelected(view.rounds[0]?.key ?? null)}
+            {selected === NEW_EVENT && eventConditions.length > 0
+              ? <NewEventRound conditions={eventConditions} onError={setError} onCancel={() => setSelected(view.rounds[0]?.key ?? null)}
                                onAdded={(m, on) => { pendingDate.current = on; reload(m); }} />
               : round
               ? <RoundDetail key={`${round.key}-${version}`} round={round} view={view} canWrite={canWrite}
@@ -440,10 +502,11 @@ function Terms(
  * 新しい製造の回（イベント式）。右の欄で開く。依頼文からまとめて入れるのが基本、
  * 1 件ずつも入れられる。記録するとその製造日の回が立ち、そちらに切り替わる。
  */
-function NewEventRound({ view, onAdded, onCancel, onError }: {
-  view: LedgerView; onAdded: (message: string, on: string) => void; onCancel: () => void; onError: (m: string) => void;
+function NewEventRound({ conditions, onAdded, onCancel, onError }: {
+  /** 回を立てる条件（① で選んだ取引モデルのイベント式の条件）。 */
+  conditions: LedgerCondition[];
+  onAdded: (message: string, on: string) => void; onCancel: () => void; onError: (m: string) => void;
 }) {
-  const conditions = view.conditions.filter((c) => c.timing === "event");
   const canBulk = conditions.some((c) => c.usageType === "sublicense" || c.usageType === "oem");
   const [mode, setMode] = useState<"bulk" | "one">(canBulk ? "bulk" : "one");
   return (

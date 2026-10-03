@@ -103,6 +103,11 @@ export interface RoundRequest { id: number; requestNo: string | null; title: str
 
 export interface Round {
   key: string; kind: "period" | "event";
+  /**
+   * この回の取引モデル（利用形態）。取引モデルごとに分けているとき、または載っている
+   * 条件の取引モデルが1つのときだけ入る。混ざっていれば null。
+   */
+  usageType: string | null;
   payOn: string | null; closeOn: string | null;
   workIds: number[];
   parts: RoundPart[];
@@ -144,6 +149,12 @@ export function buildRounds(input: {
   plans?: PlanLite[];
   /** 1作品の中で見ているか。作家でまとめないときも、1作品の中は支払日でまとめる。 */
   bundle: Bundle | "single_work";
+  /**
+   * 回（＝計算書1枚）を取引モデル（利用形態）ごとに分けるか。
+   * 分けると計算書の日付見出し・取引モデル概要・数量の欄が1つに決まる（statement-model.ts）。
+   * 台帳（ledger）は作家の設定から渡す（既定は分ける）。ここでの既定は従来どおり分けない。
+   */
+  splitByModel?: boolean;
   today: string;
   /** 締め前の回をどこまで先まで出すか（日）。 */
   lookaheadDays?: number;
@@ -298,11 +309,13 @@ export function buildRounds(input: {
   for (const p of parts) {
     const c = byCondition.get(p.conditionId)!;
     const day = p.payOn ?? p.closeOn ?? "";
-    // イベント式は製造日で 1 回（同じ作品の別の利用形態の報告も、同じ製造日なら同じ回）。
+    // イベント式は製造日で 1 回（取引モデルで分けないときは、同じ作品の別の利用形態の
+    // 報告も、同じ製造日なら同じ回）。取引モデルで分けるときは、その取引モデルの中で 1 回。
+    const model = input.splitByModel ? `${c.usageType ?? "-"}:` : "";
     const key = p.eventId !== null && c.timing === "event"
-      ? (input.bundle === "per_party" ? `e:${p.closeOn ?? p.eventId}` : `e:${c.workId ?? 0}:${p.closeOn ?? p.eventId}`)
+      ? (input.bundle === "per_party" ? `e:${model}${p.closeOn ?? p.eventId}` : `e:${c.workId ?? 0}:${model}${p.closeOn ?? p.eventId}`)
       : p.eventId !== null ? `x:${p.eventId}`
-      : input.bundle === "per_work" ? `p:${c.workId ?? 0}:${day}` : `p:${day}`;
+      : input.bundle === "per_work" ? `p:${c.workId ?? 0}:${model}${day}` : `p:${model}${day}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(p);
   }
@@ -322,8 +335,10 @@ export function buildRounds(input: {
     else if (states.every((s) => s === "before")) state = "before";
     else if (states.every((s) => s === "reported" || s === "issued" || s === "skipped")) state = "ready";
     else state = "input";
+    const models = [...new Set(list.map((p) => byCondition.get(p.conditionId)?.usageType ?? null))];
     rounds.push({
       key, kind: key.startsWith("e:") ? "event" : "period", payOn, closeOn,
+      usageType: models.length === 1 ? models[0] : null,
       workIds: [...new Set(list.map((p) => byCondition.get(p.conditionId)?.workId).filter((x): x is number => !!x))],
       parts: list, documents: [], payments: [], requests: [], state, open: true
     });
@@ -345,7 +360,9 @@ export function settleRound(round: Round): Round {
 }
 
 export interface LedgerView {
-  party: { id: number; name: string; kind: string; residency: string; bundle: Bundle; bundleExplicit: boolean };
+  party: { id: number; name: string; kind: string; residency: string; bundle: Bundle; bundleExplicit: boolean;
+           /** 計算書に取引モデルを混ぜるか（A-067）。false（既定）＝取引モデルごとに分ける。 */
+           mixModels: boolean };
   scope: { workId: number; workTitle: string } | null;
   works: Array<{ id: number; title: string; conditions: number }>;
   conditions: LedgerCondition[];
@@ -420,9 +437,14 @@ export class RoyaltyLedgerService {
     const q = this.database;
     try {
       const p = (await q.query(
-        `SELECT id, name, kind, residency, royalty_bundle FROM parties WHERE id = $1`, [partyId])).rows[0] as any;
+        // royalty_mix_models は A-067 の列。まだ当てていない DB でも落ちないように行ごと JSON で読む。
+        `SELECT id, name, kind, residency, royalty_bundle,
+                to_jsonb(parties) ->> 'royalty_mix_models' AS royalty_mix_models
+           FROM parties WHERE id = $1`, [partyId])).rows[0] as any;
       if (!p) throw new DomainError("NOT_FOUND", `取引先 ${partyId} が見つかりません`);
       const bundle: Bundle = p.royalty_bundle === "per_party" ? "per_party" : "per_work";
+      // 既定は取引モデルごとに分ける。true（まとめる）にしたときだけ混ぜる。
+      const mixModels = String(p.royalty_mix_models ?? "") === "true";
       const work = workId
         ? (await q.query("SELECT id, title FROM works WHERE id = $1", [workId])).rows[0] as any
         : null;
@@ -542,7 +564,7 @@ export class RoyaltyLedgerService {
       }));
 
       const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today,
-        bundle: workId ? "single_work" : bundle });
+        bundle: workId ? "single_work" : bundle, splitByModel: !mixModels });
 
       // 文書・送付・支払。
       const docIds = [...new Set(events.map((e) => e.documentId).filter((x): x is number => !!x))];
@@ -619,7 +641,7 @@ export class RoyaltyLedgerService {
         [c.workId!, { id: c.workId!, title: c.workTitle ?? "", conditions: conditions.filter((x) => x.workId === c.workId).length }])).values()];
       return {
         party: { id: Number(p.id), name: String(p.name), kind: String(p.kind), residency: String(p.residency ?? "resident"),
-                 bundle, bundleExplicit: Boolean(p.royalty_bundle) },
+                 bundle, bundleExplicit: Boolean(p.royalty_bundle), mixModels },
         scope: work ? { workId: Number(work.id), workTitle: String(work.title) } : null,
         works: worksList,
         conditions,
@@ -923,6 +945,21 @@ export class RoyaltyLedgerService {
         await recordAudit(client, { actor, action: "royalty.timing", targetType: "condition",
           targetId: conditionId, detail: { timing } });
         return { conditionId, timing };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 計算書に取引モデルを混ぜるか。false で既定（取引モデルごとに分ける）に戻す。 */
+  async setMixModels(partyId: number, mix: boolean, actor: string) {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const r = await client.query(
+          `UPDATE parties SET royalty_mix_models = $2, updated_at = now() WHERE id = $1 RETURNING id`,
+          [partyId, mix ? true : null]);
+        if (!r.rows[0]) throw new DomainError("NOT_FOUND", `取引先 ${partyId} が見つかりません`);
+        await recordAudit(client, { actor, action: "royalty.mix_models", targetType: "party",
+          targetId: partyId, detail: { mix } });
+        return { partyId, mix };
       });
     } catch (error) { throw translate(error); }
   }
