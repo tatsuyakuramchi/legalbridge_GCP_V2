@@ -190,7 +190,7 @@ test("予定の行（A-062）：from_on 以降の回で来るはずとして待�
 });
 
 test("決まった回は、支払・送付・AG 充当だけ（支払なし）で閉じる", () => {
-  const base: Round = { key: "p", kind: "period", payOn: null, closeOn: null, workIds: [], parts: [],
+  const base: Round = { key: "p", kind: "period", usageType: null, payOn: null, closeOn: null, workIds: [], parts: [],
     documents: [{ id: 1, documentNo: "RS-1", status: "issued", sent: false, net: 100, paymentIds: [] }], payments: [],
     requests: [], state: "issued", open: true };
   assert.equal(settleRound(base).state, "issued");
@@ -308,4 +308,40 @@ test("報告を直す：決定した計算書に載った報告は管理者だ�
   await assert.rejects(() => new RoyaltyLedgerService(correctDb("issued")).correct(
     { conditionId: 1, eventId: 7, reason: "x", taxIncluded: true, isAdmin: false }, events, "legal@x"),
     (e: unknown) => e instanceof DomainError && /管理者だけ/.test(e.message));
+});
+
+test("取引モデルで分ける：同じ製造日でも自社販売と他社販売は別の回（計算書1枚＝取引モデル1つ）", () => {
+  const conditions = [cond(1, { timing: "event", usageType: "in_house" }), cond(2, { timing: "event", usageType: "oem" })];
+  const events = [ev(5, 1, "2026-10-02", { eventType: "manufacturing", usageType: "in_house" }),
+                  ev(6, 2, "2026-10-02", { eventType: "manufacturing", usageType: "oem" })];
+  const mixed = buildRounds({ conditions, schedules: [], events, skips: [], outs: [], bundle: "single_work", today: "2026-10-05" });
+  assert.equal(mixed.length, 1, "まとめる（従来）なら1回");
+  assert.equal(mixed[0].usageType, null, "混ざった回は取引モデルが決まらない");
+  const split = buildRounds({ conditions, schedules: [], events, skips: [], outs: [], bundle: "single_work",
+                              splitByModel: true, today: "2026-10-05" });
+  assert.equal(split.length, 2);
+  assert.deepEqual(split.map((r) => r.usageType).sort(), ["in_house", "oem"]);
+  assert.ok(split.every((r) => r.kind === "event"));
+});
+
+test("取引モデルで分ける：時限式も同じ支払日の別モデルは別の回", () => {
+  const conditions = [cond(1, { usageType: "in_house" }), cond(2, { usageType: "sublicense" })];
+  const schedules = [...Q(1), ...Q(2, 10)];
+  const events = [ev(1, 1, "2026-09-10"), ev(2, 2, "2026-09-12", { usageType: "sublicense" })];
+  const split = buildRounds({ conditions, schedules, events, skips: [], outs: [], bundle: "per_party",
+                              splitByModel: true, today: "2026-10-05" });
+  const oct = split.filter((r) => r.payOn === "2026-10-31");
+  assert.equal(oct.length, 2);
+  assert.deepEqual(oct.map((r) => r.usageType).sort(), ["in_house", "sublicense"]);
+});
+
+test("台帳：作家の設定が無ければ取引モデルで分ける。まとめる設定なら混ぜる", async () => {
+  for (const [mix, expected] of [[null, true], ["true", false]] as const) {
+    const db = new FakeDatabase((t) => t.includes("FROM parties WHERE id = $1")
+      ? [{ id: 5, name: "石野謙介", kind: "individual", residency: "resident", royalty_bundle: null, royalty_mix_models: mix }]
+      : []);
+    const view = await new RoyaltyLedgerService(db).ledger(5, null, "2026-10-05").catch(() => null);
+    assert.ok(view, "台帳が組める");
+    assert.equal(view!.party.mixModels, !expected);
+  }
 });
