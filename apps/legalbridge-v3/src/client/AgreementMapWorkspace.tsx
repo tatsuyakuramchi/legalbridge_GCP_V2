@@ -4,6 +4,8 @@ import { ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { useReadOnly } from "./read-only.js";
+import { CsvBar } from "./CsvBar.js";
+import { CsvImport } from "./CsvImport.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
 import type { MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap } from "../server/agreements/party-map.js";
@@ -56,6 +58,8 @@ export function AgreementMapWorkspace(
   }, [partyId, version]);
 
   const issueCount = parties.filter((p) => p.issues > 0).length;
+  /** CSV の一括修正を開いているか。 */
+  const [csvOpen, setCsvOpen] = useState(false);
 
   return (
     <section className="workspace">
@@ -69,6 +73,28 @@ export function AgreementMapWorkspace(
 
       {error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}
+
+      {/* 一括修正：書き出して表計算で直し、取り込んで戻す。当て方は画面の編集と同じ。 */}
+      <CsvBar title="CSV で一括修正" style={{ marginBottom: 12 }}
+        exports={[
+          { value: "all", label: "全取引先の契約（ずれ・既定の参考列つき）",
+            href: "/api/v3/agreement-map/export.csv" },
+          { value: "party", label: map ? `${map.party.name} の契約だけ` : "選んだ取引先の契約だけ",
+            href: partyId ? `/api/v3/agreement-map/export.csv?partyId=${partyId}` : undefined,
+            disabled: partyId ? undefined : "先に左で取引先を選んでください" }
+        ]}
+        note={<>
+          書き出した CSV の 件名・種類・種別・方向・親契約番号・締結日・有効開始日・終了日・自動更新・相手方番号 を直して、
+          下の「取り込む」で戻します。空欄は触りません。消すときは「なし」。
+          <button className="btn btn-sm" style={{ marginLeft: 8 }}
+                  onClick={() => setCsvOpen((v) => !v)}>{csvOpen ? "取り込みを閉じる" : "直した CSV を取り込む"}</button>
+        </>} />
+      {csvOpen && (
+        <div style={{ marginBottom: 12 }}>
+          <CsvImport initialKind="agreements" lockKind
+            onApplied={() => { setNotice("CSV の修正を取り込みました。図を読み直しました"); bump(); }} />
+        </div>
+      )}
 
       <div className="ledger-split">
         <div className="panel">
@@ -144,7 +170,7 @@ function PartyMapView(
           <h2>{map.party.name}</h2>
           {onOpen && <button className="linky" onClick={() => onOpen("party", map.party.id)}>取引先を開く</button>}
           <span className="faint" style={{ marginLeft: "auto" }}>
-            既定＝他の画面がこの取引先の基本契約として拾う1本（種別 × 方向ごと）
+            既定＝他の画面がこの取引先の基本契約として拾う1本（種別 × 方向ごと。基本契約だけで、単体契約は既定にしません）
           </span>
         </div>
         <div className="panel-bd">

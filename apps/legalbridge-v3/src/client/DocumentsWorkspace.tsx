@@ -1186,7 +1186,7 @@ export function DocumentsWorkspace(
                       <select value={agreementId ?? ""} onChange={(e) => setAgreementId(e.target.value ? Number(e.target.value) : null)}>
                         <option value="">
                           {conditionAgreement
-                            ? `条件の契約に従う（${conditionAgreement.title}${conditionAgreement.agreementNo ? ` ${conditionAgreement.agreementNo}` : ""}）`
+                            ? `条件の契約に従う（${conditionAgreement.title}${conditionAgreement.agreementNo ? ` ${conditionAgreement.agreementNo}` : ""}。単体契約なら基本契約なしで出す）`
                             : "条件に契約が付いていない（基本契約なしで出す）"}
                         </option>
                         {(refs?.masters ?? []).map((a) => (
@@ -1199,6 +1199,7 @@ export function DocumentsWorkspace(
                       </select>
                       <small className="faint">
                         文書には「YYYY年M月D日付＋基本契約名」で出ます。★は取引先⇔基本契約で既定になっている契約。
+                        単体契約は基本契約として出しません（単体契約に載った条件は「基本契約なし」で出ます）。
                         締結日や種類の直しは「取引先⇔基本契約」の画面でします。基本契約に基づかない発注にするなら、
                         項目の「基本契約あり」を外してください
                       </small>
@@ -1222,7 +1223,7 @@ export function DocumentsWorkspace(
                           </option>
                         ))}
                       </select>
-                      <small className="faint">この取引先の決定済みの発注書から選べます</small>
+                      <small className="faint">この取引先の決定済みの発注書から選べます。検収書の「発注番号」に「基本契約番号 / 発注書番号」で出ます（基本契約が無ければ発注書番号だけ）</small>
                     </span>
                   </label>
                 )}
@@ -1242,7 +1243,7 @@ export function DocumentsWorkspace(
                           </option>
                         ))}
                       </select>
-                      <small className="faint">計算書の「契約番号」に「基本契約番号 / 個別契約番号」で出ます</small>
+                      <small className="faint">計算書の「契約番号」に「基本契約番号 / 個別条件書番号」で出ます（基本契約が無ければ個別条件書番号だけ）</small>
                     </span>
                   </label>
                 )}

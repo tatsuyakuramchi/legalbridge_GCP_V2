@@ -18,6 +18,14 @@ import { accountTypeLabel, bankInfoLine } from "./template-context.js";
 
 type Ctx = Record<string, any>;
 
+/**
+ * 文脈の基本契約。文書の文脈は masterAgreement を持つ（context-repository）。
+ * 持たない古い文脈（テスト・他の入口）は、agreement の種類から判断する。
+ */
+export const contextMasterAgreement = (c: Ctx) =>
+  "masterAgreement" in c ? c.masterAgreement : masterAgreementOf(c.agreement ?? null, null);
+const master = contextMasterAgreement;
+
 /** 個人なら「様」、法人なら「御中」。V1 の resolveHonorific と同じ規則。 */
 const honorific = (kind: string | null | undefined) =>
   kind === "individual" ? "様" : "御中";
@@ -59,6 +67,24 @@ export function normalizeInvoiceNo(value: unknown): string | undefined {
   const compact = raw.replace(/[Ｔｔ]/g, "T").replace(/[\s\-‐‑–—－ー]/g, "").toUpperCase();
   const m = compact.match(/^T*(\d{13})$/);
   return m ? `T${m[1]}` : raw;
+}
+
+/**
+ * 文書に出す「基本契約」。
+ *
+ *   基本契約            … それ自身
+ *   補助文書・解除合意  … 親が基本契約ならその親
+ *   単体契約・文書だけ  … 無し（基本契約なしとして出す）
+ *
+ * 単体契約はその作品・その取引だけの契約で、取引先との準拠契約ではない。
+ * 条件が単体契約に載っていても、発注書の「基本契約名」や準拠条項には出さない。
+ */
+export function masterAgreementOf<T extends { kind?: string | null }>(agreement: T | null, parent: T | null): T | null {
+  if (!agreement) return null;
+  const kind = agreement.kind ?? "master";
+  if (kind === "master") return agreement;
+  if ((kind === "supplement" || kind === "termination") && parent && (parent.kind ?? "master") === "master") return parent;
+  return null;
 }
 
 /**
@@ -106,16 +132,19 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   // 計算書は「基本契約 / 個別契約（条件書）」の番号を並べたもの（issue-service が入れる）。
   // それ以外は基本契約の番号。
   { names: ["linked_contract_number", "契約番号", "基本契約番号", "parent_contract_number"],
-    get: (c) => (c as { contractRefText?: string | null }).contractRefText ?? c.agreement?.no },
+    get: (c) => (c as { contractRefText?: string | null }).contractRefText ?? master(c)?.no },
   // 発注書の「基本契約名 / 番号」。準拠契約の条項に差し込むので、番号だけだと
   // 紙に「AGR-2025-0011」としか出ず、何の契約か読めない。
   // 締結日が分かれば「YYYY年M月D日付＋基本契約名」。分からなければ従来の「名前（番号）」。
   { names: ["MASTER_CONTRACT_REF", "基本契約名 / 番号"],
-    get: (c) => c.agreement?.executedOn && c.agreement?.title && c.agreement.title !== c.agreement.no
-      ? agreementDatedTitle(c.agreement.title, c.agreement.executedOn)
-      : agreementRefText(c.agreement?.title, c.agreement?.no) },
+    get: (c) => {
+      const m = master(c);
+      return m?.executedOn && m?.title && m.title !== m.no
+        ? agreementDatedTitle(m.title, m.executedOn)
+        : agreementRefText(m?.title, m?.no);
+    } },
   { names: ["CONTRACT_TITLE_REF", "基本契約名"],
-    get: (c) => agreementDatedTitle(c.agreement?.title, c.agreement?.executedOn) },
+    get: (c) => agreementDatedTitle(master(c)?.title, master(c)?.executedOn) },
   /**
    * 基本契約に基づく発注かどうか。
    *
@@ -124,7 +153,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
    * 人が外せば人が勝つ（false は空扱いにならないので手入力が残る）。
    */
   { names: ["HAS_BASE_CONTRACT", "基本契約あり"],
-    get: (c) => (c.agreement?.no || c.agreement?.title ? true : undefined) },
+    // 単体契約に載った条件は「基本契約なし」（undefined＝決めない。人が入れられる）。
+    get: (c) => (master(c)?.no || master(c)?.title ? true : undefined) },
   // 検収書の見出しの「発注番号」。同じ条件から出ている発注書を辿る。
   { names: ["parent_po_number", "PARENT_PO_NUMBER", "発注番号", "元発注番号"],
     get: (c) => (c as { parentPoNo?: string | null }).parentPoNo

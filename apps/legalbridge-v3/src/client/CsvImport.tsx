@@ -7,6 +7,8 @@ interface Spec {
   kind: string; label: string;
   required: string[]; optional: string[]; sample: string;
   updatable?: boolean; updateColumns?: string[]; updateSample?: string; updateHint?: string;
+  /** 既存に当てる取り込みしかできない（基本契約）。 */
+  updateOnly?: boolean;
 }
 type Mode = "create" | "update";
 interface RowOutcome {
@@ -29,7 +31,13 @@ const STATUS_LABEL: Record<Mode, Record<RowOutcome["status"], string>> = {
  * 試算を通さないと登録できない。500行を書いてから結果を見るのでは、
  * マスタを壊したあとにしか気づけない。
  */
-export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
+export function CsvImport({ initialKind, lockKind, onApplied }: {
+  initialKind?: string;
+  /** 種類を選ばせない（取引先⇔基本契約の画面に埋め込むとき）。 */
+  lockKind?: boolean;
+  /** 本番の取り込みが済んだとき。埋め込んだ画面が表示を読み直す。 */
+  onApplied?: () => void;
+} = {}) {
   const readOnly = useReadOnly();
   const [specs, setSpecs] = useState<Spec[]>([]);
   const [kind, setKind] = useState<string>(initialKind ?? "parties");
@@ -50,6 +58,8 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
   }, []);
 
   const spec = specs.find((s) => s.kind === kind);
+  // 既存に当てるしかできない種類（基本契約）は、取り込み方を選ばせずに update にする。
+  useEffect(() => { if (spec?.updateOnly && mode !== "update") setMode("update"); }, [spec, mode]);
   const updating = mode === "update";
   const sample = (updating && spec?.updateSample) || spec?.sample || "";
   // 試算が済んで、入れられる行があるときだけ本番に進める。
@@ -59,6 +69,7 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
     setBusy(true); setError(null);
     try {
       setReport(await api.post<Report>("/imports", { kind, csv, dryRun, mode }));
+      if (!dryRun) onApplied?.();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setReport(null); }
     finally { setBusy(false); }
   }
@@ -71,17 +82,19 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
       </div>
       <div className="panel-bd">
         <div className="row" style={{ flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
-          <label className="field">
+          {!lockKind && <label className="field">
             <span>種類</span>
             <select value={kind} onChange={(e) => {
               setKind(e.target.value); setReport(null);
               // 更新できない種類に移ったら新規登録に戻す。
-              if (!specs.find((s) => s.kind === e.target.value)?.updatable) setMode("create");
+              const next = specs.find((s) => s.kind === e.target.value);
+              if (!next?.updatable) setMode("create");
+              else if (next.updateOnly) setMode("update");
             }}>
               {specs.map((s) => <option key={s.kind} value={s.kind}>{s.label}</option>)}
             </select>
-          </label>
-          {spec?.updatable && (
+          </label>}
+          {spec?.updatable && !spec.updateOnly && (
             <label className="field">
               <span>取り込み方</span>
               <select value={mode} onChange={(e) => { setMode(e.target.value as Mode); setReport(null); }}>
@@ -109,7 +122,7 @@ export function CsvImport({ initialKind }: { initialKind?: string } = {}) {
             {updating ? (
               <>
                 {spec.updateHint}。書き換えられる列: {(spec.updateColumns ?? []).join("、")}。
-                <b>空欄の列は触りません</b>（空にして消すことはできません）
+                <b>空欄の列は触りません</b>{spec.updateOnly ? "" : "（空にして消すことはできません）"}
               </>
             ) : (
               <>

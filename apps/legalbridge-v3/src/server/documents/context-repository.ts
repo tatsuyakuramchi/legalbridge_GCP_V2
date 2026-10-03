@@ -2,7 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
-import { agreementDatedTitle } from "./legacy-variables.js";
+import { agreementDatedTitle, masterAgreementOf } from "./legacy-variables.js";
 import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName, eventScopeLabel } from "../royalty/product-name.js";
 
 /**
@@ -92,6 +92,11 @@ export class DocumentContextRepository {
       // client はトランザクションの接続で渡ってくることがある。1本の接続に
       // 同時に問い合わせられないので、順に読む。
       const agreement = agreementId ? await this.agreement(client, agreementId) : null;
+      // 文書に出す「基本契約」。基本契約そのものか、補助文書・解除合意の親の基本契約だけ。
+      // 単体契約・文書だけは基本契約として出さない（その取引だけの契約で、準拠契約ではない）。
+      const agreementParent = agreement?.parentId && (agreement.kind === "supplement" || agreement.kind === "termination")
+        ? await this.agreement(client, agreement.parentId) : null;
+      const masterAgreement = masterAgreementOf(agreement, agreementParent);
       const matter = matterId ? await this.matter(client, matterId) : null;
       // 条件の無い文書（基本契約書・NDA を案件や契約から作る）は、相手先を契約か案件から
       // 引く。以前は条件を 1 本選ばないと相手先（Licensor・受託者）の欄が全部空だった。
@@ -188,6 +193,8 @@ export class DocumentContextRepository {
         company,
         matter,
         agreement,
+        /** 文書に出す基本契約（masterAgreementOf）。無ければ null＝基本契約なし。 */
+        masterAgreement,
         conditions,
         /** 単一条件のテンプレートはこちらを使う。 */
         condition: conditions[0] ?? null,
@@ -662,7 +669,7 @@ export class DocumentContextRepository {
 
   private async agreement(client: Queryable, id: number) {
     const r = await client.query(
-      `SELECT a.id, a.agreement_no, a.title, a.direction, a.status,
+      `SELECT a.id, a.agreement_no, a.title, a.direction, a.status, a.kind, a.parent_id,
               a.executed_on, a.effective_on, a.expires_on,
               a.auto_renewal, a.renewal_notice_months, a.renewal_months, a.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
@@ -675,6 +682,9 @@ export class DocumentContextRepository {
       id: Number(row.id),
       no: str(row.agreement_no),
       title: String(row.title ?? ""),
+      /** 種類。移行した行は空のことがあり、他の画面と同じく基本契約とみなす。 */
+      kind: str(row.kind) ?? "master",
+      parentId: int(row.parent_id),
       /** 文書に出す呼び方「2024年4月1日付◯◯基本契約」。締結日が無ければ名前だけ。 */
       datedTitle: agreementDatedTitle(row.title, dateStr(row.executed_on)) ?? "",
       direction: String(row.direction),

@@ -61,7 +61,7 @@ export const LICENSE_TERMS_VARIABLES: TemplateVariable[] = [
     dbField: "auto.today", noGuess: true },
   { name: "許諾開始日", label: "許諾開始日", type: "date", group: "I. 基本情報", required: true,
     from: "condition.termStart" },
-  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "agreement.datedTitle" },
+  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "masterAgreement.datedTitle" },
   { name: "work_id", label: "作品ID", group: "I. 基本情報",
     helpText: "作品台帳との参照キー", dbField: "work.code", noGuess: true },
   { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["表示する", "表示しない"],

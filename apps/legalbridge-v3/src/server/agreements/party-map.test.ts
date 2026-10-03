@@ -62,12 +62,14 @@ test("同じ種別・方向の生きた基本契約が2本あれば、新しい�
   assert.deepEqual(map.issues.map((i) => `${i.code}:${i.agreementId}`), ["duplicate_master:1"]);
 });
 
-test("生きた基本契約が無ければ単体契約を既定にする。未締結は既定にしない", () => {
-  const map = buildPartyMap(party, [
+test("既定は基本契約だけ。単体契約しか無ければ既定なし。未締結も既定にしない", () => {
+  const onlyStandalone = buildPartyMap(party, [
     a({ id: 1, status: "negotiating" }),
     a({ id: 2, kind: "standalone" })
   ]);
-  assert.deepEqual(map.roots.filter((r) => r.primary).map((r) => r.id), [2]);
+  assert.deepEqual(onlyStandalone.roots.filter((r) => r.primary).map((r) => r.id), []);
+  const both = buildPartyMap(party, [a({ id: 1 }), a({ id: 2, kind: "standalone", executedOn: "2025-01-01" })]);
+  assert.deepEqual(both.roots.filter((r) => r.primary).map((r) => r.id), [1], "新しい単体契約より基本契約");
 });
 
 const current: RemapCurrent = {
@@ -127,7 +129,7 @@ test("付け替えは agreements の列を書き、前後を監査に残す", as
   });
   await new PartyAgreementMapService(db).remap(10, { parentId: 1 }, "legal@example.test");
   const up = db.find("UPDATE agreements")!;
-  assert.deepEqual(up.params, [10, "supplement", "license", "out", 1, 5]);
+  assert.deepEqual(up.params.slice(0, 6), [10, "supplement", "license", "out", 1, 5]);
   assert.ok(db.queries.some((q) => q.params.includes("agreement.remap")));
 });
 
@@ -175,4 +177,20 @@ test("文書フォームの選択肢：基本契約は締結日付きの呼び�
   assert.deepEqual(refs.purchaseOrders.map((d) => d.documentNo), ["ARC-PO-2026-0032"]);
   assert.deepEqual(refs.terms.map((d) => d.documentNo), ["ARC-ILT-D-2026-0001"]);
   assert.deepEqual(db.find("FROM documents d")!.params[0], 5, "統合先で引く");
+});
+
+test("何も変わらなければ書かない。試算は書いてから巻き戻す", async () => {
+  const row = { id: 1, kind: "master", domain: "license", direction: "out", parent_id: null, counterparty_id: 5,
+                resolved_id: 5, child_count: 0, status: "executed", executed_on: "2024-04-01",
+                title: "利用許諾基本契約", effective_on: "2024-04-01", expires_on: null,
+                auto_renewal: true, counterparty_ref_no: null };
+  const db = new FakeDatabase((t) => (t.includes("FOR UPDATE OF a") ? [row] : []));
+  const svc = new PartyAgreementMapService(db);
+  assert.deepEqual(await svc.remap(1, { title: "利用許諾基本契約", executedOn: "2024-04-01", autoRenewal: true }, "who"), []);
+  assert.equal(db.find("UPDATE agreements"), undefined);
+
+  const changed = await svc.remap(1, { title: "利用許諾基本契約（改）", expiresOn: "2029-03-31" }, "who", { dryRun: true });
+  assert.deepEqual(changed, ["件名", "終了日"]);
+  assert.ok(db.find("UPDATE agreements"), "検証のため書く");
+  assert.equal(db.texts.at(-1), "ROLLBACK", "試算は巻き戻す");
 });

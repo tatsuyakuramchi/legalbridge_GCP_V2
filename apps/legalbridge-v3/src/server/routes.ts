@@ -50,6 +50,7 @@ import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
 import { AgreementService, termInputForCondition } from "./agreements/service.js";
 import { PartyAgreementMapService } from "./agreements/party-map.js";
+import { AGREEMENT_CSV_HEADERS, agreementCsvValues } from "./agreements/csv.js";
 import { STATEMENT_MODELS } from "./royalty/statement-model.js";
 import { termHistory } from "./agreements/term-history.js";
 import { ConditionDuplicateService } from "./conditions/duplicates.js";
@@ -79,7 +80,7 @@ import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
 import { SEARCH_TARGETS, SearchRepository, normalizeQuery, type SearchTarget } from "./search/repository.js";
 import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
-import { filename, withBom } from "./exports/csv.js";
+import { filename, toCsv, withBom } from "./exports/csv.js";
 import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
 import {
   ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow, sheetRows,
@@ -302,6 +303,19 @@ export function createRoutes(database: Transactable) {
     const map = await agreementMap.forParty(Number(req.params.id));
     if (!map) return res.status(404).json({ error: "取引先が見つかりません" });
     res.json(map);
+  }));
+
+  /**
+   * 一括修正用の CSV。全件（partyId を渡せばその取引先の分）。
+   * 表計算で直して、運用 → 取込（基本契約）で戻す。
+   */
+  router.get("/agreement-map/export.csv", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const partyId = Number(req.query.partyId) > 0 ? Number(req.query.partyId) : null;
+    const rows = await agreementMap.exportRows({ partyId });
+    const csv = toCsv(AGREEMENT_CSV_HEADERS.map((h) => ({ header: h, value: (r: typeof rows[number]) => agreementCsvValues(r)[h] })), rows);
+    res.type("text/csv; charset=utf-8")
+       .set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename("基本契約"))}`)
+       .send(withBom(csv));
   }));
 
   /** 文書フォームの選択肢（基本契約・発注書番号・個別契約番号）。 */
@@ -1174,7 +1188,7 @@ export function createRoutes(database: Transactable) {
     res.json({ specs: IMPORT_SPECS });
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works", "license_conditions"]),
+    kind: z.enum(["parties", "works", "license_conditions", "agreements"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean(),
     // create（新しく作る）か update（既存に当てる）か。既定は create。
