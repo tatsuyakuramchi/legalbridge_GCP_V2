@@ -1,6 +1,6 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { ensureAgreementForTerms } from "../agreements/auto.js";
-import { conditionContracts, contractRefText } from "../conditions/contracts.js";
+import { inContractRef } from "../royalty/in-contract.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { MatterLinkService } from "../matters/link-service.js";
@@ -982,18 +982,12 @@ export class DocumentIssueService {
     await this.contexts.attachScopes(client, context.conditions);
     // 検収書の見出しの発注番号。選んでいればそれを出す（legacy-variables の parent_po_number）。
     if (refs.parentPoNo) (context as unknown as Record<string, unknown>).parentPoNo = refs.parentPoNo;
-    // 計算書の「契約番号」は 基本契約 / 個別契約（条件書）の番号を並べる。
-    // 発注書など他のひな形は従来どおり基本契約の番号だけ（legacy-variables）。
+    // 計算書の「契約番号」は イン側の 基本契約 / 個別契約 の番号を並べる（明細の対象契約と同じ、
+    // royalty/in-contract.ts）。発注書など他のひな形は従来どおり基本契約の番号だけ（legacy-variables）。
     if (isStatementTemplate(input.templateKey) && input.conditionIds.length) {
-      const cc = await conditionContracts(client, input.conditionIds[0]);
-      // 基本契約番号は基本契約だけ（単体契約は個別の側の番号なので、ここには出さない）。
-      const ctxMaster = (context as unknown as { masterAgreement?: { no?: string | null } | null }).masterAgreement;
-      const masterNo = input.agreementId
-        ? (ctxMaster?.no ?? null)
-        : (cc.master && cc.master.kind === "master" ? cc.master.no : null);
-      const termsNo = refs.termsNo ?? cc.terms.find((t) => t.used)?.no ?? null;
-      (context as unknown as Record<string, unknown>).contractRefText =
-        contractRefText(masterNo, termsNo) || null;
+      const ref = await inContractRef(client, input.conditionIds[0],
+        { masterAgreementId: input.agreementId ?? null, termsNo: refs.termsNo ?? null });
+      (context as unknown as Record<string, unknown>).contractRefText = ref.number || null;
     }
     return context as unknown as Record<string, unknown>;
   }

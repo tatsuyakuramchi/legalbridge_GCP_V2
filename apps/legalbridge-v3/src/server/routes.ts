@@ -168,9 +168,18 @@ export function createRoutes(database: Transactable) {
    * 計算書の明細の行。対象契約・契約番号はイン側（作者との）基本契約・個別契約にする
    * （royalty/in-contract.ts）。アウト側の契約は作者の知らない契約なので出さない。
    */
-  const statementLines = async (previews: Array<Parameters<typeof bundleLinesFor>[0]>) => {
+  const statementLines = async (
+    previews: Array<Parameters<typeof bundleLinesFor>[0]>,
+    /** 文書フォームで選んだ基本契約と個別契約番号（manual_inputs._termsNo）。 */
+    chosen: { agreementId?: number | null; manualInputs?: Record<string, unknown> } = {}
+  ) => {
+    const termsNo = String(chosen.manualInputs?._termsNo ?? "").trim() || null;
     const out: ReturnType<typeof bundleLinesFor> = [];
-    for (const p of previews) out.push(...withInContract(bundleLinesFor(p), await inContractRef(database, p.condition.id)));
+    for (const p of previews) {
+      const ref = await inContractRef(database, p.condition.id,
+        { masterAgreementId: chosen.agreementId ?? null, termsNo });
+      out.push(...withInContract(bundleLinesFor(p), ref));
+    }
     return out;
   };
   const royaltyLedger = new RoyaltyLedgerService(database);
@@ -3545,7 +3554,7 @@ export function createRoutes(database: Transactable) {
         ...(input.manualInputs ?? {}),
         ...(usageEvents.length
           ? { statementMode: "multi",
-              rs_bundle_lines: applyLineLabels(await statementLines([preview]), input.manualInputs ?? {}),
+              rs_bundle_lines: applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {}),
               rs_bundle_tax: preview.fee.tax_amount,
               rs_stage_notes: stageNotesOf(preview.events ?? []) }
           : {})
@@ -3626,7 +3635,7 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       const previews = await previewBundle(input.entries, supersedesOf(input));
       res.json({
-        lines: applyLineLabels(await statementLines(previews), input.manualInputs ?? {}),
+        lines: applyLineLabels(await statementLines(previews, input), input.manualInputs ?? {}),
         totals: bundleTotals(previews),
         // 前金・後金の説明（報告の備考）。計算書の備考に出す。
         stageNotes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
@@ -3646,7 +3655,7 @@ export function createRoutes(database: Transactable) {
       const previews = await previewBundle(input.entries, supersedes);
       const totals = bundleTotals(previews);
       // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
-      const lines = applyLineLabels(await statementLines(previews), input.manualInputs ?? {});
+      const lines = applyLineLabels(await statementLines(previews, input), input.manualInputs ?? {});
       const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
 
       const draft = await issues.createDraft({
