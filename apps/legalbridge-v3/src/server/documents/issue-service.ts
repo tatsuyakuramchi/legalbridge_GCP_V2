@@ -986,7 +986,11 @@ export class DocumentIssueService {
     // 発注書など他のひな形は従来どおり基本契約の番号だけ（legacy-variables）。
     if (isStatementTemplate(input.templateKey) && input.conditionIds.length) {
       const cc = await conditionContracts(client, input.conditionIds[0]);
-      const masterNo = input.agreementId ? (context.agreement?.no ?? null) : (cc.master?.no ?? null);
+      // 基本契約番号は基本契約だけ（単体契約は個別の側の番号なので、ここには出さない）。
+      const ctxMaster = (context as unknown as { masterAgreement?: { no?: string | null } | null }).masterAgreement;
+      const masterNo = input.agreementId
+        ? (ctxMaster?.no ?? null)
+        : (cc.master && cc.master.kind === "master" ? cc.master.no : null);
       const termsNo = refs.termsNo ?? cc.terms.find((t) => t.used)?.no ?? null;
       (context as unknown as Record<string, unknown>).contractRefText =
         contractRefText(masterNo, termsNo) || null;

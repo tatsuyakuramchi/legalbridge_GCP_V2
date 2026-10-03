@@ -23,6 +23,7 @@ import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
 import { isSublicensingUsage, pubMediaOfUsage } from "../core/condition-usage.js";
 import { renewalLabel } from "../conditions/renewal.js";
+import { contextMasterAgreement } from "./legacy-variables.js";
 
 export const PUB_TERMS_KEY = "pub_license_terms_v3";
 /**
@@ -89,8 +90,8 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
     dbField: "auto.docNumber", noGuess: true },
   { name: "締結日", label: "締結日", type: "date", group: "I. 基本情報", required: true,
     dbField: "auto.today", noGuess: true },
-  { name: "基本契約番号", label: "基本契約番号", group: "I. 基本情報", from: "agreement.no" },
-  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "agreement.datedTitle" },
+  { name: "基本契約番号", label: "基本契約番号", group: "I. 基本情報", from: "masterAgreement.no" },
+  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "masterAgreement.datedTitle" },
   { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["表示する", "表示しない"],
     group: "I. 基本情報", noGuess: true, default: "表示する",
     helpText: "基本契約と一括で電子署名する場合は「表示しない」にすると、基本契約側の署名欄だけになります。" },
@@ -467,8 +468,10 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   return {
     docNo: pick("条件書番号") || text(context.document?.number),
     signDate: pick("締結日") || text(context.document?.issuedOn),
-    agreementNo: pick("基本契約番号") || text(context.agreement?.no),
-    agreementTitle: pick("基本契約名") || text(context.agreement?.datedTitle ?? context.agreement?.title) || "出版等利用許諾基本契約書",
+    agreementNo: pick("基本契約番号") || text(contextMasterAgreement(context)?.no),
+    agreementTitle: pick("基本契約名")
+      || text(contextMasterAgreement(context)?.datedTitle ?? contextMasterAgreement(context)?.title)
+      || "出版等利用許諾基本契約書",
     showSignature: pick("署名欄") !== "表示しない",
 
     licensorName: pick("許諾者名称") || text(counterparty.name),

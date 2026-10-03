@@ -268,7 +268,7 @@ export interface RefDocument {
 
 export interface DocumentRefs {
   party: { id: number; name: string };
-  /** 基本契約・単体契約。primary は他の画面が既定で拾う1本。 */
+  /** 基本契約（単体契約は含めない）。primary は他の画面が既定で拾う1本。 */
   masters: Array<{
     id: number; agreementNo: string | null; title: string; kind: AgreementKind;
     domain: AgreementDomain | null; direction: "in" | "out"; status: string;
@@ -465,7 +465,8 @@ export class PartyAgreementMapService {
       }));
       return {
         party: map.party,
-        masters: map.roots.map((r) => ({
+        // 文書の「基本契約」に出せるのは基本契約だけ（単体契約は基本契約なし扱い）。
+        masters: map.roots.filter((r) => r.kind === "master").map((r) => ({
           id: r.id, agreementNo: r.agreementNo, title: r.title, kind: r.kind, domain: r.domain,
           direction: r.direction, status: r.status, executedOn: r.executedOn, terminatedOn: r.terminatedOn,
           primary: r.primary, datedTitle: agreementDatedTitle(r.title, r.executedOn) ?? r.title

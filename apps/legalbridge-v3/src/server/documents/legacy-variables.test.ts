@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveLegacyVariable, normalizeInvoiceNo, agreementDatedTitle } from "./legacy-variables.js";
+import { resolveLegacyVariable, normalizeInvoiceNo, agreementDatedTitle, masterAgreementOf } from "./legacy-variables.js";
 import { bindVariables } from "./binding.js";
 
 const ctx = (over: Record<string, any> = {}) => ({
@@ -391,4 +391,25 @@ test("検収書の発注番号は、文書フォームで選んだものが自�
                 related: [{ id: 3, documentNo: "ARC-PO-2026-0032", templateKey: "purchase_order" }] };
   assert.equal(resolveLegacyVariable("parent_po_number", ctx as any, "発注番号"), "ARC-PO-2026-0099");
   assert.equal(resolveLegacyVariable("parent_po_number", { related: ctx.related } as any, "発注番号"), "ARC-PO-2026-0032");
+});
+
+test("文書の基本契約：単体契約は出さない。補助文書は親の基本契約を出す", () => {
+  const master = { kind: "master", no: "ARC-SVC-2024-0001", title: "業務委託基本契約", executedOn: "2024-04-01" };
+  const standalone = { kind: "standalone", no: "ARC-ISA-2025-0003", title: "業務委託契約（作品A）", executedOn: "2025-06-01" };
+  const supplement = { kind: "supplement", no: "ARC-SVC-2024-0001-S01", title: "覚書", executedOn: "2025-01-15" };
+  assert.equal(masterAgreementOf(master, null), master);
+  assert.equal(masterAgreementOf(standalone, null), null);
+  assert.equal(masterAgreementOf(supplement, master), master);
+  assert.equal(masterAgreementOf(supplement, standalone), null, "単体契約の覚書も基本契約なし");
+  assert.equal(masterAgreementOf({ kind: null, no: "C-1", title: "移行" }, null)?.no, "C-1", "種類の無い移行行は基本契約");
+
+  // 単体契約に載った条件の発注書：基本契約名も「基本契約あり」も出さない。
+  const onStandalone = { agreement: standalone, masterAgreement: null };
+  assert.equal(resolveLegacyVariable("MASTER_CONTRACT_REF", onStandalone, "基本契約名 / 番号"), undefined);
+  assert.equal(resolveLegacyVariable("CONTRACT_TITLE_REF", onStandalone, "基本契約名"), undefined);
+  assert.equal(resolveLegacyVariable("HAS_BASE_CONTRACT", onStandalone, "基本契約あり"), undefined);
+  // 補助文書に載った条件：親の基本契約を出す。
+  const onSupplement = { agreement: supplement, masterAgreement: master };
+  assert.equal(resolveLegacyVariable("MASTER_CONTRACT_REF", onSupplement, "基本契約名 / 番号"), "2024年4月1日付業務委託基本契約");
+  assert.equal(resolveLegacyVariable("HAS_BASE_CONTRACT", onSupplement, "基本契約あり"), true);
 });
