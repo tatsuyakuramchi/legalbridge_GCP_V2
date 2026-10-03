@@ -17,6 +17,7 @@ import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
 import { BLANK_INPUT_KEY, blankedNames } from "../server/documents/binding.js";
 import { PUB_TERMS_TEMPLATE_HINT } from "../server/documents/pub-terms.js";
+import type { DocumentRefs } from "../server/agreements/party-map.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -163,8 +164,12 @@ export function DocumentsWorkspace(
    * 付いている契約に従う」。条件に契約が無いときや、別の契約に基づくときに選ぶ。
    */
   const [agreementId, setAgreementId] = useState<number | null>(null);
-  const [agreements, setAgreements] = useState<Array<{ id: number; agreementNo: string | null; title: string;
-    status: string; counterparty: { id: number; name: string } }>>([]);
+  /** 文書フォームで選ぶ値（基本契約・発注書番号・個別契約番号）。取引先⇔基本契約のマップと同じ引き方。 */
+  const [refs, setRefs] = useState<DocumentRefs | null>(null);
+  /** 検収書の「発注番号」。空なら同じ条件から出ている発注書を自動で辿る。manual_inputs._parentPoNo。 */
+  const [parentPoNo, setParentPoNo] = useState("");
+  /** 計算書の「契約番号」の個別契約。空なら決定済みの条件書を自動で使う。manual_inputs._termsNo。 */
+  const [termsNo, setTermsNo] = useState("");
   /** 案件が決まっているとき、その案件の条件だけを候補に出す（既定）。 */
   const [scopeToMatter, setScopeToMatter] = useState(true);
   /** 差し替え済み（改訂前）の版も候補に出すか。既定は出さない。 */
@@ -414,8 +419,10 @@ export function DocumentsWorkspace(
     api.get<{ staff: typeof staff }>("/staff")
       .then((r) => setStaff(r.staff.filter((x) => (x.status ?? "active") === "active"))).catch(() => setStaff([]));
   }, []);
-  const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}) }),
-                         [manual, lines, ownerStaffId]);
+  const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}),
+                                  ...(parentPoNo ? { _parentPoNo: parentPoNo } : {}),
+                                  ...(termsNo ? { _termsNo: termsNo } : {}) }),
+                         [manual, lines, ownerStaffId, parentPoNo, termsNo]);
 
   // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
   const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
@@ -501,11 +508,11 @@ export function DocumentsWorkspace(
   })();
   // 基本契約の選択肢は、この相手先の契約だけ。他社の契約が並ぶと選び間違える。
   useEffect(() => {
-    if (!partyId) { setAgreements([]); return; }
+    if (!partyId) { setRefs(null); return; }
     let live = true;
-    api.get<{ agreements: typeof agreements }>("/agreements")
-      .then((r) => { if (live) setAgreements(r.agreements.filter((a) => a.counterparty.id === partyId)); })
-      .catch(() => { if (live) setAgreements([]); });
+    api.get<DocumentRefs>(`/agreement-map/parties/${partyId}/document-refs`)
+      .then((r) => { if (live) setRefs(r); })
+      .catch(() => { if (live) setRefs(null); });
     return () => { live = false; };
   }, [partyId]);
   /** 選んだ条件に付いている契約（人が選ばなければこれに従う）。 */
@@ -664,7 +671,8 @@ export function DocumentsWorkspace(
         }
         const result = await api.post<{ document: { id: number; documentNo: string } }>(
           "/statement-documents", {
-            templateKey, matterId, requestId,
+            // 選んだ基本契約も渡す。渡さないとプレビューと決定で「契約番号」が食い違う。
+            templateKey, matterId, requestId, agreementId,
             manualInputs: inputs,
             entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
             // 訂正版：決定の瞬間に元の計算書が退き、実績がこちらへ移る。
@@ -851,8 +859,10 @@ export function DocumentsWorkspace(
       const savedEvents = Array.isArray(d.manualInputs?._eventIds)
         ? (d.manualInputs._eventIds as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
       setOwnerStaffId(Number(d.manualInputs?._ownerStaffId) > 0 ? Number(d.manualInputs._ownerStaffId) : "");
+      setParentPoNo(String(d.manualInputs?._parentPoNo ?? ""));
+      setTermsNo(String(d.manualInputs?._termsNo ?? ""));
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
-        if (k === "_eventIds" || k === "_ownerStaffId") continue;
+        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo") continue;
         if (Array.isArray(v)) arrays[k] = v as Row[];
         else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
@@ -1179,16 +1189,60 @@ export function DocumentsWorkspace(
                             ? `条件の契約に従う（${conditionAgreement.title}${conditionAgreement.agreementNo ? ` ${conditionAgreement.agreementNo}` : ""}）`
                             : "条件に契約が付いていない（基本契約なしで出す）"}
                         </option>
-                        {agreements.map((a) => (
+                        {(refs?.masters ?? []).map((a) => (
                           <option key={a.id} value={a.id}>
-                            {a.title}{a.agreementNo ? ` ${a.agreementNo}` : ""}{a.status !== "executed" ? `（${a.status}）` : ""}
+                            {a.primary ? "★ " : ""}{a.datedTitle}{a.agreementNo ? `（${a.agreementNo}）` : ""}
+                            {a.status !== "executed" ? `［${a.status === "terminated" ? "解除済み" : "未締結"}］` : ""}
+                            {a.terminatedOn && a.status !== "terminated" ? "［解除済み］" : ""}
                           </option>
                         ))}
                       </select>
                       <small className="faint">
-                        発注書の「基本契約名 / 番号」と準拠条項に出ます。基本契約に基づかない発注にするなら、
+                        文書には「YYYY年M月D日付＋基本契約名」で出ます。★は取引先⇔基本契約で既定になっている契約。
+                        締結日や種類の直しは「取引先⇔基本契約」の画面でします。基本契約に基づかない発注にするなら、
                         項目の「基本契約あり」を外してください
                       </small>
+                    </span>
+                  </label>
+                )}
+                {/* 検収書の見出しの発注番号。自動では同じ条件から出ている発注書を辿る。
+                    別の発注書に対する検収なら、ここで選ぶ。 */}
+                {picked.length > 0 && partyId && /inspection/.test(templateKey) && (
+                  <label className="field" style={{ marginTop: 6 }}>
+                    <span>発注書番号</span>
+                    <span className="stack" style={{ gap: 2 }}>
+                      <select value={parentPoNo} onChange={(e) => setParentPoNo(e.target.value)}>
+                        <option value="">自動（同じ条件から出ている発注書）</option>
+                        {parentPoNo && !(refs?.purchaseOrders ?? []).some((d) => d.documentNo === parentPoNo) && (
+                          <option value={parentPoNo}>{parentPoNo}</option>
+                        )}
+                        {(refs?.purchaseOrders ?? []).map((d) => (
+                          <option key={d.id} value={d.documentNo}>
+                            {d.documentNo}　{d.title}{d.issuedOn ? `（${d.issuedOn}）` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <small className="faint">この取引先の決定済みの発注書から選べます</small>
+                    </span>
+                  </label>
+                )}
+                {/* 計算書の「契約番号」は 基本契約 / 個別契約 の番号を並べる。個別契約はここで選ぶ。 */}
+                {picked.length > 0 && partyId && isStatement && (
+                  <label className="field" style={{ marginTop: 6 }}>
+                    <span>個別契約番号</span>
+                    <span className="stack" style={{ gap: 2 }}>
+                      <select value={termsNo} onChange={(e) => setTermsNo(e.target.value)}>
+                        <option value="">自動（条件に繋がった決定済みの条件書）</option>
+                        {termsNo && !(refs?.terms ?? []).some((d) => d.documentNo === termsNo) && (
+                          <option value={termsNo}>{termsNo}</option>
+                        )}
+                        {(refs?.terms ?? []).map((d) => (
+                          <option key={d.id} value={d.documentNo}>
+                            {d.documentNo}　{d.label}{d.title ? `：${d.title}` : ""}{d.issuedOn ? `（${d.issuedOn}）` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <small className="faint">計算書の「契約番号」に「基本契約番号 / 個別契約番号」で出ます</small>
                     </span>
                   </label>
                 )}

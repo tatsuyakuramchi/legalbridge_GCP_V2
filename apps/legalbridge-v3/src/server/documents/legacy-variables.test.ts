@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveLegacyVariable, normalizeInvoiceNo } from "./legacy-variables.js";
+import { resolveLegacyVariable, normalizeInvoiceNo, agreementDatedTitle } from "./legacy-variables.js";
 import { bindVariables } from "./binding.js";
 
 const ctx = (over: Record<string, any> = {}) => ({
@@ -374,4 +374,21 @@ test("契約番号：計算書は 基本 / 個別 の並び（contractRefText）
   assert.equal(resolveLegacyVariable("linked_contract_number",
     { agreement: { no: "CT-2026-00008" }, contractRefText: "CT-2026-00008 / ARC-LIC-2026-0007" } as never),
     "CT-2026-00008 / ARC-LIC-2026-0007");
+});
+
+test("基本契約は締結日があれば「YYYY年M月D日付＋基本契約名」で出す", () => {
+  const ctx = { agreement: { no: "ARC-LIC-2024-0012", title: "利用許諾基本契約", executedOn: "2024-04-01" } };
+  assert.equal(resolveLegacyVariable("MASTER_CONTRACT_REF", ctx, "基本契約名 / 番号"), "2024年4月1日付利用許諾基本契約");
+  assert.equal(resolveLegacyVariable("CONTRACT_TITLE_REF", ctx, "基本契約名"), "2024年4月1日付利用許諾基本契約");
+  // 締結日が無ければ日付を推さない。
+  assert.equal(resolveLegacyVariable("CONTRACT_TITLE_REF",
+    { agreement: { no: "X", title: "利用許諾基本契約" } }, "基本契約名"), "利用許諾基本契約");
+  assert.equal(agreementDatedTitle("", "2024-04-01"), undefined);
+});
+
+test("検収書の発注番号は、文書フォームで選んだものが自動で辿ったものに勝つ", () => {
+  const ctx = { parentPoNo: "ARC-PO-2026-0099",
+                related: [{ id: 3, documentNo: "ARC-PO-2026-0032", templateKey: "purchase_order" }] };
+  assert.equal(resolveLegacyVariable("parent_po_number", ctx as any, "発注番号"), "ARC-PO-2026-0099");
+  assert.equal(resolveLegacyVariable("parent_po_number", { related: ctx.related } as any, "発注番号"), "ARC-PO-2026-0032");
 });

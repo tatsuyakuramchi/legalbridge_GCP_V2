@@ -63,7 +63,7 @@ export function AgreementMapWorkspace(
         <h1>取引先 ⇔ 基本契約</h1>
         <p>
           取引先ごとに、基本契約とその下の補助文書・解除合意を図にします。
-          親の無い補助文書や種別の無い基本契約など、画面によって見え方が変わる原因（ずれ）はここで付け替えます。
+          親の無い補助文書や種別の無い基本契約など、画面によって見え方が変わる原因（ずれ）はここで付け替えます。契約締結日もここで入れます（文書には「YYYY年M月D日付＋基本契約名」で出ます）。
         </p>
       </header>
 
@@ -206,11 +206,14 @@ function AgreementNode(
         <button className="linky code" onClick={() => onOpen?.("agreement", a.id)}>{a.agreementNo ?? `#${a.id}`}</button>
         <span>{a.title}</span>
         <StatusTag kind="agreement" value={a.status} />
+        {a.executedOn
+          ? <span className="faint">締結 {a.executedOn}</span>
+          : a.kind !== "document" && <span className="tag ghost warn">締結日なし</span>}
         {a.terminatedOn && <span className="faint">解除 {a.terminatedOn}</span>}
         {a.counterparty.merged && <span className="faint" title="統合前の取引先を指しています（参照は付け替えない決まり）">統合元：{a.counterparty.name}</span>}
         <span className="faint">条件 {a.conditionCount}・文書 {a.documentCount}</span>
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={readOnly} onClick={onEdit}>
-          {editing ? "閉じる" : "付け替え"}
+          {editing ? "閉じる" : "編集"}
         </button>
       </div>
       {issues.map((i, n) => <div key={n} className="amap-issue">⚠ {i.message}</div>)}
@@ -229,6 +232,7 @@ function RemapForm(
   const [direction, setDirection] = useState<"in" | "out">(a.direction);
   const [parentId, setParentId] = useState<string>(a.parentId ? String(a.parentId) : "");
   const [counterpartyId, setCounterpartyId] = useState<string>(String(a.counterparty.id));
+  const [executedOn, setExecutedOn] = useState<string>(a.executedOn ?? "");
   const [busy, setBusy] = useState(false);
   const needsParent = kind === "supplement" || kind === "termination";
   const isRoot = kind === "master" || kind === "standalone";
@@ -241,9 +245,10 @@ function RemapForm(
         kind, direction,
         domain: domain ? domain : null,
         parentId: needsParent && parentId ? Number(parentId) : null,
-        counterpartyId: Number(counterpartyId)
+        counterpartyId: Number(counterpartyId),
+        executedOn: executedOn || null
       });
-      onSaved(`${a.agreementNo ?? `#${a.id}`} を付け替えました（番号はそのまま）`);
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を保存しました（番号はそのまま）`);
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -280,14 +285,20 @@ function RemapForm(
           </select>
         </label>
       )}
+      <label className="field"><span>契約締結日</span>
+        <input type="date" value={executedOn} onChange={(e) => setExecutedOn(e.target.value)} />
+        {executedOn && (a.status === "draft" || a.status === "negotiating") && (
+          <small className="faint">締結日を入れると「締結済み」になります</small>
+        )}
+      </label>
       <div className="field"><span>相手先</span>
         <SearchSelect value={counterpartyId} onChange={(v) => setCounterpartyId(v)}
           search={searchParties} valueLabel={a.counterparty.name} placeholder="取引先名で探す" />
       </div>
       <div className="row" style={{ gridColumn: "1 / -1" }}>
-        <button className="btn primary btn-sm" disabled={busy || (needsParent && !parentId)} onClick={save}>付け替える</button>
+        <button className="btn primary btn-sm" disabled={busy || (needsParent && !parentId)} onClick={save}>保存する</button>
         <span className="faint">
-          番号は振り直しません。{isRoot ? "基本契約・単体契約にすると親は外れます。" : ""}
+          番号は振り直しません。文書には「{executedOn ? `${Number(executedOn.slice(0, 4))}年${Number(executedOn.slice(5, 7))}月${Number(executedOn.slice(8, 10))}日付` : ""}{a.title}」と出ます。{isRoot ? "基本契約・単体契約にすると親は外れます。" : ""}
           相手先を別の取引先にすると、この取引先の図から外れます。
         </span>
       </div>

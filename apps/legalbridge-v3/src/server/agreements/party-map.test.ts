@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { buildPartyMap, planRemap, PartyAgreementMapService, type MapAgreement, type RemapCurrent } from "./party-map.js";
+import { buildPartyMap, executedChange, planRemap, PartyAgreementMapService, type MapAgreement, type RemapCurrent } from "./party-map.js";
 
 const party = { id: 5, name: "株式会社サンプル" };
 
@@ -129,4 +129,50 @@ test("付け替えは agreements の列を書き、前後を監査に残す", as
   const up = db.find("UPDATE agreements")!;
   assert.deepEqual(up.params, [10, "supplement", "license", "out", 1, 5]);
   assert.ok(db.queries.some((q) => q.params.includes("agreement.remap")));
+});
+
+test("締結日：未締結に入れたら締結済みにする。締結済み・解除済みは状態を変えない", () => {
+  assert.deepEqual(executedChange("negotiating", "2024-04-01"), { executedOn: "2024-04-01", status: "executed" });
+  assert.deepEqual(executedChange("draft", "2024-04-01"), { executedOn: "2024-04-01", status: "executed" });
+  assert.deepEqual(executedChange("executed", "2024-05-01"), { executedOn: "2024-05-01", status: "executed" });
+  assert.deepEqual(executedChange("terminated", "2024-05-01"), { executedOn: "2024-05-01", status: "terminated" });
+  assert.deepEqual(executedChange("negotiating", null), { executedOn: null, status: "negotiating" });
+  assert.throws(() => executedChange("draft", "2024/04/01"), /YYYY-MM-DD/);
+});
+
+test("締結日は付け替えと一緒に保存し、監査に前後を残す", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF a")) return [{ id: 1, kind: "master", domain: "license", direction: "out",
+                                               parent_id: null, counterparty_id: 5, resolved_id: 5, child_count: 0,
+                                               status: "negotiating", executed_on: null }];
+    return [];
+  });
+  await new PartyAgreementMapService(db).remap(1, { executedOn: "2024-04-01" }, "legal@example.test");
+  const up = db.find("SET executed_on")!;
+  assert.deepEqual(up.params, [1, "2024-04-01", "executed"]);
+  assert.match(up.text, /effective_on = COALESCE\(effective_on/);
+});
+
+test("文書フォームの選択肢：基本契約は締結日付きの呼び方、文書は発注書と個別契約に分ける", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT resolved_id, resolved_name FROM v_party_resolved")) return [{ resolved_id: 5, resolved_name: "株式会社サンプル" }];
+    if (t.includes("FROM agreements a")) return [
+      { id: 1, agreement_no: "ARC-LIC-2024-0012", title: "利用許諾基本契約", kind: "master", domain: "license",
+        direction: "out", status: "executed", executed_on: "2024-04-01", parent_id: null, counterparty_id: 5, party_name: "株式会社サンプル" },
+      { id: 2, agreement_no: "ARC-LIC-2024-0012-S01", title: "覚書", kind: "supplement", domain: "license",
+        direction: "out", status: "executed", parent_id: 1, parent_resolved_id: 5, parent_kind: "master",
+        counterparty_id: 5, party_name: "株式会社サンプル" }
+    ];
+    if (t.includes("FROM documents d")) return [
+      { id: 10, document_no: "ARC-PO-2026-0032", title: "挿絵", template_key: "purchase_order", label: "発注書", issued_at: "2026-08-01" },
+      { id: 11, document_no: "ARC-ILT-D-2026-0001", title: "作品A", template_key: "individual_license_terms_v3", label: "個別利用許諾条件書" }
+    ];
+    return [];
+  });
+  const refs = (await new PartyAgreementMapService(db).documentRefs(5))!;
+  assert.deepEqual(refs.masters.map((m) => m.datedTitle), ["2024年4月1日付利用許諾基本契約"], "補助文書は基本契約の候補に出さない");
+  assert.equal(refs.masters[0].primary, true);
+  assert.deepEqual(refs.purchaseOrders.map((d) => d.documentNo), ["ARC-PO-2026-0032"]);
+  assert.deepEqual(refs.terms.map((d) => d.documentNo), ["ARC-ILT-D-2026-0001"]);
+  assert.deepEqual(db.find("FROM documents d")!.params[0], 5, "統合先で引く");
 });

@@ -2,6 +2,8 @@ import { type Transactable, inTransaction, dateStr, int, str } from "../core/db.
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.js";
+import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
+import { agreementDatedTitle } from "../documents/legacy-variables.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -174,6 +176,12 @@ export interface RemapInput {
   direction?: "in" | "out";
   parentId?: number | null;
   counterpartyId?: number;
+  /**
+   * 契約締結日（YYYY-MM-DD）。null で消す。
+   * 未締結（下書き・交渉中）の契約に入れたら締結済みにする（日付だけ入って
+   * 「交渉中」のままだと、締結済みだけを拾う画面に出てこない）。
+   */
+  executedOn?: string | null;
 }
 
 export interface RemapCurrent {
@@ -226,9 +234,39 @@ export function planRemap(
   return { kind, domain, direction, parentId, counterpartyId };
 }
 
+/** 締結日を入れたときの状態。未締結なら締結済みに進める。解除済み・締結済みはそのまま。 */
+export function executedChange(status: string, executedOn: string | null)
+  : { executedOn: string | null; status: string } {
+  if (executedOn !== null && !/^\d{4}-\d{2}-\d{2}$/.test(executedOn)) {
+    throw new DomainError("VALIDATION", "締結日は YYYY-MM-DD で入れてください");
+  }
+  const pending = status === "draft" || status === "negotiating";
+  return { executedOn, status: executedOn && pending ? "executed" : status };
+}
+
 // ---------------------------------------------------------------------------
 // DB
 // ---------------------------------------------------------------------------
+
+export interface RefDocument {
+  id: number; documentNo: string; title: string; label: string; issuedOn: string | null;
+}
+
+export interface DocumentRefs {
+  party: { id: number; name: string };
+  /** 基本契約・単体契約。primary は他の画面が既定で拾う1本。 */
+  masters: Array<{
+    id: number; agreementNo: string | null; title: string; kind: AgreementKind;
+    domain: AgreementDomain | null; direction: "in" | "out"; status: string;
+    executedOn: string | null; terminatedOn: string | null; primary: boolean;
+    /** 文書に出る呼び方「2024年4月1日付◯◯」。 */
+    datedTitle: string;
+  }>;
+  /** 決定済みの発注書。検収書の「発注番号」に選ぶ。 */
+  purchaseOrders: RefDocument[];
+  /** 個別契約（条件書・取り込んだ利用許諾契約書・覚書）。計算書の「契約番号」に選ぶ。 */
+  terms: RefDocument[];
+}
 
 export interface MapPartyRow {
   id: number; name: string;
@@ -324,13 +362,57 @@ export class PartyAgreementMapService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 文書フォームで選ぶ値。基本契約（このマップの木の根）・発注書番号・個別契約番号。
+   *
+   * 文書フォームはこれまで契約一覧を 300 件取ってから画面で取引先に絞っていた
+   * （統合元の契約が落ち、補助文書や文書だけも並んでいた）。マップと同じ引き方にする。
+   */
+  async documentRefs(partyId: number): Promise<DocumentRefs | null> {
+    const map = await this.forParty(partyId);
+    if (!map) return null;
+    try {
+      const docs = await this.database.query(
+        `SELECT d.id, d.document_no, d.issued_at, v.title,
+                t.template_key, COALESCE(t.label, d.manual_inputs->>'documentKind') AS label
+           FROM documents d
+           JOIN v_document_display v ON v.document_id = d.id
+           LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+           LEFT JOIN document_templates t ON t.id = tv.template_id
+          WHERE v.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $1)
+            AND d.document_no IS NOT NULL
+            AND d.status NOT IN ('void', 'superseded', 'draft')
+            AND (t.template_key IN ('purchase_order', 'intl_purchase_order')
+                 OR t.template_key = ANY($2::text[])
+                 OR d.manual_inputs->>'documentKind' = ANY($3::text[]))
+          ORDER BY d.issued_at DESC NULLS LAST, d.id DESC
+          LIMIT 300`,
+        [map.party.id, TERMS_TEMPLATES, TERMS_IMPORT_KINDS]);
+      const rows = (docs.rows as any[]).map((d) => ({
+        id: Number(d.id), documentNo: String(d.document_no), title: String(d.title ?? ""),
+        label: String(d.label ?? "文書"), issuedOn: dateStr(d.issued_at),
+        isOrder: d.template_key === "purchase_order" || d.template_key === "intl_purchase_order"
+      }));
+      return {
+        party: map.party,
+        masters: map.roots.map((r) => ({
+          id: r.id, agreementNo: r.agreementNo, title: r.title, kind: r.kind, domain: r.domain,
+          direction: r.direction, status: r.status, executedOn: r.executedOn, terminatedOn: r.terminatedOn,
+          primary: r.primary, datedTitle: agreementDatedTitle(r.title, r.executedOn) ?? r.title
+        })),
+        purchaseOrders: rows.filter((d) => d.isOrder).map(({ isOrder: _, ...d }) => d),
+        terms: rows.filter((d) => !d.isOrder).map(({ isOrder: _, ...d }) => d)
+      };
+    } catch (error) { throw translate(error); }
+  }
+
   /** 種類・親・種別・方向・相手先を付け替える。番号は振り直さない。 */
   async remap(id: number, input: RemapInput, actor: string): Promise<void> {
     try {
       await inTransaction(this.database, async (client) => {
         const cr = await client.query(
           `SELECT a.id, a.kind, a.domain, a.direction, a.parent_id, a.counterparty_id,
-                  r.resolved_id,
+                  a.status, a.executed_on, r.resolved_id,
                   (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count
              FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
             WHERE a.id = $1 FOR UPDATE OF a`, [id]);
@@ -371,12 +453,22 @@ export class PartyAgreementMapService {
                   updated_at = now()
             WHERE id = $1`,
           [id, next.kind, next.domain, next.direction, next.parentId, next.counterpartyId]);
+        const executed = input.executedOn !== undefined
+          ? executedChange(String(row.status ?? ""), input.executedOn) : null;
+        if (executed) {
+          await client.query(
+            `UPDATE agreements
+                SET executed_on = $2::date, status = $3,
+                    effective_on = COALESCE(effective_on, $2::date), updated_at = now()
+              WHERE id = $1`, [id, executed.executedOn, executed.status]);
+        }
         await recordAudit(client, {
           actor, action: "agreement.remap", targetType: "agreement", targetId: id,
           detail: {
             before: { kind: current.kind, domain: current.domain, direction: current.direction,
-                      parentId: current.parentId, counterpartyId: current.counterpartyId },
-            after: next
+                      parentId: current.parentId, counterpartyId: current.counterpartyId,
+                      status: String(row.status ?? ""), executedOn: dateStr(row.executed_on) },
+            after: { ...next, ...(executed ?? {}) }
           }
         });
       });

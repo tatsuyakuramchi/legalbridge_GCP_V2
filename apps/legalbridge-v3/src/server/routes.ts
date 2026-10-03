@@ -304,6 +304,13 @@ export function createRoutes(database: Transactable) {
     res.json(map);
   }));
 
+  /** 文書フォームの選択肢（基本契約・発注書番号・個別契約番号）。 */
+  router.get("/agreement-map/parties/:id/document-refs", asyncRoute(async (req, res) => {
+    const refs = await agreementMap.documentRefs(Number(req.params.id));
+    if (!refs) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(refs);
+  }));
+
   router.patch("/agreement-map/agreements/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({
@@ -311,7 +318,8 @@ export function createRoutes(database: Transactable) {
         domain: z.enum(["service", "license"]).nullable().optional(),
         direction: z.enum(["in", "out"]).optional(),
         parentId: z.coerce.number().int().positive().nullable().optional(),
-        counterpartyId: z.coerce.number().int().positive().optional()
+        counterpartyId: z.coerce.number().int().positive().optional(),
+        executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
       }).parse(req.body ?? {});
       await agreementMap.remap(Number(req.params.id), input, actor(res));
       res.json({ ok: true });
