@@ -63,15 +63,27 @@ export const ROUTES = [
   ["POST", "/internal/jobs/flow-notice"],
   // CloudSign の webhook（送信・締結・却下）。CloudSign は見出しを足せないので、
   // 共有シークレットは URL の ?key= で渡す（V3 本体で照合する）。
-  ["POST", "/internal/webhooks/cloudsign"]
+  ["POST", "/internal/webhooks/cloudsign"],
+  // searchAPI の「支払Excel発行」（legalbridge.arclight.co.jp/payments/excel-export）。
+  // searchAPI のサービスアカウントの ID トークンは V3 本体の IAP に断られる（401）ので、口を通す。
+  // 守りは V3 本体の共有シークレット（x-lb-webhook-token）。
+  ["GET", "/internal/exports/accounting"],
+  ["GET", "/internal/exports/accounting/bundle"]
+];
+/** 番号の入るパス。形を正規表現で決める（数字だけ。../ などは通らない）。 */
+const PATTERNS = [
+  ["POST", /^\/internal\/documents\/\d{1,12}\/account-owner$/]
 ];
 export const allowed = (method, pathname) =>
-  ROUTES.some(([m, p]) => m === method && p === pathname);
+  ROUTES.some(([m, p]) => m === method && p === pathname)
+  || PATTERNS.some(([m, re]) => m === method && re.test(pathname));
 
 /** V3 へ渡すヘッダ。署名の検証に要るものと本文の形だけ。 */
 const PASS_REQUEST = ["content-type", "x-slack-signature", "x-slack-request-timestamp", "x-lb-webhook-token",
                       "user-agent", "accept", "accept-language"];
-const PASS_RESPONSE = ["content-type", "cache-control", "referrer-policy", "content-security-policy"];
+const PASS_RESPONSE = ["content-type", "cache-control", "referrer-policy", "content-security-policy",
+                       // 経理提出の ZIP（searchAPI）：ファイル名と、PDF を同梱できなかった件数。
+                       "content-disposition", "x-pdf-failures", "x-payment-count"];
 
 // ID トークンは 1 時間もつ。50 分で取り直す。宛先ごとに持つ。
 const cache = new Map();
