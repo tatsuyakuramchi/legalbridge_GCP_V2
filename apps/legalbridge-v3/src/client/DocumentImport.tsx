@@ -56,8 +56,10 @@ function CopyNo({ no }: { no: string }) {
 }
 
 export function DocumentImport(
-  { conditionId, matterId, requestId, onDone, onOpenDocument, onRegistered }: {
+  { conditionId, matterId, agreementId, requestId, onDone, onOpenDocument, onRegistered }: {
     conditionId?: number; matterId?: number;
+    /** 契約。付けると登録した文書がその契約に繋がる（取引先⇔基本契約の画面から）。 */
+    agreementId?: number;
     /** デイリータスクの依頼。付けると登録した文書がその作業に繋がる。 */
     requestId?: number;
     onDone: () => void;
@@ -100,6 +102,7 @@ export function DocumentImport(
       if (v.note.trim()) params.set("note", v.note.trim());
       if (conditionId) params.set("conditionIds", String(conditionId));
       if (matterId) params.set("matterId", String(matterId));
+      if (agreementId) params.set("agreementId", String(agreementId));
       if (requestId) params.set("requestId", String(requestId));
 
       const r = await api.postRaw<{ id: number; documentNo: string }>(
@@ -120,7 +123,7 @@ export function DocumentImport(
       const r = await api.post<{ id: number; documentNo: string }>("/documents/reserve", {
         title: v.title.trim(), documentKind: v.documentKind,
         conditionIds: conditionId ? [conditionId] : [],
-        matterId: matterId ?? null, requestId: requestId ?? null
+        matterId: matterId ?? null, agreementId: agreementId ?? null, requestId: requestId ?? null
       });
       setReserved(r); setDone(null);
       setMode("closed");

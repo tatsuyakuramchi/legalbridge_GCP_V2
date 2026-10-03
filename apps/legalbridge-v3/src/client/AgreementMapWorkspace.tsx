@@ -6,6 +6,8 @@ import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { useReadOnly } from "./read-only.js";
 import { CsvBar } from "./CsvBar.js";
 import { CsvImport } from "./CsvImport.js";
+import { DocumentImport } from "./DocumentImport.js";
+import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
 import type { MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap } from "../server/agreements/party-map.js";
@@ -145,7 +147,8 @@ function PartyMapView(
     <AgreementNode key={a.id} a={a} issues={issuesOf(a.id)} primary={extra?.primary}
       editing={editing === a.id} onEdit={() => setEditing(editing === a.id ? null : a.id)}
       onOpen={onOpen} roots={map.roots}
-      onSaved={(msg) => { setEditing(null); onChanged(msg); }} onError={onError} />
+      onSaved={(msg) => { setEditing(null); onChanged(msg); }}
+      onDocsChanged={(msg) => onChanged(msg)} onError={onError} />
   );
 
   return (
@@ -212,13 +215,19 @@ function PartyMapView(
 }
 
 function AgreementNode(
-  { a, issues, primary, editing, onEdit, onOpen, roots, onSaved, onError }: {
+  { a, issues, primary, editing, onEdit, onOpen, roots, onSaved, onDocsChanged, onError }: {
     a: MapAgreement; issues: MapIssue[]; primary?: boolean; editing: boolean; onEdit: () => void;
     onOpen?: (kind: EntityKind, id: number) => void; roots: MapNode[];
-    onSaved: (msg: string) => void; onError: (msg: string) => void;
+    onSaved: (msg: string) => void;
+    /** 文書を取り込んだ・繋いだ・外したとき。図（文書の件数）を読み直す。 */
+    onDocsChanged: (msg: string) => void;
+    onError: (msg: string) => void;
   }
 ) {
   const readOnly = useReadOnly();
+  /** 文書の欄（取り込む・既存を繋ぐ）を開いているか。 */
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [docsVersion, setDocsVersion] = useState(0);
   return (
     <div className={`amap-node${issues.length ? " bad" : ""}`}>
       <div className="amap-line">
@@ -238,12 +247,27 @@ function AgreementNode(
         {a.terminatedOn && <span className="faint">解除 {a.terminatedOn}</span>}
         {a.counterparty.merged && <span className="faint" title="統合前の取引先を指しています（参照は付け替えない決まり）">統合元：{a.counterparty.name}</span>}
         <span className="faint">条件 {a.conditionCount}・文書 {a.documentCount}</span>
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={readOnly} onClick={onEdit}>
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setDocsOpen((v) => !v)}>
+          {docsOpen ? "文書を閉じる" : "文書"}
+        </button>
+        <button className="btn btn-sm" disabled={readOnly} onClick={onEdit}>
           {editing ? "閉じる" : "編集"}
         </button>
       </div>
       {issues.map((i, n) => <div key={n} className="amap-issue">⚠ {i.message}</div>)}
       {editing && <RemapForm a={a} roots={roots} onSaved={onSaved} onError={onError} />}
+      {docsOpen && (
+        <div className="amap-form stack" style={{ gap: 8 }}>
+          {/* 外で結んだ契約書（PDF など）を、この契約に繋いだ状態で登録する。 */}
+          <DocumentImport agreementId={a.id}
+            onOpenDocument={(id) => onOpen?.("document", id)}
+            onDone={() => { setDocsVersion((v) => v + 1); onDocsChanged(`${a.agreementNo ?? `#${a.id}`} に文書を登録しました`); }} />
+          {/* 既にある文書を繋ぐ・外す。同じ取引先の文書が先に並ぶ。 */}
+          <Relations kind="agreement" id={a.id} reloadKey={docsVersion}
+            exclude={["conditions", "party"]} initialOpen="documents" onOpen={onOpen}
+            onChanged={() => onDocsChanged(`${a.agreementNo ?? `#${a.id}`} の文書を更新しました`)} />
+        </div>
+      )}
     </div>
   );
 }
