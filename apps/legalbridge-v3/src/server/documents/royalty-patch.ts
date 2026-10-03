@@ -26,7 +26,7 @@ export function taxRateOrDefault(value: unknown): number {
   return Number.isFinite(n) ? n : 10;
 }
 import { taxOf } from "../royalty/rounding.js";
-import { statementModelPatch } from "../royalty/statement-model.js";
+import { modelSummary, statementModelPatch } from "../royalty/statement-model.js";
 
 type Data = Record<string, unknown>;
 
@@ -626,7 +626,12 @@ function receiptHeader(context: Data, lines: BundleLine[]): Data {
     // payerCompany は自社名の別名として登録されていて、当社の名前が出ていた。
     // 計算書のときだけ、ここで上書きする（他のひな形の自社名は動かさない）。
     // 複数社をまとめた計算書は「最初の社 ほか N 社」（明細の行に各社名が出る）。
-    payerCompany: payerSummary(lines.map((l) => l.payerName)),
+    //
+    // 利用形態の付いた行は「■ 取引モデル」の「取引モデル概要」として、
+    // 取引モデルごとの書き方（アークライト版／◯◯再許諾分／◯◯版）で出す（statement-model.ts）。
+    payerCompany: lines.some((l) => l.usageType)
+      ? modelSummary(lines, (context.company as Data | undefined)?.name)
+      : payerSummary(lines.map((l) => l.payerName)),
     // デザイナー／権利者は作者。＝取得（イン）条件の取引先。
     designerName: String(counterparty.name ?? ""),
     // 入金通貨はアウト条件の通貨。契約が何建てかは、その契約が持っている。

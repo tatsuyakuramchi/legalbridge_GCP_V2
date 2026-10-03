@@ -24,8 +24,11 @@ export interface StatementModelRule {
   basisLabel: string;
   /** 数量・見本・有償数量の欄を出すか。 */
   quantityRows: boolean;
-  /** 受領情報（入金企業・デザイナー／権利者・入金通貨）の欄を出すか。相手から入金がある形だけ。 */
-  receiptBlock: boolean;
+  /**
+   * 「■ 取引モデル」の表の「取引モデル概要」（変数 payerCompany）の書き方。
+   * {自社} は会社情報の会社名から「株式会社」などを外したもの、{OUT企業} はアウト条件の取引先。
+   */
+  summaryPattern: string;
 }
 
 const spec = (value: UsageType) => USAGE_TYPES.find((t) => t.value === value)!;
@@ -35,19 +38,19 @@ export const STATEMENT_MODELS: StatementModelRule[] = [
     usageType: "in_house", label: spec("in_house").label,
     calcType: "manufacturing", dateLabel: "製造完了日",
     basisLabel: "基準価格 × 個数（見本を除く）",
-    quantityRows: true, receiptBlock: false
+    quantityRows: true, summaryPattern: "{自社}版"
   },
   {
     usageType: "sublicense", label: spec("sublicense").label,
     calcType: "sublicense", dateLabel: "入金日",
     basisLabel: "受領価格（期間の合計）",
-    quantityRows: false, receiptBlock: true
+    quantityRows: false, summaryPattern: "{OUT企業}再許諾分"
   },
   {
     usageType: "oem", label: spec("oem").label,
     calcType: "manufacturing", dateLabel: "製造完了日",
     basisLabel: "受領価格 × 製造個数（または受領額）",
-    quantityRows: true, receiptBlock: true
+    quantityRows: true, summaryPattern: "{OUT企業}版"
   }
 ];
 
@@ -58,8 +61,6 @@ export const statementModelRule = (value: unknown): StatementModelRule | null =>
  * 計算書に載る行の利用形態から、本文へ渡す出し分けの値を作る。
  *
  * 利用形態が1つも分からなければ空（これまでどおり何も変えない）。
- * 受領情報は、載っている形のどれも相手からの入金を持たないときだけ空にする
- * （自社製造・自社販売だけの計算書に「サブライセンス入金」の欄を出さない）。
  */
 export function statementModelPatch(usageTypes: Array<string | null | undefined>): Data {
   const rules = [...new Set(usageTypes.map((u) => String(u ?? "")).filter(Boolean))]
@@ -70,15 +71,47 @@ export function statementModelPatch(usageTypes: Array<string | null | undefined>
     // 本文が今は読まない新しい名前。版を改めるときに {{#if}} の条件に使える。
     transactionModel: rules.length === 1 ? rules[0].usageType : "mixed",
     transactionModelLabel: rules.map((r) => r.label).join("／"),
-    hasReceiptBlock: rules.some((r) => r.receiptBlock),
     hasQuantityRows: rules.some((r) => r.quantityRows)
   };
   // 日付の見出し（本文が calcType で分岐する）。モデルが混ざれば渡さず「発生日」のまま。
   if (rules.length === 1) patch.calcType = rules[0].calcType;
-  if (!rules.some((r) => r.receiptBlock)) {
-    patch.payerCompany = "";
-    patch.designerName = "";
-    patch.intakeCurrency = "";
-  }
   return patch;
+}
+
+/** 会社名から法人の種類を外す。「株式会社アークライト」→「アークライト」。 */
+export function companyShortName(name: unknown): string {
+  return String(name ?? "")
+    .replace(/[（(](株|有|同)[）)]/g, "")
+    .replace(/^(株式会社|有限会社|合同会社)\s*/, "")
+    .replace(/\s*(株式会社|有限会社|合同会社)$/, "")
+    .trim();
+}
+
+/**
+ * 行1本の「取引モデル概要」。
+ *   自社製造・自社販売 … {自社}版（アークライト版）
+ *   再許諾            … {OUT企業}再許諾分
+ *   自社製造・他社販売 … {OUT企業}版
+ * 利用形態の分からない行は、これまでどおり払ってきた相手の名前。
+ */
+export function modelSummaryLabel(usageType: unknown, payerName: unknown, companyName: unknown): string {
+  const payer = String(payerName ?? "").trim();
+  const rule = statementModelRule(usageType);
+  if (!rule) return payer;
+  const own = companyShortName(companyName) || "自社";
+  if (rule.summaryPattern.includes("{OUT企業}") && !payer) return rule.label;
+  return rule.summaryPattern.replace("{自社}", own).replace("{OUT企業}", payer);
+}
+
+/**
+ * 計算書1枚の「取引モデル概要」。紙には1組しか書けないので、明細の並び順で
+ * 最初の1つを出し、ほかは「ほかN件」にする（各行の内訳は明細に出る）。
+ */
+export function modelSummary(
+  lines: Array<{ usageType?: string | null; payerName?: string | null }>, companyName: unknown
+): string {
+  const found = [...new Set(lines.map((l) => modelSummaryLabel(l.usageType, l.payerName, companyName))
+    .filter(Boolean))];
+  if (found.length <= 1) return found[0] ?? "";
+  return `${found[0]} ほか${found.length - 1}件`;
 }

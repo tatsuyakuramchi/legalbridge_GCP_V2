@@ -27,7 +27,7 @@ export function StatementModels() {
         <table>
           <thead><tr>
             <th>取引モデル</th><th>日付の見出し</th><th>算定の基礎</th>
-            <th>数量・見本・有償数量</th><th>受領情報（入金企業・権利者・入金通貨）</th>
+            <th>数量・見本・有償数量</th><th>取引モデル概要</th>
           </tr></thead>
           <tbody>
             {models.map((m) => (
@@ -36,15 +36,16 @@ export function StatementModels() {
                 <td>{m.dateLabel}</td>
                 <td>{m.basisLabel}</td>
                 <td>{mark(m.quantityRows)}</td>
-                <td>{mark(m.receiptBlock)}</td>
+                <td>{m.summaryPattern}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <div className="panel-bd faint">
-        1枚に複数の取引モデルが載るときは、どれか1つでも「出す」なら出します。
-        利用形態の付いていない旧い計算書は、これまでどおりの表示のままです。
+        取引モデル概要は計算書の「■ 取引モデル」の表に出ます。{"{自社}"} は会社情報の会社名（「株式会社」などを外したもの）、
+        {"{OUT企業}"} はアウト条件の取引先です。1枚に複数載るときは、明細の並び順で最初の1つ＋「ほかN件」。
+        数量の欄は、どれか1つでも「出す」なら出します。利用形態の付いていない旧い計算書は、これまでどおりの表示のままです。
       </div>
     </div>
   );
