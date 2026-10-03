@@ -551,9 +551,26 @@ export function DocumentsWorkspace(
     // 下書きを開いたときは、その下書きの手入力が正。既定で上書きしない。
     if (draft) return;
     setManual({}); setLines({}); setPickedFields(new Set());
-    api.get<{ defaults: Record<string, string> }>(`/document-defaults/${templateKey}`)
-      .then((r) => setManual(r.defaults ?? {}))
-      .catch(() => undefined);
+    const defaults = api.get<{ defaults: Record<string, string> }>(`/document-defaults/${templateKey}`)
+      .then((r) => r.defaults ?? {}).catch(() => ({} as Record<string, string>));
+    if (!reviseCtx) { void defaults.then(setManual); return; }
+    // 訂正版は元の文書で人が入れた値を引き継ぐ（支払期日・備考・行の見出し・担当者など）。
+    // 引き継がないと、元の紙に入れた支払期日が消え、訂正版の支払が「発生日＋60日」で
+    // 立っていた（元 10/20 → 訂正版 12/01）。計算で作る値は決定のときに作り直すので持ってこない。
+    void Promise.all([
+      defaults,
+      api.get<{ templateKey: string | null; manualInputs: Record<string, unknown> }>(`/documents/${reviseCtx.ids[0]}`)
+        .catch(() => null)
+    ]).then(([base, prev]) => {
+      const carried = prev && prev.templateKey === templateKey ? carryOverInputs(prev.manualInputs ?? {}) : null;
+      setManual({ ...base, ...(carried?.values ?? {}) });
+      if (carried) {
+        setLines(carried.arrays);
+        if (carried.ownerStaffId) setOwnerStaffId(carried.ownerStaffId);
+        if (carried.parentPoNo) setParentPoNo(carried.parentPoNo);
+        if (carried.termsNo) setTermsNo(carried.termsNo);
+      }
+    });
   }, [templateKey]);
 
   // ひな形か条件を変えたら、何が要るかを取り直す。押してから足りないと
@@ -1636,4 +1653,29 @@ export function DocumentsWorkspace(
       </div>
     </section>
   );
+}
+
+/**
+ * 訂正版に引き継ぐ手入力。元の文書の manual_inputs から、人が入れた値だけを取り出す。
+ * 計算で作る値（計算書の行・税・前金後金の注記・束ねの印）と、退かせる版・実績の控えは
+ * 決定のときに作り直すので持ってこない。
+ */
+export function carryOverInputs(manual: Record<string, unknown>): {
+  values: Record<string, string>; arrays: Record<string, Row[]>;
+  ownerStaffId: number | null; parentPoNo: string; termsNo: string;
+} {
+  const computed = new Set(["statementMode", "rs_bundle_lines", "rs_bundle_tax", "rs_stage_notes",
+                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo"]);
+  const values: Record<string, string> = {};
+  const arrays: Record<string, Row[]> = {};
+  for (const [k, v] of Object.entries(manual)) {
+    if (computed.has(k)) continue;
+    if (Array.isArray(v)) arrays[k] = v as Row[];
+    else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
+  }
+  return {
+    values, arrays,
+    ownerStaffId: Number(manual._ownerStaffId) > 0 ? Number(manual._ownerStaffId) : null,
+    parentPoNo: String(manual._parentPoNo ?? ""), termsNo: String(manual._termsNo ?? "")
+  };
 }
