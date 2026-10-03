@@ -1223,7 +1223,7 @@ export function DocumentsWorkspace(
                           </option>
                         ))}
                       </select>
-                      <small className="faint">この取引先の決定済みの発注書から選べます</small>
+                      <small className="faint">この取引先の決定済みの発注書から選べます。検収書の「発注番号」に「基本契約番号 / 発注書番号」で出ます（基本契約が無ければ発注書番号だけ）</small>
                     </span>
                   </label>
                 )}
@@ -1243,7 +1243,7 @@ export function DocumentsWorkspace(
                           </option>
                         ))}
                       </select>
-                      <small className="faint">計算書の「契約番号」に「基本契約番号 / 個別契約番号」で出ます</small>
+                      <small className="faint">計算書の「契約番号」に「基本契約番号 / 個別条件書番号」で出ます（基本契約が無ければ個別条件書番号だけ）</small>
                     </span>
                   </label>
                 )}

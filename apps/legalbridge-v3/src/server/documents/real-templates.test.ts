@@ -107,7 +107,8 @@ test("検収書：当事者と検収者と日付が出る", () => {
 });
 
 test("検収書：見出しの発注番号は発注書から辿る", () => {
-  assert.equal(rendered("inspection_certificate").parent_po_number, "ARC-PO-2026-0032");
+  // 「基本契約番号 / 発注書番号」（計算書の契約番号と同じ並べ方）。
+  assert.equal(rendered("inspection_certificate").parent_po_number, "AGR-2026-0088 / ARC-PO-2026-0032");
   assert.equal(rendered("inspection_certificate").issueKey, "LEGAL-1234");
 });
 
@@ -224,4 +225,14 @@ test("発注書：相手先の担当者（氏名・メール・電話・部署�
                       "先方担当者名", "担当者メール", "取引先電話"]) {
     assert.equal(values[name], undefined, `${name} が自動で入っている`);
   }
+});
+
+test("検収書：基本契約が無ければ（単体契約に載った条件も）発注書番号だけ。手入力は上書きしない", () => {
+  const onStandalone = { ...context, agreement: { ...context.agreement, kind: "standalone" }, masterAgreement: null };
+  const v = { ...resolveAllLegacyVariables(onStandalone), ...buildTemplateContext("inspection_certificate", onStandalone, {}) };
+  assert.equal(v.parent_po_number, "ARC-PO-2026-0032");
+  assert.equal(buildTemplateContext("inspection_certificate", context, { parent_po_number: "手入力-1" }).parent_po_number,
+               undefined, "手入力がある欄は作らない（bindVariables が手入力を入れる）");
+  // 英文の検収書は「Purchase Order No.」なので発注書番号のまま。
+  assert.equal(buildTemplateContext("intl_inspection_certificate", context, {}).parent_po_number, undefined);
 });
