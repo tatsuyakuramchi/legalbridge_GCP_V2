@@ -367,3 +367,10 @@ test("取り消しにも理由が要る", async () => {
   await assert.rejects(() => service.unvoid(1, "  ", "me"),
     (e: unknown) => e instanceof DomainError && e.code === "VALIDATION");
 });
+
+test("文書フォームで選んだ番号は manual_inputs の内部の名前から読む", async () => {
+  const { chosenRefs } = await import("./issue-service.js");
+  assert.deepEqual(chosenRefs({ _parentPoNo: " ARC-PO-2026-0099 ", _termsNo: "" }),
+                   { parentPoNo: "ARC-PO-2026-0099", termsNo: null });
+  assert.deepEqual(chosenRefs(undefined), { parentPoNo: null, termsNo: null });
+});

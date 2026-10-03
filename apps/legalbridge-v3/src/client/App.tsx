@@ -5,6 +5,7 @@ import { GlobalSearch, type SearchHit } from "./GlobalSearch.js";
 import { MattersWorkspace } from "./MattersWorkspace.js";
 import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
 import { AgreementsWorkspace } from "./AgreementsWorkspace.js";
+import { AgreementMapWorkspace } from "./AgreementMapWorkspace.js";
 import type { EntityKind } from "./Relations.js";
 import { DocumentsWorkspace } from "./DocumentsWorkspace.js";
 import { ClosingWorkspace } from "./ClosingWorkspace.js";
@@ -20,7 +21,7 @@ import { TradeWorkspace, type TradeCtx } from "./TradeWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "trade" | "agreements" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "trade" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -43,6 +44,8 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
   { section: "横断で見る", items: [
     // 契約が器で、条件はその明細。並びもその順にする。
     { view: "agreements", label: "契約" },
+    // 取引先ごとの基本契約の木。画面によって基本契約の見え方が違う原因（ずれ）を直す。
+    { view: "agreement-map", label: "取引先⇔基本契約" },
     { view: "conditions", label: "条件明細" },
     { view: "works", label: "作品" },
     { view: "parties", label: "取引先・担当" },
@@ -399,6 +402,10 @@ export function App() {
             initialId={focusFor("agreements")} onOpen={openEntity}
             createPreset={agreementPreset
               ? { partyId: agreementPreset.partyId, partyName: agreementPreset.partyName } : null} />
+        )}
+        {view === "agreement-map" && (
+          <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? 0}`}
+            initialPartyId={focusFor("agreement-map")} onOpen={openEntity} />
         )}
         {view === "closing" && (
           <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}

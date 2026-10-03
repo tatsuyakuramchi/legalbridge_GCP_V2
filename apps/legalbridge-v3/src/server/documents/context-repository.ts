@@ -2,6 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
+import { agreementDatedTitle } from "./legacy-variables.js";
 import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName, eventScopeLabel } from "../royalty/product-name.js";
 
 /**
@@ -674,6 +675,8 @@ export class DocumentContextRepository {
       id: Number(row.id),
       no: str(row.agreement_no),
       title: String(row.title ?? ""),
+      /** 文書に出す呼び方「2024年4月1日付◯◯基本契約」。締結日が無ければ名前だけ。 */
+      datedTitle: agreementDatedTitle(row.title, dateStr(row.executed_on)) ?? "",
       direction: String(row.direction),
       status: String(row.status),
       executedOn: dateStr(row.executed_on),

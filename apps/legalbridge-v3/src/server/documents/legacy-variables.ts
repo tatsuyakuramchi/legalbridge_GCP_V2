@@ -61,6 +61,19 @@ export function normalizeInvoiceNo(value: unknown): string | undefined {
   return m ? `T${m[1]}` : raw;
 }
 
+/**
+ * 文書に出す基本契約の呼び方。「2024年4月1日付利用許諾基本契約」。
+ *
+ * 契約は締結日と名前で特定するのが紙の作法で、番号は相手方の契約書に無い。
+ * 締結日が入っていなければ名前だけ（日付を推して書かない）。
+ */
+export function agreementDatedTitle(title: unknown, executedOn: unknown): string | undefined {
+  const name = String(title ?? "").trim();
+  if (!name) return undefined;
+  const m = String(executedOn ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日付${name}` : name;
+}
+
 export function agreementRefText(title: unknown, no: unknown): string | undefined {
   const name = String(title ?? "").trim();
   const number = String(no ?? "").trim();
@@ -96,9 +109,13 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
     get: (c) => (c as { contractRefText?: string | null }).contractRefText ?? c.agreement?.no },
   // 発注書の「基本契約名 / 番号」。準拠契約の条項に差し込むので、番号だけだと
   // 紙に「AGR-2025-0011」としか出ず、何の契約か読めない。
+  // 締結日が分かれば「YYYY年M月D日付＋基本契約名」。分からなければ従来の「名前（番号）」。
   { names: ["MASTER_CONTRACT_REF", "基本契約名 / 番号"],
-    get: (c) => agreementRefText(c.agreement?.title, c.agreement?.no) },
-  { names: ["CONTRACT_TITLE_REF", "基本契約名"], get: (c) => c.agreement?.title },
+    get: (c) => c.agreement?.executedOn && c.agreement?.title && c.agreement.title !== c.agreement.no
+      ? agreementDatedTitle(c.agreement.title, c.agreement.executedOn)
+      : agreementRefText(c.agreement?.title, c.agreement?.no) },
+  { names: ["CONTRACT_TITLE_REF", "基本契約名"],
+    get: (c) => agreementDatedTitle(c.agreement?.title, c.agreement?.executedOn) },
   /**
    * 基本契約に基づく発注かどうか。
    *
@@ -110,7 +127,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
     get: (c) => (c.agreement?.no || c.agreement?.title ? true : undefined) },
   // 検収書の見出しの「発注番号」。同じ条件から出ている発注書を辿る。
   { names: ["parent_po_number", "PARENT_PO_NUMBER", "発注番号", "元発注番号"],
-    get: (c) => relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order")
+    get: (c) => (c as { parentPoNo?: string | null }).parentPoNo
+             ?? relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order")
              ?? conditionOrderNos(c) },
   { names: ["issueKey", "BACKLOG_KEY", "課題キー"], get: (c) => c.backlogKey },
 
