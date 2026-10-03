@@ -70,6 +70,7 @@ import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
+import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
 import { undeliverableEmails } from "./integrations/mail-domain.js";
@@ -163,6 +164,15 @@ export function createRoutes(database: Transactable) {
   const storage = new DocumentStorageService(database, drive, pdf, pdfs);
   const documentImports = new DocumentImportService(database, drive);
   const royalty = new RoyaltyStatementService(database);
+  /**
+   * 計算書の明細の行。対象契約・契約番号はイン側（作者との）基本契約・個別契約にする
+   * （royalty/in-contract.ts）。アウト側の契約は作者の知らない契約なので出さない。
+   */
+  const statementLines = async (previews: Array<Parameters<typeof bundleLinesFor>[0]>) => {
+    const out: ReturnType<typeof bundleLinesFor> = [];
+    for (const p of previews) out.push(...withInContract(bundleLinesFor(p), await inContractRef(database, p.condition.id)));
+    return out;
+  };
   const royaltyLedger = new RoyaltyLedgerService(database);
   const payments = new PaymentService(database);
   const allocations = new PaymentAllocationService(database);
@@ -3535,7 +3545,7 @@ export function createRoutes(database: Transactable) {
         ...(input.manualInputs ?? {}),
         ...(usageEvents.length
           ? { statementMode: "multi",
-              rs_bundle_lines: applyLineLabels(bundleLinesFor(preview), input.manualInputs ?? {}),
+              rs_bundle_lines: applyLineLabels(await statementLines([preview]), input.manualInputs ?? {}),
               rs_bundle_tax: preview.fee.tax_amount,
               rs_stage_notes: stageNotesOf(preview.events ?? []) }
           : {})
@@ -3616,7 +3626,7 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       const previews = await previewBundle(input.entries, supersedesOf(input));
       res.json({
-        lines: applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {}),
+        lines: applyLineLabels(await statementLines(previews), input.manualInputs ?? {}),
         totals: bundleTotals(previews),
         // 前金・後金の説明（報告の備考）。計算書の備考に出す。
         stageNotes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
@@ -3636,7 +3646,7 @@ export function createRoutes(database: Transactable) {
       const previews = await previewBundle(input.entries, supersedes);
       const totals = bundleTotals(previews);
       // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
-      const lines = applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {});
+      const lines = applyLineLabels(await statementLines(previews), input.manualInputs ?? {});
       const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
 
       const draft = await issues.createDraft({
