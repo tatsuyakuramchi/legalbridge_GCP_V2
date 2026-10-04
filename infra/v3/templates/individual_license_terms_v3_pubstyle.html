@@ -140,7 +140,10 @@
   <tr><th>対象製品</th><td>{{productName}}。{{productDefinition}}</td></tr>
   <tr><th>利用の範囲</th><td>第１条の構成要素を利用して、対象製品を企画・開発・製造し、販売（販売店その他の第三者を通じた販売を含む。）すること、及び対象製品の販売促進に必要な範囲で利用すること。本条に定めのない利用は本条件書の対象外とし、別途合意による。</td></tr>
   <tr><th>独占性</th><td>{{exclusivity}}</td></tr>
-  <tr><th>地域・言語</th><td>{{maxRegion}}／{{maxLanguage}}</td></tr>
+  <tr><th>地域・言語</th><td>{{maxRegion}}／{{maxLanguage}}{{#if scopeVaries}}を上限とし、取引モデルごとの地域・言語は次のとおりとする。
+    {{#each conds}}
+    <div class="model"><b>{{condName}}</b>　{{condRegion}}／{{condLang}}</div>
+    {{/each}}{{/if}}</td></tr>
   <tr><th>許諾期間</th><td>{{#if termText}}{{termText}}{{else}}{{formatDate startDate}}から。{{/if}}</td></tr>
   {{#if sublicenseText}}<tr><th>再許諾</th><td>{{sublicenseText}}再許諾先は第３条による。</td></tr>
   {{else}}{{#if hasSublicense}}<tr><th>再許諾</th><td>被許諾者は、第三者に再許諾することができる。再許諾先は第３条による。</td></tr>{{/if}}{{/if}}

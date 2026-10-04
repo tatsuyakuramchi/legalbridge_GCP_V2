@@ -473,6 +473,10 @@ export function licenseScopeSentence(context: Data, bound: Data = {}): string {
   return parts.join("");
 }
 
+/** 地域・言語の並びを比べるための鍵。区切り（・、,）と順序の違いは同じとみなす。 */
+const scopeKey = (value: unknown): string =>
+  text(value).split(/[・、,，\s]+/).filter(Boolean).sort().join("・");
+
 /**
  * 許諾者が個人か。条件書の「Licensor 種別」が先、無ければ取引先の種別。
  * どちらも無ければ法人として扱う（本文の licensorIsCorp と同じ既定）。
@@ -676,6 +680,11 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     })),
     /** 再許諾の取引モデル（非加算型）を載せているか。許諾内容に再許諾を書くかを決める。 */
     hasSublicense: deals.some((deal) => !deal.addon),
+    /**
+     * 取引モデルによって地域・言語が違うか。違うときだけ、許諾条件の
+     * 「地域・言語」欄に取引モデルごとの内訳を出す（同じなら1行で足りる）。
+     */
+    scopeVaries: new Set(conds.map((c) => `${scopeKey(c.condRegion)}|${scopeKey(c.condLang)}`)).size > 1,
     showHolder,
     scopeColCount: 5 + (showHolder ? 1 : 0),
     rateColCount: 2 + addons.length,

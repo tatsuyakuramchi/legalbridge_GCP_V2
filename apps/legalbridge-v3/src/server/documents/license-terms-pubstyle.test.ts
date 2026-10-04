@@ -120,7 +120,10 @@ test("試作：許諾内容・期間・地域・言語・許諾料は第２条�
   for (const row of ["対象製品", "利用の範囲", "独占性", "地域・言語", "許諾期間", "再許諾", "監修", "許諾料", "算定基準日", "報告・支払"]) {
     assert.match(art2, new RegExp(`<th>${row}</th>`), `${row} の欄がある`);
   }
-  assert.match(art2, /<th>地域・言語<\/th><td>全世界／全言語<\/td>/);
+  // 自社製造・自社販売だけ日本／日本語。取引モデルで違うので内訳を出す。
+  assert.match(art2, /<th>地域・言語<\/th><td>全世界／全言語を上限とし、取引モデルごとの地域・言語は次のとおりとする。/);
+  assert.match(art2, /<b>自社製造・自社販売<\/b>　日本／日本語<\/div>/);
+  assert.match(art2, /<b>権利許諾（サブライセンス）<\/b>　全世界／全言語<\/div>/);
   // 終了日・自動更新・支払は条件明細から。まとめた文（許諾範囲）に頼らない。
   assert.match(art2, /許諾期間は2026年10月1日から2031年9月30日までとする。期間満了の3か月前までに/);
   // 許諾者は法人（Licensor 種別）なので翌月末日。
@@ -132,6 +135,16 @@ test("試作：許諾内容・期間・地域・言語・許諾料は第２条�
   // 自動で組んだ許諾範囲の文は各欄と同じことなので載せない。
   assert.doesNotMatch(art2, /<th>補足<\/th>/);
   assert.doesNotMatch(out, /本許諾の範囲は、/);
+});
+
+test("試作：地域・言語が取引モデルで同じなら内訳を出さず1行にする", () => {
+  const same = { ...context, conditions: context.conditions.map((c: any) => ({ ...c,
+    scopes: { region: ["全世界"], language: ["日本語", "英語"] } })) };
+  same.conditions[0].scopes = { region: ["全世界"], language: ["英語", "日本語"] }; // 並び順だけ違う
+  const values: Record<string, unknown> = { ...manual, ...licenseTermsPatch(same, manual) };
+  assert.equal(values.scopeVaries, false);
+  const out = renderDocumentHtml(html, values);
+  assert.match(out, /<th>地域・言語<\/th><td>全世界／全言語<\/td>/);
 });
 
 test("試作：許諾者が個人なら報告・支払は翌月20日", () => {
