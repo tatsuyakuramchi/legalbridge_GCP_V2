@@ -381,7 +381,9 @@ test("許諾範囲の文：期間・自動更新・計算書の時期・支払�
   assert.match(s, /許諾期間は2026年10月1日から2029年9月30日までとする/);
   assert.match(s, /同一条件で1年間更新され/);
   assert.match(s, /各計算期間の末日で締め/);
-  assert.match(s, /計算書送付後30日以内とする/);
+  // 支払の期日は許諾者の種別で決まる（条件明細の支払条件では変えない）。法人なので翌月末日。
+  assert.match(s, /締め日の翌月末日までに許諾料計算書を許諾者に送付する。被許諾者は、同日までに許諾料を/);
+  assert.doesNotMatch(s, /計算書送付後30日以内/);
   assert.match(s, /本許諾の範囲内で第三者に再許諾することができる/);
   const strict = licenseScopeSentence({ ...ctx, condition: { ...ctx.condition, sublicenseConsent: "required", autoRenew: false } });
   assert.match(strict, /事前の書面による承諾を得て/);
@@ -436,7 +438,8 @@ test("計算書・支払の期日は許諾者が個人なら翌月20日、法人
   // 製造のつど報告する条件は製造月の翌月。
   const event = licenseTermParts({ condition: { statementTiming: "event" } }, { 許諾者種別: "個人" });
   assert.match(event.report, /製造のつど、製造月の翌月20日までに/);
-  // 条件明細に支払条件があれば、その契約の取り決めが勝つ。
-  const agreed = licenseTermParts({ condition: { ...condition, paymentTerms: "計算書送付後30日以内" } });
-  assert.equal(agreed.payment, "許諾料の支払は、計算書送付後30日以内とする。");
+  // 条件明細に支払条件が入っていても、期日は種別のルールのまま。
+  const agreed = licenseTermParts({ condition: { ...condition, paymentTerms: "計算書送付後30日以内", counterparty: { kind: "individual" } } });
+  assert.match(agreed.report, /締め日の翌月20日までに/);
+  assert.equal(agreed.payment, "被許諾者は、同日までに許諾料を許諾者の指定する口座に振り込んで支払う。");
 });

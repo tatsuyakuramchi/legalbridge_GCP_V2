@@ -78,7 +78,12 @@ test("CloudSign 版：許諾料はカードで、算定式に適用料率を埋�
   assert.match(art2, /数量の基準日は、初版については発売日、2版以降については製造日とする。/);
   assert.match(art2, /締日の翌月末日までに許諾料計算書を許諾者に交付するとともに、同日までに算定された許諾料を許諾者の指定する銀行口座へ振り込む方法により支払うものとする。/);
   const person = renderSample({}, { ...manual, 許諾者種別: "個人" }).out;
-  assert.match(person, /締日の翌月20日までに許諾料計算書を許諾者に交付する/);
+  assert.match(person, /締日の翌月20日までに許諾料計算書を許諾者に交付するとともに、同日までに算定された許諾料を/);
+  // 条件明細に支払条件が入っていても、報告日・支払日は種別のルールで出す。
+  const withTerms = { ...context, condition: { ...context.condition, paymentTerms: "月末締め翌々月末払い" } };
+  const out = renderDocumentHtml(html, { ...manual, ...licenseTermsPatch(withTerms, manual) });
+  assert.match(out, /締日の翌月末日までに許諾料計算書を許諾者に交付するとともに、同日までに/);
+  assert.doesNotMatch(out, /翌々月末払い/);
 });
 
 test("CloudSign 版：別紙は署名欄の後ろに改ページ。別紙1 特記事項・別紙2 対象著作物一覧・別紙3 再許諾先一覧", () => {

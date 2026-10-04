@@ -501,19 +501,21 @@ const scopeKey = (value: unknown): string =>
 /**
  * 報告と支払を1文で書く（CloudSign 版の書き方）。
  * 締日の翌月の期日（個人＝20日／法人＝末日）までに計算書を交付し、同日までに振り込む。
- * 条件明細に支払条件が書いてあれば、支払はその取り決めによる。
+ * 期日は報告も支払も許諾者の種別だけで決まる。条件明細の支払条件（移行で一律の
+ * 文字列が入っていることがある）では変えない。
  */
 export function reportSentence(context: Data, bound: Data = {}): string {
   const condition = context.condition ?? {};
-  const day = licensorIsIndividual(context, bound) ? "20日" : "末日";
-  const payment = text(condition.paymentTerms ?? "").trim();
+  const day = paymentDayOf(context, bound);
   const head = String(condition.statementTiming ?? "") === "event"
     ? `被許諾者は、対象製品の製造のつど、製造月の翌月${day}までに許諾料計算書を許諾者に交付する`
     : `被許諾者は、各計算期間の末日を締日とし、締日の翌月${day}までに許諾料計算書を許諾者に交付する`;
-  return payment
-    ? `${head}。許諾料の支払は、${payment}とする。`
-    : `${head}とともに、同日までに算定された許諾料を許諾者の指定する銀行口座へ振り込む方法により支払うものとする。`;
+  return `${head}とともに、同日までに算定された許諾料を許諾者の指定する銀行口座へ振り込む方法により支払うものとする。`;
 }
+
+/** 報告日・支払日。許諾者が個人なら翌月20日、法人なら翌月末日。 */
+export const paymentDayOf = (context: Data, bound: Data = {}): "20日" | "末日" =>
+  licensorIsIndividual(context, bound) ? "20日" : "末日";
 
 /**
  * 許諾者が個人か。条件書の「Licensor 種別」が先、無ければ取引先の種別。
@@ -550,16 +552,13 @@ export function licenseTermParts(context: Data, bound: Data = {}): Record<
     out.term = `許諾期間は${japanese(start)}から期間の定めなしとする。`;
   }
   // 計算書と支払。計算書の時期（締めごと／製造ごと）は条件明細にある。
-  // 期日は許諾者が個人か法人かで決まる（個人＝翌月20日、法人＝翌月末日）。
-  // 条件明細に支払条件が書いてあればその契約の取り決めなので、支払はそちらが勝つ。
-  const day = licensorIsIndividual(context, bound) ? "20日" : "末日";
+  // 期日は報告も支払も許諾者が個人か法人かだけで決まる（個人＝翌月20日、法人＝翌月末日）。
+  const day = paymentDayOf(context, bound);
   const timing = String(condition.statementTiming ?? "");
-  const payment = text(condition.paymentTerms ?? "").trim();
   out.report = timing === "event"
     ? `被許諾者は、対象製品の製造のつど、製造月の翌月${day}までに許諾料計算書を許諾者に送付する。`
     : `被許諾者は、各計算期間の末日で締め、締め日の翌月${day}までに許諾料計算書を許諾者に送付する。`;
-  out.payment = payment ? `許諾料の支払は、${payment}とする。`
-    : `被許諾者は、同日までに許諾料を許諾者の指定する口座に振り込んで支払う。`;
+  out.payment = "被許諾者は、同日までに許諾料を許諾者の指定する口座に振り込んで支払う。";
   // 再許諾は「書いていない＝できない」と読まれる。条件明細で決まっているので、
   // どちらであっても書く。承諾の要否（A-033）で条文を分ける。
   const sublicensable = condition.sublicensable;
