@@ -463,42 +463,56 @@ export function licenseScopeSentence(context: Data, bound: Data = {}): string {
 
   const product = value("対象製品予定名", "productName");
   const exclusivity = value("独占性", "exclusivity");
-  const condition = context.condition ?? {};
-  const sublicensable = condition.sublicensable;
+  const terms = licenseTermParts(context, bound);
 
   const parts: string[] = [];
   parts.push(`本許諾の範囲は、${region || "全世界"}における${language || "全言語"}`
     + `${product ? `の${product}` : ""}とする。`);
   if (exclusivity) parts.push(`本許諾は${exclusivity}とする。`);
+  parts.push(terms.term, terms.renewal, terms.report, terms.payment, terms.sublicense);
+  return parts.join("");
+}
+
+/**
+ * 許諾範囲の文のうち、条件明細から決まる部分（期間・更新・計算書・支払・再許諾）。
+ * 条件書の本文は、これを1文にまとめず欄ごとに出す（地域・言語・独占性は
+ * 別の欄にあるので、まとめた文を載せると同じことが2回書かれる）。
+ */
+export function licenseTermParts(context: Data, bound: Data = {}): Record<
+  "term" | "renewal" | "report" | "payment" | "sublicense", string
+> {
+  const condition = context.condition ?? {};
+  const out = { term: "", renewal: "", report: "", payment: "", sublicense: "" };
   // 許諾期間と更新。終了日・自動更新は条件明細にある（A-039）。書かないと
   // 「期間の定めなし」と読まれる。
-  const start = value("許諾開始日") || text(condition.termStart ?? "");
+  const start = text(bound["許諾開始日"] ?? context["許諾開始日"] ?? "").trim() || text(condition.termStart ?? "");
   const end = text(condition.termEnd ?? "");
   if (end) {
-    parts.push(`許諾期間は${start ? `${japanese(start)}から` : ""}${japanese(end)}までとする。`);
+    out.term = `許諾期間は${start ? `${japanese(start)}から` : ""}${japanese(end)}までとする。`;
     if (condition.autoRenew === true) {
       const months = Number(condition.renewMonths ?? 12) || 12;
       const unit = months % 12 === 0 ? `${months / 12}年` : `${months}か月`;
-      parts.push(`期間満了の3か月前までにいずれの当事者からも書面による申出がないときは、同一条件で${unit}間更新され、以後も同様とする。`);
+      out.renewal = `期間満了の3か月前までにいずれの当事者からも書面による申出がないときは、同一条件で${unit}間更新され、以後も同様とする。`;
     }
   } else if (start) {
-    parts.push(`許諾期間は${japanese(start)}から期間の定めなしとする。`);
+    out.term = `許諾期間は${japanese(start)}から期間の定めなしとする。`;
   }
   // 計算書と支払。計算書の時期（締めごと／製造ごと）と支払条件は条件明細にある。
   const timing = String(condition.statementTiming ?? "");
   const payment = text(condition.paymentTerms ?? "").trim();
-  if (timing === "periodic") parts.push("被許諾者は、各計算期間の末日で締め、締め後30日以内に許諾料計算書を許諾者に送付する。");
-  if (timing === "event") parts.push("被許諾者は、対象製品の製造のつど許諾料計算書を許諾者に送付する。");
-  if (payment) parts.push(`許諾料の支払は、${payment}とする。`);
+  if (timing === "periodic") out.report = "被許諾者は、各計算期間の末日で締め、締め後30日以内に許諾料計算書を許諾者に送付する。";
+  if (timing === "event") out.report = "被許諾者は、対象製品の製造のつど許諾料計算書を許諾者に送付する。";
+  if (payment) out.payment = `許諾料の支払は、${payment}とする。`;
   // 再許諾は「書いていない＝できない」と読まれる。条件明細で決まっているので、
   // どちらであっても書く。承諾の要否（A-033）で条文を分ける。
+  const sublicensable = condition.sublicensable;
   if (sublicensable === true) {
-    parts.push(condition.sublicenseConsent === "covered"
+    out.sublicense = condition.sublicenseConsent === "covered"
       ? "被許諾者は、本許諾の範囲内で第三者に再許諾することができる。"
-      : "被許諾者は、許諾者の事前の書面による承諾を得て、第三者に再許諾することができる。");
+      : "被許諾者は、許諾者の事前の書面による承諾を得て、第三者に再許諾することができる。";
   }
-  if (sublicensable === false) parts.push("被許諾者は、第三者に再許諾することができない。");
-  return parts.join("");
+  if (sublicensable === false) out.sublicense = "被許諾者は、第三者に再許諾することができない。";
+  return out;
 }
 
 /**
@@ -624,6 +638,23 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     maxRegion: pick("v3_maxRegion", "許諾地域", "maxRegion"),
     maxLanguage: pick("v3_maxLanguage", "許諾言語", "maxLanguage"),
     scope: pick("v3_scope", "許諾範囲", "scope"),
+    /**
+     * 許諾範囲の文を人が直したか。直していなければ、文の中身は許諾条件の各欄
+     * （地域・言語・独占性・期間・支払・再許諾）と同じなので紙に載せない。
+     * 直したときだけ、その文を「補足」として載せる（人の手入力を落とさない）。
+     */
+    scopeEdited: (() => {
+      const written = pick("v3_scope", "許諾範囲", "scope").trim();
+      return Boolean(written) && written !== licenseScopeSentence(context, manual);
+    })(),
+    ...(() => {
+      const parts = licenseTermParts(context, manual);
+      return {
+        termText: parts.term + parts.renewal,
+        reportText: parts.report + parts.payment,
+        sublicenseText: parts.sublicense
+      };
+    })(),
     conds,
     addonConds: addons.map(({ deal, index }) => ({
       condLabel: conds[index].condLabel, condName: conds[index].condName, appliedRate: appliedRate(deal)

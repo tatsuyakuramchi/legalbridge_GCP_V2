@@ -46,6 +46,7 @@
   .list td.note .lbl { color: #666; margin-right: .6em; }
   .list td.note .lbl:not(:first-child) { margin-left: 1em; }
   .list td.note .def + .lbl { margin-left: 0; }
+  .kv .model { margin-top: .8mm; padding-left: 1em; text-indent: -1em; }
   .list tfoot td { background: #faf9f5; font-weight: bold; }
   .role { font-size: 8.5pt; color: #555; }
   .art { margin-bottom: 3mm; }
@@ -92,14 +93,14 @@
 <p>許諾者と被許諾者は、両者間の{{#if masterAgreement}}{{masterAgreement}}{{else}}基本契約{{/if}}（以下「基本契約」という。）に基づき、以下のとおり個別の利用許諾条件を定める。本条件書に定めのない事項は基本契約による。</p>
 
 <h2><span class="no">第１条</span>対象著作物</h2>
-<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率は第４条の取引モデルごとに許諾者と被許諾者が合意した料率を示し、「—」はその取引モデルで当該要素の料率が無いことを示す。最下行の「適用料率」は第４条の計算に用いる料率で、権利許諾（サブライセンス）以外の取引モデルでは各構成要素の料率の合計とする。根拠文書は同じNo.の下の行に示す。</p>
+<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率は第２条の取引モデルごとに許諾者と被許諾者が合意した料率を示し、「—」はその取引モデルで当該要素の料率が無いことを示す。最下行の「適用料率」は第２条の許諾料の計算に用いる料率で、権利許諾（サブライセンス）以外の取引モデルでは各構成要素の料率の合計とする。根拠文書は同じNo.の下の行に示す。</p>
 <table class="list">
   <thead>
     <tr>
       <th class="n" rowspan="2">No.</th>
       <th rowspan="2">構成要素</th>
       {{#if showHolder}}<th class="holder" rowspan="2">権利元</th>{{/if}}
-      <th class="group" colspan="{{conds.length}}">料率（取引モデル別・第４条）</th>
+      <th class="group" colspan="{{conds.length}}">料率（取引モデル別・第２条）</th>
     </tr>
     <tr>
       {{#each conds}}<th class="rate">{{condName}}</th>{{/each}}
@@ -134,46 +135,34 @@
 </table>
 
 <div class="art">
-<h2><span class="no">第２条</span>許諾内容</h2>
+<h2><span class="no">第２条</span>許諾条件</h2>
 <table class="kv">
   <tr><th>対象製品</th><td>{{productName}}。{{productDefinition}}</td></tr>
-  <tr><th>許諾する利用</th><td>第１条の構成要素を利用して、対象製品を企画・開発・製造し、販売（販売店その他の第三者を通じた販売を含む。）すること。</td></tr>
-  {{#if hasSublicense}}<tr><th>再許諾</th><td>前号の利用を第三者に再許諾すること（第５条）。</td></tr>{{/if}}
-  <tr><th>販促・広告利用</th><td>対象製品の販売促進に必要な範囲での、第１条の構成要素の利用。</td></tr>
-  {{#if supervisor}}<tr><th>監修</th><td>対象製品の内容は、許諾者の指定する監修者（{{supervisor}}）の監修を受ける。</td></tr>{{/if}}
-  <tr><th>その他の利用</th><td>本条に定めのない利用は本条件書の対象外とし、別途合意による。</td></tr>
-</table>
-</div>
-
-<div class="art">
-<h2><span class="no">第３条</span>許諾期間・地域・言語</h2>
-<table class="kv">
-  <tr><th>許諾開始日</th><td>{{formatDate startDate}}</td></tr>
+  <tr><th>利用の範囲</th><td>第１条の構成要素を利用して、対象製品を企画・開発・製造し、販売（販売店その他の第三者を通じた販売を含む。）すること、及び対象製品の販売促進に必要な範囲で利用すること。本条に定めのない利用は本条件書の対象外とし、別途合意による。</td></tr>
   <tr><th>独占性</th><td>{{exclusivity}}</td></tr>
-  <tr><th>地域</th><td>{{maxRegion}}</td></tr>
-  <tr><th>言語</th><td>{{maxLanguage}}</td></tr>
-  {{#if scope}}<tr><th>許諾範囲</th><td>{{scope}}</td></tr>{{/if}}
-</table>
-</div>
-
-<div class="art">
-<h2><span class="no">第４条</span>許諾料</h2>
-<p class="lead">許諾料は、取引の場面に応じて次の取引モデルの算定式により計算する。料率は第１条一覧の当該取引モデルの欄の適用料率とする。</p>
-<table class="kv">
-  {{#each conds}}
-  <tr><th>{{condName}}</th><td>{{condDesc}}：{{condFormula}}。{{#if hasGuarantee}}{{#if (gt ag 0)}}前払保証金 {{ag}} {{currency}}。{{/if}}{{#if (gt mg 0)}}最低保証 {{mg}} {{currency}}。{{/if}}{{/if}}</td></tr>
-  {{/each}}
+  <tr><th>地域・言語</th><td>{{maxRegion}}／{{maxLanguage}}</td></tr>
+  <tr><th>許諾期間</th><td>{{#if termText}}{{termText}}{{else}}{{formatDate startDate}}から。{{/if}}</td></tr>
+  {{#if sublicenseText}}<tr><th>再許諾</th><td>{{sublicenseText}}再許諾先は第３条による。</td></tr>
+  {{else}}{{#if hasSublicense}}<tr><th>再許諾</th><td>被許諾者は、第三者に再許諾することができる。再許諾先は第３条による。</td></tr>{{/if}}{{/if}}
+  {{#if supervisor}}<tr><th>監修</th><td>対象製品の内容は、許諾者の指定する監修者（{{supervisor}}）の監修を受ける。</td></tr>{{/if}}
+  <tr><th>許諾料</th><td>取引の場面に応じて次の取引モデルの算定式により計算する。料率は第１条一覧の当該取引モデルの欄の適用料率とする。
+    {{#each conds}}
+    <div class="model"><b>{{condName}}</b>　{{condDesc}}：{{condFormula}}。{{#if hasGuarantee}}{{#if (gt ag 0)}}前払保証金 {{ag}} {{currency}}。{{/if}}{{#if (gt mg 0)}}最低保証 {{mg}} {{currency}}。{{/if}}{{/if}}</div>
+    {{/each}}
+  </td></tr>
   <tr><th>算定基準日</th><td>{{#each calcBaseRows}}{{edition}}は{{trigger}}{{#if note}}（{{note}}）{{/if}}{{#unless @last}}、{{/unless}}{{/each}}を基準として算定する。</td></tr>
+  {{#if reportText}}<tr><th>報告・支払</th><td>{{reportText}}</td></tr>{{/if}}
+  {{#if scopeEdited}}<tr><th>補足</th><td>{{scope}}</td></tr>{{/if}}
 </table>
 </div>
 
 <div class="art">
-<h2><span class="no">第５条</span>再許諾</h2>
+<h2><span class="no">第３条</span>再許諾</h2>
 <p>被許諾者が第三者に再許諾したときは、再許諾先・取引モデル・地域・言語・料率・開始日を別紙「再許諾先一覧」に記載する。再許諾先を追加したときは、その都度別紙に行を加え、別紙の更新をもって本条件書の一部とする。{{#if sublicensees.length}}現在の再許諾先は別紙のとおりとする。{{else}}本条件書の締結時点で再許諾先はない。{{/if}}</p>
 </div>
 
 <div class="art">
-<h2><span class="no">第６条</span>通知先</h2>
+<h2><span class="no">第４条</span>通知先</h2>
 <table class="kv">
   <tr><th>許諾者</th><td>{{licensorContact}}</td></tr>
   <tr><th>被許諾者</th><td>{{licenseeContact}}</td></tr>
@@ -182,7 +171,7 @@
 
 {{#if specialExtras.length}}
 <div class="art">
-<h2><span class="no">第７条</span>特記事項</h2>
+<h2><span class="no">第５条</span>特記事項</h2>
 {{#each specialExtras}}<p>{{#if seId}}（{{seId}}）{{/if}}{{seText}}</p>{{/each}}
 </div>
 {{/if}}
@@ -199,8 +188,8 @@
 {{#if sublicensees.length}}
 <div class="annex">
 <h1 class="annex-title">別紙　再許諾先一覧</h1>
-<p class="sub">{{contractNo}}　個別利用許諾条件書 第５条に基づく</p>
-<p class="lead">一覧の1行が再許諾1件。再許諾先を追加したときは、その都度本別紙に行を加える。料率は、当該再許諾について被許諾者が許諾者に支払う許諾料の料率（第４条）を示す。</p>
+<p class="sub">{{contractNo}}　個別利用許諾条件書 第３条に基づく</p>
+<p class="lead">一覧の1行が再許諾1件。再許諾先を追加したときは、その都度本別紙に行を加える。料率は、当該再許諾について被許諾者が許諾者に支払う許諾料の料率（第２条）を示す。</p>
 <table class="list">
   <thead>
     <tr><th class="n">No.</th><th>再許諾先</th><th>取引モデル</th><th>地域／言語</th><th class="rate">料率</th><th class="date">開始日</th></tr>
