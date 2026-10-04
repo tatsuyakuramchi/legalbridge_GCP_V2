@@ -474,6 +474,16 @@ export function licenseScopeSentence(context: Data, bound: Data = {}): string {
 }
 
 /**
+ * 許諾者が個人か。条件書の「Licensor 種別」が先、無ければ取引先の種別。
+ * どちらも無ければ法人として扱う（本文の licensorIsCorp と同じ既定）。
+ */
+export function licensorIsIndividual(context: Data, bound: Data = {}): boolean {
+  const chosen = text(bound["許諾者種別"] ?? context["許諾者種別"] ?? "").trim();
+  if (chosen) return chosen === "個人";
+  return text(context.condition?.counterparty?.kind) === "individual";
+}
+
+/**
  * 許諾範囲の文のうち、条件明細から決まる部分（期間・更新・計算書・支払・再許諾）。
  * 条件書の本文は、これを1文にまとめず欄ごとに出す（地域・言語・独占性は
  * 別の欄にあるので、まとめた文を載せると同じことが2回書かれる）。
@@ -497,12 +507,17 @@ export function licenseTermParts(context: Data, bound: Data = {}): Record<
   } else if (start) {
     out.term = `許諾期間は${japanese(start)}から期間の定めなしとする。`;
   }
-  // 計算書と支払。計算書の時期（締めごと／製造ごと）と支払条件は条件明細にある。
+  // 計算書と支払。計算書の時期（締めごと／製造ごと）は条件明細にある。
+  // 期日は許諾者が個人か法人かで決まる（個人＝翌月20日、法人＝翌月末日）。
+  // 条件明細に支払条件が書いてあればその契約の取り決めなので、支払はそちらが勝つ。
+  const day = licensorIsIndividual(context, bound) ? "20日" : "末日";
   const timing = String(condition.statementTiming ?? "");
   const payment = text(condition.paymentTerms ?? "").trim();
-  if (timing === "periodic") out.report = "被許諾者は、各計算期間の末日で締め、締め後30日以内に許諾料計算書を許諾者に送付する。";
-  if (timing === "event") out.report = "被許諾者は、対象製品の製造のつど許諾料計算書を許諾者に送付する。";
-  if (payment) out.payment = `許諾料の支払は、${payment}とする。`;
+  out.report = timing === "event"
+    ? `被許諾者は、対象製品の製造のつど、製造月の翌月${day}までに許諾料計算書を許諾者に送付する。`
+    : `被許諾者は、各計算期間の末日で締め、締め日の翌月${day}までに許諾料計算書を許諾者に送付する。`;
+  out.payment = payment ? `許諾料の支払は、${payment}とする。`
+    : `被許諾者は、同日までに許諾料を許諾者の指定する口座に振り込んで支払う。`;
   // 再許諾は「書いていない＝できない」と読まれる。条件明細で決まっているので、
   // どちらであっても書く。承諾の要否（A-033）で条文を分ける。
   const sublicensable = condition.sublicensable;

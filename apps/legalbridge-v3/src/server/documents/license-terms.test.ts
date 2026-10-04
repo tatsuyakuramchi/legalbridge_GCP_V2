@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds, dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, componentName, licenseScopeSentence, licenseTermsPatch, licenseTermsSeeds, licenseTermsSuggestions, materialSeeds, calcOfCondition
+  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds, dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, componentName, licenseScopeSentence, licenseTermParts, licensorIsIndividual, licenseTermsPatch, licenseTermsSeeds, licenseTermsSuggestions, materialSeeds, calcOfCondition
 } from "./license-terms.js";
 
 /**
@@ -420,4 +420,23 @@ test("構成要素の名前：コアは原作名_オリジナルゲームデザ�
   ] });
   assert.match(patch.lcs[0].lcNote, /^オリジナルゲームデザインとは、本著作物を構成する/);
   assert.equal(patch.lcs[1].lcNote, "", "サブは名前で何の要素かが分かる");
+});
+
+test("計算書・支払の期日は許諾者が個人なら翌月20日、法人なら翌月末日", () => {
+  const condition = { statementTiming: "periodic", counterparty: { kind: "corporate" } };
+  const corp = licenseTermParts({ condition });
+  assert.match(corp.report, /締め日の翌月末日までに許諾料計算書を許諾者に送付する/);
+  assert.match(corp.payment, /同日までに許諾料を許諾者の指定する口座に振り込んで支払う/);
+  const person = licenseTermParts({ condition: { ...condition, counterparty: { kind: "individual" } } });
+  assert.match(person.report, /締め日の翌月20日までに/);
+  // 条件書の「Licensor 種別」が取引先の種別より先。
+  assert.equal(licensorIsIndividual({ condition }, { 許諾者種別: "個人" }), true);
+  assert.equal(licensorIsIndividual({ condition: { counterparty: { kind: "individual" } } }, { 許諾者種別: "法人" }), false);
+  assert.equal(licensorIsIndividual({}), false, "どちらも無ければ法人");
+  // 製造のつど報告する条件は製造月の翌月。
+  const event = licenseTermParts({ condition: { statementTiming: "event" } }, { 許諾者種別: "個人" });
+  assert.match(event.report, /製造のつど、製造月の翌月20日までに/);
+  // 条件明細に支払条件があれば、その契約の取り決めが勝つ。
+  const agreed = licenseTermParts({ condition: { ...condition, paymentTerms: "計算書送付後30日以内" } });
+  assert.equal(agreed.payment, "許諾料の支払は、計算書送付後30日以内とする。");
 });

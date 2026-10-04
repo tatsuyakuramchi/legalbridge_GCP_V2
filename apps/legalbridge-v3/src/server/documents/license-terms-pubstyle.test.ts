@@ -53,7 +53,7 @@ const context: Record<string, any> = {
 };
 // 期間・更新・計算書・支払・再許諾は代表の条件明細から（licenseScopeSentence と同じ出どころ）。
 context.condition = { ...context.conditions[0], termStart: "2026-10-01", termEnd: "2031-09-30",
-  autoRenew: true, renewMonths: 12, statementTiming: "periodic", paymentTerms: "締め日の翌月末日払い",
+  autoRenew: true, renewMonths: 12, statementTiming: "periodic",
   sublicensable: true, sublicenseConsent: "required" };
 
 const manual = {
@@ -123,7 +123,8 @@ test("試作：許諾内容・期間・地域・言語・許諾料は第２条�
   assert.match(art2, /<th>地域・言語<\/th><td>全世界／全言語<\/td>/);
   // 終了日・自動更新・支払は条件明細から。まとめた文（許諾範囲）に頼らない。
   assert.match(art2, /許諾期間は2026年10月1日から2031年9月30日までとする。期間満了の3か月前までに/);
-  assert.match(art2, /許諾料の支払は、締め日の翌月末日払いとする。/);
+  // 許諾者は法人（Licensor 種別）なので翌月末日。
+  assert.match(art2, /締め日の翌月末日までに許諾料計算書を許諾者に送付する。被許諾者は、同日までに許諾料を/);
   assert.match(art2, /事前の書面による承諾を得て、第三者に再許諾することができる。再許諾先は第３条による。/);
   // 取引モデルは許諾料の欄の中で「場面：算定式」として書く。利用の範囲には並べない。
   assert.match(art2, /<b>自社製造・自社販売<\/b>　被許諾者が対象製品を製造し、自ら販売する場合：上代（MSRP）× 数量 × 料率。/);
@@ -131,6 +132,13 @@ test("試作：許諾内容・期間・地域・言語・許諾料は第２条�
   // 自動で組んだ許諾範囲の文は各欄と同じことなので載せない。
   assert.doesNotMatch(art2, /<th>補足<\/th>/);
   assert.doesNotMatch(out, /本許諾の範囲は、/);
+});
+
+test("試作：許諾者が個人なら報告・支払は翌月20日", () => {
+  const person = { ...manual, 許諾者種別: "個人" };
+  const values: Record<string, unknown> = { ...person, ...licenseTermsPatch(context, person) };
+  const out = renderDocumentHtml(html, values);
+  assert.match(out, /<th>報告・支払<\/th><td>被許諾者は、各計算期間の末日で締め、締め日の翌月20日までに/);
 });
 
 test("試作：許諾範囲の文を人が直したときだけ「補足」として載せる", () => {
