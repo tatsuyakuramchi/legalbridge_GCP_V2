@@ -37,8 +37,11 @@ const patternLabel = (p: TradePattern) => { const x = PATTERNS.find((q) => q.val
 
 /** 段階 3 で作る文書。ひな形は本番 DB のもの（template_key）。 */
 const DOCS: Record<TradePattern, Array<{ key: string; label: string; conditions: "license_in" | "license_out" | "service" | "none" }>> = {
-  // V4（2026-10 ローンチ）。V3 で作った文書は V3 のまま開ける。
-  game_in: [{ key: "individual_license_terms_v4", label: "個別利用許諾条件書", conditions: "license_in" }],
+  // V4（2026-10 ローンチ。CloudSign 体裁）を先に、V3 を後に並べて選ばせる。
+  // ボタンは有効なひな形だけ出す（V3 を止めれば V4 だけになる）。V3 で作った文書は
+  // どちらでも一覧に出る（一覧はここに並ぶ鍵すべてで拾う）。
+  game_in: [{ key: "individual_license_terms_v4", label: "個別利用許諾条件書V4", conditions: "license_in" },
+            { key: "individual_license_terms_v3", label: "個別利用許諾条件書V3", conditions: "license_in" }],
   pub_in: [{ key: "pub_master_individual", label: "出版許諾契約書（個人）", conditions: "license_in" },
            { key: "pub_master_corporate", label: "出版許諾契約書（法人）", conditions: "license_in" }],
   game_out: [{ key: "pub_license_terms_v3", label: "利用許諾条件書（一覧形式）", conditions: "license_out" },
@@ -113,6 +116,17 @@ function TradeFlow(
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  /**
+   * 有効なひな形の鍵。作るボタンはここにある鍵だけ出す（止めたひな形で作ろうとすると
+   * 「テンプレートが見つかりません」で落ちる）。読めなかったら null のまま＝全部出す。
+   */
+  const [activeKeys, setActiveKeys] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    api.get<{ templates: Array<{ templateKey: string }> }>("/document-templates")
+      .then((r) => setActiveKeys(new Set(r.templates.map((t) => t.templateKey))))
+      .catch(() => undefined);
+  }, []);
+  const creatable = DOCS[p].filter((d) => !activeKeys || activeKeys.has(d.key));
 
   async function load(id: number) {
     try {
@@ -290,7 +304,7 @@ function TradeFlow(
               <div className="panel-bd stack">
                 {!mine.length && <div className="note warn">先に{stages[2].name}を登録してください（文書は条件から作ります）</div>}
                 <div className="row" style={{ flexWrap: "wrap" }}>
-                  {DOCS[p].map((d) => (
+                  {creatable.map((d) => (
                     <button key={d.key} className="btn primary" disabled={!mine.length}
                             onClick={() => onCompose(conditionIdsFor(d.conditions), [], detail.id, d.key)}>
                       {d.label}を作る
