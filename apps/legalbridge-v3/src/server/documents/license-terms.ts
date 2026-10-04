@@ -64,6 +64,15 @@ export const DEAL_NAME_EN: Record<string, string> = {
   "自社製造・他社販売": "WHOLESALE"
 };
 
+/** 取引モデル名を見出し2行に分ける。括弧の前か「・」で分け、分けられなければ1行。 */
+export function headLines(name: string): { condHead1: string; condHead2: string } {
+  const paren = name.search(/[（(]/);
+  if (paren > 0) return { condHead1: name.slice(0, paren), condHead2: name.slice(paren) };
+  const dot = name.indexOf("・");
+  if (dot > 0) return { condHead1: name.slice(0, dot), condHead2: name.slice(dot + 1) };
+  return { condHead1: name, condHead2: "" };
+}
+
 /** 加算型の形態。構成要素の料率を合算する側で、料率の列がここの数だけ出る。 */
 export const addonDeals = (deals: Data[]): Data[] => deals.filter((d) => Boolean(d.addon));
 
@@ -655,6 +664,9 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     condFormulaRated: appliedRate(deal) === "—" ? formulaOf(deal)
       : formulaOf(deal).replace(/料率\s*$/, appliedRate(deal)),
     condNameEn: DEAL_NAME_EN[text(deal.name)] ?? "",
+    // 狭い列の見出し用に2行へ分けた名前（「自社製造／自社販売」「権利許諾／（サブライセンス）」）。
+    // 文字数で折り返すと「自社製造・自社販／売」のように語の途中で切れる。
+    ...headLines(text(deal.name)),
     /** 取引モデルごとの独占性。条件明細に無ければ書類の独占性。 */
     condExclusivity: text(deal.excl) || pick("独占性", "exclusivity"),
     /** 許諾料の条に書く、その取引モデルが当たる場面。 */

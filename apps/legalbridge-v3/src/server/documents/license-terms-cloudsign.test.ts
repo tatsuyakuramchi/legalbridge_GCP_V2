@@ -89,6 +89,13 @@ test("CloudSign 版：別紙は署名欄の後ろに改ページ。別紙1 特�
   assert.ok(out.indexOf('class="sign"') < out.indexOf('<div class="annex">'));
   assert.match(out, /別紙1<\/span>特記事項/);
   assert.match(out, /\(1\) 初回製造分の見本10部を許諾者に無償で提供する。/);
+  // 別紙の見出しは3つとも同じ形。
+  for (const h of ["別紙1</span>特記事項", "別紙2</span>対象著作物一覧", "別紙3</span>再許諾先一覧"]) {
+    assert.ok(out.includes(`<h2><span class="no">${h}`), h);
+  }
+  // 料率の列の見出しは語の切れ目で2行にする。
+  assert.match(out, /<th class="c" style="width:22mm">自社製造<span class="l2">自社販売<\/span><\/th>/);
+  assert.match(out, /権利許諾<span class="l2">（サブライセンス）<\/span>/);
   assert.match(out, /<b>ito_オリジナルゲームデザイン一式<\/b><span class="role">コアロジック<\/span>/);
   assert.match(out, /根拠文書　ARC-ILT-2026-0030/);
   assert.match(out, /<td>サブB社<\/td>.*<td class="c">2027\.03\.15<\/td><\/tr>\s*<tr class="memo"><td><\/td><td>備考<\/td><td colspan="4">MG 500,000円を別途受領<\/td>/s);
@@ -99,8 +106,8 @@ test("CloudSign 版：締結時点で再許諾先が無ければ別紙3は空の
   assert.match(out, /（本条件書の締結時点で再許諾先はない）/);
   assert.match(out, /<td class="k">特記事項<\/td><td>なし<\/td>/);
   assert.doesNotMatch(out, /別紙1「特記事項」に定める/);
-  assert.match(out, /別紙1<\/span>特記事項<span class="en">SPECIAL TERMS<\/span><\/h2>\s*<p class="lead">なし<\/p>/);
-  assert.match(out, /別紙2　対象著作物一覧/);
+  assert.match(out, /別紙1<\/span>特記事項<span class="en">SPECIAL TERMS<\/span><\/h2>\s*<p>なし<\/p>/);
+  assert.match(out, /別紙2<\/span>対象著作物一覧/);
 });
 
 test("CloudSign 版：再許諾できない条件なら、そう書いて承諾の文を出さない", () => {

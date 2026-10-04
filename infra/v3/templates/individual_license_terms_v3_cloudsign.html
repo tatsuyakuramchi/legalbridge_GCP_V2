@@ -104,10 +104,12 @@
   .tail { break-inside: avoid; page-break-inside: avoid; }
 
   .annex { break-before: page; page-break-before: always; }
-  .annex-title { font-size: 10.5pt; margin: 0; }
-  .annex-title.sub { font-size: 15pt; }
-  .annex-en { font-size: 6.5pt; color: #777; margin: 0 0 2mm; letter-spacing: .06em; }
-  .lead { color: #555; font-size: 7.5pt; }
+  /* 別紙の見出しは3つとも同じ形（本文の 01〜04 と同じ組み方で、少し大きく）。 */
+  .annex h2 { font-size: 10pt; margin: 0 0 1.5mm; }
+  .annex h2 .no { font-size: 8pt; }
+  .annex .part + .part { margin-top: 6mm; }
+  .lead { color: #555; }
+  .grid th .l2 { display: block; font-weight: normal; font-size: 6.5pt; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -230,17 +232,18 @@
 
 <!-- 別紙。本文（署名欄まで）の後ろに改ページして付ける。 -->
 <div class="annex">
-<h2 class="annex-title"><span class="no">別紙1</span>特記事項<span class="en">SPECIAL TERMS</span></h2>
+<div class="part">
+<h2><span class="no">別紙1</span>特記事項<span class="en">SPECIAL TERMS</span></h2>
 {{#if specialExtras.length}}
 <p class="lead">本条件書の本文に定める条件に加え、次の特記事項を適用する。</p>
-{{#each specialExtras}}<p class="lead">{{#if seId}}({{seId}}) {{/if}}{{seText}}</p>{{/each}}
+{{#each specialExtras}}<p>{{#if seId}}({{seId}}) {{/if}}{{seText}}</p>{{/each}}
 {{else}}
-<p class="lead">なし</p>
+<p>なし</p>
 {{/if}}
-<div style="height:5mm"></div>
+</div>
 
-<p class="annex-title sub"><b>別紙2　対象著作物一覧</b></p>
-<p class="annex-en">LICENSED WORKS REGISTER / VARIABLE-LENGTH SECTION</p>
+<div class="part">
+<h2><span class="no">別紙2</span>対象著作物一覧<span class="en">LICENSED WORKS REGISTER</span></h2>
 <p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率は取引モデルごとの合意料率を示し、「—」は当該モデルで料率がないことを示す。</p>
 <table class="grid">
   <thead>
@@ -248,7 +251,7 @@
       <th class="c" style="width:7mm">No.</th>
       <th>構成要素</th>
       {{#if showHolder}}<th style="width:30mm">権利元</th>{{/if}}
-      {{#each conds}}<th class="c" style="width:20mm">{{condName}}</th>{{/each}}
+      {{#each conds}}<th class="c" style="width:22mm">{{condHead1}}{{#if condHead2}}<span class="l2">{{condHead2}}</span>{{/if}}</th>{{/each}}
     </tr>
   </thead>
   <tbody>
@@ -275,10 +278,10 @@
   </tfoot>
   {{/if}}
 </table>
+</div>
 
-<div style="height:6mm"></div>
-<p class="annex-title sub"><b>別紙3　再許諾先一覧</b></p>
-<p class="annex-en">SUBLICENSE REGISTER / VARIABLE-LENGTH SECTION</p>
+<div class="part">
+<h2><span class="no">別紙3</span>再許諾先一覧<span class="en">SUBLICENSE REGISTER</span></h2>
 <p class="lead">一覧の1行が再許諾1件。再許諾先を追加したときは、その都度本別紙に行を加える。料率は、当該再許諾について被許諾者が許諾者に支払う許諾料の料率を示す。</p>
 <table class="grid">
   <thead>
@@ -295,6 +298,7 @@
   {{/unless}}
   </tbody>
 </table>
+</div>
 </div>
 
 </body>
