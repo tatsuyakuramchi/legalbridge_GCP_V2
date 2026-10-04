@@ -1,5 +1,8 @@
 /**
- * 個別利用許諾条件書（individual_license_terms_v3）。
+ * 個別利用許諾条件書（individual_license_terms_v3 / v4）。
+ *
+ * V4（2026-10 ローンチ）は本文だけが違う（CloudSign 向けの体裁。infra/v3/155）。
+ * 項目・表の種・計算ブロックは V3 と共通で、ここが両方に効く。
  *
  * この書類だけ、項目の一覧が V1・V2 では **コードの中** にあった
  * （V2 template-repository の `databaseFields.length === 0 ? individualLicenseV3Fields`）。
@@ -18,8 +21,11 @@ import type { TemplateVariable } from "./binding.js";
 import { dealIdOfUsage } from "../core/condition-usage.js";
 
 export const LICENSE_TERMS_KEY = "individual_license_terms_v3";
+/** V4。新しく作る条件書はこちら（V3 で作った文書は V3 のまま）。 */
+export const LICENSE_TERMS_V4_KEY = "individual_license_terms_v4";
+export const LICENSE_TERMS_KEYS = [LICENSE_TERMS_KEY, LICENSE_TERMS_V4_KEY];
 export const isLicenseTermsTemplate = (templateKey: string): boolean =>
-  templateKey === LICENSE_TERMS_KEY;
+  LICENSE_TERMS_KEYS.includes(templateKey);
 
 type Data = Record<string, any>;
 
@@ -57,7 +63,7 @@ export const DEAL_DESCRIPTION: Record<string, string> = {
   "自社製造・他社販売": "被許諾者が対象製品を製造し、販売店その他の第三者に供給する場合"
 };
 
-/** 取引モデルの英語の見出し（CloudSign 版の許諾料の欄）。 */
+/** 取引モデルの英語の見出し（V4 の許諾料の欄）。 */
 export const DEAL_NAME_EN: Record<string, string> = {
   "自社製造・自社販売": "SELF-PUBLISHING",
   "権利許諾（サブライセンス）": "SUBLICENSE",
@@ -499,7 +505,7 @@ const scopeKey = (value: unknown): string =>
   text(value).split(/[・、,，\s]+/).filter(Boolean).sort().join("・");
 
 /**
- * 報告と支払を1文で書く（CloudSign 版の書き方）。
+ * 報告と支払を1文で書く（V4 の書き方）。
  * 締日の翌月の期日（個人＝20日／法人＝末日）までに計算書を交付し、同日までに振り込む。
  * 期日は報告も支払も許諾者の種別だけで決まる。条件明細の支払条件（移行で一律の
  * 文字列が入っていることがある）では変えない。
@@ -743,7 +749,7 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
       if (condition.sublicensable === true) return condition.sublicenseConsent === "covered" ? "covered" : "consent";
       return deals.some((deal) => !deal.addon) ? "consent" : "";
     })(),
-    /** 報告・支払の1文（CloudSign 版）。期日は許諾者の種別で決まる。 */
+    /** 報告・支払の1文（V4）。期日は許諾者の種別で決まる。 */
     reportSentence: reportSentence(context, manual),
     scopeVaries: new Set(conds.map((c) => `${scopeKey(c.condRegion)}|${scopeKey(c.condLang)}`)).size > 1,
     showHolder,

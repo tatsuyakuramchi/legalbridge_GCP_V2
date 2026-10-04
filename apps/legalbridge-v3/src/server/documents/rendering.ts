@@ -8,7 +8,7 @@ export function registerLegacyHelpers(handlebars: HelperRegistry) {
   handlebars.registerHelper("formatCurrency", formatCurrency);
   handlebars.registerHelper("formatDate", formatDate);
   handlebars.registerHelper("formatDateCompact", formatDateCompact);
-  // CloudSign 版の条件書。"2026.10.01"。
+  // 個別利用許諾条件書V4。"2026.10.01"。
   handlebars.registerHelper("formatDateDot", (value: unknown) => formatDateCompact(value).replace(/\//g, "."));
   // 海外版の書類。"September 23, 2026"。日付でない文字列（範囲のまとめ）はそのまま。
   handlebars.registerHelper("formatDateEn", formatDateEn);

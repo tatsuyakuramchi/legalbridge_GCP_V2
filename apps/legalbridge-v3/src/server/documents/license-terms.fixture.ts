@@ -1,5 +1,5 @@
 /**
- * 個別利用許諾条件書の試作ひな形（出版等型・CloudSign 型）の試験で使う見本データ。
+ * 個別利用許諾条件書V4 の本文の試験で使う見本データ。
  * license-terms.test.ts と同じ形（本番のデータの形）。素材2は形態を画面で選んだ想定。
  */
 import { licenseScopeSentence } from "./license-terms.js";

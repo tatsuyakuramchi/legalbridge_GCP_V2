@@ -37,7 +37,8 @@ const patternLabel = (p: TradePattern) => { const x = PATTERNS.find((q) => q.val
 
 /** 段階 3 で作る文書。ひな形は本番 DB のもの（template_key）。 */
 const DOCS: Record<TradePattern, Array<{ key: string; label: string; conditions: "license_in" | "license_out" | "service" | "none" }>> = {
-  game_in: [{ key: "individual_license_terms_v3", label: "個別利用許諾条件書", conditions: "license_in" }],
+  // V4（2026-10 ローンチ）。V3 で作った文書は V3 のまま開ける。
+  game_in: [{ key: "individual_license_terms_v4", label: "個別利用許諾条件書", conditions: "license_in" }],
   pub_in: [{ key: "pub_master_individual", label: "出版許諾契約書（個人）", conditions: "license_in" },
            { key: "pub_master_corporate", label: "出版許諾契約書（法人）", conditions: "license_in" }],
   game_out: [{ key: "pub_license_terms_v3", label: "利用許諾条件書（一覧形式）", conditions: "license_out" },

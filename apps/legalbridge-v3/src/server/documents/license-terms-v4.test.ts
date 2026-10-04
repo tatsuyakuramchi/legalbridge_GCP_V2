@@ -9,15 +9,15 @@ import { LICENSE_TERMS_VARIABLES, licenseTermsPatch } from "./license-terms.js";
 import { context, manual } from "./license-terms.fixture.js";
 
 /**
- * 試作：個別利用許諾条件書V3 の CloudSign 版
- * （infra/v3/templates/individual_license_terms_v3_cloudsign.html。利用者の
- * CloudSign_LicenseTerms_v6_fixed.docx をひな形にしたもの）。
+ * 個別利用許諾条件書V4（infra/v3/templates/individual_license_terms_v4.html。利用者の
+ * CloudSign_LicenseTerms_v6_fixed.docx をひな形にしたもの）。本番へは infra/v3/155 が運ぶ。
  *
- * 見張るのは、docx の文言・構成が条件明細と条件書の欄からそのまま組めること。
+ * 見張るのは、docx の文言・構成が条件明細と条件書の欄からそのまま組めることと、
+ * 155 の SQL が運ぶ本文がこのファイルと同じであること。
  */
 const here = path.dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(
-  path.resolve(here, "../../../../../infra/v3/templates/individual_license_terms_v3_cloudsign.html"), "utf8");
+  path.resolve(here, "../../../../../infra/v3/templates/individual_license_terms_v4.html"), "utf8");
 
 function renderSample(over: Record<string, unknown> = {}, base: Record<string, unknown> = manual) {
   const values: Record<string, unknown> = { ...base, ...licenseTermsPatch(context, base), ...over };
@@ -25,7 +25,7 @@ function renderSample(over: Record<string, unknown> = {}, base: Record<string, u
 }
 const between = (out: string, from: string, to: string) => out.slice(out.indexOf(from), out.indexOf(to));
 
-test("CloudSign 版：本文が差す名前は、いまの計算ブロックからすべて出る", () => {
+test("V4：本文が差す名前は、いまの計算ブロックからすべて出る", () => {
   const { values } = renderSample();
   const rowNames = new Set(["condName", "condNameEn", "condExclusivity", "condRegion", "condLang", "appliedRate",
     "condFormulaRated", "hasGuarantee", "ag", "mg", "currency", "lcName", "lcRole", "lcHolder", "lcNote",
@@ -36,7 +36,7 @@ test("CloudSign 版：本文が差す名前は、いまの計算ブロックか�
   assert.deepEqual(blanks, []);
 });
 
-test("CloudSign 版：見出し・当事者・本文 01〜04 が docx のとおりに出る", () => {
+test("V4：見出し・当事者・本文 01〜04 が docx のとおりに出る", () => {
   const { out } = renderSample();
   assert.match(out, /<span class="k">ISSUED<\/span><b>2026\.10\.01<\/b>/);
   assert.match(out, /<span class="k">NO\.<\/span><b>ARC-ILT-2026-0041<\/b>/);
@@ -48,7 +48,7 @@ test("CloudSign 版：見出し・当事者・本文 01〜04 が docx のとお�
   assert.match(out, /content: "ARC-ILT-2026-0041　個別利用許諾条件書"/, "フッターに条件書番号");
 });
 
-test("CloudSign 版：許諾条件。期間は開始日だけで終了・更新は基本契約に従う。再許諾は承諾要", () => {
+test("V4：許諾条件。期間は開始日だけで終了・更新は基本契約に従う。再許諾は承諾要", () => {
   const art2 = between(renderSample().out, "02</span>許諾条件", "03</span>再許諾");
   assert.match(art2, /「ito 新装版」（以下「対象製品」という。）/);
   assert.match(art2, /本許諾の開始日は2026年10月1日とする。本許諾の終了、更新その他の有効期間に関する事項は、利用許諾基本契約書の定めに従う。/);
@@ -57,7 +57,7 @@ test("CloudSign 版：許諾条件。期間は開始日だけで終了・更新�
   assert.match(art2, /別紙1「特記事項」に定める/);
 });
 
-test("CloudSign 版：取引モデル別の許諾範囲（独占性・地域・言語）を表で出す", () => {
+test("V4：取引モデル別の許諾範囲（独占性・地域・言語）を表で出す", () => {
   const art2 = between(renderSample().out, "02</span>許諾条件", "03</span>再許諾");
   assert.match(art2, /<td>自社製造・自社販売<\/td><td>非独占<\/td><td>日本<\/td><td>日本語<\/td>/);
   assert.match(art2, /<td>権利許諾（サブライセンス）<\/td><td>非独占<\/td><td>全世界<\/td><td>全言語<\/td>/);
@@ -70,7 +70,7 @@ test("CloudSign 版：取引モデル別の許諾範囲（独占性・地域・�
   assert.match(out, /<td>自社製造・自社販売<\/td><td>非独占<\/td>/, "条件明細に無ければ書類の独占性");
 });
 
-test("CloudSign 版：許諾料はカードで、算定式に適用料率を埋める。報告・支払は1文", () => {
+test("V4：許諾料はカードで、算定式に適用料率を埋める。報告・支払は1文", () => {
   const art2 = between(renderSample().out, "02</span>許諾条件", "03</span>再許諾");
   assert.match(art2, /<span class="en">SELF-PUBLISHING<\/span>\s*<div class="name">自社製造・自社販売<\/div>\s*<div class="rate">適用料率<b>5%<\/b><\/div>\s*<div class="f">上代（MSRP）× 数量 × 5%<\/div>/);
   assert.match(art2, /<span class="en">SUBLICENSE<\/span>[\s\S]*?許諾収入 × 50%/);
@@ -86,7 +86,7 @@ test("CloudSign 版：許諾料はカードで、算定式に適用料率を埋�
   assert.doesNotMatch(out, /翌々月末払い/);
 });
 
-test("CloudSign 版：別紙は署名欄の後ろに改ページ。別紙1 特記事項・別紙2 対象著作物一覧・別紙3 再許諾先一覧", () => {
+test("V4：別紙は署名欄の後ろに改ページ。別紙1 特記事項・別紙2 対象著作物一覧・別紙3 再許諾先一覧", () => {
   const { out } = renderSample({ sublicensees: [
     { slPartner: "サブA社", slRegion: "北米", slLang: "英語", slCond: "権利許諾（サブライセンス）", slRate: "50", slDate: "2026-12-01" },
     { slPartner: "サブB社", slRegion: "ドイツ", slLang: "ドイツ語", slCond: "権利許諾（サブライセンス）", slRate: "50", slDate: "2027-03-15", slNote: "MG 500,000円を別途受領" }
@@ -106,7 +106,7 @@ test("CloudSign 版：別紙は署名欄の後ろに改ページ。別紙1 特�
   assert.match(out, /<td>サブB社<\/td>.*<td class="c">2027\.03\.15<\/td><\/tr>\s*<tr class="memo"><td><\/td><td>備考<\/td><td colspan="4">MG 500,000円を別途受領<\/td>/s);
 });
 
-test("CloudSign 版：締結時点で再許諾先が無ければ別紙3は空の行。特記事項が無ければ「なし」", () => {
+test("V4：締結時点で再許諾先が無ければ別紙3は空の行。特記事項が無ければ「なし」", () => {
   const { out } = renderSample({ sublicensees: [], specialExtras: [] });
   assert.match(out, /（本条件書の締結時点で再許諾先はない）/);
   assert.match(out, /<td class="k">特記事項<\/td><td>なし<\/td>/);
@@ -115,7 +115,7 @@ test("CloudSign 版：締結時点で再許諾先が無ければ別紙3は空の
   assert.match(out, /別紙2<\/span>対象著作物一覧/);
 });
 
-test("CloudSign 版：再許諾できない条件なら、そう書いて承諾の文を出さない", () => {
+test("V4：再許諾できない条件なら、そう書いて承諾の文を出さない", () => {
   const none = { ...context, condition: { ...context.condition, sublicensable: false } };
   const values = { ...manual, ...licenseTermsPatch(none, manual) };
   const out = renderDocumentHtml(html, values);
@@ -123,7 +123,7 @@ test("CloudSign 版：再許諾できない条件なら、そう書いて承諾�
   assert.doesNotMatch(out, /事前の書面による承諾を得た場合に限り/);
 });
 
-test("CloudSign 版：署名欄は署名版と押印版。署名日・署名の枠は空のまま（年月日を刷らない）", () => {
+test("V4：署名欄は署名版と押印版。署名日・署名の枠は空のまま（年月日を刷らない）", () => {
   const sign = between(renderSample({ 署名欄: "署名" }).out, '<table class="sign">', "<!-- 別紙。");
   assert.equal((sign.match(/<span class="lbl">署名日<\/span><span class="box"><\/span>/g) ?? []).length, 2, "両者に署名日の枠");
   assert.equal((sign.match(/<span class="lbl">署名<\/span><span class="box"><\/span>/g) ?? []).length, 2, "両者に署名の枠");
@@ -142,9 +142,18 @@ test("CloudSign 版：署名欄は署名版と押印版。署名日・署名の�
   assert.doesNotMatch(renderSample({ 署名欄: "表示しない" }).out, /<table class="sign">/);
 });
 
-test("CloudSign 版：署名日・署名・通知先の枠は高さ 12pt 固定", () => {
+test("V4：署名日・署名・通知先の枠は高さ 12pt 固定", () => {
   assert.match(html, /\.field \.box \{[^}]*height: 12pt;/);
   assert.match(html, /\.notice \.fix \{[^}]*height: 12pt;/);
   const out = renderSample().out;
   assert.match(out, /<td class="k"><div class="fix">許諾者<\/div><\/td><td><div class="fix">甲野 花子 ／ hanako@example.test<\/div><\/td>/);
+});
+
+test("V4：155 の SQL が運ぶ本文はひな形のファイルと同じ（片方だけ直すと本番とずれる）", () => {
+  const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/155_individual_license_terms_v4.sql"), "utf8");
+  const start = sql.indexOf("$tpl$") + "$tpl$".length;
+  const end = sql.indexOf("$tpl$", start);
+  assert.ok(start > 5 && end > start, "155 に $tpl$ … $tpl$ がある");
+  assert.equal(sql.slice(start, end), html);
+  assert.match(sql, /'individual_license_terms_v4'/);
 });

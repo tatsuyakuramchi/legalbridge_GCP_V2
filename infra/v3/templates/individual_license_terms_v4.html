@@ -1,12 +1,13 @@
-<!-- individual_license_terms_v3 cloudsign draft -->
+<!-- individual_license_terms_v4 r1 -->
 <!--
-  試作：個別利用許諾条件書V3 の CloudSign 版（利用者作成の CloudSign_LicenseTerms_v6_fixed.docx を
-  ひな形にしたもの）。本番には流していない（検証用）。
+  個別利用許諾条件書V4（individual_license_terms_v4）。本番へは infra/v3/155 が運ぶ
+  （この本文をそのまま埋めてある。直すときはここを直して 155 を作り直す）。
+  元は利用者作成の CloudSign_LicenseTerms_v6_fixed.docx。
 
-  本文は 01〜04 の4条＋署名欄。可変長の一覧は別紙に回す：
-    別紙1 特記事項 / 別紙2 対象著作物一覧 / 別紙3 再許諾先一覧（締結後に行が増える）
+  本文は 01〜04 の4条＋署名欄を1ページに収める。可変長の一覧は改ページして別紙に回す：
+    別紙1 特記事項（無ければ「なし」）/ 別紙2 対象著作物一覧 / 別紙3 再許諾先一覧（締結後に行が増える）
   差し込みは licenseTermsPatch（apps/legalbridge-v3/src/server/documents/license-terms.ts）の値。
-  署名欄 は formData をそのまま描画に渡しているので直接参照できる（073 と同じ）。
+  署名欄（署名／押印／表示しない）は formData をそのまま描画に渡しているので直接参照できる。
 
   見出し・余白は docx の値に合わせる（本文 7pt・表題 19pt・見出し 9pt、罫線は上の濃い線と
   行間の薄い線だけ）。ヘッダー・フッターは @page の余白ボックスで出す

@@ -53,6 +53,7 @@ const context = {
 
 test("条件書のひな形だけを見分ける", () => {
   assert.equal(isLicenseTermsTemplate("individual_license_terms_v3"), true);
+  assert.equal(isLicenseTermsTemplate("individual_license_terms_v4"), true, "V4 も同じ項目・計算");
   assert.equal(isLicenseTermsTemplate("royalty_statement"), false);
 });
 
