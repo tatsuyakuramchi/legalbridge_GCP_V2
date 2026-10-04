@@ -94,10 +94,12 @@ test("CloudSign 版：別紙は署名欄の後ろに改ページ。別紙1 特�
   assert.match(out, /<td>サブB社<\/td>.*<td class="c">2027\.03\.15<\/td><\/tr>\s*<tr class="memo"><td><\/td><td>備考<\/td><td colspan="4">MG 500,000円を別途受領<\/td>/s);
 });
 
-test("CloudSign 版：締結時点で再許諾先が無ければ別紙3は空の行。特記事項が無ければ別紙1と行を出さない", () => {
+test("CloudSign 版：締結時点で再許諾先が無ければ別紙3は空の行。特記事項が無ければ「なし」", () => {
   const { out } = renderSample({ sublicensees: [], specialExtras: [] });
   assert.match(out, /（本条件書の締結時点で再許諾先はない）/);
-  assert.doesNotMatch(out, /別紙1<\/span>特記事項|別紙1「特記事項」/);
+  assert.match(out, /<td class="k">特記事項<\/td><td>なし<\/td>/);
+  assert.doesNotMatch(out, /別紙1「特記事項」に定める/);
+  assert.match(out, /別紙1<\/span>特記事項<span class="en">SPECIAL TERMS<\/span><\/h2>\s*<p class="lead">なし<\/p>/);
   assert.match(out, /別紙2　対象著作物一覧/);
 });
 
@@ -109,7 +111,28 @@ test("CloudSign 版：再許諾できない条件なら、そう書いて承諾�
   assert.doesNotMatch(out, /事前の書面による承諾を得た場合に限り/);
 });
 
-test("CloudSign 版：署名欄=表示しない で記名欄を消す", () => {
-  assert.match(renderSample().out, /class="sign"/);
-  assert.doesNotMatch(renderSample({ 署名欄: "表示しない" }).out, /class="sign"/);
+test("CloudSign 版：署名欄は署名版と押印版。署名日・署名の枠は空のまま（年月日を刷らない）", () => {
+  const sign = between(renderSample({ 署名欄: "署名" }).out, '<table class="sign">', "<!-- 別紙。");
+  assert.equal((sign.match(/<span class="lbl">署名日<\/span><span class="box"><\/span>/g) ?? []).length, 2, "両者に署名日の枠");
+  assert.equal((sign.match(/<span class="lbl">署名<\/span><span class="box"><\/span>/g) ?? []).length, 2, "両者に署名の枠");
+  assert.doesNotMatch(sign, /class="stamp"/);
+  assert.doesNotMatch(sign, /年\s*月\s*日/, "署名日は自由記入なので年月日を刷らない");
+
+  const seal = between(renderSample({ 署名欄: "押印" }).out, '<table class="sign">', "<!-- 別紙。");
+  assert.equal((seal.match(/class="stamp">印</g) ?? []).length, 2, "両者に印の枠");
+  assert.equal((seal.match(/署名日<\/span><span class="box">/g) ?? []).length, 2, "押印版も署名日の枠");
+  assert.doesNotMatch(seal, /<span class="lbl">署名<\/span>/, "押印版に署名の枠は無い");
+
+  // 空欄・以前の「表示する」は署名版。
+  for (const value of ["", "表示する"]) {
+    assert.match(renderSample({ 署名欄: value }).out, /<span class="lbl">署名<\/span><span class="box">/);
+  }
+  assert.doesNotMatch(renderSample({ 署名欄: "表示しない" }).out, /<table class="sign">/);
+});
+
+test("CloudSign 版：署名日・署名・通知先の枠は高さ 12pt 固定", () => {
+  assert.match(html, /\.field \.box \{[^}]*height: 12pt;/);
+  assert.match(html, /\.notice \.fix \{[^}]*height: 12pt;/);
+  const out = renderSample().out;
+  assert.match(out, /<td class="k"><div class="fix">許諾者<\/div><\/td><td><div class="fix">甲野 花子 ／ hanako@example.test<\/div><\/td>/);
 });

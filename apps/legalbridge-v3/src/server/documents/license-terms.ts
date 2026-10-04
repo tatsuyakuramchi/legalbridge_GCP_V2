@@ -81,9 +81,12 @@ export const LICENSE_TERMS_VARIABLES: TemplateVariable[] = [
   { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "agreement.title" },
   { name: "work_id", label: "作品ID", group: "I. 基本情報",
     helpText: "作品台帳との参照キー", dbField: "work.code", noGuess: true },
-  { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["表示する", "表示しない"],
+  // 「署名」「押印」は署名欄の形（署名の枠／印の枠）。どちらも本番の現行ひな形では
+  // 「表示する」と同じに働く（現行ひな形は「表示しない」かどうかしか見ない）。
+  // 以前の「表示する」は「署名」として扱う。
+  { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["署名", "押印", "表示しない"],
     group: "I. 基本情報", noGuess: true,
-    helpText: "基本契約と一括で電子署名する場合は「表示しない」にすると、基本契約側の署名欄だけになります。" },
+    helpText: "署名＝署名日と署名の枠、押印＝署名日と印の枠。基本契約と一括で電子署名する場合は「表示しない」にすると、基本契約側の署名欄だけになります。" },
 
   { name: "Licensor_氏名会社名", label: "Licensor 名称", group: "II. Licensor", required: true,
     dbField: "vendor.vendor_name", noGuess: true },
