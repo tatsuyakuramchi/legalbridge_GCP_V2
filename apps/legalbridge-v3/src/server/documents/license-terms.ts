@@ -57,6 +57,13 @@ export const DEAL_DESCRIPTION: Record<string, string> = {
   "自社製造・他社販売": "被許諾者が対象製品を製造し、販売店その他の第三者に供給する場合"
 };
 
+/** 取引モデルの英語の見出し（CloudSign 版の許諾料の欄）。 */
+export const DEAL_NAME_EN: Record<string, string> = {
+  "自社製造・自社販売": "SELF-PUBLISHING",
+  "権利許諾（サブライセンス）": "SUBLICENSE",
+  "自社製造・他社販売": "WHOLESALE"
+};
+
 /** 加算型の形態。構成要素の料率を合算する側で、料率の列がここの数だけ出る。 */
 export const addonDeals = (deals: Data[]): Data[] => deals.filter((d) => Boolean(d.addon));
 
@@ -266,6 +273,8 @@ export function dealSeeds(context: Data): Data[] {
       rateConflict: !deal.addon
         && new Set(matches.map((c) => text(c.ratePct ?? ""))).size > 1,
       reg: joined(match.scopes?.region) || String(deal.maxReg),
+      // 取引モデルごとの独占性。条件明細ごとに持っている（同じ作品でも形態で違うことがある）。
+      excl: text(match.exclusivityLabel ?? ""),
       lang: joined(match.scopes?.language) || String(deal.maxLang),
       ag: text(match.agAmount ?? 0), mg: text(match.mgAmount ?? 0),
       cur: match.currency ?? deal.cur
@@ -478,6 +487,23 @@ const scopeKey = (value: unknown): string =>
   text(value).split(/[・、,，\s]+/).filter(Boolean).sort().join("・");
 
 /**
+ * 報告と支払を1文で書く（CloudSign 版の書き方）。
+ * 締日の翌月の期日（個人＝20日／法人＝末日）までに計算書を交付し、同日までに振り込む。
+ * 条件明細に支払条件が書いてあれば、支払はその取り決めによる。
+ */
+export function reportSentence(context: Data, bound: Data = {}): string {
+  const condition = context.condition ?? {};
+  const day = licensorIsIndividual(context, bound) ? "20日" : "末日";
+  const payment = text(condition.paymentTerms ?? "").trim();
+  const head = String(condition.statementTiming ?? "") === "event"
+    ? `被許諾者は、対象製品の製造のつど、製造月の翌月${day}までに許諾料計算書を許諾者に交付する`
+    : `被許諾者は、各計算期間の末日を締日とし、締日の翌月${day}までに許諾料計算書を許諾者に交付する`;
+  return payment
+    ? `${head}。許諾料の支払は、${payment}とする。`
+    : `${head}とともに、同日までに算定された許諾料を許諾者の指定する銀行口座へ振り込む方法により支払うものとする。`;
+}
+
+/**
  * 許諾者が個人か。条件書の「Licensor 種別」が先、無ければ取引先の種別。
  * どちらも無ければ法人として扱う（本文の licensorIsCorp と同じ既定）。
  */
@@ -597,6 +623,16 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     return found ? percent(total) : "—";
   };
 
+  const pick = (...keys: string[]): string => {
+    for (const key of keys) {
+      const value = manual[key] ?? context[key];
+      if (value != null && String(value).trim() !== "") return String(value);
+    }
+    return "";
+  };
+  const formulaOf = (deal: Data): string => (/料率/.test(text(deal.basePrice)) ? text(deal.basePrice)
+    : `${text(deal.basePrice) || "基準価格"} × 料率`);
+
   const conds = deals.map((deal, index) => ({
     condLabel: `条件${index + 1}`,
     condName: text(deal.name),
@@ -611,8 +647,13 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     mg: text(deal.mg) || "0",
     currency: text(deal.cur) || "JPY",
     // 算定式の文。基準価格の欄に「料率」まで書いてあればそのまま使う。
-    condFormula: /料率/.test(text(deal.basePrice)) ? text(deal.basePrice)
-      : `${text(deal.basePrice) || "基準価格"} × 料率`,
+    condFormula: formulaOf(deal),
+    // 料率を数字で埋めた算定式（「上代（MSRP）× 数量 × 5%」）。料率が無ければ「料率」のまま。
+    condFormulaRated: appliedRate(deal) === "—" ? formulaOf(deal)
+      : formulaOf(deal).replace(/料率\s*$/, appliedRate(deal)),
+    condNameEn: DEAL_NAME_EN[text(deal.name)] ?? "",
+    /** 取引モデルごとの独占性。条件明細に無ければ書類の独占性。 */
+    condExclusivity: text(deal.excl) || pick("独占性", "exclusivity"),
     /** 許諾料の条に書く、その取引モデルが当たる場面。 */
     condDesc: DEAL_DESCRIPTION[text(deal.name)] ?? "",
     /** AG・MG は 0 なら紙に書かない（「AG 0 JPY」を並べない）。 */
@@ -623,13 +664,6 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
   const holders = new Set(materials.map((m) => text(m.holder).trim()).filter(Boolean));
   const showHolder = holders.size > 1;
 
-  const pick = (...keys: string[]): string => {
-    for (const key of keys) {
-      const value = manual[key] ?? context[key];
-      if (value != null && String(value).trim() !== "") return String(value);
-    }
-    return "";
-  };
   const contact = (...keys: string[]) =>
     keys.map((k) => manual[k]).filter((v) => v != null && String(v).trim() !== "").join(" ／ ");
 
@@ -684,6 +718,19 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
      * 取引モデルによって地域・言語が違うか。違うときだけ、許諾条件の
      * 「地域・言語」欄に取引モデルごとの内訳を出す（同じなら1行で足りる）。
      */
+    /**
+     * 再許諾の書き方。consent=許諾者の事前の書面承諾が要る / covered=範囲内なら要らない /
+     * none=できない。条件明細で決まっていなければ、再許諾の取引モデルを載せていれば
+     * 承諾が要る側（安全な側）で書き、載せていなければ書かない。
+     */
+    sublicenseMode: (() => {
+      const condition = context.condition ?? {};
+      if (condition.sublicensable === false) return "none";
+      if (condition.sublicensable === true) return condition.sublicenseConsent === "covered" ? "covered" : "consent";
+      return deals.some((deal) => !deal.addon) ? "consent" : "";
+    })(),
+    /** 報告・支払の1文（CloudSign 版）。期日は許諾者の種別で決まる。 */
+    reportSentence: reportSentence(context, manual),
     scopeVaries: new Set(conds.map((c) => `${scopeKey(c.condRegion)}|${scopeKey(c.condLang)}`)).size > 1,
     showHolder,
     scopeColCount: 5 + (showHolder ? 1 : 0),
