@@ -26,7 +26,7 @@ import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapPartyRow, Part
  */
 
 const KIND_LABEL: Record<AgreementKind, string> = {
-  master: "基本契約", standalone: "単体契約", supplement: "補助文書", termination: "解除合意", document: "文書だけ"
+  master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書", termination: "解除合意", document: "文書だけ"
 };
 const DOMAIN_LABEL: Record<AgreementDomain, string> = { service: "業務委託", license: "ライセンス" };
 
@@ -72,7 +72,7 @@ export function AgreementMapWorkspace(
       <header className="workspace-head">
         <h1>取引先 ⇔ 基本契約</h1>
         <p>
-          取引先ごとに、基本契約とその下の補助文書・解除合意を図にします。
+          取引先ごとに、基本契約とその下の個別契約・覚書・解除合意、単体契約を図にします。
           親の無い補助文書や種別の無い基本契約など、画面によって見え方が変わる原因（ずれ）はここで付け替えます。契約締結日もここで入れます（文書には「YYYY年M月D日付＋基本契約名」で出ます）。
         </p>
       </header>
@@ -153,13 +153,16 @@ function PartyMapView(
   }
 ) {
   const [editing, setEditing] = useState<number | null>(null);
+  /** 「個別契約にする／単体契約に戻す」の欄を開いている契約。 */
+  const [leveling, setLeveling] = useState<number | null>(null);
   const issuesOf = (id: number) => map.issues.filter((i) => i.agreementId === id);
 
   const node = (a: MapAgreement, extra?: { primary?: boolean }) => (
     <AgreementNode key={a.id} a={a} issues={issuesOf(a.id)} primary={extra?.primary}
       editing={editing === a.id} onEdit={() => setEditing(editing === a.id ? null : a.id)}
+      leveling={leveling === a.id} onLevel={() => setLeveling(leveling === a.id ? null : a.id)}
       onOpen={onOpen} roots={map.roots}
-      onSaved={(msg) => { setEditing(null); onChanged(msg); }}
+      onSaved={(msg) => { setEditing(null); setLeveling(null); onChanged(msg); }}
       onDocsChanged={(msg) => onChanged(msg)} onError={onError} />
   );
 
@@ -172,7 +175,8 @@ function PartyMapView(
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               {map.issues.map((i, n) => (
                 <li key={n}>
-                  <button className="linky" onClick={() => setEditing(i.agreementId)}>{i.message}</button>
+                  <button className="linky" onClick={() => i.code === "standalone_with_master"
+                    ? setLeveling(i.agreementId) : setEditing(i.agreementId)}>{i.message}</button>
                 </li>
               ))}
             </ul>
@@ -192,6 +196,11 @@ function PartyMapView(
           </span>
         </div>
         <div className="panel-bd">
+          <p className="faint" style={{ margin: "0 0 10px" }}>
+            取引の形は2つです。<b>（1）基本契約＋個別契約</b>：基本契約の下に個別契約（条件書など）をぶら下げ、条件明細は基本契約の明細になります。
+            <b>（2）単体契約</b>：その取引だけで完結する契約で、条件明細は単体契約に載ります。
+            条件書を先に結んで後から基本契約を結んだ相手は、単体契約の「個別契約にする」で（1）に揃えます。
+          </p>
           <div className="amap">
             <div className="amap-party">{map.party.name}</div>
             <div className="amap-roots">
@@ -409,8 +418,10 @@ function LooseConditions(
 }
 
 function AgreementNode(
-  { a, issues, primary, editing, onEdit, onOpen, roots, onSaved, onDocsChanged, onError }: {
+  { a, issues, primary, editing, onEdit, leveling, onLevel, onOpen, roots, onSaved, onDocsChanged, onError }: {
     a: MapAgreement; issues: MapIssue[]; primary?: boolean; editing: boolean; onEdit: () => void;
+    /** 個別契約にする（単体契約）／単体契約に戻す（個別契約）の欄。 */
+    leveling: boolean; onLevel: () => void;
     onOpen?: (kind: EntityKind, id: number) => void; roots: MapNode[];
     onSaved: (msg: string) => void;
     /** 文書を取り込んだ・繋いだ・外したとき。図（文書の件数）を読み直す。 */
@@ -424,6 +435,9 @@ function AgreementNode(
   const [docsVersion, setDocsVersion] = useState(0);
   /** 条件明細の欄（載っている条件を見る・載せる・外す）を開いているか。 */
   const [condsOpen, setCondsOpen] = useState(false);
+  const levelOpen = leveling;
+  const canDemote = a.kind === "standalone";
+  const canPromote = a.kind === "supplement" && Boolean(a.parentId);
   return (
     <div className={`amap-node${issues.length ? " bad" : ""}`}>
       <div className="amap-line">
@@ -452,12 +466,23 @@ function AgreementNode(
                 onClick={() => setDocsOpen((v) => !v)}>
           {docsOpen ? "文書を閉じる" : "文書"}
         </button>
+        {(canDemote || canPromote) && (
+          <button className="btn btn-sm" disabled={readOnly} onClick={onLevel}>
+            {levelOpen ? "閉じる" : canDemote ? "個別契約にする" : "単体契約に戻す"}
+          </button>
+        )}
         <button className="btn btn-sm" disabled={readOnly} onClick={onEdit}>
           {editing ? "閉じる" : "編集"}
         </button>
       </div>
       {issues.map((i, n) => <div key={n} className="amap-issue">⚠ {i.message}</div>)}
       {editing && <RemapForm a={a} roots={roots} onSaved={onSaved} onError={onError} />}
+      {levelOpen && canDemote && (
+        <DemoteForm a={a} roots={roots} onSaved={onSaved} onError={onError} />
+      )}
+      {levelOpen && canPromote && (
+        <PromoteForm a={a} roots={roots} onSaved={onSaved} onError={onError} />
+      )}
       {condsOpen && (
         <div className="amap-form stack" style={{ gap: 8 }}>
           {/* この契約に載っている条件明細。同じ取引先・同じ向きの条件から載せる・外す。 */}
@@ -477,6 +502,91 @@ function AgreementNode(
             onChanged={() => onDocsChanged(`${a.agreementNo ?? `#${a.id}`} の文書を更新しました`)} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 単体契約を、基本契約の下の個別契約にする。条件明細は基本契約の明細に移る。
+ * 親にできるのは同じ取引先・同じ向きの、解除されていない基本契約。
+ */
+function DemoteForm(
+  { a, roots, onSaved, onError }: {
+    a: MapAgreement; roots: MapNode[]; onSaved: (msg: string) => void; onError: (msg: string) => void;
+  }
+) {
+  const masters = roots.filter((r) => r.kind === "master" && r.direction === a.direction && !r.terminatedOn)
+    .sort((x, y) => Number(y.domain === a.domain) - Number(x.domain === a.domain) || Number(y.primary) - Number(x.primary));
+  const [masterId, setMasterId] = useState<string>(masters[0] ? String(masters[0].id) : "");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await api.post<{ conditionsMoved: number }>(`/agreement-map/agreements/${a.id}/demote`, { masterId: Number(masterId) });
+      const m = masters.find((x) => String(x.id) === masterId);
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を ${m?.agreementNo ?? "基本契約"} の下の個別契約にしました（条件明細 ${r.conditionsMoved} 本を基本契約へ）`);
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+  if (!masters.length) {
+    return (
+      <div className="amap-form note">
+        この取引先に、{a.direction === "in" ? "IN" : "OUT"} の基本契約がありません。個別契約にするには、先に「契約を登録」で基本契約を立ててください
+        （基本契約の紙を取り込むなら、登録した基本契約の「文書」から）。
+      </div>
+    );
+  }
+  return (
+    <div className="amap-form stack" style={{ gap: 8 }}>
+      <b>（2）単体契約 → （1）基本契約＋個別契約</b>
+      <label className="field"><span>ぶら下げる基本契約</span>
+        <select value={masterId} onChange={(e) => setMasterId(e.target.value)}>
+          {masters.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.agreementNo ?? `#${m.id}`} {m.title}（{m.domain ? DOMAIN_LABEL[m.domain] : "種別なし"}{m.executedOn ? `・締結 ${m.executedOn}` : "・未締結"}{m.primary ? "・既定" : ""}）
+            </option>
+          ))}
+        </select>
+      </label>
+      <span className="faint">
+        この契約は選んだ基本契約の下の個別契約になり、載っている条件明細 {a.conditionCount} 本は基本契約の明細に移ります。
+        これから作る発注書・検収書・計算書は、この基本契約に拠って出ます。番号（{a.agreementNo ?? `#${a.id}`}）と文書はそのまま。「単体契約に戻す」で戻せます。
+      </span>
+      <div className="row">
+        <button className="btn primary btn-sm" disabled={busy || !masterId} onClick={() => void save()}>
+          {busy ? "移しています…" : "個別契約にする"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 個別契約を単体契約に戻す。基本契約に移した条件明細のうち、この契約の文書に載るものを戻す。 */
+function PromoteForm(
+  { a, roots, onSaved, onError }: {
+    a: MapAgreement; roots: MapNode[]; onSaved: (msg: string) => void; onError: (msg: string) => void;
+  }
+) {
+  const parent = roots.find((r) => r.id === a.parentId) ?? null;
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await api.post<{ conditionsMoved: number }>(`/agreement-map/agreements/${a.id}/promote`, {});
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を単体契約に戻しました（条件明細 ${r.conditionsMoved} 本を戻す）`);
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="amap-form stack" style={{ gap: 8 }}>
+      <b>（1）基本契約＋個別契約 → （2）単体契約</b>
+      <span className="faint">
+        {parent ? `${parent.agreementNo ?? `#${parent.id}`} の下から外し、` : ""}その取引だけで完結する単体契約にします。
+        基本契約に載っている条件明細のうち、この契約の文書（条件書）に載っているものを、この契約に戻します。覚書のように条件明細を持たないものは、戻さないでください。
+      </span>
+      <div className="row">
+        <button className="btn btn-sm" disabled={busy} onClick={() => void save()}>{busy ? "戻しています…" : "単体契約に戻す"}</button>
+      </div>
     </div>
   );
 }

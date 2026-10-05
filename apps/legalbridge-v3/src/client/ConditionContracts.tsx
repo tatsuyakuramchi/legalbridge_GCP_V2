@@ -16,7 +16,7 @@ interface Contracts {
   candidates: { masters: Agreement[]; terms: Terms[] };
 }
 
-const KIND_LABEL: Record<string, string> = { master: "基本契約", standalone: "単体契約", supplement: "補助文書", termination: "解除合意", document: "文書" };
+const KIND_LABEL: Record<string, string> = { master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書", termination: "解除合意", document: "文書" };
 const STATUS_LABEL: Record<string, string> = { issued: "決定済", draft: "下書き", superseded: "訂正版あり", reserved: "番号のみ" };
 
 export function ConditionContracts({ conditionId, onOpen, onChanged }: {
