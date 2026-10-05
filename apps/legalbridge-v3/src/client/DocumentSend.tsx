@@ -85,6 +85,14 @@ export function DocumentSend(
   const [mailTo, setMailTo] = useState<Record<string, Person[]>>({ to: [], cc: [] });
   const to = mailTo.to ?? [];
   const cc = mailTo.cc ?? [];
+  /**
+   * 一緒に添える文書（同じ相手先の決定済みの文書）。基本契約と個別契約を一度に送るなど。
+   * 選んでいれば 1 通・複数添付で送る（/documents/send-many。相手先が違えば断られる）。
+   */
+  const [extras, setExtras] = useState<number[]>([]);
+  const [siblings, setSiblings] = useState<Array<{ id: number; documentNo: string | null; templateLabel: string | null;
+    title: string | null; phase?: string; issuedAt: string | null }>>([]);
+  const [siblingFilter, setSiblingFilter] = useState("");
   const [subject, setSubject] = useState(`${documentNo ?? ""} ${templateLabel ?? "文書"} のご確認`.trim());
   const [body, setBody] = useState(
     `${templateLabel ?? "文書"}をお送りします。内容をご確認のうえ、問題なければご返信ください。`);
@@ -123,6 +131,15 @@ export function DocumentSend(
     }).catch(() => undefined);
   }, [documentId]);
 
+  // 同じ相手先の決定済みの文書。送る文書そのものと、差し替えられた古い版は出さない。
+  useEffect(() => {
+    const partyId = docRecipients?.counterparty?.id;
+    if (!partyId) { setSiblings([]); return; }
+    api.get<{ documents: typeof siblings }>(`/documents?partyId=${partyId}&status=issued`)
+      .then((r) => setSiblings(r.documents.filter((d) => d.id !== documentId)))
+      .catch(() => setSiblings([]));
+  }, [docRecipients?.counterparty?.id, documentId]);
+
   async function loadDraft(p: Purpose) {
     setError(null);
     try {
@@ -157,8 +174,11 @@ export function DocumentSend(
   }
 
   const sendMail = () => run(async () => {
-    const r = await api.post<{ outcome: Outcome }>(`/documents/${documentId}/send`,
-      { to: to.map((p) => p.email), cc: cc.map((p) => p.email), subject, body, attachPdf: true });
+    const mail = { to: to.map((p) => p.email), cc: cc.map((p) => p.email), subject, body, attachPdf: true };
+    // 添える文書があれば 1 通にまとめて送る（各文書に「送った」が残る）。
+    const r = extras.length
+      ? await api.post<{ outcome: Outcome }>("/documents/send-many", { ...mail, documentIds: [documentId, ...extras] })
+      : await api.post<{ outcome: Outcome }>(`/documents/${documentId}/send`, mail);
     return describe(r.outcome, "内容確認のメール");
   }, "メールを送っています");
   const confirm = () => run(async () => {
@@ -248,7 +268,36 @@ export function DocumentSend(
               <div className="fbody"><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div></div>
             <div className="frow"><div className="flabel"><span>本文</span></div>
               <div className="fbody"><textarea rows={14} value={body} onChange={(e) => setBody(e.target.value)} />
-                <div className="faint" style={{ marginTop: 3 }}>{documentNo ?? "この文書"} の PDF を添えます</div></div></div>
+                <div className="faint" style={{ marginTop: 3 }}>
+                  {[documentNo ?? "この文書", ...extras.map((id) => siblings.find((d) => d.id === id)?.documentNo ?? `#${id}`)].join("・")} の PDF を添えます
+                </div></div></div>
+            <div className="frow"><div className="flabel"><span>一緒に添える文書</span></div>
+              <div className="fbody stack" style={{ gap: 4 }}>
+                {!docRecipients?.counterparty?.id
+                  ? <span className="faint">この文書は相手先が決まっていないので、ほかの文書を添えられません</span>
+                  : !siblings.length
+                  ? <span className="faint">同じ相手先の決定済みの文書はほかにありません</span>
+                  : (<>
+                    <input value={siblingFilter} placeholder="文書番号・種類・件名で絞る（基本契約書 など）"
+                           onChange={(e) => setSiblingFilter(e.target.value)} />
+                    <div className="picker" style={{ maxHeight: 180, overflowY: "auto" }}>
+                      {siblings
+                        .filter((d) => !siblingFilter.trim() || `${d.documentNo ?? ""} ${d.templateLabel ?? ""} ${d.title ?? ""}`
+                          .toLowerCase().includes(siblingFilter.trim().toLowerCase()) || extras.includes(d.id))
+                        .slice(0, 50)
+                        .map((d) => (
+                          <label key={d.id} className="row" style={{ gap: 6, padding: "2px 0", cursor: "pointer" }}>
+                            <input type="checkbox" checked={extras.includes(d.id)}
+                                   onChange={(e) => setExtras((x) => e.target.checked ? [...x, d.id] : x.filter((y) => y !== d.id))} />
+                            <span className="code">{d.documentNo ?? `#${d.id}`}</span>
+                            <span>{d.templateLabel ?? "文書"}</span>
+                            <span className="faint">{d.title ?? ""}{d.issuedAt ? `（${d.issuedAt.slice(0, 10)}）` : ""}</span>
+                          </label>
+                        ))}
+                    </div>
+                    <small className="faint">同じ相手先の決定済みの文書から選べます（基本契約と個別契約を一緒に送るなど）。選ぶと 1 通に PDF を並べて送り、添えた文書にも「送った」が残ります</small>
+                  </>)}
+              </div></div>
             <div className="row">
               <button className="btn primary" disabled={busy || !to.length || !subject.trim() || !body.trim()}
                       aria-busy={busy} onClick={() => void sendMail()}>{busy ? "送っています…" : "メールを送る"}</button>

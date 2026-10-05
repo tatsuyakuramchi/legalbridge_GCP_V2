@@ -193,6 +193,8 @@ export class DocumentRepository {
     phase?: DocumentPhase;
     /** 一括作成の束で絞る。 */
     batchId?: number;
+    /** 相手先で絞る（統合を辿る）。メールに一緒に添える文書を選ぶとき。 */
+    partyId?: number;
   } = {}) {
     const where: string[] = [];
     const params: unknown[] = [];
@@ -217,6 +219,11 @@ export class DocumentRepository {
     if (query.phase === "void") where.push("d.status = 'void'");
     if (query.matterId) { params.push(query.matterId); where.push(`d.matter_id = $${params.length}`); }
     if (query.batchId) { params.push(query.batchId); where.push(`d.batch_id = $${params.length}`); }
+    if (query.partyId) {
+      params.push(query.partyId);
+      where.push(`v.counterparty_id IN (SELECT party_id FROM v_party_resolved
+                    WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length}))`);
+    }
     if (query.unlinked) {
       where.push(`NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)`);
     }
