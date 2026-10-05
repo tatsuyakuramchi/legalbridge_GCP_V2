@@ -182,7 +182,13 @@ function orderNoFor(context: Ctx, conditionId: unknown): string | null {
   // 移行した条件は発注書が V1・V2 側にあるので、ここが埋まっていないと空欄になる。
   const condition = (context.conditions ?? []).find((c: Ctx) => c.id === conditionId);
   const fallback = String(condition?.orderNo ?? "").trim();
-  return fallback || null;
+  if (fallback) return fallback;
+  // 取り込んだ発注書は単体契約として登録されていることがある。その契約番号。
+  const standalone = String(condition?.standaloneNo ?? "").trim();
+  if (standalone) return standalone;
+  // 最後は、文書の画面で選んだ発注書番号（見出しの発注番号と同じもの）。
+  const chosen = String((context as { parentPoNo?: unknown }).parentPoNo ?? "").trim();
+  return chosen || null;
 }
 
 /** 相手先が「1件の条件」に決まるときだけ、条件から明細を組める。 */

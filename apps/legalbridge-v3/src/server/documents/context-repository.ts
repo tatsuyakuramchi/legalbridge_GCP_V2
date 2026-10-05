@@ -383,16 +383,21 @@ export class DocumentContextRepository {
          SELECT y.id, COALESCE(y.series_id, y.id) AS series
            FROM conditions y WHERE y.id = ANY($1::bigint[])
        )
-       SELECT DISTINCT ON (w.id, t.template_key)
-              d.id, d.document_no, d.issued_at, t.template_key, w.id AS condition_id
+       SELECT DISTINCT ON (w.id, k.template_key)
+              d.id, d.document_no, d.issued_at, k.template_key, w.id AS condition_id
          FROM wanted w
          JOIN conditions x ON COALESCE(x.series_id, x.id) = w.series
          JOIN document_conditions dc ON dc.condition_id = x.id
          JOIN documents d ON d.id = dc.document_id
-         JOIN document_template_versions tv ON tv.id = d.template_version_id
-         JOIN document_templates t ON t.id = tv.template_id
-        WHERE d.status = 'issued'
-        ORDER BY w.id, t.template_key, d.id DESC`, [conditionIds]);
+         LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+         LEFT JOIN document_templates t ON t.id = tv.template_id
+         -- 取り込んだ文書はひな形を持たない。種類が発注書なら発注書として扱う
+         -- （検収書の発注番号が、取り込んだ発注書でも埋まるように）。
+         CROSS JOIN LATERAL (SELECT COALESCE(t.template_key,
+                               CASE WHEN d.manual_inputs->>'documentKind' LIKE '%発注%'
+                                    THEN 'purchase_order' END) AS template_key) k
+        WHERE d.status = 'issued' AND k.template_key IS NOT NULL
+        ORDER BY w.id, k.template_key, d.id DESC`, [conditionIds]);
     return (r.rows as Array<Record<string, any>>).map((row) => ({
       id: Number(row.id),
       conditionId: Number(row.condition_id),
@@ -560,6 +565,10 @@ export class DocumentContextRepository {
               c.auto_renew, c.renew_months, c.renew_stopped_on,
               c.notes, c.spec, c.deliverable_ownership,
               c.order_no, c.usage_type,
+              -- 条件が載っている単体契約の番号（取り込んだ発注書を契約として登録したもの）。
+              -- 検収書の行の発注番号が、発注書の文書も控えも無いときにこれを使う。
+              (SELECT a.agreement_no FROM agreements a
+                WHERE a.id = c.agreement_id AND COALESCE(a.kind, 'master') IN ('standalone', 'document')) AS standalone_no,
               c.counterparty_id, c.work_id, c.work_part_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
@@ -635,6 +644,8 @@ export class DocumentContextRepository {
         deliverableOwnership: str(row.deliverable_ownership),
         /** 外部で出した発注番号。V3 の発注書が無いときの控え。 */
         orderNo: str(row.order_no),
+        /** 条件が載っている単体契約の番号。発注書の文書も控えも無いときの発注番号。 */
+        standaloneNo: str(row.standalone_no),
         /** 利用形態（A-027）。条件書の行・取引形態の当てはめはこれが先。 */
         usageType: str(row.usage_type),
         agreementId: int(row.agreement_id),

@@ -341,6 +341,16 @@ test("V3 の発注書があればそちらを使う（控えは使わない）",
   assert.equal(lines[0].order_no, "ARC-PO-2026-0031");
 });
 
+test("発注書の文書も控えも無ければ、条件が載っている単体契約（取り込んだ発注書）の番号、次に選んだ発注書番号", () => {
+  const ev = (id: number, conditionId: number) => ({ id, conditionId, occurredOn: "2026-09-30", amount: 50000, schedule: null });
+  const lines = deliveryLinesFrom(ctx({
+    conditions: [condition({ id: 1, standaloneNo: "ARC-PO-2026-0079" }), condition({ id: 2 })],
+    related: [], parentPoNo: "ARC-PO-2026-0100",
+    events: [ev(9, 1), ev(10, 2)]
+  } as any)) as Array<Record<string, any>>;
+  assert.deepEqual(lines.map((l) => l.order_no), ["ARC-PO-2026-0079", "ARC-PO-2026-0100"]);
+});
+
 test("控えも発注書も無ければ空のまま", () => {
   const lines = deliveryLinesFrom(ctx({
     related: [],
