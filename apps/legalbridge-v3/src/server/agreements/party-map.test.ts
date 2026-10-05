@@ -260,14 +260,14 @@ test("取引先のマップに、契約に繋がっていない契約文書を�
     if (t.includes("FROM agreements a")) return [];
     if (t.includes("d.agreement_id IS NULL")) return [
       { id: 50, document_no: "LIC-2025-0007", status: "issued", issued_at: "2025-07-31", title: null,
-        manual_title: "利用許諾契約書（おたずねマもの村）", label: "利用許諾契約書" }
+        manual_title: "利用許諾契約書（おたずねマもの村）", label: "利用許諾契約書", role: "terms", condition_count: 2 }
     ];
     return [];
   });
   const map = (await new PartyAgreementMapService(db).forParty(7))!;
   assert.equal(map.roots.length, 0);
   assert.deepEqual(map.unlinked, [{ id: 50, documentNo: "LIC-2025-0007", label: "利用許諾契約書",
-    title: "利用許諾契約書（おたずねマもの村）", status: "issued", issuedOn: "2025-07-31" }]);
+    title: "利用許諾契約書（おたずねマもの村）", status: "issued", issuedOn: "2025-07-31", role: "terms", conditionCount: 2 }]);
   assert.deepEqual(db.find("d.agreement_id IS NULL")!.params, [7]);
 });
 
@@ -301,4 +301,13 @@ test("個別契約にする：単体契約以外・向き違い・別の取引�
   await assert.rejects(() => new PartyAgreementMapService(db({}, { direction: "out" })).demoteToIndividual(2, 1, "k"), /向き/);
   await assert.rejects(() => new PartyAgreementMapService(db({}, { resolved_id: 9 })).demoteToIndividual(2, 1, "k"), /相手先/);
   await assert.rejects(() => new PartyAgreementMapService(db({ child_count: 1 }, {})).demoteToIndividual(2, 1, "k"), /覚書・解除合意/);
+});
+
+test("文書から契約を立てる：基本契約書・条件書でない文書、繋がっている文書は断る", async () => {
+  const db = (row: Record<string, unknown>) => new FakeDatabase((t) => t.includes("FOR UPDATE OF d") ? [{
+    id: 1, document_no: "ARC-NDA-1", status: "issued", agreement_id: null, counterparty_id: 7, resolved_id: 7,
+    label: "NDA", role: null, ...row }] : []);
+  await assert.rejects(() => new PartyAgreementMapService(db({})).agreementFromDocument(1, "k"), /基本契約書・条件書でない/);
+  await assert.rejects(() => new PartyAgreementMapService(db({ agreement_id: 3 })).agreementFromDocument(1, "k"), /既に契約/);
+  await assert.rejects(() => new PartyAgreementMapService(db({ role: "master", status: "draft" })).agreementFromDocument(1, "k"), /決定済み/);
 });
