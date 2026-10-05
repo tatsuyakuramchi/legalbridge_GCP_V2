@@ -436,6 +436,11 @@ function BasicsStage(
     return base.trim();
   };
   const ready = Boolean(partyId) && (!license || Boolean(workId));
+  /** まだ足りないもの。ボタンが押せない理由をボタンの横に出す（出さないと押しても何も起きないように見える）。 */
+  const missing = [
+    !partyId ? (pattern === "service" ? "受託者" : isOut(pattern) ? "許諾先" : "権利元") : null,
+    license && !workId ? "作品" : null
+  ].filter(Boolean);
 
   if (detail) {
     return (
@@ -496,7 +501,9 @@ function BasicsStage(
             } catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
             finally { setBusy(false); }
           }}>{busy ? "作っています…" : "案件を立てて次へ：基本契約"}</button>
-          <span className="faint">案件が器になります。既にある案件で進めるなら、案件の画面の「取引を進める」から開いてください</span>
+          {missing.length > 0
+            ? <span className="tag warn">あと：{missing.join("・")}を候補から選んでください{license && !workId ? "（作品が候補に出なければ、作品の画面で先に登録します）" : ""}</span>
+            : <span className="faint">案件が器になります。既にある案件で進めるなら、案件の画面の「取引を進める」から開いてください</span>}
         </div>
       </div>
     </div>

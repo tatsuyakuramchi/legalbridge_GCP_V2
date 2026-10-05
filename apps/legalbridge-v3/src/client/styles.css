@@ -268,6 +268,9 @@ tr.grid-edit td{background:var(--sunken);padding:12px 14px}
 /* 元に戻せない操作。押す前に色で分かるようにする。 */
 .btn.danger{background:var(--out);border-color:var(--out);color:var(--ground)}
 .btn.danger:disabled{background:var(--out-soft);border-color:var(--line-strong);color:var(--faint)}
+/* 押せないボタンは押せないと分かる見た目にする。無いと primary の濃い色のまま残り、
+   押しても何も起きない（＝壊れている）ように見える。 */
+.btn:disabled{opacity:.45;cursor:not-allowed}
 .alert{border-left:2px solid var(--out);background:var(--out-soft);color:var(--out);
   padding:9px 12px;border-radius:0 6px 6px 0;font-size:12px}
 .note{border:1px dashed var(--line-strong);border-radius:6px;padding:10px 12px;
