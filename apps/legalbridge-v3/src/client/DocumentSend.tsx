@@ -81,9 +81,10 @@ export function DocumentSend(
   const [sendingWhat, setSendingWhat] = useState<string | null>(null);
   const [open, setOpen] = useState<Step["key"] | null>(null);
   // メール
-  const [to, setTo] = useState<string[]>([]);
-  const [cc, setCc] = useState<string[]>([]);
-  const [extra, setExtra] = useState("");
+  // 宛先。下書きが入れた相手に、取引先の連絡先・自社の人を探して足せる（To / Cc）。
+  const [mailTo, setMailTo] = useState<Record<string, Person[]>>({ to: [], cc: [] });
+  const to = mailTo.to ?? [];
+  const cc = mailTo.cc ?? [];
   const [subject, setSubject] = useState(`${documentNo ?? ""} ${templateLabel ?? "文書"} のご確認`.trim());
   const [body, setBody] = useState(
     `${templateLabel ?? "文書"}をお送りします。内容をご確認のうえ、問題なければご返信ください。`);
@@ -127,7 +128,7 @@ export function DocumentSend(
     try {
       const d = await api.get<Draft>(`/documents/${documentId}/mail-draft?purpose=${p}`);
       setPurpose(p);
-      setTo(d.to.map((x) => x.email)); setCc(d.cc.map((x) => x.email)); setExtra("");
+      setMailTo({ to: d.to.map((x) => ({ email: x.email, name: x.name })), cc: d.cc.map((x) => ({ email: x.email, name: x.name })) });
       setSubject(d.subject); setBody(d.body); setWarnings(d.warnings);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
@@ -156,9 +157,8 @@ export function DocumentSend(
   }
 
   const sendMail = () => run(async () => {
-    const all = [...to, ...extra.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)];
     const r = await api.post<{ outcome: Outcome }>(`/documents/${documentId}/send`,
-      { to: all, cc, subject, body, attachPdf: true });
+      { to: to.map((p) => p.email), cc: cc.map((p) => p.email), subject, body, attachPdf: true });
     return describe(r.outcome, "内容確認のメール");
   }, "メールを送っています");
   const confirm = () => run(async () => {
@@ -238,24 +238,19 @@ export function DocumentSend(
             </div>
             <div className="faint">宛先・件名・本文は、運用 → 設定 → 「メールの文面」から組みます。送る前にここで直せます。</div>
             {warnings.map((w) => <div key={w} className="note warn">{w}</div>)}
-            <div className="frow"><div className="flabel"><span>To</span></div>
-              <div className="fbody row" style={{ flexWrap: "wrap", gap: 4 }}>
-                {to.map((a) => <span key={a} className="chip" title="外す" onClick={() => setTo(to.filter((x) => x !== a))}>{a} ×</span>)}
-                <input value={extra} placeholder="追加の宛先（カンマ区切り）" style={{ flex: 1, minWidth: 200 }}
-                       onChange={(e) => setExtra(e.target.value)} />
-              </div></div>
-            <div className="frow"><div className="flabel"><span>Cc</span></div>
-              <div className="fbody row" style={{ flexWrap: "wrap", gap: 4 }}>
-                {cc.length ? cc.map((a) => <span key={a} className="chip" title="外す" onClick={() => setCc(cc.filter((x) => x !== a))}>{a} ×</span>)
-                  : <span className="faint">なし</span>}
-              </div></div>
+            <RecipientPicker value={mailTo} onChange={setMailTo}
+              initialKeyword={docRecipients?.counterparty?.name ?? ""}
+              fields={[
+                { key: "to", label: "To" },
+                { key: "cc", label: "Cc", hint: "写し。事業部の担当者・経理などを足せます" }
+              ]} />
             <div className="frow"><div className="flabel"><span>件名</span></div>
               <div className="fbody"><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div></div>
             <div className="frow"><div className="flabel"><span>本文</span></div>
               <div className="fbody"><textarea rows={14} value={body} onChange={(e) => setBody(e.target.value)} />
                 <div className="faint" style={{ marginTop: 3 }}>{documentNo ?? "この文書"} の PDF を添えます</div></div></div>
             <div className="row">
-              <button className="btn primary" disabled={busy || !(to.length || extra.trim()) || !subject.trim() || !body.trim()}
+              <button className="btn primary" disabled={busy || !to.length || !subject.trim() || !body.trim()}
                       aria-busy={busy} onClick={() => void sendMail()}>{busy ? "送っています…" : "メールを送る"}</button>
               <button className="linky" onClick={() => setOpen("cloudsign")}>飛ばして CloudSign へ</button>
             </div>
