@@ -355,7 +355,8 @@ export function App() {
             onCompose={(conditionIds, eventIds, matterId, templateKey) => startCompose(conditionIds, eventIds ?? [], matterId ?? null, templateKey ?? null)}
             onOpenDocument={openDocumentAt}
             onOpenMatter={(id) => openEntity("matter", id)}
-            onRegisterAgreement={startAgreement} />
+            onRegisterAgreement={startAgreement}
+            onOpenPayments={() => { setConditionId(undefined); setFocus(null); setView("closing"); }} />
         )}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
