@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { RecipientPicker, type Person } from "./RecipientPicker.js";
 
 /**
  * 案件のやり取り。担当者との Slack、メールの送受信、ファイルの受け渡し、メモ。
@@ -58,9 +59,16 @@ export function MatterTimeline(
   const [body, setBody] = useState("");
   const [subject, setSubject] = useState("");
   // メールの宛先。担当者だけ（to 担当者）か、取引先へ担当者を写しに（to 取引先 cc 担当者）。
-  const [to, setTo] = useState<string[]>([]);
-  const [cc, setCc] = useState<string[]>([]);
-  const [extra, setExtra] = useState("");
+  // 型で入れたあと、取引先の連絡先・自社の人を探して To / Cc に足せる。
+  const [mailTo, setMailTo] = useState<Record<string, Person[]>>({ to: [], cc: [] });
+  const to = (mailTo.to ?? []).map((p) => p.email);
+  const cc = (mailTo.cc ?? []).map((p) => p.email);
+  const people = (emails: string[]): Person[] => emails.map((email) => ({
+    email, name: recipients?.contacts.find((c) => c.email === email)?.name
+      ?? (email === ownerEmail ? recipients?.owner?.name ?? null : null)
+  }));
+  const setTo = (emails: string[]) => setMailTo((m) => ({ ...m, to: people(emails) }));
+  const setCc = (emails: string[]) => setMailTo((m) => ({ ...m, cc: people(emails) }));
   const [documentId, setDocumentId] = useState("");
   const [driveUrl, setDriveUrl] = useState("");
   const [driveTitle, setDriveTitle] = useState("");
@@ -118,13 +126,12 @@ export function MatterTimeline(
         setNote(describeOutcome(r, "Slack"));
         if (r.outcome.sent) setBody("");
       } else if (mode === "email") {
-        const all = [...to, ...extra.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)];
         const r = await api.post<SendResult>(`/matters/${matterId}/communications/email`, {
-          to: all, cc, subject, body,
+          to, cc, subject, body,
           documentId: documentId ? Number(documentId) : null, attachPdf: Boolean(documentId)
         });
         setNote(describeOutcome(r, "メール"));
-        if (r.outcome.sent) { setBody(""); setSubject(""); setExtra(""); setDocumentId(""); }
+        if (r.outcome.sent) { setBody(""); setSubject(""); setDocumentId(""); }
       } else {
         await api.post(`/matters/${matterId}/communications/drive`,
           { url: driveUrl, title: driveTitle || null, direction: driveDirection, note: body || null });
@@ -137,7 +144,7 @@ export function MatterTimeline(
   }
 
   const canSubmit = mode === "drive" ? Boolean(driveUrl.trim())
-    : mode === "email" ? Boolean(body.trim() && subject.trim() && (to.length || extra.trim()))
+    : mode === "email" ? Boolean(body.trim() && subject.trim() && to.length > 0)
     : Boolean(body.trim());
 
   return (
@@ -186,31 +193,12 @@ export function MatterTimeline(
               </button>
               {!ownerEmail && <span className="faint">担当者のメールが無いので cc に入れられません</span>}
             </div>
-            <div className="frow">
-              <div className="flabel"><span>To</span></div>
-              <div className="fbody">
-                <div className="row" style={{ flexWrap: "wrap", gap: 4 }}>
-                  {to.map((a) => (
-                    <span key={a} className="chip" onClick={() => setTo(to.filter((x) => x !== a))} title="外す">{a} ×</span>
-                  ))}
-                  <input value={extra} placeholder="追加の宛先（カンマ区切り）" style={{ flex: 1, minWidth: 200 }}
-                         onChange={(e) => setExtra(e.target.value)} />
-                </div>
-                {recipients.contacts.length > 0 && (
-                  <div className="faint" style={{ marginTop: 3 }}>
-                    取引先の連絡先：{recipients.contacts.map((c) => `${c.name ?? ""} <${c.email}>`).join("、")}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="frow">
-              <div className="flabel"><span>Cc</span></div>
-              <div className="fbody row" style={{ flexWrap: "wrap", gap: 4 }}>
-                {cc.length ? cc.map((a) => (
-                  <span key={a} className="chip" onClick={() => setCc(cc.filter((x) => x !== a))} title="外す">{a} ×</span>
-                )) : <span className="faint">なし</span>}
-              </div>
-            </div>
+            <RecipientPicker value={mailTo} onChange={setMailTo}
+              initialKeyword={recipients.counterparty?.name ?? ""}
+              fields={[
+                { key: "to", label: "To" },
+                { key: "cc", label: "Cc", hint: "写し。事業部の担当者・経理などを足せます" }
+              ]} />
             <div className="frow">
               <div className="flabel"><span>件名</span></div>
               <div className="fbody"><input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
