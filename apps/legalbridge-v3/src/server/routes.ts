@@ -2873,7 +2873,8 @@ export function createRoutes(database: Transactable) {
       unlinked: String(req.query.unlinked ?? "") === "1",
       phase: (["draft", "decided", "sent", "superseded", "void"] as const)
         .find((p) => p === String(req.query.phase ?? "")),
-      batchId: req.query.batchId ? Number(req.query.batchId) : undefined
+      batchId: req.query.batchId ? Number(req.query.batchId) : undefined,
+      partyId: req.query.partyId ? Number(req.query.partyId) : undefined
     }) });
   }));
 
