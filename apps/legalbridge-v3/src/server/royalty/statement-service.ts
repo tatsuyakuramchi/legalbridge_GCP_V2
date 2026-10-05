@@ -70,6 +70,8 @@ export interface StatementBasis {
   outCurrency?: string | null;
   /** 許諾地域・言語など。紙に「従前に決めた内容」として出す。 */
   outScopes?: string | null;
+  /** その報告の言語だけ（「英語・フランス語」）。経理提出用の支払内容に出す。 */
+  outLanguages?: string | null;
   /** 製品名。作品名を出す。 */
   productName?: string | null;
   /** 基準価格／受領単価（最小通貨単位）。 */
@@ -340,6 +342,7 @@ export class RoyaltyStatementService {
         outCurrency: str(e.out_currency),
         // 実績が言語・地域を持っていれば、その報告の範囲を紙に出す（許諾先の範囲全体ではなく）。
         outScopes: eventScopeLabel(e.scope_languages, e.scope_regions) ?? str(e.out_scopes),
+        outLanguages: eventScopeLabel(e.scope_languages, []),
         productName: statementProductName({
           usageType, outConditionName: str(e.out_condition_name), outWorkTitle: str(e.out_work_title),
           inWorkTitle: str(e.in_work_title), inWorkKind: str(e.in_work_kind),

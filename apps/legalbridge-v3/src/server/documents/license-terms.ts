@@ -93,7 +93,7 @@ export const LICENSE_TERMS_VARIABLES: TemplateVariable[] = [
     dbField: "auto.today", noGuess: true },
   { name: "許諾開始日", label: "許諾開始日", type: "date", group: "I. 基本情報", required: true,
     from: "condition.termStart" },
-  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "agreement.title" },
+  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "masterAgreement.datedTitle" },
   { name: "work_id", label: "作品ID", group: "I. 基本情報",
     helpText: "作品台帳との参照キー", dbField: "work.code", noGuess: true },
   // 「署名」「押印」は署名欄の形（署名の枠／印の枠）。どちらも本番の現行ひな形では

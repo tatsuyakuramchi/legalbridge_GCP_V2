@@ -26,6 +26,7 @@ export function taxRateOrDefault(value: unknown): number {
   return Number.isFinite(n) ? n : 10;
 }
 import { taxOf } from "../royalty/rounding.js";
+import { modelSummary, statementModelPatch } from "../royalty/statement-model.js";
 
 type Data = Record<string, unknown>;
 
@@ -87,8 +88,11 @@ export function singleStatementPatch(n: SingleStatementNumbers): Data {
     calcType: n.calcType,
     msrpStr: fmtYen(n.msrp),
     quantity: n.quantity ? String(n.quantity) : "",
-    sampleQuantity: String(n.sampleQuantity),
-    billableQuantity: String(Math.max(0, n.quantity - n.sampleQuantity)),
+    // 数量の欄は製造時等だけ。時限式（売上・受領額）で "0" を渡すと本文の
+    // {{#if}} が真になり、意味の無い「0個」が出る。
+    sampleQuantity: n.calcType === "manufacturing" ? String(n.sampleQuantity) : "",
+    billableQuantity: n.calcType === "manufacturing"
+      ? String(Math.max(0, n.quantity - n.sampleQuantity)) : "",
     royaltyRatePct: String(n.ratePct || 0),
     taxRate: String(n.taxRatePct),
     grossRoyaltyStr: fmtYen(n.grossExTax),
@@ -376,6 +380,8 @@ export interface BundleLine {
   payerName?: string | null;
   /** 相手から入ってきた通貨（アウト条件の通貨）。紙の「入金通貨」に出す。 */
   intakeCurrency?: string | null;
+  /** その報告の言語。経理提出用の支払内容（入金企業・言語）に出す。紙には出さない。 */
+  languageLabel?: string | null;
   /** その実績の発生日。経理提出用の「納品日」になる。 */
   occurredOn?: string | null;
   /**
@@ -385,6 +391,8 @@ export interface BundleLine {
    * 経理の側で 1 を置く（単価 × 数量 = 金額 を崩さないため）。
    */
   quantity?: number | null;
+  /** 行の利用形態（取引モデル）。計算書の出し分け（statement-model.ts）に使う。紙には出さない。 */
+  usageType?: string | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -401,8 +409,10 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     basisNote: String(row.basisNote ?? ""),
     payerName: String(row.payerName ?? ""),
     intakeCurrency: String(row.intakeCurrency ?? ""),
+    languageLabel: String(row.languageLabel ?? ""),
     occurredOn: String(row.occurredOn ?? ""),
-    quantity: num(row.quantity) || null
+    quantity: num(row.quantity) || null,
+    usageType: String(row.usageType ?? "") || null
   }));
 }
 
@@ -421,10 +431,11 @@ export function usageBundleLines(
     productName?: string | null; methodLabel?: string | null; basisNote?: string | null;
     outConditionNo?: string | null; outAgreementNo?: string | null; outConditionName?: string | null;
     outPartyName?: string | null; outScopes?: string | null;
-    outCurrency?: string | null;
+    outCurrency?: string | null; outLanguages?: string | null;
     basis: number; ratePct?: number | null; amount?: number | null;
     period?: string | null; occurredOn?: string | null;
     quantity?: number | null; sampleQuantity?: number | null;
+    usageType?: string | null;
   }>
 ): BundleLine[] {
   return events.map((e) => ({
@@ -442,10 +453,12 @@ export function usageBundleLines(
       .map((x) => String(x ?? "").trim()).filter(Boolean).join("・"),
     payerName: e.outPartyName ?? "",
     intakeCurrency: e.outCurrency ?? "",
+    languageLabel: e.outLanguages ?? "",
     occurredOn: e.occurredOn ?? "",
     // 見本は作者に払わない分なので引く。紙の但し書きと同じ数にする。
     quantity: Number(e.quantity ?? 0) > 0
-      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null
+      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null,
+    usageType: e.usageType ?? null
   }));
 }
 
@@ -541,6 +554,9 @@ export function bundleLinesPatch(
       contractNumber: first.contractNumber,
       methodLabel: sorted.length > 1 ? withoutStage(first.methodLabel) : first.methodLabel,
       conditionId: first.conditionId ?? "",
+      // 経理提出用の支払内容（小計 1 つ＝1 行）。紙には出さない。
+      payerName: first.payerName ?? "",
+      languageLabel: first.languageLabel ?? "",
       lines: sorted.map((line, i) => ({
         // 2 行目からは製品名を繰り返さない（同じ製品の前金・後金）。
         productName: i === 0 ? product : "同上",
@@ -610,7 +626,12 @@ function receiptHeader(context: Data, lines: BundleLine[]): Data {
     // payerCompany は自社名の別名として登録されていて、当社の名前が出ていた。
     // 計算書のときだけ、ここで上書きする（他のひな形の自社名は動かさない）。
     // 複数社をまとめた計算書は「最初の社 ほか N 社」（明細の行に各社名が出る）。
-    payerCompany: payerSummary(lines.map((l) => l.payerName)),
+    //
+    // 利用形態の付いた行は「■ 取引モデル」の「取引モデル概要」として、
+    // 取引モデルごとの書き方（アークライト版／◯◯再許諾分／◯◯版）で出す（statement-model.ts）。
+    payerCompany: lines.some((l) => l.usageType)
+      ? modelSummary(lines, (context.company as Data | undefined)?.name)
+      : payerSummary(lines.map((l) => l.payerName)),
     // デザイナー／権利者は作者。＝取得（イン）条件の取引先。
     designerName: String(counterparty.name ?? ""),
     // 入金通貨はアウト条件の通貨。契約が何建てかは、その契約が持っている。
@@ -710,6 +731,8 @@ export function royaltyStatementPatch(
         taxTotal: total === undefined || total === null ? null : num(total)
       }),
       ...receiptHeader(context, computedLines),
+      // 取引モデル（利用形態）で、そのモデルに要らない欄を空にする。
+      ...statementModelPatch(computedLines.map((l) => l.usageType)),
       ...(notes ? { notes } : {})
     };
   }

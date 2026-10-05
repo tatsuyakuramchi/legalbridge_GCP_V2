@@ -27,6 +27,8 @@ import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
+import { contextMasterAgreement, resolveLegacyVariable } from "./legacy-variables.js";
+import { contractRefText } from "../conditions/contracts.js";
 import { toInternationalPhone } from "../core/phone.js";
 
 type Ctx = Record<string, any>;
@@ -37,6 +39,23 @@ const INSPECTION_KEYS = new Set(["inspection_certificate", "intl_inspection_cert
  * （海外発注書の約款 6.5 条）。税を上乗せも内訳もしないので、税率は条件によらず 0 で組む。
  */
 export const INTL_INSPECTION_KEY = "intl_inspection_certificate";
+/**
+ * 「発注番号」欄を「基本契約番号 / 発注書番号」で出す検収書（国内）。
+ * 英文の検収書は本文が「Purchase Order No. {{parent_po_number}}」と書くので発注書番号のまま。
+ */
+const CONTRACT_REF_INSPECTION_KEYS = new Set(["inspection_certificate", "acceptance_certificate"]);
+
+/**
+ * 検収書の「発注番号」欄。計算書の「契約番号」と同じく「基本契約番号 / 個別契約番号」で出す。
+ * 検収書の個別契約は発注書。基本契約が無ければ（単体契約に載った条件も）発注書番号だけ。
+ * 人が欄に打った値があればそちらを使う（ここでは作らない）。
+ */
+export function inspectionContractRef(context: Ctx, manual: Record<string, unknown>): string | undefined {
+  if (String(manual.parent_po_number ?? "").trim()) return undefined;
+  const poNo = resolveLegacyVariable("parent_po_number", context);
+  const masterNo = contextMasterAgreement(context)?.no;
+  return contractRefText(masterNo, poNo == null ? null : String(poNo)) || undefined;
+}
 const PURCHASE_ORDER_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
 /**
  * 計算書のひな形。本文の金額は手入力ではなく、条件と実績からの試算で決まる。
@@ -114,11 +133,11 @@ export function statementLabelRows(context: Ctx): Row[] {
         eventId: event.id,
         // 利用形態で決まる（自社販売＝当社作品名、再許諾・他社販売＝条件名）。
         productName: event.productName ?? out.workTitle ?? condition.work?.title ?? "",
-        contractTitle: [out.partyName, out.name]
-          .map((x: unknown) => String(x ?? "").trim()).filter(Boolean).join("　"),
-        // 相手に見せる「契約番号」。合意があればその番号、無ければ条件番号
-        // （条件番号を契約番号として刷ると、相手が持つ契約書と突き合わない）。
-        contractNumber: out.agreementNo ?? out.conditionNo ?? ""
+        // 対象契約・契約番号は空で出す。空のままならイン側（作者との）基本契約・個別契約が
+        // 入る（royalty/in-contract.ts）。ここにアウト側の値を入れておくと、そのまま
+        // 保存されて作者の知らない契約が紙に出る。
+        contractTitle: "",
+        contractNumber: ""
       };
     });
 }
@@ -481,9 +500,11 @@ export function buildTemplateContext(
 
   if (INSPECTION_KEYS.has(templateKey)) {
     const block = inspectionBlock(context, manual, Number(common.taxRate));
-    return templateKey === INTL_INSPECTION_KEY
-      ? { ...common, ...block, ...intlInspectionExtras(context, block) }
-      : { ...common, ...block };
+    if (templateKey === INTL_INSPECTION_KEY) {
+      return { ...common, ...block, ...intlInspectionExtras(context, block) };
+    }
+    const ref = CONTRACT_REF_INSPECTION_KEYS.has(templateKey) ? inspectionContractRef(context, manual) : undefined;
+    return { ...common, ...block, ...(ref ? { parent_po_number: ref } : {}) };
   }
   if (PURCHASE_ORDER_KEYS.has(templateKey)) {
     return { ...common, ...orderBlock(templateKey, context, manual) };

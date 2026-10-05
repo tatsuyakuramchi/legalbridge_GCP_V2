@@ -1,6 +1,11 @@
 import { money } from "./api.js";
 import { PRICING_MODEL_LABEL } from "./labels.js";
 import { STEP_TONE, type PeriodRow } from "./closing-types.js";
+import { nextActionOf, notYet, type NextAction } from "./ClosingSteps.js";
+
+const NEXT_LABEL: Record<Exclude<NextAction, null | "wait">, string> = {
+  record: "① 実績を入れる", issue: "② 検収書を出す", send: "③ 送る", pay: "④ 支払を立てる"
+};
 
 /**
  * 回の表。月で切っても条件で切っても、行の形は同じにする。
@@ -10,7 +15,7 @@ import { STEP_TONE, type PeriodRow } from "./closing-types.js";
  */
 export function ClosingRows({
   rows, showParty = true, selected, onSelect,
-  onOpenCondition, onOpenDocument, onRecord, empty
+  onOpenCondition, onOpenDocument, onRecord, onNext, empty
 }: {
   rows: PeriodRow[];
   /** 条件1本を見ているときは相手先の列を畳む（全行同じなので邪魔になる）。 */
@@ -29,6 +34,8 @@ export function ClosingRows({
    * 既存のフォームの仕事なので、ここでは入口だけ出して送る。
    */
   onRecord?: (conditionId: number, scheduleId: number) => void;
+  /** 「次にやること」の列を出す。押したら親がその手へ連れていく。 */
+  onNext?: (row: PeriodRow, action: Exclude<NextAction, null | "wait">) => void;
   empty?: string;
 }) {
   // 選べるのは予定の回だけ。浮いた実績は個別に締める。
@@ -63,6 +70,7 @@ export function ClosingRows({
           <th>決済文書</th>
           <th>支払</th>
           <th>状態</th>
+          {onNext && <th>次にやること</th>}
         </tr></thead>
         <tbody>
           {rows.map((row) => {
@@ -109,7 +117,8 @@ export function ClosingRows({
                       </>
                     // 締め日の前に「実績を入れる」は出さない。まだ起きていない
                     // ことを入れる欄を出しても、入れる中身が無い。
-                    : onRecord && id !== null && !notYet(row.closingOn)
+                    // 「次にやること」の列があるときはそちらに任せる（同じ手のボタンを2つ出さない）。
+                    : !onNext && onRecord && id !== null && !notYet(row.closingOn)
                     ? <button className="btn btn-sm"
                         onClick={() => onRecord(row.conditionId, id)}>
                         {row.pricingModel === "revenue_rate" ? "報告を入れる" : "実績を入れる"}
@@ -132,7 +141,13 @@ export function ClosingRows({
                       </>}
                   <DueNote row={row} />
                 </td>
-                <td><span className={`tag ${STEP_TONE[row.step]}`}>{row.state}</span></td>
+                <td>
+                  <span className={`tag ${STEP_TONE[row.step]}`}>{row.state}</span>
+                  {row.documentId !== null && (
+                    <div className="faint">{row.documentSentAt ? `送付 ${row.documentSentAt.slice(0, 10)}` : "未送付"}</div>
+                  )}
+                </td>
+                {onNext && <td><NextButton row={row} onNext={onNext} /></td>}
               </tr>
             );
           })}
@@ -142,9 +157,21 @@ export function ClosingRows({
   );
 }
 
-/** 締め日がまだ来ていないか。サーバの notYet と同じ線。 */
-const notYet = (closingOn: string | null) =>
-  !!closingOn && closingOn > new Date().toISOString().slice(0, 10);
+function NextButton({ row, onNext }: {
+  row: PeriodRow;
+  onNext: (row: PeriodRow, action: Exclude<NextAction, null | "wait">) => void;
+}) {
+  const action = nextActionOf(row);
+  if (action === null) return row.step === "done" ? <span className="faint">—</span> : null;
+  if (action === "wait") return <span className="faint">締め日待ち</span>;
+  const label = action === "issue" ? `② ${row.documentLabel}を出す`
+    : action === "record" && row.pricingModel === "revenue_rate" ? "① 報告を入れる"
+    : NEXT_LABEL[action];
+  return (
+    <button className={`btn btn-sm${action === "send" ? "" : " primary"}`}
+      onClick={() => onNext(row, action)}>{label}</button>
+  );
+}
 
 /**
  * その回を選べるか。サーバの refusalFor と同じ線で切る（そこで断られる行に

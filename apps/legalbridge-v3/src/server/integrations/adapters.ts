@@ -1,3 +1,4 @@
+import { DomainError } from "../core/errors.js";
 import { createHash } from "node:crypto";
 
 /**
@@ -65,9 +66,18 @@ export interface DispatchAdapter {
   send(request: DispatchRequest): Promise<DispatchReceipt>;
 }
 
-const fail = async (channel: string, response: Response): Promise<never> => {
-  const detail = (await response.text()).slice(0, 500);
-  throw new Error(`${channel} への送信に失敗しました (${response.status}): ${detail}`);
+/**
+ * 外部サービスが断ったとき。相手の返した理由をそのまま画面に出す
+ * （素の Error だと「サーバ内部でエラーが発生しました」になり、何が悪いか分からない）。
+ */
+const fail = async (channel: string, response: Response, step?: string): Promise<never> => {
+  const detail = (await response.text().catch(() => "")).slice(0, 500);
+  // よくある断られ方には、何を直せばよいかを添える。
+  const hint = /invalid value for email/i.test(detail)
+    ? "。CloudSign がこのメールアドレスを受け付けません（届かないドメインや綴りの誤りが多い）。取引先の連絡先を確かめてください。途中まで作った下書きは CloudSign の画面で消してください"
+    : "";
+  throw new DomainError("UNAVAILABLE",
+    `${channel} への送信に失敗しました${step ? `（${step}）` : ""} (${response.status}): ${detail}${hint}`);
 };
 
 /** Slack。chat.postMessage のみを使う（V2 の Web API アダプタから必要部分を移植）。 */
@@ -219,7 +229,7 @@ export class CloudSignAdapter implements DispatchAdapter {
       method: "POST", headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
       body: form({ title: request.subject ?? files[0].filename })
     });
-    if (!created.ok) return fail("CloudSign", created);
+    if (!created.ok) return fail("CloudSign", created, "書類を作るところ");
     const document = await created.json() as { id?: string };
     const documentId = String(document.id ?? "");
 
@@ -237,25 +247,27 @@ export class CloudSignAdapter implements DispatchAdapter {
     const signers = request.participants?.length
       ? request.participants
       : [{ email: request.recipient, name: request.recipient }];
-    for (const [index, signer] of signers.entries()) {
+    // 宛先は「末尾に追加」なので、並べた順に足せばそれが署名の順番になる
+    // （order という項目は CloudSign の宛先には無い。送らない）。
+    const ordered = [...signers].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
+    for (const signer of ordered) {
       const added = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}/participants`, {
         method: "POST", headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
         body: form({
-          email: signer.email, name: signer.name ?? signer.email,
-          organization: signer.organization ?? undefined,
-          order: String(signer.order ?? index + 1)
+          email: signer.email, name: signer.name || signer.email,
+          organization: signer.organization ?? undefined
         })
       });
-      if (!added.ok) return fail("CloudSign", added);
+      if (!added.ok) return fail("CloudSign", added, `署名者 ${signer.email} を下書き ${documentId} に入れるところ`);
     }
 
     // 確認者・CC。署名はしないが書類を見られる（CloudSign の reportees）。
     for (const reportee of request.reportees ?? []) {
       const added = await this.fetchImpl(`${this.baseUrl}/documents/${documentId}/reportees`, {
         method: "POST", headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },
-        body: form({ email: reportee.email, name: reportee.name ?? reportee.email })
+        body: form({ email: reportee.email, name: reportee.name || reportee.email })
       });
-      if (!added.ok) return fail("CloudSign", added);
+      if (!added.ok) return fail("CloudSign", added, `確認者 ${reportee.email} を下書き ${documentId} に入れるところ`);
     }
 
     // 入れた宛先が CloudSign 側に本当に入ったかを読み戻して確かめる。

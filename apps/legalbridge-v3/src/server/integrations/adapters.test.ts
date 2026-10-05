@@ -75,10 +75,9 @@ test("CloudSign：1つの封筒に書類を何枚も入れ、署名者は順番�
 
   const participants = calls.filter((c) => c.url.endsWith("/participants"))
     .map((c) => new URLSearchParams(String(c.init.body)));
-  assert.equal(participants[0].get("email"), "rep@example.com");
-  assert.equal(participants[0].get("order"), "1");
+  assert.equal(participants[0].get("email"), "rep@example.com", "並べた順に足す（末尾に追加＝署名の順番）");
   assert.equal(participants[1].get("name"), "部長 花子");
-  assert.equal(participants[1].get("order"), "2", "並べた順に署名を求める");
+  assert.equal(participants[0].get("order"), null, "CloudSign の宛先に無い項目は送らない");
 
   const reportee = new URLSearchParams(String(
     calls.find((c) => c.url.endsWith("/reportees"))!.init.body));
@@ -142,4 +141,15 @@ test("CloudSign：読み戻して宛先が入っていなければ、どの宛�
   const r = await new CloudSignAdapter("client", "https://cs.test", impl).send(signRequest);
   assert.equal(r.draft, true);
   assert.match(r.warnings![0], /rep@example\.com、cc:cc@arclight\.co\.jp/);
+});
+
+test("CloudSign：断られたら、どこで・何と言われたかを画面に出せる形で返す", async () => {
+  const { DomainError } = await import("../core/errors.js");
+  const impl = (async (url: string) => {
+    const u = String(url);
+    if (u.endsWith("/participants")) return { ok: false, status: 400, text: async () => '{"message":"email is invalid"}' } as unknown as Response;
+    return { ok: true, json: async () => (u.includes("/token") ? { access_token: "t" } : { id: "doc-9" }) } as unknown as Response;
+  }) as unknown as typeof fetch;
+  await assert.rejects(() => new CloudSignAdapter("client", "https://cs.test", impl).send(signRequest),
+    (e: unknown) => e instanceof DomainError && /署名者 rep@example\.com を下書き doc-9/.test(e.message) && /email is invalid/.test(e.message));
 });

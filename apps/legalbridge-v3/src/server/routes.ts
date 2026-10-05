@@ -49,6 +49,9 @@ import { diffSettled } from "./documents/settled-diff.js";
 import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
 import { AgreementService, termInputForCondition } from "./agreements/service.js";
+import { PartyAgreementMapService } from "./agreements/party-map.js";
+import { AGREEMENT_CSV_HEADERS, agreementCsvValues } from "./agreements/csv.js";
+import { STATEMENT_MODELS } from "./royalty/statement-model.js";
 import { termHistory } from "./agreements/term-history.js";
 import { ConditionDuplicateService } from "./conditions/duplicates.js";
 import { ChromiumPdfRenderer, MemoryPdfRenderer, type PdfRenderer } from "./documents/pdf-renderer.js";
@@ -67,21 +70,25 @@ import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
+import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
+import { undeliverableEmails } from "./integrations/mail-domain.js";
+import { issueDocumentSet } from "./documents/document-set.js";
 import { PaymentService } from "./payments/service.js";
 import { PaymentAllocationService } from "./payments/allocation-service.js";
 import { PartyRepository } from "./parties/repository.js";
 import { OpsRepository } from "./ops/repository.js";
 import { SEARCH_TARGETS, SearchRepository, normalizeQuery, type SearchTarget } from "./search/repository.js";
 import { ExportRepository, DATASETS, type Dataset } from "./exports/repository.js";
-import { filename, withBom } from "./exports/csv.js";
+import { filename, toCsv, withBom } from "./exports/csv.js";
 import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
 import {
-  ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow,
+  ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow, sheetRows,
   V1_ACCOUNTING_HEADERS, v1AccountingCells, v1FileStem, v1SheetName
 } from "./exports/accounting.js";
 import { buildXlsx } from "./exports/xlsx.js";
+import { buildAccountingBundle } from "./exports/accounting-bundle.js";
 import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
@@ -151,18 +158,30 @@ export function createRoutes(database: Transactable) {
   const matters = new MatterRepository(database);
   const works = new WorkRepository(database);
   const documents = new DocumentRepository(database);
-  const issues = new DocumentIssueService(database);
-  const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
-    ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
-  // 決定した文書の PDF の作り置き。決定の直後に描いて置き、送る・開くときはそれを返す。
-  const pdfs = new PdfStore(database, pdf, (id) => issues.renderIssued(id),
-    process.env.PDF_RENDERER === "memory" ? "memory" : "chromium");
-  issues.afterIssue = async (id) => { await pdfs.warm(id); };
+  const { issues, pdf, pdfs } = pdfServicesFor(database);
 
   const drive = buildDrive();
   const storage = new DocumentStorageService(database, drive, pdf, pdfs);
   const documentImports = new DocumentImportService(database, drive);
   const royalty = new RoyaltyStatementService(database);
+  /**
+   * 計算書の明細の行。対象契約・契約番号はイン側（作者との）基本契約・個別契約にする
+   * （royalty/in-contract.ts）。アウト側の契約は作者の知らない契約なので出さない。
+   */
+  const statementLines = async (
+    previews: Array<Parameters<typeof bundleLinesFor>[0]>,
+    /** 文書フォームで選んだ基本契約と個別契約番号（manual_inputs._termsNo）。 */
+    chosen: { agreementId?: number | null; manualInputs?: Record<string, unknown> } = {}
+  ) => {
+    const termsNo = String(chosen.manualInputs?._termsNo ?? "").trim() || null;
+    const out: ReturnType<typeof bundleLinesFor> = [];
+    for (const p of previews) {
+      const ref = await inContractRef(database, p.condition.id,
+        { masterAgreementId: chosen.agreementId ?? null, termsNo });
+      out.push(...withInContract(bundleLinesFor(p), ref));
+    }
+    return out;
+  };
   const royaltyLedger = new RoyaltyLedgerService(database);
   const payments = new PaymentService(database);
   const allocations = new PaymentAllocationService(database);
@@ -179,6 +198,7 @@ export function createRoutes(database: Transactable) {
   const receivables = new ReceivableRepository(database);
   const contractCheck = new ContractCheckRepository(database);
   const agreements = new AgreementService(database);
+  const agreementMap = new PartyAgreementMapService(database);
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
@@ -286,6 +306,57 @@ export function createRoutes(database: Transactable) {
   router.get("/parties/:id/agreements", asyncRoute(async (req, res) => {
     res.json({ agreements: await agreements.candidatesFor(Number(req.params.id)) });
   }));
+
+  // ---- 取引先 ⇔ 基本契約のマップ ----
+  //
+  // 取引先ごとに 基本契約 → 補助文書・解除合意 の木を出し、木にならないもの
+  // （親なし・相手先違い・種別なし・基本契約の重複）をその場で付け替える。
+  router.get("/agreement-map/parties", asyncRoute(async (req, res) => {
+    res.json({ parties: await agreementMap.parties({
+      keyword: String(req.query.q ?? ""),
+      issuesOnly: String(req.query.issues ?? "") === "1"
+    }) });
+  }));
+
+  router.get("/agreement-map/parties/:id", asyncRoute(async (req, res) => {
+    const map = await agreementMap.forParty(Number(req.params.id));
+    if (!map) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(map);
+  }));
+
+  /**
+   * 一括修正用の CSV。全件（partyId を渡せばその取引先の分）。
+   * 表計算で直して、運用 → 取込（基本契約）で戻す。
+   */
+  router.get("/agreement-map/export.csv", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const partyId = Number(req.query.partyId) > 0 ? Number(req.query.partyId) : null;
+    const rows = await agreementMap.exportRows({ partyId });
+    const csv = toCsv(AGREEMENT_CSV_HEADERS.map((h) => ({ header: h, value: (r: typeof rows[number]) => agreementCsvValues(r)[h] })), rows);
+    res.type("text/csv; charset=utf-8")
+       .set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename("基本契約"))}`)
+       .send(withBom(csv));
+  }));
+
+  /** 文書フォームの選択肢（基本契約・発注書番号・個別契約番号）。 */
+  router.get("/agreement-map/parties/:id/document-refs", asyncRoute(async (req, res) => {
+    const refs = await agreementMap.documentRefs(Number(req.params.id));
+    if (!refs) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(refs);
+  }));
+
+  router.patch("/agreement-map/agreements/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        kind: z.enum(["master", "standalone", "supplement", "termination", "document"]).optional(),
+        domain: z.enum(["service", "license"]).nullable().optional(),
+        direction: z.enum(["in", "out"]).optional(),
+        parentId: z.coerce.number().int().positive().nullable().optional(),
+        counterpartyId: z.coerce.number().int().positive().optional(),
+        executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
+      }).parse(req.body ?? {});
+      await agreementMap.remap(Number(req.params.id), input, actor(res));
+      res.json({ ok: true });
+    }));
 
   const agreementBody = z.object({
     counterpartyId: z.coerce.number().int().positive(),
@@ -956,6 +1027,21 @@ export function createRoutes(database: Transactable) {
     res.json(await accounting.build(accountingSchema.parse(req.query)));
   }));
 
+  // 社内の担当者（経理提出用）を付け替える。紙（PDF）には出さない。
+  // 台帳から出した計算書は案件に繋がっておらず、担当者が「未設定」の束に落ちる。
+  // 書類を作り直さずに、経理提出の画面からここで担当を持たせる。
+  router.put("/documents/:id/account-owner", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    const { staffId } = z.object({ staffId: z.coerce.number().int().positive().nullable() }).parse(req.body ?? {});
+    if (staffId !== null) {
+      const found = await database.query("SELECT id FROM staff WHERE id = $1", [staffId]);
+      if (!found.rows.length) throw new DomainError("NOT_FOUND", `担当者 ${staffId} が見つかりません`);
+    }
+    await assignAccountOwner(database, id, staffId, actor(res));
+    res.json({ ok: true, staffId });
+  }));
+
   // 束ね1つ分の Excel。groupKey は preview の key をそのまま渡す。
   router.get("/exports/accounting.xls", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
@@ -967,7 +1053,8 @@ export function createRoutes(database: Transactable) {
 
     const breakdown = req.query.layout === "breakdown";
     // 束ごとに合計行を挟む。V1 も束ごとに1ファイルだった。
-    const rows = groups.flatMap((g) => [...g.rows, totalRow(g)]);
+    // 内訳一覧は 1 支払 1 行のまま。経理提出用は 9 組目から続きの行へ。
+    const rows = groups.flatMap((g) => [...(breakdown ? g.rows : sheetRows(g.rows)), totalRow(g)]);
     const label = breakdown ? "内訳一覧" : "経理提出用";
     const sheet = groups.length === 1
       ? `${label}_${groups[0].paymentDate || "期日未設定"}`
@@ -1010,7 +1097,7 @@ export function createRoutes(database: Transactable) {
     const stem = v1FileStem(query.category, query.entity, group.paymentDate);
     const xlsx = buildXlsx([{
       name: v1SheetName(query.category, query.entity),
-      rows: [V1_ACCOUNTING_HEADERS, ...rows.map(v1AccountingCells)]
+      rows: [V1_ACCOUNTING_HEADERS, ...sheetRows(rows).map(v1AccountingCells)]
     }]);
     const disposition = (name: string) =>
       `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
@@ -1120,7 +1207,7 @@ export function createRoutes(database: Transactable) {
     res.json({ specs: IMPORT_SPECS });
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works", "license_conditions"]),
+    kind: z.enum(["parties", "works", "license_conditions", "agreements"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean(),
     // create（新しく作る）か update（既存に当てる）か。既定は create。
@@ -1905,13 +1992,20 @@ export function createRoutes(database: Transactable) {
 
   // まとめて締める。何が起きるかを先に出してから実行する。
   const closeSchema = z.object({
-    scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(200)
+    scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+    // 相手先ごとに1枚にまとめる。省略すれば条件ごと（これまでどおり）。
+    bundle: z.enum(["condition", "party"]).optional(),
+    // 締める前に直した実績の額（回の id → 額・理由）。
+    overrides: z.record(z.string(), z.object({
+      amount: z.coerce.number().positive().nullable().optional(),
+      note: z.string().max(500).nullable().optional()
+    })).optional()
   });
   router.post("/closing/preview",
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
-      const { scheduleIds } = closeSchema.parse(req.body ?? {});
-      res.json(await closingClose.preview(scheduleIds));
+      const { scheduleIds, ...options } = closeSchema.parse(req.body ?? {});
+      res.json(await closingClose.preview(scheduleIds, options));
     }));
 
   // 1件でも止まったら終わり、にはしない。できたものはでき、落ちたものは
@@ -1919,8 +2013,8 @@ export function createRoutes(database: Transactable) {
   router.post("/closing/run",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { scheduleIds } = closeSchema.parse(req.body ?? {});
-      res.json(await closingClose.run(scheduleIds, actor(res)));
+      const { scheduleIds, ...options } = closeSchema.parse(req.body ?? {});
+      res.json(await closingClose.run(scheduleIds, actor(res), options));
     }));
 
   // 月の表からこぼれるもの（締め日を過ぎた回・予定の無い実績）。
@@ -2309,6 +2403,11 @@ export function createRoutes(database: Transactable) {
     res.json(await royaltyLedger.forWork(Number(req.params.id)));
   }));
   // 台帳。workId を付ければ作家 × その作品、付けなければ作家 × 全作品。
+  /** 取引モデル（利用形態）ごとの計算書の出し分け表。運用の画面が見せる。 */
+  router.get("/royalty/statement-models", (_req, res) => {
+    res.json({ models: STATEMENT_MODELS });
+  });
+
   router.get("/royalty-ledger", asyncRoute(async (req, res) => {
     const input = z.object({
       partyId: z.coerce.number().int().positive(),
@@ -2417,6 +2516,15 @@ export function createRoutes(database: Transactable) {
         bundle: z.enum(["per_work", "per_party"]).nullable()
       }).parse(req.body ?? {});
       res.json(await royaltyLedger.setBundle(input.partyId, input.bundle, actor(res)));
+    }));
+  /** 計算書に取引モデルを混ぜるか（既定は取引モデルごとに分ける）。 */
+  router.put("/royalty-ledger/mix-models", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(),
+        mix: z.boolean()
+      }).parse(req.body ?? {});
+      res.json(await royaltyLedger.setMixModels(input.partyId, input.mix, actor(res)));
     }));
 
   router.get("/works/:id", asyncRoute(async (req, res) => {
@@ -3284,6 +3392,46 @@ export function createRoutes(database: Transactable) {
     return issued;
   };
 
+  /**
+   * 文書をまとめて作る（基本契約書＋条件書・追加／基本契約書＋発注書・追加）。
+   * 1 つのフォームで入れたものを、基本契約の記録 → 条件の載せ替え → 事前の確かめ →
+   * 基本契約書 → 条件書・発注書の順に決定する（documents/document-set.ts）。
+   */
+  const setDocSchema = z.object({
+    templateKey: z.string().trim().min(1).max(60),
+    conditionIds: z.array(z.coerce.number().int().positive()).max(200).default([]),
+    manualInputs: z.record(z.string(), z.unknown()).default({}),
+    role: z.enum(["main", "extra"]).default("main")
+  });
+  router.post("/document-sets",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        domain: z.enum(["license", "service"]),
+        counterpartyId: z.coerce.number().int().positive(),
+        matterId: z.coerce.number().int().positive().nullable().optional(),
+        master: z.object({
+          existingAgreementId: z.coerce.number().int().positive().nullable().optional(),
+          templateKey: z.string().trim().max(60).nullable().optional(),
+          title: z.string().trim().max(200).nullable().optional(),
+          manualInputs: z.record(z.string(), z.unknown()).default({})
+        }).nullable().optional(),
+        docs: z.array(setDocSchema).max(10).default([])
+      }).parse(req.body ?? {});
+      const who = actor(res);
+      res.json(await issueDocumentSet({
+        db: database,
+        preview: async (x) => {
+          const r = await issues.preview({ ...x, eventIds: [] });
+          return { missing: r.binding.missing as Array<{ name: string; label?: string | null }>, templateLabel: r.templateLabel };
+        },
+        createDraft: (x) => issues.createDraft(x, who),
+        issue: (id) => issueOne(id, [], who) as unknown as Promise<{ documentNo?: string | null }>,
+        createAgreement: (x) => agreements.create(x, who)
+      }, { domain: input.domain, counterpartyId: input.counterpartyId, matterId: input.matterId ?? null,
+           master: input.master ?? null, docs: input.docs }, who));
+    }));
+
   router.post("/documents/:id/issue",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -3415,7 +3563,7 @@ export function createRoutes(database: Transactable) {
         ...(input.manualInputs ?? {}),
         ...(usageEvents.length
           ? { statementMode: "multi",
-              rs_bundle_lines: applyLineLabels(bundleLinesFor(preview), input.manualInputs ?? {}),
+              rs_bundle_lines: applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {}),
               rs_bundle_tax: preview.fee.tax_amount,
               rs_stage_notes: stageNotesOf(preview.events ?? []) }
           : {})
@@ -3496,7 +3644,7 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       const previews = await previewBundle(input.entries, supersedesOf(input));
       res.json({
-        lines: applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {}),
+        lines: applyLineLabels(await statementLines(previews, input), input.manualInputs ?? {}),
         totals: bundleTotals(previews),
         // 前金・後金の説明（報告の備考）。計算書の備考に出す。
         stageNotes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
@@ -3516,7 +3664,7 @@ export function createRoutes(database: Transactable) {
       const previews = await previewBundle(input.entries, supersedes);
       const totals = bundleTotals(previews);
       // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
-      const lines = applyLineLabels(previews.flatMap(bundleLinesFor), input.manualInputs ?? {});
+      const lines = applyLineLabels(await statementLines(previews, input), input.manualInputs ?? {});
       const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
 
       const draft = await issues.createDraft({
@@ -4189,6 +4337,19 @@ export function createRoutes(database: Transactable) {
     }));
 
   /**
+   * CloudSign に出す前に、メールが届くドメインかを見る。届かない宛先は CloudSign が
+   * 「invalid value for email」で断り、宛先の無い下書きが残る。作る前に止めて、どれかを言う。
+   */
+  const assertDeliverable = async (emails: string[]) => {
+    const bad = await undeliverableEmails(emails);
+    if (bad.length) {
+      throw new DomainError("VALIDATION",
+        `${bad.join("、")} はメールが届かないドメインです（メールの受け口が登録されていません）。` +
+        "アドレスの綴り（.co.jp と .jp など）を確かめ、取引先の連絡先を直してから作り直してください");
+    }
+  };
+
+  /**
    * 何枚かの文書を1つの CloudSign の封筒で署名依頼する。
    *
    * 署名者は順番に署名を求める（order）。確認者・CC は署名しないが書類を見られる
@@ -4212,6 +4373,7 @@ export function createRoutes(database: Transactable) {
     requireRole("admin"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = signManySchema.parse(req.body ?? {});
+      await assertDeliverable([...input.signers, ...input.reportees].map((x) => x.email));
       const who = actor(res);
       const loaded = await manyDocuments(input.documentIds);
       const ids = loaded.map((x) => x.document.id);
@@ -4390,6 +4552,7 @@ export function createRoutes(database: Transactable) {
       if (!signers.length) throw new DomainError("VALIDATION", "署名者を 1 人以上入れてください");
       const reportees = (input.reportees ?? [])
         .filter((r) => !signers.some((x) => x.email.toLowerCase() === r.email.toLowerCase()));
+      await assertDeliverable([...signers, ...reportees].map((x) => x.email));
       const { document, attachment } = await pdfOf(id);
       const subject = input.subject ?? document.title ?? document.documentNo ?? "署名のお願い";
       const who = actor(res);
@@ -4608,6 +4771,44 @@ function flowNoticeJob(
 }
 
 /** Webhook 受信。ユーザー認証は通さず、共有シークレットと署名で守る。 */
+/**
+ * 社内の担当者（経理提出用。紙には出さない）を書類に付ける・外す。
+ * V3 の経理提出の画面と、searchAPI の「支払Excel発行」の両方から呼ぶ。
+ */
+async function assignAccountOwner(database: Transactable, documentId: number, staffId: number | null, by: string) {
+  const updated = await database.query(
+    `UPDATE documents
+        SET manual_inputs = CASE WHEN $2::bigint IS NULL THEN manual_inputs - '_accountOwnerStaffId'
+                                 ELSE jsonb_set(manual_inputs, '{_accountOwnerStaffId}', to_jsonb($2::bigint)) END
+      WHERE id = $1 RETURNING id`, [documentId, staffId]);
+  if (!updated.rows.length) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+  await recordAudit(database, {
+    action: "document.account_owner", targetType: "document", targetId: documentId,
+    actor: by, detail: { staffId }
+  });
+}
+
+/**
+ * 文書の決定と PDF の作り置き。画面の経路と内部の経路（searchAPI の経理提出）で
+ * 同じものを使う（PDF を描くブラウザを2つ立てない）。
+ */
+const pdfServices = new WeakMap<object, { issues: DocumentIssueService; pdf: PdfRenderer; pdfs: PdfStore }>();
+function pdfServicesFor(database: Transactable) {
+  let found = pdfServices.get(database);
+  if (!found) {
+    const issues = new DocumentIssueService(database);
+    const pdf: PdfRenderer = process.env.PDF_RENDERER === "memory"
+      ? new MemoryPdfRenderer() : new ChromiumPdfRenderer();
+    // 決定した文書の PDF の作り置き。決定の直後に描いて置き、送る・開くときはそれを返す。
+    const pdfs = new PdfStore(database, pdf, (id) => issues.renderIssued(id),
+      process.env.PDF_RENDERER === "memory" ? "memory" : "chromium");
+    issues.afterIssue = async (id) => { await pdfs.warm(id); };
+    found = { issues, pdf, pdfs };
+    pdfServices.set(database, found);
+  }
+  return found;
+}
+
 export function createWebhookRouter(database: Transactable) {
   const router = Router();
   // 受信の記録と送信は同じ設定で動かす（画面側と食い違わせない）。
@@ -4722,6 +4923,100 @@ export function createWebhookRouter(database: Transactable) {
     catch { return res.status(400).json({ error: "本文を読み取れません" }); }
 
     res.json(await job(body));
+  }));
+
+  // ---------------------------------------------------------------------
+  // searchAPI の「支払Excel発行」（legalbridge.arclight.co.jp/payments/excel-export）
+  // から読む口。V3 の経理提出と同じ行・同じ Excel・同じ PDF を返す（二重に組まない）。
+  // 共有シークレット（WEBHOOK_TOKEN、定期実行と同じもの）で守る。誰の分を返すかは
+  // searchAPI がログイン者で決めて ownerEmail で渡す。
+  // ---------------------------------------------------------------------
+  const internalAccounting = new AccountingExportRepository(database);
+  const { pdfs: internalPdfs } = pdfServicesFor(database);
+  const tokenOk = (req: { header: (n: string) => string | undefined }) =>
+    Boolean(config.webhookToken) && req.header("x-lb-webhook-token") === config.webhookToken;
+  const internalQuery = z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    basis: z.enum(["due", "paid"]).optional(),
+    // 既定は出力済みも含める（searchAPI は参照用に何度でも出し直せる画面）。
+    includeExported: z.enum(["0", "1"]).optional(),
+    // 指定があれば、その人が担当の支払だけ（searchAPI の一般担当者）。
+    ownerEmail: z.string().trim().toLowerCase().max(200).optional(),
+    // "1" なら担当者が決まっていない支払だけ（searchAPI の管理者の「担当者未設定」）。
+    unset: z.enum(["0", "1"]).optional()
+  });
+  const internalRows = async (query: z.infer<typeof internalQuery>) => {
+    const result = await internalAccounting.build({
+      from: query.from, to: query.to, basis: query.basis ?? "due",
+      includeExported: query.includeExported !== "0"
+    });
+    return result.groups.flatMap((g) => g.rows.map((row) => ({ row, group: g })))
+      .filter(({ row }) => !query.ownerEmail || (row.ownerEmail ?? "").toLowerCase() === query.ownerEmail)
+      .filter(({ row }) => query.unset !== "1" || !row.ownerName);
+  };
+
+  router.get("/exports/accounting", asyncRoute(async (req, res) => {
+    if (!tokenOk(req)) return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+    const query = internalQuery.parse(req.query);
+    const rows = await internalRows(query);
+    res.json({
+      rows: rows.map(({ row, group }) => ({
+        paymentId: row.paymentId, paymentNo: row.paymentNo,
+        documentId: row.documentId, documentNo: row.documentNo,
+        category: row.category, entity: row.entity,
+        title: row.title, vendorName: row.vendorName, paymentDate: row.paymentDate,
+        currency: row.currency, subtotal: row.subtotal, consumptionTax: row.consumptionTax,
+        withholdingTax: row.withholdingTax, netTransfer: row.netTransfer,
+        owner: row.ownerName ?? null, ownerEmail: row.ownerEmail ?? null,
+        contents: [...row.slots, ...(row.moreSlots ?? []).flat()].map((x) => x.content).filter(Boolean),
+        flags: row.flags, groupKey: group.key
+      }))
+    });
+  }));
+
+  router.get("/exports/accounting/bundle", asyncRoute(async (req, res) => {
+    if (!tokenOk(req)) return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+    const query = internalQuery.extend({
+      paymentIds: z.string().regex(/^\d+(,\d+)*$/),
+      withPdf: z.enum(["0", "1"]).optional()
+    }).parse(req.query);
+    const wanted = new Set(query.paymentIds.split(",").map(Number));
+    if (wanted.size > 200) throw new DomainError("VALIDATION", "一度に出せるのは 200 件までです");
+    // 期間と担当の絞り込みは一覧と同じ。見えない支払の id を混ぜても入らない。
+    const rows = (await internalRows(query)).map(({ row }) => row).filter((r) => wanted.has(r.paymentId));
+    if (!rows.length) return res.status(404).json({ error: "対象の支払がありません（読み込み直してください）" });
+    const bundle = await buildAccountingBundle(rows,
+      { pdf: async (id) => await internalPdfs.ensure(id) }, { withPdf: query.withPdf !== "0" });
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("content-type", "application/zip");
+    res.setHeader("content-disposition",
+      `attachment; filename="payment_export.zip"; filename*=UTF-8''${encodeURIComponent(bundle.name)}`);
+    res.setHeader("x-pdf-failures", String(bundle.missing.length));
+    res.setHeader("x-payment-count", String(rows.length));
+    res.send(Buffer.from(bundle.data));
+  }));
+
+  // 社内の担当者を付ける（searchAPI の管理者の「担当者を設定」）。担当者はメールで指す。
+  router.post("/documents/:id/account-owner", asyncRoute(async (req, res) => {
+    if (!tokenOk(req)) return res.status(config.webhookToken ? 401 : 404).json({ error: "unauthorized" });
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+    let body: any = {};
+    try { body = raw.length ? JSON.parse(raw.toString("utf8")) : {}; }
+    catch { return res.status(400).json({ error: "本文を読み取れません" }); }
+    const { staffEmail, by } = z.object({
+      staffEmail: z.string().trim().toLowerCase().email().nullable(),
+      by: z.string().trim().max(200).optional()
+    }).parse(body);
+    let staffId: number | null = null;
+    if (staffEmail) {
+      const found = await database.query("SELECT id FROM staff WHERE lower(email) = $1 ORDER BY id LIMIT 1", [staffEmail]);
+      if (!found.rows.length) throw new DomainError("NOT_FOUND", `担当者 ${staffEmail} が V3 の担当者に見つかりません`);
+      staffId = Number((found.rows[0] as { id: number }).id);
+    }
+    await assignAccountOwner(database, id, staffId, by ? `searchapi:${by}` : "searchapi");
+    res.json({ ok: true, staffId });
   }));
 
   router.post("/webhooks/:source", asyncRoute(async (req, res) => {

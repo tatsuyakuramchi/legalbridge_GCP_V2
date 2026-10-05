@@ -21,6 +21,7 @@ V3 本体を外に開くと、画面も API も全部開いてしまう。
 | `GET /internal/upload` | 署名付きリンク（HMAC・30 日） |
 | `POST /internal/upload/file` | 同上。1 ファイル 30MB まで |
 | `POST /internal/jobs/{delivery-alert,daily,mail-intake,backlog-pull,flow-notice}` | 共有シークレット（`x-lb-webhook-token`）。定期実行用 |
+| `GET /internal/exports/accounting`・`GET /internal/exports/accounting/bundle`・`POST /internal/documents/{番号}/account-owner` | 共有シークレット（`x-lb-webhook-token`）。searchAPI の「支払Excel発行」用（V3 本体の IAP は searchAPI の ID トークンを受け付けないので口を通す） |
 
 これ以外のパスは 404（`..` を使った抜け道も含む）。V3 本体へは口のサービスアカウントの
 ID トークンを付けて呼ぶので、V3 本体は非公開のまま。社内の人の使い方は変わらない。

@@ -2351,6 +2351,16 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON v3.document_pdfs TO legalbridge_v3_runti
 ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS unit_label text;
 COMMENT ON COLUMN v3.conditions.unit_label IS '数量の単位（式・P・個 など）。発注書の明細に出す。A-066';
 
+-- ---------------------------------------------------------------------
+-- A-067 許諾料の計算書に取引モデル（利用形態）を混ぜるか
+--   既定（空）は取引モデルごとに分ける＝計算書1枚＝取引モデル1つ。計算書の
+--   日付見出し（製造完了日／入金日）・取引モデル概要・数量の欄が1つに決まる。
+--   true は従来どおり、同じ製造日・同じ支払日なら取引モデルをまたいで1枚にする。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS royalty_mix_models boolean;
+COMMENT ON COLUMN v3.parties.royalty_mix_models IS
+  '許諾料の計算書に取引モデルを混ぜるか。空＝取引モデルごとに分ける（既定）/ true＝混ぜる。A-067';
+
 COMMIT;
 
 
@@ -2624,6 +2634,10 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 67, '計算書に取引モデルを混ぜるか（A-067。列 1 であること）',
+         (SELECT count(*) FROM information_schema.columns
+           WHERE table_schema='v3' AND table_name='parties' AND column_name='royalty_mix_models')::text
   UNION ALL
   SELECT 66, '明細の単位（A-066。列 1 であること）',
          (SELECT count(*) FROM information_schema.columns

@@ -81,6 +81,8 @@ export interface PeriodRow {
   documentNo: string | null;
   documentStatus: string | null;
   documentLabel: string;
+  /** 決済文書を送った日時（メール・CloudSign）。まだなら null。 */
+  documentSentAt: string | null;
   paymentId: number | null;
   paymentNo: string | null;
   paymentStatus: string | null;
@@ -183,6 +185,7 @@ const PERIOD_SELECT = `
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
          d.id AS document_id, d.document_no, d.status AS document_status,
+         snd.sent_at AS document_sent_at,
          ${PRINTED_DUE_SQL} AS printed_due_on,
          y.id AS payment_id, y.payment_no, y.status AS payment_status, y.paid_on,
          COALESCE(al.amount, 0) AS allocated_amount
@@ -202,6 +205,13 @@ const PERIOD_SELECT = `
        ORDER BY ev.id LIMIT 1
     ) e ON true
     LEFT JOIN documents d ON d.id = e.document_id AND d.status <> 'void'
+    -- 送った記録（文書の一覧と同じ出どころ）。「③ 送る」が済んだかを見る。
+    LEFT JOIN LATERAL (
+      SELECT a.occurred_at AS sent_at FROM audit_events a
+       WHERE a.target_type = 'document' AND a.target_id = d.id
+         AND a.action IN ('gmail.send', 'cloudsign.send')
+       ORDER BY a.occurred_at DESC LIMIT 1
+    ) snd ON true
     LEFT JOIN LATERAL (
       SELECT a.amount, a.payment_id FROM payment_allocations a
         JOIN payments py ON py.id = a.payment_id
@@ -222,6 +232,7 @@ const UNPLANNED_SELECT = `
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
          d.id AS document_id, d.document_no, d.status AS document_status,
+         snd.sent_at AS document_sent_at,
          ${PRINTED_DUE_SQL} AS printed_due_on,
          y.id AS payment_id, y.payment_no, y.status AS payment_status, y.paid_on,
          COALESCE(al.amount, 0) AS allocated_amount
@@ -235,6 +246,13 @@ const UNPLANNED_SELECT = `
        ORDER BY mm.id DESC LIMIT 1
     ) m ON true
     LEFT JOIN documents d ON d.id = e.document_id AND d.status <> 'void'
+    -- 送った記録（文書の一覧と同じ出どころ）。「③ 送る」が済んだかを見る。
+    LEFT JOIN LATERAL (
+      SELECT a.occurred_at AS sent_at FROM audit_events a
+       WHERE a.target_type = 'document' AND a.target_id = d.id
+         AND a.action IN ('gmail.send', 'cloudsign.send')
+       ORDER BY a.occurred_at DESC LIMIT 1
+    ) snd ON true
     LEFT JOIN LATERAL (
       SELECT a.amount, a.payment_id FROM payment_allocations a
         JOIN payments py ON py.id = a.payment_id
@@ -542,6 +560,7 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     documentNo: str(row.document_no),
     documentStatus: str(row.document_status),
     documentLabel: documentFor(kind).label,
+    documentSentAt: row.document_sent_at ? new Date(String(row.document_sent_at)).toISOString() : null,
     paymentId,
     paymentNo: str(row.payment_no),
     paymentStatus: str(row.payment_status),

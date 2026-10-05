@@ -10,6 +10,9 @@ import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
 import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
 import { FEE_BASIS } from "./fee-basis.js";
+import { PartyAgreementMapService } from "../agreements/party-map.js";
+import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_UPDATE_COLUMNS,
+         agreementCsvPatch } from "../agreements/csv.js";
 
 /**
  * CSV の一括取込。
@@ -22,7 +25,7 @@ import { FEE_BASIS } from "./fee-basis.js";
  * 画面から入れた行と取り込んだ行で品質が変わる。
  */
 
-export type ImportKind = "parties" | "works" | "license_conditions";
+export type ImportKind = "parties" | "works" | "license_conditions" | "agreements";
 
 /**
  * 取り込み方。
@@ -50,6 +53,8 @@ export interface ImportSpec {
   updateSample?: string;
   /** update のときの当て方の説明。 */
   updateHint?: string;
+  /** 既存に当てる取り込みしかできない（新しく作るのは画面から）。 */
+  updateOnly?: boolean;
 }
 
 export const IMPORT_SPECS: ImportSpec[] = [
@@ -98,6 +103,19 @@ export const IMPORT_SPECS: ImportSpec[] = [
     updateSample: "条件番号,料率,開始日,終了日\n" +
                   "CL-2026-00451,11,2026-10-01,2031-09-30\n" +
                   "CL-2026-00452,15,,"
+  },
+  {
+    kind: "agreements", label: "基本契約（契約の一括修正）",
+    required: [], optional: [...AGREEMENT_CSV_HEADERS],
+    sample: "",
+    updatable: true, updateOnly: true,
+    updateHint: "当てる先は 契約ID（無ければ 契約番号）。「取引先⇔基本契約」の画面から全件を書き出して直すのが早道です。" +
+                "消すときは「なし」（親契約番号・締結日・有効開始日・終了日・相手方番号）。" +
+                `${AGREEMENT_CSV_REFERENCE_COLUMNS.join("・")} は参考の列で、取り込んでも変わりません。番号は振り直しません`,
+    updateColumns: AGREEMENT_CSV_UPDATE_COLUMNS,
+    updateSample: "契約ID,契約番号,件名,種類,種別,方向,親契約番号,締結日,有効開始日,終了日,自動更新,相手方番号\n" +
+                  "12,ARC-LIC-2024-0012,利用許諾基本契約,基本契約,ライセンス,OUT,,2024-04-01,2024-04-01,2027-03-31,する,\n" +
+                  "30,C-0100,覚書（料率変更）,補助文書,,,ARC-LIC-2024-0012,2025-01-15,,,,"
   }
 ];
 
@@ -205,8 +223,10 @@ export class ImportService {
   private readonly parties: PartyWriteService;
   private readonly works: WorkWriteService;
   private readonly conditions: ConditionWriteService;
+  private readonly agreements: PartyAgreementMapService;
 
   constructor(private readonly database: Transactable) {
+    this.agreements = new PartyAgreementMapService(database);
     this.parties = new PartyWriteService(database);
     this.works = new WorkWriteService(database);
     this.conditions = new ConditionWriteService(database);
@@ -217,7 +237,8 @@ export class ImportService {
   }): Promise<ImportReport> {
     const spec = IMPORT_SPECS.find((s) => s.kind === input.kind);
     if (!spec) throw new DomainError("VALIDATION", `取り込めない種類です: ${input.kind}`);
-    const mode: ImportMode = input.mode ?? "create";
+    // 既存に当てるしかできない種類は、指定が無くても update にする。
+    const mode: ImportMode = spec.updateOnly ? "update" : (input.mode ?? "create");
     if (mode === "update" && !spec.updatable) {
       throw new DomainError("VALIDATION", `${spec.label}は既存に当てる取り込みができません`);
     }
@@ -225,7 +246,12 @@ export class ImportService {
     const parsed = parseCsv(input.csv);
     if (mode === "update") {
       // どれを直すかが決まればよい。値の列は書いてあるものだけ当てる。
-      if (input.kind === "license_conditions") {
+      if (input.kind === "agreements") {
+        if (!parsed.headers.includes("契約ID") && !parsed.headers.includes("契約番号")) {
+          throw new DomainError("VALIDATION",
+            "更新には「契約ID」か「契約番号」の見出しが要ります。どの契約を直すかが決まりません");
+        }
+      } else if (input.kind === "license_conditions") {
         const byNo = parsed.headers.includes("条件番号");
         const byWork = (parsed.headers.includes("作品名") || parsed.headers.includes("作品コード"))
           && parsed.headers.includes("取引モデル");
@@ -255,7 +281,9 @@ export class ImportService {
     for (const [index, row] of parsed.rows.entries()) {
       const line = index + 2;   // 1行目は見出し
       try {
-        const outcome = input.kind === "license_conditions"
+        const outcome = input.kind === "agreements"
+          ? await this.agreementUpdate(row, input.dryRun, input.actor)
+          : input.kind === "license_conditions"
           ? await this.conditionUpdate(row, input.dryRun, input.actor)
           : input.kind === "parties"
             ? await this.party(row, input.dryRun, input.actor)
@@ -272,7 +300,8 @@ export class ImportService {
         rows.push({
           line,
           status: e?.code === "CONFLICT" ? "duplicate" : "error",
-          label: String(row["条件番号"] ?? row[spec.required[0]] ?? row["作品コード"] ?? ""),
+          label: String(row["条件番号"] ?? row["契約番号"] ?? row["契約ID"]
+                        ?? (spec.required[0] ? row[spec.required[0]] : undefined) ?? row["作品コード"] ?? ""),
           message: e?.message ?? (mode === "update" ? "更新に失敗しました" : "登録に失敗しました")
         });
       }
@@ -371,6 +400,62 @@ export class ImportService {
     await this.works.update(Number(work.id), patch, actor);
     return { status: "ok", label, id: Number(work.id), code: work.work_code,
              message: `${who} の ${what} を更新しました${tail}` };
+  }
+
+  /**
+   * 契約（基本契約・補助文書 …）に、CSV に書いてある列だけを当てる。
+   * 当て方は「取引先⇔基本契約」の画面の編集と同じ（親・種類・相手先の検査も同じ）。
+   * 試算も同じ検証と書き込みを通してから巻き戻す。
+   */
+  private async agreementUpdate(row: Record<string, string>, dryRun: boolean, actor: string):
+    Promise<Omit<RowOutcome, "line">> {
+    const text = (header: string) => String(row[header] ?? "").trim();
+    const idText = text("契約ID");
+    const no = text("契約番号");
+    if (!idText && !no) throw new DomainError("VALIDATION", "契約IDも契約番号も空です");
+    if (idText && !/^\d+$/.test(idText)) throw new DomainError("VALIDATION", `契約IDは数字です（"${idText}"）`);
+    const found = await this.database.query(
+      idText
+        ? "SELECT id, agreement_no, title FROM agreements WHERE id = $1"
+        : "SELECT id, agreement_no, title FROM agreements WHERE lower(btrim(agreement_no)) = lower(btrim($1)) LIMIT 2",
+      [idText ? Number(idText) : no]);
+    const hits = found.rows as Array<{ id: number; agreement_no: string | null; title: string }>;
+    if (!hits.length) {
+      throw new DomainError("NOT_FOUND", idText ? `契約ID ${idText} の契約が見つかりません` : `契約番号 ${no} の契約が見つかりません`);
+    }
+    if (hits.length > 1) throw new DomainError("VALIDATION", `契約番号 ${no} が複数あります。契約IDで指定してください`);
+    const a = hits[0];
+    const label = a.agreement_no ?? `#${a.id}`;
+    const who = `${label} ${a.title}`;
+    // ID と番号の両方が書いてあって食い違えば、どちらを直すつもりか分からない。
+    if (idText && no && String(a.agreement_no ?? "").toLowerCase() !== no.toLowerCase()) {
+      throw new DomainError("VALIDATION", `契約ID ${idText} の契約番号は ${a.agreement_no ?? "（なし）"} です（CSV は ${no}）`);
+    }
+
+    const patch = await agreementCsvPatch(row, async (parentNo) => {
+      const m = parentNo.match(/^#(\d+)$/);
+      const r = await this.database.query(
+        m ? "SELECT id FROM agreements WHERE id = $1"
+          : "SELECT id FROM agreements WHERE lower(btrim(agreement_no)) = lower(btrim($1)) LIMIT 2",
+        [m ? Number(m[1]) : parentNo]);
+      if (r.rows.length !== 1) {
+        throw new DomainError("VALIDATION", r.rows.length
+          ? `親契約番号 ${parentNo} が複数あります。「#契約ID」で書いてください`
+          : `親契約番号 ${parentNo} の契約が見つかりません`);
+      }
+      return Number((r.rows[0] as { id: number }).id);
+    });
+    if (!Object.keys(patch).length) {
+      return { status: "skip", label, id: Number(a.id), code: a.agreement_no,
+               message: `${who}：当てる項目がありません（空欄の列は触りません）` };
+    }
+    const changed = await this.agreements.remap(Number(a.id), patch, actor, { dryRun });
+    if (!changed.length) {
+      return { status: "skip", label, id: Number(a.id), code: a.agreement_no,
+               message: `${who}：いまと同じです` };
+    }
+    return { status: "ok", label, id: Number(a.id), code: a.agreement_no,
+             message: `${who} の ${changed.join("・")} を${dryRun ? "更新します" : "更新しました"}` };
   }
 
   private async party(row: Record<string, string>, dryRun: boolean, actor: string):

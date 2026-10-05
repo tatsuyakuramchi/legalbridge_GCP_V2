@@ -1,6 +1,6 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { ensureAgreementForTerms } from "../agreements/auto.js";
-import { conditionContracts, contractRefText } from "../conditions/contracts.js";
+import { inContractRef } from "../royalty/in-contract.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { MatterLinkService } from "../matters/link-service.js";
@@ -147,7 +147,8 @@ export class DocumentIssueService {
             WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
           [input.documentId])).rows[0] as any)?.request_id);
       }
-      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER, null, ownerStaffId);
+      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER, null, ownerStaffId,
+                                              chosenRefs(manual));
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
       // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
       // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
@@ -447,7 +448,8 @@ export class DocumentIssueService {
           agreementId: row.agreement_id,
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
-        }, documentNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId));
+        }, documentNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId),
+           chosenRefs(settled.manual));
         const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
@@ -962,7 +964,9 @@ export class DocumentIssueService {
      */
     issuedOn: string | null = null,
     /** 人が選んだ当社担当者（manual_inputs._ownerStaffId）。案件・作業の担当より優先。 */
-    ownerStaffId: number | null = null
+    ownerStaffId: number | null = null,
+    /** 人が文書フォームで選んだ発注書番号・個別契約番号。自動で辿った値より優先。 */
+    refs: ChosenRefs = {}
   ) {
     const context = await this.contexts.build({
       conditionIds: input.conditionIds,
@@ -976,13 +980,14 @@ export class DocumentIssueService {
       documentNumber
     }, client);
     await this.contexts.attachScopes(client, context.conditions);
-    // 計算書の「契約番号」は 基本契約 / 個別契約（条件書）の番号を並べる。
-    // 発注書など他のひな形は従来どおり基本契約の番号だけ（legacy-variables）。
+    // 検収書の見出しの発注番号。選んでいればそれを出す（legacy-variables の parent_po_number）。
+    if (refs.parentPoNo) (context as unknown as Record<string, unknown>).parentPoNo = refs.parentPoNo;
+    // 計算書の「契約番号」は イン側の 基本契約 / 個別契約 の番号を並べる（明細の対象契約と同じ、
+    // royalty/in-contract.ts）。発注書など他のひな形は従来どおり基本契約の番号だけ（legacy-variables）。
     if (isStatementTemplate(input.templateKey) && input.conditionIds.length) {
-      const cc = await conditionContracts(client, input.conditionIds[0]);
-      const masterNo = input.agreementId ? (context.agreement?.no ?? null) : (cc.master?.no ?? null);
-      (context as unknown as Record<string, unknown>).contractRefText =
-        contractRefText(masterNo, cc.terms.find((t) => t.used)?.no ?? null) || null;
+      const ref = await inContractRef(client, input.conditionIds[0],
+        { masterAgreementId: input.agreementId ?? null, termsNo: refs.termsNo ?? null });
+      (context as unknown as Record<string, unknown>).contractRefText = ref.number || null;
     }
     return context as unknown as Record<string, unknown>;
   }
@@ -1020,4 +1025,12 @@ export class DocumentIssueService {
       throw new DomainError("CONFLICT", `無効または旧版の条件は文書にできません: ${names}`);
     }
   }
+}
+
+/** 文書フォームで人が選んだ番号（manual_inputs の内部の名前）。 */
+export interface ChosenRefs { parentPoNo?: string | null; termsNo?: string | null }
+
+export function chosenRefs(manual: Record<string, unknown> | null | undefined): ChosenRefs {
+  const text = (v: unknown) => { const t = String(v ?? "").trim(); return t || null; };
+  return { parentPoNo: text(manual?._parentPoNo), termsNo: text(manual?._termsNo) };
 }

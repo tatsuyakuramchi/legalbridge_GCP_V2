@@ -53,6 +53,10 @@ export interface CloseTarget {
   /** この回で起こすこと。すでに済んでいる手は入らない。 */
   willRecordEvent: boolean;
   amount: number | null;
+  /** 予定の額。締める前に直したときに比べられるように。 */
+  plannedAmount: number | null;
+  /** 画面で直した額で記録する。 */
+  overridden: boolean;
   documentLabel: string;
   dueOn: string | null;
   dueSource: string;
@@ -62,9 +66,29 @@ export interface CloseTarget {
 export interface CloseSkip { scheduleId: number; conditionName: string; seq: number | null;
                              reason: Refusal; label: string }
 
+/**
+ * 決済文書のまとめ方。
+ * - condition: 条件ごとに1枚（これまでどおり）。
+ * - party: 相手先ごとに1枚。同じ相手先・同じ種類の文書・同じ通貨の条件を
+ *   1枚の検収書と1件の支払にまとめる。定期払いの条件がいくつもある相手先で、
+ *   条件の画面を行き来せずに済む。
+ */
+export type CloseBundle = "condition" | "party";
+
+/** 締める前に直す実績の額。予定どおりでない回だけ渡す。 */
+export interface CloseOverride { amount?: number | null; note?: string | null }
+export type CloseOverrides = Record<number, CloseOverride>;
+
+export interface CloseOptions { bundle?: CloseBundle; overrides?: CloseOverrides }
+
 export interface CloseDocPlan {
+  /** 先頭の条件（条件ごとのときはその条件）。 */
   conditionId: number;
   conditionName: string;
+  /** この1枚に載る条件。相手先ごとにまとめると複数になる。 */
+  conditionIds: number[];
+  conditionNames: string[];
+  party: { id: number; name: string } | null;
   templateKey: string;
   documentLabel: string;
   /** その文書に載る回。締め日のいちばん遅い日を決定日にする。 */
@@ -80,6 +104,7 @@ export interface ClosePreview {
   documents: CloseDocPlan[];
   numbers: Array<{ templateKey: string; label: string; prefix: string; year: number;
                    count: number; from: string; to: string }>;
+  bundle: CloseBundle;
   summary: {
     rows: number; parties: number;
     events: number; documents: number; payments: number; total: number;
@@ -113,7 +138,9 @@ export interface CloseResult {
 // ---------------------------------------------------------------------------
 
 /** その回を締められるか。締められないなら理由。 */
-export function refusalFor(row: PeriodRow, today: string): Refusal | null {
+export function refusalFor(
+  row: PeriodRow, today: string, override?: CloseOverride
+): Refusal | null {
   if (row.step === "done") return "done";
   if (row.scheduleId === null) return "unplanned";
   if (!row.closingOn) return "no_closing_date";
@@ -123,9 +150,56 @@ export function refusalFor(row: PeriodRow, today: string): Refusal | null {
   if (row.step === "event") {
     // 料率は売上報告からしか金額が出ない。予定額で埋めてはいけない。
     if (needsReport(row.pricingModel)) return "needs_report";
-    if (!row.plannedAmount) return "no_planned_amount";
+    // 画面で額を入れた回は、予定額が無くても締められる。
+    if (!row.plannedAmount && !(override?.amount && override.amount > 0)) return "no_planned_amount";
   }
   return null;
+}
+
+/** 締める前に直した額を読む。予定と違う額には理由が要る。 */
+export function readOverrides(raw: CloseOverrides | undefined): CloseOverrides {
+  const out: CloseOverrides = {};
+  for (const [key, value] of Object.entries(raw ?? {})) {
+    const id = Math.trunc(Number(key));
+    if (!(id > 0) || !value) continue;
+    const amount = value.amount === null || value.amount === undefined || Number.isNaN(Number(value.amount))
+      ? null : Math.round(Number(value.amount));
+    if (amount !== null && amount <= 0) {
+      throw new DomainError("VALIDATION", "実績の金額は1以上で入れてください");
+    }
+    const note = typeof value.note === "string" && value.note.trim() ? value.note.trim() : null;
+    if (amount === null && !note) continue;
+    out[id] = { amount, note };
+  }
+  return out;
+}
+
+/** 予定と違う額で記録するなら理由が要る。検収書の変更履歴に出るため。 */
+function assertReasons(rows: PeriodRow[], overrides: CloseOverrides) {
+  const missing = rows.filter((r) => {
+    const o = overrides[r.scheduleId!];
+    return o?.amount && r.plannedAmount && o.amount !== r.plannedAmount && !o.note;
+  });
+  if (missing.length) {
+    throw new DomainError("VALIDATION",
+      `予定と違う額にした回は理由を入れてください（${missing.map((r) =>
+        `${r.conditionName}${r.seq ? ` 第${r.seq}回` : ""}`).join("・")}）`);
+  }
+}
+
+/**
+ * 1枚にまとめる鍵。相手先ごとでも、文書の種類と通貨が違えば分ける
+ * （検収書と計算書を1枚にはできない。通貨の違う額は足せない）。
+ */
+export function bundleKey(row: PeriodRow, bundle: CloseBundle): string {
+  if (bundle === "condition") return `c:${row.conditionId}`;
+  return `p:${row.party?.id ?? `c${row.conditionId}`}:${documentFor(row.kind).templateKey}:${row.currency || "JPY"}`;
+}
+
+/** その回で記録する（した）額。直した額 → 実績 → 予定。 */
+function amountOf(row: PeriodRow, overrides: CloseOverrides): number | null {
+  if (row.eventAmount !== null) return row.eventAmount;
+  return overrides[row.scheduleId ?? 0]?.amount ?? row.plannedAmount;
 }
 
 export class ClosingCloseService {
@@ -145,15 +219,18 @@ export class ClosingCloseService {
    * 何が起きるかを先に出す。枚数・番号・合計・支払期日の根拠まで。
    * 押したあとに「思っていたのと違う」が起きないようにする。
    */
-  async preview(scheduleIds: number[]): Promise<ClosePreview> {
+  async preview(scheduleIds: number[], options: CloseOptions = {}): Promise<ClosePreview> {
     try {
+      const bundle: CloseBundle = options.bundle === "party" ? "party" : "condition";
+      const overrides = readOverrides(options.overrides);
       const rows = await this.rowsFor(scheduleIds);
       const today = this.today().toISOString().slice(0, 10);
+      const refuse = (row: PeriodRow) => refusalFor(row, today, overrides[row.scheduleId ?? 0]);
       const targets: CloseTarget[] = [];
       const skipped: CloseSkip[] = [];
 
       for (const row of rows) {
-        const refusal = refusalFor(row, today);
+        const refusal = refuse(row);
         if (refusal) {
           skipped.push({ scheduleId: row.scheduleId ?? 0, conditionName: row.conditionName,
                          seq: row.seq, reason: refusal, label: REFUSAL_LABEL[refusal] });
@@ -165,45 +242,54 @@ export class ClosingCloseService {
           conditionName: row.conditionName,
           seq: row.seq, label: row.label, closingOn: row.closingOn, party: row.party,
           willRecordEvent: row.step === "event",
-          amount: row.eventAmount ?? row.plannedAmount,
+          amount: amountOf(row, overrides),
+          plannedAmount: row.plannedAmount,
+          overridden: row.step === "event" && !!overrides[row.scheduleId!]?.amount,
           documentLabel: row.documentLabel,
           dueOn: row.due.on, dueSource: row.due.source, dueLabel: row.due.label
         });
       }
 
-      // 決済文書は条件ごとに1枚。同じ条件の回を1枚にまとめる。
+      // 決済文書は条件ごと（または相手先ごと）に1枚。同じ組の回を1枚にまとめる。
       // すでに文書のある回は枚数に数えない（その回は支払だけが残っている）。
-      const byCondition = new Map<number, PeriodRow[]>();
+      const groups = new Map<string, PeriodRow[]>();
       for (const row of rows) {
-        if (refusalFor(row, today) || row.documentId !== null) continue;
-        const list = byCondition.get(row.conditionId) ?? [];
+        if (refuse(row) || row.documentId !== null) continue;
+        const key = bundleKey(row, bundle);
+        const list = groups.get(key) ?? [];
         list.push(row);
-        byCondition.set(row.conditionId, list);
+        groups.set(key, list);
       }
-      const documents: CloseDocPlan[] = [...byCondition.entries()].map(([conditionId, list]) => {
+      const documents: CloseDocPlan[] = [...groups.values()].map((list) => {
         const head = list[0]!;
+        const conditions = new Map(list.map((r) => [r.conditionId, r.conditionName]));
         return {
-          conditionId, conditionName: head.conditionName,
+          conditionId: head.conditionId, conditionName: head.conditionName,
+          conditionIds: [...conditions.keys()], conditionNames: [...conditions.values()],
+          party: head.party,
           templateKey: documentFor(head.kind).templateKey,
           documentLabel: head.documentLabel,
           scheduleIds: list.map((r) => r.scheduleId!),
           // 1枚に数回を載せるときは、いちばん遅い締め日で決定する。
           issuedOn: list.map((r) => r.closingOn).filter((d): d is string => !!d).sort().at(-1) ?? null,
-          amount: list.reduce((a, r) => a + (r.eventAmount ?? r.plannedAmount ?? 0), 0),
+          amount: list.reduce((a, r) => a + (amountOf(r, overrides) ?? 0), 0),
           willCreatePayment: true
         };
       });
 
-      const payingRows = rows.filter((r) => !refusalFor(r, today) && r.paymentId === null);
+      // 支払は文書1枚につき1件。すでに文書のある回はその文書で、まだの回は組で数える。
+      const payingRows = rows.filter((r) => !refuse(r) && r.paymentId === null);
+      const payingKeys = new Set(payingRows.map((r) =>
+        r.documentId !== null ? `d:${r.documentId}` : bundleKey(r, bundle)));
       return {
-        targets, skipped, documents,
+        targets, skipped, documents, bundle,
         numbers: await this.peekNumbers(documents),
         summary: {
           rows: targets.length,
           parties: new Set(targets.map((t) => t.party?.id ?? 0)).size,
           events: targets.filter((t) => t.willRecordEvent).length,
           documents: documents.length,
-          payments: new Set(payingRows.map((r) => r.conditionId)).size,
+          payments: payingKeys.size,
           total: targets.reduce((a, t) => a + (t.amount ?? 0), 0),
           dueByLimit: targets.filter((t) => t.dueSource === "limit").length
         }
@@ -218,27 +304,35 @@ export class ClosingCloseService {
    * 理由を返す。途中で止めると、どこまで進んだのか画面から読めなくなる
    * （遡及一括の取り込みと同じ考え方）。
    */
-  async run(scheduleIds: number[], actor: string): Promise<CloseResult> {
-    const plan = await this.preview(scheduleIds);
+  async run(scheduleIds: number[], actor: string, options: CloseOptions = {}): Promise<CloseResult> {
+    const plan = await this.preview(scheduleIds, options);
+    const overrides = readOverrides(options.overrides);
     const outcomes: CloseOutcome[] = [];
 
-    // 条件ごとに進める。決済文書は条件で1枚にまとめるので、回を1つずつ
-    // 進めると同じ条件に何枚も出てしまう。
-    const byCondition = new Map<number, CloseTarget[]>();
+    // 組ごとに進める。決済文書は組（条件、または相手先）で1枚にまとめるので、
+    // 回を1つずつ進めると同じ組に何枚も出てしまう。
+    // 組の鍵は行から引く（相手先・文書の種類・通貨）。対象の行は preview と同じ。
+    const rows = plan.targets.length
+      ? await this.rowsFor(plan.targets.map((t) => t.scheduleId)) : [];
+    const rowOf = new Map(rows.map((r) => [r.scheduleId!, r]));
+    assertReasons(rows.filter((r) => r.step === "event"), overrides);
+    const groups = new Map<string, CloseTarget[]>();
     for (const t of plan.targets) {
-      const list = byCondition.get(t.conditionId) ?? [];
+      const row = rowOf.get(t.scheduleId);
+      const key = row ? bundleKey(row, plan.bundle) : `c:${t.conditionId}`;
+      const list = groups.get(key) ?? [];
       list.push(t);
-      byCondition.set(t.conditionId, list);
+      groups.set(key, list);
     }
 
-    for (const [conditionId, list] of byCondition) {
+    for (const list of groups.values()) {
       try {
-        outcomes.push(...await this.closeOne(conditionId, list, actor));
+        outcomes.push(...await this.closeGroup(list, actor, overrides));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         for (const t of list) {
           outcomes.push({
-            scheduleId: t.scheduleId, conditionId, conditionName: t.conditionName, seq: t.seq,
+            scheduleId: t.scheduleId, conditionId: t.conditionId, conditionName: t.conditionName, seq: t.seq,
             ok: false, eventId: null, documentId: null, documentNo: null,
             paymentId: null, paymentNo: null, reached: "event", error: message
           });
@@ -255,31 +349,34 @@ export class ClosingCloseService {
     await recordAudit(this.database, {
       action: "closing.run", targetType: "condition_schedule",
       targetId: null, actor,
-      detail: { scheduleIds, ok: result.ok, failed: result.failed,
-                skipped: plan.skipped.length }
+      detail: { scheduleIds, bundle: plan.bundle, ok: result.ok, failed: result.failed,
+                skipped: plan.skipped.length,
+                ...(Object.keys(overrides).length ? { overrides } : {}) }
     });
     return result;
   }
 
-  /** 1つの条件の回をまとめて進める。 */
-  private async closeOne(
-    conditionId: number, targets: CloseTarget[], actor: string
+  /** 1つの組（条件、または相手先）の回をまとめて進める。 */
+  private async closeGroup(
+    targets: CloseTarget[], actor: string, overrides: CloseOverrides
   ): Promise<CloseOutcome[]> {
     const rows = await this.rowsFor(targets.map((t) => t.scheduleId));
     const base = (row: PeriodRow): CloseOutcome => ({
-      scheduleId: row.scheduleId!, conditionId, conditionName: row.conditionName, seq: row.seq,
+      scheduleId: row.scheduleId!, conditionId: row.conditionId, conditionName: row.conditionName, seq: row.seq,
       ok: false, eventId: row.eventId, documentId: row.documentId, documentNo: row.documentNo,
       paymentId: row.paymentId, paymentNo: row.paymentNo, reached: "event", error: null
     });
     const out = new Map<number, CloseOutcome>(rows.map((r) => [r.scheduleId!, base(r)]));
 
-    // ① 実績。予定どおりの額で記録する。差がある回はここへ来ない
-    //    （予定額がそのまま実績になる。理由が要る回は個別のフォームへ）。
+    // ① 実績。予定どおりの額で記録する。画面で額を直した回はその額と理由で
+    //    記録する（理由は検収書の変更履歴に出る）。
     for (const row of rows) {
       const o = out.get(row.scheduleId!)!;
       if (row.eventId !== null) continue;
+      const fix = overrides[row.scheduleId!];
       try {
-        const made = await this.schedules.record(conditionId, row.scheduleId!, {}, actor);
+        const made = await this.schedules.record(row.conditionId, row.scheduleId!,
+          fix ? { amount: fix.amount ?? null, note: fix.note ?? null } : {}, actor);
         o.eventId = made.eventId;
       } catch (error) {
         o.error = error instanceof Error ? error.message : String(error);
@@ -295,16 +392,24 @@ export class ClosingCloseService {
     if (needDoc.length) {
       const head = needDoc[0]!;
       const eventIds = needDoc.map((r) => out.get(r.scheduleId!)!.eventId!);
+      const conditionIds = [...new Set(needDoc.map((r) => r.conditionId))];
+      // 案件は全部が同じときだけ渡す。違えば決めない（文書の側で引く）。
+      const matters = new Set(needDoc.map((r) => r.matter?.id ?? null));
       const issuedOn = needDoc.map((r) => r.closingOn)
         .filter((d): d is string => !!d).sort().at(-1) ?? null;
       try {
         const draft = await this.issues.createDraft({
           templateKey: documentFor(head.kind).templateKey,
-          conditionIds: [conditionId],
-          matterId: head.matter?.id ?? null
+          conditionIds,
+          matterId: matters.size === 1 ? head.matter?.id ?? null : null
         }, actor);
         const issued = await this.issues.issue(draft.id, actor, { issuedOn, eventIds });
-        await this.events.linkDocument(conditionId, eventIds, draft.id, actor);
+        // 実績は条件ごとに結ぶ（結ぶ側は条件の系列の中しか見ない）。
+        for (const conditionId of conditionIds) {
+          const own = needDoc.filter((r) => r.conditionId === conditionId)
+            .map((r) => out.get(r.scheduleId!)!.eventId!);
+          await this.events.linkDocument(conditionId, own, draft.id, actor);
+        }
         for (const r of needDoc) {
           const o = out.get(r.scheduleId!)!;
           o.documentId = draft.id; o.documentNo = issued.documentNo; o.reached = "document";

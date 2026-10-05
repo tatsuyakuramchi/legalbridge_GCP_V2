@@ -41,6 +41,44 @@ export interface AccountingResult {
   flagged: number;
 }
 
+/**
+ * 書類の当社担当者。文書の画面で選んだ担当（manual_inputs._ownerStaffId）→
+ * 書類の案件の担当 → 書類を決定した人（issued_by のメール）。本文の担当者欄と同じ順。
+ */
+const DOCUMENT_OWNER_SQL = `COALESCE(
+           CASE WHEN (d.manual_inputs->>'_ownerStaffId') ~ '^[0-9]+$'
+                THEN (d.manual_inputs->>'_ownerStaffId')::bigint END,
+           dm.owner_staff_id,
+           (SELECT st.id FROM staff st
+             WHERE d.issued_by IS NOT NULL AND lower(st.email) = lower(d.issued_by)
+             ORDER BY st.id LIMIT 1))`;
+
+/**
+ * 社内の担当者（経理提出用）。紙には出さない。経理提出の画面で付け替える
+ * （PUT /documents/:id/account-owner）。付けてあれば、案件の担当より優先する。
+ */
+const ACCOUNT_OWNER_SQL = `CASE WHEN (d.manual_inputs->>'_accountOwnerStaffId') ~ '^[0-9]+$'
+           THEN (d.manual_inputs->>'_accountOwnerStaffId')::bigint END`;
+
+/** 書類に刷った件名。ひな形ごとに名前が違うので、件名らしい欄を順に見る。 */
+const TITLE_KEYS = ["件名", "title", "PROJECT_TITLE", "projectTitle", "CONTRACT_TITLE",
+                    "contractTitle", "基本契約名"];
+
+export function documentTitleFrom(values: unknown, templateKey?: string | null): string | null {
+  const v = (values && typeof values === "object" ? values : {}) as Record<string, unknown>;
+  const pick = (key: string) => (typeof v[key] === "string" ? (v[key] as string).trim() : "");
+  // 利用許諾料計算書の件名は「◯◯ 利用許諾料のご報告」（◯◯は原作名）。ひな形の件名の行と同じ形にする。
+  if (/statement/.test(String(templateKey ?? ""))) {
+    const original = pick("originalWork") || pick("原作名") || pick("原著作物名");
+    return original ? `${original} 利用許諾料のご報告` : (pick("件名") || "利用許諾料のご報告");
+  }
+  for (const key of TITLE_KEYS) {
+    const t = pick(key);
+    if (t) return t;
+  }
+  return null;
+}
+
 const PAYMENTS_SQL = `
   SELECT y.id, y.payment_no, y.currency, y.amount, y.tax_amount, y.withholding_amount,
          y.due_on, y.paid_on, y.status,
@@ -51,7 +89,7 @@ const PAYMENTS_SQL = `
          -- 列を振込名義の照合に使う。口座が無いときだけ取引先のカナで代える。
          b.account_holder_kana,
          m.matter_no, m.title AS matter_title,
-         s.name AS owner_name, s.department AS owner_department
+         s.name AS owner_name, s.department AS owner_department, s.email AS owner_email
     FROM payments y
     JOIN parties p ON p.id = y.party_id
     LEFT JOIN party_bank_accounts b ON b.party_id = p.id
@@ -96,14 +134,42 @@ const DOCUMENT_SQL = `
          min(e.document_id) AS document_id,
          (array_agg(d.rendered_values ORDER BY d.id))[1] AS rendered_values,
          (array_agg(d.document_no ORDER BY d.id))[1] AS document_no,
-         (array_agg(t.template_key ORDER BY d.id))[1] AS template_key
+         (array_agg(t.template_key ORDER BY d.id))[1] AS template_key,
+         (array_agg(${DOCUMENT_OWNER_SQL} ORDER BY d.id))[1] AS owner_staff_id,
+         (array_agg(${ACCOUNT_OWNER_SQL} ORDER BY d.id))[1] AS account_owner_staff_id
     FROM payment_allocations al
     JOIN condition_events e ON e.id = al.event_id
     JOIN documents d ON d.id = e.document_id AND d.status = 'issued'
     LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
     LEFT JOIN document_templates t ON t.id = tv.template_id
+    LEFT JOIN matters dm ON dm.id = d.matter_id
    WHERE al.payment_id = ANY($1::bigint[])
    GROUP BY al.payment_id`;
+
+/**
+ * 実績から書類に辿れない支払の書類。支払を立てたときの監査記録に、元の書類が
+ * 残っている（payment.create の detail.documentId）。
+ *
+ * 利用許諾料計算書から立てた支払は、実績が計算書に結ばれていない（報告だけの回・
+ * 訂正版で実績が移った回）と上の経路で書類が見つからず、帳票が「書類なし」になり、
+ * 種別・件名・担当者・PDF の同梱がすべて抜けていた。
+ */
+const DOCUMENT_BY_AUDIT_SQL = `
+  SELECT DISTINCT ON (a.target_id)
+         a.target_id AS payment_id, 1 AS documents, d.id AS document_id,
+         d.rendered_values, d.document_no, t.template_key,
+         ${DOCUMENT_OWNER_SQL} AS owner_staff_id,
+         ${ACCOUNT_OWNER_SQL} AS account_owner_staff_id
+    FROM audit_events a
+    JOIN documents d ON d.id = NULLIF(a.detail->>'documentId', '')::bigint
+                    AND d.status IN ('issued', 'superseded')
+    LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+    LEFT JOIN document_templates t ON t.id = tv.template_id
+    LEFT JOIN matters dm ON dm.id = d.matter_id
+   WHERE a.target_type = 'payment' AND a.action = 'payment.create'
+     AND a.target_id = ANY($1::bigint[])
+     AND (a.detail->>'documentId') ~ '^[0-9]+$'
+   ORDER BY a.target_id, a.id DESC`;
 
 const LINES_SQL = `
   SELECT al.payment_id, al.amount, c.condition_no, c.name, c.tax_category, c.kind,
@@ -156,28 +222,45 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
       deliveryDate: text(row.delivery_date).slice(0, 10) || null
     });
   }
-  // 計算書の明細。1明細＝1グループ（前金・後金、取引モデルごと）。
+  // 計算書の明細。小計の括り（入金企業 × 言語の製品）1 つを 1 行にする。
+  // 前金・後金は同じ製造回の 1 つの取引で、紙でも 1 つの小計にまとめてある。
+  // 経理は紙の小計と帳票の行を突き合わせるので、行も小計に揃える。
   // 検収書の行があるときは触らない（1枚に両方は載らない）。
   if (!lines.length) {
+    /** 組ごとの有償の個数（個数建てでない組は null）。寄せるときに足す。 */
+    const counted = new Map<DocumentLine, number | null>();
     for (const group of rowsOf(values.lineGroups)) {
-      for (const row of rowsOf(group.lines)) {
-        const amount = n(row.paymentJpy) ?? 0;
-        // 方式名（前金・受領価格…）と製品名。どちらも行ごとに違うので、
-        // 並べないと2行が同じ文字になって見分けが付かない。
-        const content = [text(group.methodLabel), text(row.productName)]
-          .filter(Boolean).join("　");
-        // 数量は個数建ての行だけが持つ。受領額 × 料率の行は個数が無いので 1。
-        // 単価は渡さない。経理側が 金額 ÷ 数量 で出し、割り切れないときは
-        // 空にする（単価 × 数量 = 金額 が崩れた表を出さないための決まり）。
-        const billable = n(row.quantity);
-        lines.push({
-          content: content || text(group.contractNumber),
-          unitPrice: null,
-          quantity: billable && billable > 0 ? billable : (amount > 0 ? 1 : null),
-          amount,
-          deliveryDate: text(row.occurredOn).slice(0, 10) || null
-        });
+      const rows = rowsOf(group.lines);
+      const amount = n(group.subtotalPayment)
+        ?? rows.reduce((sum, row) => sum + (n(row.paymentJpy) ?? 0), 0);
+      // 数量は個数建ての行だけが持つ。全部の行が持つときだけ足す（受領額 × 料率の行は 1）。
+      // 単価は渡さない。経理側が 金額 ÷ 数量 で出し、割り切れないときは空にする。
+      const counts = rows.map((row) => n(row.quantity));
+      const billable = counts.length && counts.every((q) => q !== null && q > 0)
+        ? counts.reduce((sum: number, q) => sum + (q ?? 0), 0) : null;
+      const delivered = rows.map((row) => text(row.occurredOn).slice(0, 10)).filter(Boolean).sort();
+      const content = statementGroupLabel(group, rows) || "（内容未設定）";
+      // 同じ入金企業・言語の組は 1 組に寄せる（前金・後金を別の小計にしていた頃の計算書）。
+      const same = lines.find((l) => l.content === content);
+      if (same) {
+        same.amount += amount;
+        // 個数は寄せる両方が個数建てのときだけ足す。片方でも個数が無ければ 1。
+        const before = counted.get(same) ?? null;
+        const total = before !== null && billable !== null ? before + billable : null;
+        counted.set(same, total);
+        same.quantity = total ?? (same.amount > 0 ? 1 : null);
+        same.deliveryDate = [same.deliveryDate, delivered.at(-1)].filter(Boolean).sort().at(-1) ?? null;
+        continue;
       }
+      const line: DocumentLine = {
+        content,
+        unitPrice: null,
+        quantity: billable ?? (amount > 0 ? 1 : null),
+        amount,
+        deliveryDate: delivered.at(-1) ?? null
+      };
+      counted.set(line, billable);
+      lines.push(line);
     }
   }
 
@@ -192,6 +275,36 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
     });
   }
   return lines;
+}
+
+/**
+ * 計算書の小計の括りの名前：入金企業・言語（「Hachette・フランス語」）。
+ *
+ * 焼き付けた組が入金企業と言語を持っていればそれを使う。持っていない（前の版で
+ * 決定した）計算書は、対象契約の先頭（入金企業）と製品名の括弧（言語・地域）から拾う。
+ */
+export function statementGroupLabel(group: Record<string, any>, rows: Array<Record<string, any>>): string {
+  const text = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
+  // 対象契約から入金企業を拾うのは、組が入金企業（payerName）を持っていない前の版の計算書だけ。
+  // 今の計算書の対象契約はイン側（作者との）契約で、入金企業ではない。自社製造・自社販売の組は
+  // 入金企業が空（相手がいない）なので、拾うと「2025年7月31日付◯◯契約書・日本語」になっていた。
+  const legacy = !("payerName" in group);
+  const [head, ...tail] = legacy ? text(group.contractTitle).split("\u3000") : [""];
+  const payer = text(group.payerName) || text(head);
+  let language = text(group.languageLabel);
+  if (!language) {
+    // 製品名の括弧（「X（フランス語）」）→ 対象契約の入金企業の後ろ（「タイ語版」）。
+    const product = text(rows[0]?.productName);
+    const m = product.match(/（([^（）]+)）\s*$/);
+    language = m ? m[1]!.trim() : text(group.payerName) ? "" : tail.join("　").trim();
+  }
+  // 製品名の括弧は言語と地域を並べている（「英語・中国・アメリカ合衆国…」）。
+  // 支払内容に出すのは言語だけ。「◯◯語」が1つも無いときはそのまま出す。
+  const parts = language.split("・").map((x) => x.trim()).filter(Boolean);
+  const languages = parts.filter((x) => /語(版)?$/.test(x));
+  if (languages.length) language = languages.join("・");
+  const label = [payer, language].filter(Boolean).join("・");
+  return label || text(rows[0]?.productName) || text(group.contractNumber);
 }
 
 export class AccountingExportRepository {
@@ -211,15 +324,44 @@ export class AccountingExportRepository {
       // 書類の明細を先に取る。あれば支払内容はこちらを使う。
       const docLines = new Map<number, DocumentLine[]>();
       const docOf = new Map<number, NonNullable<AccountingSource["document"]>>();
+      const docTitle = new Map<number, string>();
+      const docOwner = new Map<number, number>();
+      const accountOwner = new Map<number, number>();
+      const take = (d: any) => {
+        const paymentId = Number(d.payment_id);
+        docOf.set(paymentId, {
+          id: Number(d.document_id), number: str(d.document_no), templateKey: str(d.template_key)
+        });
+        const lines = documentLinesFrom(d.rendered_values);
+        if (lines.length) docLines.set(paymentId, lines);
+        const title = documentTitleFrom(d.rendered_values, str(d.template_key));
+        if (title) docTitle.set(paymentId, title);
+        if (d.owner_staff_id) docOwner.set(paymentId, Number(d.owner_staff_id));
+        if (d.account_owner_staff_id) accountOwner.set(paymentId, Number(d.account_owner_staff_id));
+      };
       if (ids.length) {
         const docs = await this.database.query(DOCUMENT_SQL, [ids]);
+        const ambiguous = new Set<number>();
         for (const d of docs.rows as any[]) {
-          if (Number(d.documents) !== 1) continue;
-          docOf.set(Number(d.payment_id), {
-            id: Number(d.document_id), number: str(d.document_no), templateKey: str(d.template_key)
-          });
-          const lines = documentLinesFrom(d.rendered_values);
-          if (lines.length) docLines.set(Number(d.payment_id), lines);
+          if (Number(d.documents) !== 1) { ambiguous.add(Number(d.payment_id)); continue; }
+          take(d);
+        }
+        // 実績から辿れなかった支払は、支払を立てたときの記録から書類を引く。
+        // 複数の書類にまたがる支払（ambiguous）は決めない。
+        const rest = ids.filter((id) => !docOf.has(id) && !ambiguous.has(id));
+        if (rest.length) {
+          const byAudit = await this.database.query(DOCUMENT_BY_AUDIT_SQL, [rest]);
+          for (const d of byAudit.rows as any[]) take(d);
+        }
+      }
+      // 案件の担当が無い支払は、書類の担当者で代える（計算書を台帳から出すと案件が無い）。
+      const ownerIds = [...new Set([...docOwner.values(), ...accountOwner.values()])];
+      const staffById = new Map<number, { name: string; department: string | null; email: string | null }>();
+      if (ownerIds.length) {
+        const staff = await this.database.query(
+          "SELECT id, name, department, email FROM staff WHERE id = ANY($1::bigint[])", [ownerIds]);
+        for (const s of staff.rows as any[]) {
+          staffById.set(Number(s.id), { name: String(s.name ?? ""), department: str(s.department), email: str(s.email) });
         }
       }
       const kindsOf = new Map<number, string[]>();
@@ -249,7 +391,15 @@ export class AccountingExportRepository {
       const owners = new Map<number, string>();
       const rows = (heads.rows as any[]).map((r) => {
         const id = Number(r.id);
-        owners.set(id, str(r.owner_name) ?? "(担当者未設定)");
+        // 社内の担当者（付け替えたもの）→ 案件の担当 → 書類の担当者。
+        const assigned = staffById.get(accountOwner.get(id) ?? 0) ?? null;
+        const docStaff = staffById.get(docOwner.get(id) ?? 0) ?? null;
+        const ownerName = assigned?.name || str(r.owner_name) || docStaff?.name || null;
+        const ownerDepartment = assigned ? assigned.department
+          : str(r.owner_name) ? str(r.owner_department) : docStaff?.department ?? null;
+        const ownerEmail = assigned ? assigned.email
+          : str(r.owner_name) ? str(r.owner_email) : docStaff?.email ?? null;
+        owners.set(id, ownerName ?? "(担当者未設定)");
         const source: AccountingSource = {
           paymentId: id,
           paymentNo: str(r.payment_no),
@@ -267,13 +417,15 @@ export class AccountingExportRepository {
             invoiceNo: str(r.invoice_no), withholding: r.withholding === true,
             ...withholdingPartyOf(r)
           },
-          ownerName: str(r.owner_name),
-          ownerDepartment: str(r.owner_department),
+          ownerName,
+          ownerDepartment,
+          ownerEmail,
           matterNo: str(r.matter_no),
           matterTitle: str(r.matter_title),
           lines: byPayment.get(id) ?? [],
           documentLines: docLines.get(id),
           document: docOf.get(id) ?? null,
+          documentTitle: docTitle.get(id) ?? null,
           conditionKinds: kindsOf.get(id) ?? []
         };
         return buildAccountingRow(source);

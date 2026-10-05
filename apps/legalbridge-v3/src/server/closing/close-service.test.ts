@@ -54,13 +54,17 @@ test("理由には人に読める言葉が付く", () => {
 
 /** preview / run が読む形の偽データベース。回は条件ごとに読み直される。 */
 const db = (rows: Array<Record<string, unknown>>, over: Record<string, any[]> = {}) =>
-  new FakeDatabase((t) => {
+  new FakeDatabase((t, params) => {
     for (const [fragment, out] of Object.entries(over)) if (t.includes(fragment)) return out;
     if (t.includes("SELECT DISTINCT condition_id")) {
       return [...new Set(rows.map((r) => Number(r.condition_id)))].map((id) => ({ condition_id: id }));
     }
     if (t.includes("e.schedule_id IS NULL")) return [];
-    if (t.includes("FROM condition_schedules s\n    JOIN conditions c")) return rows;
+    if (t.includes("FROM condition_schedules s\n    JOIN conditions c")) {
+      // 条件ごとに読み直すので、その条件の回だけ返す。
+      const id = typeof params[0] === "number" ? params[0] : null;
+      return id === null ? rows : rows.filter((r) => Number(r.condition_id) === id);
+    }
     if (t.includes("FROM conditions c\n    LEFT JOIN parties p")) {
       return [{ id: rows[0]?.condition_id, condition_no: "COND-1", name: "月額保守",
                 kind: rows[0]?.kind ?? "service", pricing_model: rows[0]?.pricing_model ?? "subscription",
@@ -139,4 +143,97 @@ test("選んでいない回は断る", async () => {
 test("無い回を混ぜたら、どれが無いかを言って断る", async () => {
   const service = new ClosingCloseService(db([raw()]), now);
   await assert.rejects(() => service.preview([100, 999]), /999/);
+});
+
+// ---------------------------------------------------------------------------
+// 相手先ごとにまとめる
+
+test("相手先ごとにまとめると、同じ相手先の条件を1枚・1件にする", async () => {
+  const service = new ClosingCloseService(db([
+    raw(), raw({ schedule_id: 200, condition_id: 8, condition_name: "月額サーバ" })
+  ]), now);
+  const view = await service.preview([100, 200], { bundle: "party" });
+  assert.equal(view.bundle, "party");
+  assert.equal(view.summary.documents, 1);
+  assert.equal(view.summary.payments, 1);
+  assert.deepEqual(view.documents[0]?.conditionIds, [7, 8]);
+  assert.equal(view.documents[0]?.amount, 70000);
+});
+
+test("相手先ごとでも、通貨や相手先が違えば分ける", async () => {
+  const service = new ClosingCloseService(db([
+    raw(),
+    raw({ schedule_id: 200, condition_id: 8, currency: "USD" }),
+    raw({ schedule_id: 300, condition_id: 9, party_id: 4, party_name: "別の相手" })
+  ]), now);
+  const view = await service.preview([100, 200, 300], { bundle: "party" });
+  assert.equal(view.summary.documents, 3);
+});
+
+test("締める前に額を直せる。予定額の無い回も額を入れれば締められる", async () => {
+  const service = new ClosingCloseService(db([
+    raw(), raw({ schedule_id: 101, seq: 2, planned_amount: null })
+  ]), now);
+  const before = await service.preview([100, 101]);
+  assert.equal(before.skipped[0]?.reason, "no_planned_amount");
+  const view = await service.preview([100, 101],
+    { overrides: { 100: { amount: 30000, note: "稼働が少なかった" }, 101: { amount: 12000 } } });
+  assert.equal(view.skipped.length, 0);
+  assert.equal(view.summary.total, 42000);
+  assert.equal(view.targets.find((t) => t.scheduleId === 100)?.overridden, true);
+});
+
+test("相手先ごとに締めると、実績を条件ごとに記録し、1枚の検収書に全部の条件を載せる", async () => {
+  const rows = [raw(), raw({ schedule_id: 200, condition_id: 8, condition_name: "月額サーバ" })];
+  const calls: string[] = [];
+  let next = 500;
+  const schedules = {
+    record: async (conditionId: number, scheduleId: number, input: Record<string, unknown>) => {
+      calls.push(`record ${conditionId}/${scheduleId} ${input.amount ?? "予定"} ${input.note ?? ""}`.trim());
+      return { eventId: next++, scheduleId };
+    }
+  };
+  const issues = {
+    createDraft: async (input: { conditionIds: number[]; matterId: number | null }) => {
+      calls.push(`draft ${input.conditionIds.join(",")} matter=${input.matterId}`);
+      return { id: 900 };
+    },
+    issue: async (_id: number, _actor: string, extra: { eventIds: number[]; issuedOn: string | null }) => {
+      calls.push(`issue ${extra.eventIds.join(",")} ${extra.issuedOn}`);
+      return { documentNo: "ARC-INS-2026-1036" };
+    }
+  };
+  const events = {
+    linkDocument: async (conditionId: number, eventIds: number[], documentId: number) => {
+      calls.push(`link ${conditionId} ${eventIds.join(",")} → ${documentId}`);
+      return { linked: eventIds.length, documentNo: null };
+    }
+  };
+  const payments = {
+    createFromInspection: async (documentId: number) => {
+      calls.push(`pay ${documentId}`);
+      return { paymentId: 70, paymentNo: "PAY-70" };
+    }
+  };
+  const service = new ClosingCloseService(db(rows), now,
+    schedules as never, events as never, issues as never, payments as never);
+  const result = await service.run([100, 200], "tester",
+    { bundle: "party", overrides: { 200: { amount: 30000, note: "値引き" } } });
+  assert.equal(result.ok, 2);
+  assert.deepEqual(calls, [
+    "record 7/100 予定",
+    "record 8/200 30000 値引き",
+    "draft 7,8 matter=11",
+    "issue 500,501 2026-07-31",
+    "link 7 500 → 900",
+    "link 8 501 → 900",
+    "pay 900"
+  ]);
+  assert.ok(result.outcomes.every((o) => o.paymentNo === "PAY-70" && o.documentNo === "ARC-INS-2026-1036"));
+});
+
+test("予定と違う額にしたのに理由が無ければ、何も作らずに断る", async () => {
+  const service = new ClosingCloseService(db([raw()]), now);
+  await assert.rejects(() => service.run([100], "tester", { overrides: { 100: { amount: 1 } } }),
+    /理由を入れてください/);
 });
