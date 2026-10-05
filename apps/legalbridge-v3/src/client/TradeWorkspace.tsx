@@ -243,7 +243,7 @@ function TradeFlow(
       </div>
       {detail && (isLicense(p) || caseWorks.length > 0) && (
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          <span className="faint">作品{isLicense(p) ? "（必須・複数可）" : "（任意）"}</span>
+          <span className="faint">作品{isLicense(p) ? "（必須・複数可）" : "（任意・複数可）"}</span>
           <MatterWorks works={caseWorks} required={isLicense(p)}
             onAdd={async (id) => { setError(null); await addWork(id); setNotice("作品を足しました"); }}
             onRemove={async (id) => { setError(null); await removeWork(id); setNotice("作品を外しました（入れた条件明細はそのまま残ります）"); }}
@@ -565,35 +565,30 @@ function BasicsStage(
           <label className="field"><span>{pattern === "service" ? "受託者（相手先）" : isOut(pattern) ? "許諾先（相手先）" : "権利元（相手先）"}</span>
             <SearchSelect value={partyId} search={searchParties} placeholder="取引先名・コードで探す"
                           onChange={(v, o) => { setPartyId(v); setPartyName(o?.label ?? null); }} /></label>
-          {license ? (
-            <div className="field"><span>作品（必須・複数可）</span>
-              {/* 許諾地域・言語と同じく複数選べる。選ぶたびに下に並び、× で外す。 */}
-              <SearchSelect value="" search={searchWorks} placeholder={works.length ? "作品を足す" : "作品名・コードで探す"}
-                            onChange={(v, o) => {
-                              if (!v) return;
-                              setWorks((cur) => cur.some((w) => w.id === v) ? cur : [...cur, { id: v, label: o?.label ?? `#${v}` }]);
-                            }} />
-              {works.length > 0 && (
-                <span className="chips" style={{ marginTop: 4 }}>
-                  {works.map((w, i) => (
-                    <button key={w.id} type="button" className="chip" aria-pressed="true" title="外す"
-                            onClick={() => setWorks((cur) => cur.filter((x) => x.id !== w.id))}>
-                      {w.label}{i === 0 && works.length > 1 ? "（軸）" : ""} ×
-                    </button>
-                  ))}
-                </span>
-              )}
-              <small className="faint">{isOut(pattern) ? "許諾する作品。OUT 条件は各作品の IN 条件の範囲内で入れます" : "取得する作品（原作）。無ければ作品の画面で先に登録します"}。
-                複数の作品をまとめて扱えます（先頭が案件の軸の作品）</small>
-            </div>
-          ) : (
-            <label className="field"><span>作品（任意）</span>
-              <SearchSelect value={workId} search={searchWorks} emptyLabel="（なし）" placeholder="作品名・コードで探す"
-                            valueLabel={works[0]?.label ?? null}
-                            onChange={(v, o) => setWorks(v ? [{ id: v, label: o?.label ?? `#${v}` }] : [])} />
-              <small className="faint">業務委託は作品に結びつかないこともあります。結びつくときだけ選びます</small>
-            </label>
-          )}
+          {/* 作品は複数選べる（許諾地域・言語と同じく、選ぶたびに下に並び × で外す）。
+              ライセンスは必須、業務委託は任意（作品に結びつかない業務もある）。 */}
+          <div className="field"><span>作品（{license ? "必須" : "任意"}・複数可）</span>
+            <SearchSelect value="" search={searchWorks} placeholder={works.length ? "作品を足す" : "作品名・コードで探す"}
+                          onChange={(v, o) => {
+                            if (!v) return;
+                            setWorks((cur) => cur.some((w) => w.id === v) ? cur : [...cur, { id: v, label: o?.label ?? `#${v}` }]);
+                          }} />
+            {works.length > 0 && (
+              <span className="chips" style={{ marginTop: 4 }}>
+                {works.map((w, i) => (
+                  <button key={w.id} type="button" className="chip" aria-pressed="true" title="外す"
+                          onClick={() => setWorks((cur) => cur.filter((x) => x.id !== w.id))}>
+                    {w.label}{i === 0 && works.length > 1 ? "（軸）" : ""} ×
+                  </button>
+                ))}
+              </span>
+            )}
+            <small className="faint">{!license
+              ? "業務委託は作品に結びつかないこともあります。結びつくときだけ選びます"
+              : isOut(pattern) ? "許諾する作品。OUT 条件は各作品の IN 条件の範囲内で入れます"
+              : "取得する作品（原作）。無ければ作品の画面で先に登録します"}。
+              複数の作品をまとめて扱えます（先頭が案件の軸の作品）</small>
+          </div>
           {mode === "new" && <>
           <label className="field"><span>{pattern === "service" ? "業務名（件名）" : "件名"}</span>
             <input value={title} placeholder={autoTitle() || "空なら自動で付く"} onChange={(e) => setTitle(e.target.value)} /></label>
