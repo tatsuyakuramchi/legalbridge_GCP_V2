@@ -696,6 +696,8 @@ export function createRoutes(database: Transactable) {
       direction: direction === "in" || direction === "out" ? direction : undefined,
       kind: req.query.kind ? String(req.query.kind) : undefined,
       workId: req.query.workId ? Number(req.query.workId) : undefined,
+      // 相手先（統合を辿る）。取引を進める（支払）で相手の条件を並べる。
+      counterpartyId: req.query.counterpartyId ? Number(req.query.counterpartyId) : undefined,
       // 出版の条件書は作品 80 点・条件 170 本で1通になる。既定の 200 では
       // 台帳の新しい順に切られて、載せたい条件が候補に出てこない。
       limit: req.query.limit ? Number(req.query.limit) : undefined,
