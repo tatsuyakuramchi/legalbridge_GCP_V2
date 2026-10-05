@@ -2361,6 +2361,43 @@ ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS royalty_mix_models boolean;
 COMMENT ON COLUMN v3.parties.royalty_mix_models IS
   '許諾料の計算書に取引モデルを混ぜるか。空＝取引モデルごとに分ける（既定）/ true＝混ぜる。A-067';
 
+-- A-068 契約の他の当事者（三社間契約。docs/v3-agreement-parties.md）
+--   契約の相手方は counterparty_id の 1 列だけで、当社 対 相手方が 1 対 N になる契約を
+--   表せなかった。主たる相手先は counterparty_id のまま、他の当事者をこの表に持つ。
+CREATE TABLE IF NOT EXISTS v3.agreement_parties (
+  id           bigserial PRIMARY KEY,
+  agreement_id bigint NOT NULL REFERENCES v3.agreements(id) ON DELETE CASCADE,
+  party_id     bigint NOT NULL REFERENCES v3.parties(id),
+  role         text NOT NULL DEFAULT 'co_party'
+               CONSTRAINT agreement_parties_role_chk
+               CHECK (role IN ('co_party', 'agent', 'guarantor', 'rights_holder', 'other')),
+  seq          int NOT NULL CHECK (seq >= 2),
+  note         text,
+  created_by   text,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (agreement_id, party_id),
+  CONSTRAINT agreement_parties_seq_uq UNIQUE (agreement_id, seq) DEFERRABLE INITIALLY DEFERRED
+);
+COMMENT ON TABLE v3.agreement_parties IS
+  '契約の他の当事者（三社間契約など）。主たる相手先は agreements.counterparty_id のまま。A-068';
+COMMENT ON COLUMN v3.agreement_parties.role IS
+  'co_party=共同当事者 / agent=窓口・代理 / guarantor=保証人 / rights_holder=権利者 / other=その他';
+CREATE INDEX IF NOT EXISTS agreement_parties_party_idx ON v3.agreement_parties (party_id);
+CREATE OR REPLACE VIEW v3.v_agreement_parties AS
+SELECT a.id AS agreement_id, a.counterparty_id AS party_id,
+       'counterparty'::text AS role, 1 AS seq, true AS is_primary, NULL::text AS note
+  FROM v3.agreements a
+UNION ALL
+SELECT ap.agreement_id, ap.party_id, ap.role, ap.seq, false AS is_primary, ap.note
+  FROM v3.agreement_parties ap
+  JOIN v3.agreements a ON a.id = ap.agreement_id
+ WHERE ap.party_id <> a.counterparty_id;
+COMMENT ON VIEW v3.v_agreement_parties IS
+  '契約の当事者（主たる相手先 seq 1 ＋ 他の当事者）。取引先ごとの契約を引く画面はここを通す。A-068';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.agreement_parties TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.agreement_parties_id_seq TO legalbridge_v3_runtime;
+GRANT SELECT ON v3.v_agreement_parties TO legalbridge_v3_runtime;
+
 COMMIT;
 
 
@@ -2634,6 +2671,10 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 68, '契約の他の当事者（A-068。表 1・ビュー 1 で 2 であること）',
+         ((SELECT count(*) FROM information_schema.tables WHERE table_schema='v3' AND table_name='agreement_parties')
+          + (SELECT count(*) FROM information_schema.views WHERE table_schema='v3' AND table_name='v_agreement_parties'))::text
   UNION ALL
   SELECT 67, '計算書に取引モデルを混ぜるか（A-067。列 1 であること）',
          (SELECT count(*) FROM information_schema.columns

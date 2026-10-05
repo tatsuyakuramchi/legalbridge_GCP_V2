@@ -12,6 +12,7 @@
 
 import type { Queryable } from "../core/db.js";
 import { DomainError } from "../core/errors.js";
+import { AGREEMENT_HAS_PARTY, PARTY_ROLE_LABEL, ordinalFor } from "../agreements/parties.js";
 
 export type EntityKind = "matter" | "condition" | "document" | "agreement" | "work" | "party";
 
@@ -46,10 +47,6 @@ const rows = (r: { rows: unknown[] }) => r.rows as Array<Record<string, any>>;
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 
 const like = (keyword: string) => `%${keyword.trim()}%`;
-/** 2つの取引先が同じか（統合を辿った先で比べる）。式は取引先の id を返す SQL。 */
-const SAME_PARTY = (left: string, right: string) =>
-  `(SELECT resolved_id FROM v_party_resolved WHERE party_id = ${left})
-     = (SELECT resolved_id FROM v_party_resolved WHERE party_id = ${right})`;
 
 // ---------------------------------------------------------------------------
 // 行の形をそろえる
@@ -92,7 +89,11 @@ const asAgreement = (r: Record<string, any>): LinkItem => ({
 
 const asParty = (r: Record<string, any>): LinkItem => ({
   id: Number(r.id), code: str(r.party_code), label: String(r.name),
-  note: r.kind === "individual" ? "個人" : "法人", kind: "party"
+  // 契約の当事者なら立場も出す（主たる相手先＝乙、他の当事者＝丙・丁 …）。
+  note: [r.kind === "individual" ? "個人" : "法人",
+         r.role ? `${ordinalFor(Number(r.seq ?? 1))}・${PARTY_ROLE_LABEL[String(r.role) as keyof typeof PARTY_ROLE_LABEL] ?? String(r.role)}` : null]
+    .filter(Boolean).join("／"),
+  kind: "party"
 });
 
 const asWork = (r: Record<string, any>): LinkItem => ({
@@ -199,7 +200,8 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
            FROM agreements a
           WHERE ($2 = '' OR a.title ILIKE $2 OR COALESCE(a.agreement_no,'') ILIKE $2)
             AND a.direction = (SELECT direction FROM conditions WHERE id = $1)
-            AND ${SAME_PARTY("(SELECT counterparty_id FROM conditions WHERE id = $1)", "a.counterparty_id")}
+            -- 条件の相手先が当事者に入っている契約（三社間契約は他の当事者としてでもよい）。統合を辿る。
+            AND ${AGREEMENT_HAS_PARTY("a.id", "(SELECT counterparty_id FROM conditions WHERE id = $1)")}
           ORDER BY a.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asAgreement),
       attach: async (c, id, targetId) => {
         await assertExists(c, "agreements", targetId, "契約");
@@ -387,7 +389,7 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
           WHERE co.agreement_id IS DISTINCT FROM $1
             AND co.direction = (SELECT direction FROM agreements WHERE id = $1)
             AND co.status NOT IN ('superseded', 'void')
-            AND ${SAME_PARTY("co.counterparty_id", "(SELECT counterparty_id FROM agreements WHERE id = $1)")}
+            AND ${AGREEMENT_HAS_PARTY("$1", "co.counterparty_id")}
             AND ($2 = '' OR co.name ILIKE $2 OR COALESCE(co.condition_no,'') ILIKE $2)
           ORDER BY (co.agreement_id IS NULL) DESC, co.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asCondition),
       attach: async (c, id, targetId) => {
@@ -409,12 +411,12 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
       }
     },
     party: {
-      target: "party", label: "相手先", single: true, editable: false,
-      hint: "この契約の相手先。契約の相手先は締結の記録なので、ここでは変えません。",
+      target: "party", label: "当事者", single: false, editable: false,
+      hint: "この契約の当事者（主たる相手先と、三社間契約の他の当事者）。足す・外す・入れ替えは契約の画面の「当事者」で。",
       list: async (c, id) => rows(await c.query(
-        `SELECT p.id, p.party_code, p.name, p.kind
-           FROM agreements a JOIN parties p ON p.id = a.counterparty_id
-          WHERE a.id = $1`, [id])).map(asParty)
+        `SELECT p.id, p.party_code, p.name, p.kind, vap.role, vap.seq
+           FROM v_agreement_parties vap JOIN parties p ON p.id = vap.party_id
+          WHERE vap.agreement_id = $1 ORDER BY vap.seq`, [id])).map(asParty)
     },
     documents: {
       target: "document", label: "文書", single: false, editable: true,
@@ -468,11 +470,18 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
   party: {
     agreements: {
       target: "agreement", label: "契約（合意）", single: false, editable: false,
-      hint: "この取引先との契約。",
+      hint: "この取引先が当事者として入っている契約（三社間契約の他の当事者としてのものも含む）。",
       list: async (c, id) => rows(await c.query(
-        `SELECT a.id, a.agreement_no, a.title, a.direction, a.status
-           FROM agreements a WHERE a.counterparty_id = $1 ORDER BY a.id DESC`, [id]))
-        .map(asAgreement)
+        `SELECT a.id, a.agreement_no, a.title, a.direction, a.status, vap.role, vap.seq
+           FROM v_agreement_parties vap JOIN agreements a ON a.id = vap.agreement_id
+          WHERE vap.party_id = $1 ORDER BY a.id DESC`, [id]))
+        .map((r) => {
+          const item = asAgreement(r);
+          // 主たる相手先でないときは立場を添える（どの席で入っているか）。
+          return r.role && r.role !== "counterparty"
+            ? { ...item, note: `${item.note}／${ordinalFor(Number(r.seq ?? 2))}・${PARTY_ROLE_LABEL[String(r.role) as keyof typeof PARTY_ROLE_LABEL] ?? String(r.role)}` }
+            : item;
+        })
     },
     conditions: {
       target: "condition", label: "条件明細", single: false, editable: false,

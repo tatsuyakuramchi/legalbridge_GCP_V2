@@ -1,4 +1,5 @@
 import type { Queryable, Transactable } from "../core/db.js";
+import { PARTY_ROLE_LABEL, ordinalFor } from "../agreements/parties.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
@@ -673,7 +674,13 @@ export class DocumentContextRepository {
               a.executed_on, a.effective_on, a.expires_on,
               a.auto_renewal, a.renewal_notice_months, a.renewal_months, a.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
-              p.invoice_no, p.corporate_no
+              p.invoice_no, p.corporate_no,
+              -- 他の当事者（三社間契約。A-068）。頭書きの丙・丁に出す。
+              (SELECT COALESCE(json_agg(json_build_object(
+                        'partyId', ap.party_id, 'role', ap.role, 'seq', ap.seq, 'note', ap.note,
+                        'party', to_jsonb(xp)) ORDER BY ap.seq, ap.id), '[]'::json)
+                 FROM agreement_parties ap JOIN parties xp ON xp.id = ap.party_id
+                WHERE ap.agreement_id = a.id AND ap.party_id <> a.counterparty_id) AS extra_parties
          FROM agreements a LEFT JOIN parties p ON p.id = a.counterparty_id
         WHERE a.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -705,7 +712,14 @@ export class DocumentContextRepository {
         honorific: honorificFor(str(row.party_kind)),
         invoiceNo: str(row.invoice_no),
         corporateNo: str(row.corporate_no)
-      }
+      },
+      /**
+       * 他の当事者（三社間契約）。頭書きの順（丙・丁 …）。ひな形は
+       * "agreement.parties.0.name"（丙）のように添字で引く。2 者間の契約なら空。
+       */
+      parties: extraPartiesForTemplate(row.extra_parties),
+      /** 当事者の数（当社を除く）。2 者間なら 1、三社間なら 2。 */
+      partyCount: 1 + extraPartiesForTemplate(row.extra_parties).length
     };
   }
 
@@ -856,4 +870,33 @@ export class DocumentContextRepository {
       if (bucket) bucket.push(String(row.label));
     }
   }
+}
+
+/** 契約の他の当事者を、ひな形に差せる形にする（宛名・頭書き用）。 */
+function extraPartiesForTemplate(raw: unknown) {
+  const list = Array.isArray(raw) ? raw as Array<Record<string, any>> : [];
+  return list.map((x, n) => {
+    const p = (x.party ?? {}) as Record<string, any>;
+    const seq = Number(x.seq ?? n + 2);
+    const role = String(x.role ?? "co_party");
+    return {
+      partyId: Number(x.partyId),
+      seq,
+      ordinal: ordinalFor(seq),
+      role,
+      roleLabel: PARTY_ROLE_LABEL[role as keyof typeof PARTY_ROLE_LABEL] ?? role,
+      note: str(x.note),
+      name: str(p.name) ?? "",
+      kana: str(p.name_kana),
+      kind: str(p.kind),
+      honorific: honorificFor(str(p.kind)),
+      invoiceNo: str(p.invoice_no),
+      corporateNo: str(p.corporate_no),
+      address: str(p.address),
+      phone: str(p.phone),
+      email: str(p.email),
+      representativeTitle: str(p.representative_title),
+      representativeName: str(p.representative_name)
+    };
+  });
 }

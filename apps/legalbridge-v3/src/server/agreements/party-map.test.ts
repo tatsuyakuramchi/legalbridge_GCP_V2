@@ -10,7 +10,9 @@ function a(over: Partial<MapAgreement> & { id: number }): MapAgreement {
     agreementNo: `ARC-${over.id}`, title: "契約", kind: "master", domain: "license", direction: "out",
     status: "executed", parentId: null, executedOn: "2025-04-01", terminatedOn: null,
     counterparty: { id: 5, name: party.name, merged: false },
-    parentResolvedPartyId: null, parentKind: null, conditionCount: 0, documentCount: 0,
+    parties: [{ partyId: 5, name: party.name, role: "counterparty", roleLabel: "主たる相手先", seq: 1, ordinal: "乙",
+                primary: true, note: null, merged: false }],
+    parentResolvedPartyId: null, parentPartyIds: [], parentKind: null, conditionCount: 0, documentCount: 0,
     ...over
   };
 }
@@ -78,7 +80,7 @@ const current: RemapCurrent = {
 };
 
 test("付け替え：親の無い補助文書に、同じ取引先の基本契約を親として付ける", () => {
-  const next = planRemap(current, { parentId: 1 }, { id: 1, kind: "master", resolvedPartyId: 5 }, 5);
+  const next = planRemap(current, { parentId: 1 }, { id: 1, kind: "master", resolvedPartyIds: [5] }, 5);
   assert.equal(next.parentId, 1);
   assert.equal(next.kind, "supplement");
 });
@@ -93,9 +95,9 @@ test("付け替え：基本契約に変えると親は外れ、種別が要る",
 test("付け替え：通らない形を断る", () => {
   assert.throws(() => planRemap(current, {}, null, 5), /親の契約を選んで/);
   assert.throws(() => planRemap(current, { parentId: 10 }, null, 5), /自分自身/);
-  assert.throws(() => planRemap(current, { parentId: 1 }, { id: 1, kind: "supplement", resolvedPartyId: 5 }, 5),
+  assert.throws(() => planRemap(current, { parentId: 1 }, { id: 1, kind: "supplement", resolvedPartyIds: [5] }, 5),
                 /基本契約か単体契約だけ/);
-  assert.throws(() => planRemap(current, { parentId: 1 }, { id: 1, kind: "master", resolvedPartyId: 8 }, 5),
+  assert.throws(() => planRemap(current, { parentId: 1 }, { id: 1, kind: "master", resolvedPartyIds: [8] }, 5),
                 /相手先が違います/);
   const root: RemapCurrent = { ...current, kind: "master", childCount: 2 };
   assert.throws(() => planRemap(root, { kind: "document" }, null, 5), /ぶら下がっています/);
@@ -249,4 +251,76 @@ test("取引先のマップに、契約に繋がっていない契約文書を�
   assert.deepEqual(map.unlinked, [{ id: 50, documentNo: "LIC-2025-0007", label: "利用許諾契約書",
     title: "利用許諾契約書（おたずねマもの村）", status: "issued", issuedOn: "2025-07-31" }]);
   assert.deepEqual(db.find("d.agreement_id IS NULL")!.params, [7]);
+});
+
+// ---------------------------------------------------------------------------
+// 三社間契約（A-068）
+// ---------------------------------------------------------------------------
+
+const extra = (id: number, name: string, seq = 2) => ({
+  partyId: id, name, role: "co_party" as const, roleLabel: "共同当事者", seq, ordinal: seq === 2 ? "丙" : "丁",
+  primary: false, note: null, merged: false
+});
+
+test("三社間契約：親の当事者にこの取引先が入っていれば、親の主たる相手先が別でもずれにしない", () => {
+  // 親 1 は主たる相手先が 9（別社）だが、5 が丙として入っている。子 2 は 5 の契約。
+  const map = buildPartyMap(party, [
+    a({ id: 1, counterparty: { id: 9, name: "株式会社ほか", merged: false },
+        parties: [{ ...a({ id: 0 }).parties[0], partyId: 9, name: "株式会社ほか" }, extra(5, party.name)] }),
+    a({ id: 2, kind: "supplement", parentId: 1, parentResolvedPartyId: 9, parentPartyIds: [9, 5], parentKind: "master" })
+  ]);
+  assert.deepEqual(map.issues, []);
+  assert.deepEqual(map.roots[0].children.map((c) => c.id), [2]);
+});
+
+test("三社間契約：親の当事者に入っていなければ、これまでどおりずれ", () => {
+  const map = buildPartyMap(party, [
+    a({ id: 1 }),
+    a({ id: 3, kind: "supplement", parentId: 99, parentResolvedPartyId: 8, parentPartyIds: [8, 7], parentKind: "master" })
+  ]);
+  assert.deepEqual(map.issues.map((i) => i.code), ["parent_party_mismatch"]);
+});
+
+test("付け替え：親の当事者（他の当事者を含む）に入っていれば親にできる", () => {
+  const next = planRemap(current, { parentId: 1 }, { id: 1, kind: "master", resolvedPartyIds: [9, 5] }, 5);
+  assert.equal(next.parentId, 1);
+  assert.throws(() => planRemap(current, { parentId: 1 }, { id: 1, kind: "master", resolvedPartyIds: [9, 7] }, 5),
+                /親の当事者に入っていません/);
+});
+
+test("取引先のマップは、丙として入っている契約も引く（当事者の集合で見る）", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT resolved_id, resolved_name FROM v_party_resolved")) return [{ resolved_id: 5, resolved_name: "株式会社サンプル" }];
+    if (t.includes("FROM agreements a")) return [
+      { id: 1, agreement_no: "ARC-LIC-2026-0001", title: "三社間契約", kind: "master", domain: "license", direction: "out",
+        status: "executed", parent_id: null, counterparty_id: 9, party_name: "株式会社ほか", party_merged: false,
+        extra_parties: [{ partyId: 5, name: "株式会社サンプル", role: "co_party", seq: 2, note: null, merged: false }] }
+    ];
+    return [];
+  });
+  const map = (await new PartyAgreementMapService(db).forParty(5))!;
+  const q = db.find("WHERE r.resolved_id = $1")!;
+  assert.ok(q.text.includes("v_agreement_parties"), "当事者の集合で引く");
+  assert.deepEqual(map.roots[0].parties.map((p) => `${p.ordinal}:${p.partyId}:${p.role}`), ["乙:9:counterparty", "丙:5:co_party"]);
+  assert.equal(map.roots[0].counterparty.id, 9, "主たる相手先はそのまま");
+});
+
+test("取引先の一覧も当事者の集合で数える", async () => {
+  const db = new FakeDatabase(() => []);
+  await new PartyAgreementMapService(db).parties({});
+  const q = db.find("WITH matched AS")!;
+  assert.ok(q.text.includes("JOIN v_agreement_parties vap ON vap.agreement_id = a.id"));
+  assert.ok(q.text.includes("count(DISTINCT a.id)"), "同じ契約を二重に数えない");
+});
+
+test("付け替えで相手先を他の当事者に変えると、席を入れ替える", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF a")) return [{ id: 1, kind: "master", domain: "license", direction: "out",
+                                               parent_id: null, counterparty_id: 9, resolved_id: 9, child_count: 0 }];
+    if (t.includes("SELECT resolved_id FROM v_party_resolved WHERE party_id = $1")) return [{ resolved_id: 5 }];
+    return [];
+  });
+  await new PartyAgreementMapService(db).remap(1, { counterpartyId: 5 }, "legal@example.test");
+  const swap = db.find("UPDATE agreement_parties SET party_id = $3")!;
+  assert.deepEqual(swap.params, [1, 5, 9]);
 });

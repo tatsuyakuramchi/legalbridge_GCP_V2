@@ -50,6 +50,7 @@ import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
 import { AgreementService, termInputForCondition } from "./agreements/service.js";
 import { PartyAgreementMapService } from "./agreements/party-map.js";
+import { AgreementPartyService } from "./agreements/parties.js";
 import { AGREEMENT_CSV_HEADERS, agreementCsvValues } from "./agreements/csv.js";
 import { STATEMENT_MODELS } from "./royalty/statement-model.js";
 import { termHistory } from "./agreements/term-history.js";
@@ -198,6 +199,7 @@ export function createRoutes(database: Transactable) {
   const receivables = new ReceivableRepository(database);
   const contractCheck = new ContractCheckRepository(database);
   const agreements = new AgreementService(database);
+  const agreementParties = new AgreementPartyService(database);
   const agreementMap = new PartyAgreementMapService(database);
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
@@ -373,8 +375,59 @@ export function createRoutes(database: Transactable) {
     renewalMonths: z.coerce.number().int().min(1).max(120).nullable().optional(),
     renewalNoticeMonths: z.coerce.number().int().min(0).max(36).nullable().optional(),
     counterpartyRefNo: z.string().trim().max(100).nullable().optional(),
-    sourceUrl: z.string().trim().max(2000).nullable().optional()
+    sourceUrl: z.string().trim().max(2000).nullable().optional(),
+    // 他の当事者（三社間契約。A-068）。並べた順に丙・丁 … と頭書きに出る。
+    parties: z.array(z.object({
+      partyId: z.coerce.number().int().positive(),
+      role: z.enum(["co_party", "agent", "guarantor", "rights_holder", "other"]).nullable().optional(),
+      note: z.string().trim().max(200).nullable().optional()
+    })).max(8).nullable().optional()
   });
+
+  // ---- 契約の当事者（三社間契約）----
+  //
+  // 相手方が 1 対 N の契約。主たる相手先は agreements.counterparty_id のまま、
+  // 他の当事者をここで足す・立場を直す・外す・主たる相手先と入れ替える。
+  router.get("/agreements/:id/parties", asyncRoute(async (req, res) => {
+    res.json({ parties: await agreementParties.list(Number(req.params.id)) });
+  }));
+
+  const agreementPartyRole = z.enum(["co_party", "agent", "guarantor", "rights_holder", "other"]).nullable().optional();
+  router.post("/agreements/:id/parties", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(),
+        role: agreementPartyRole,
+        note: z.string().trim().max(200).nullable().optional()
+      }).parse(req.body ?? {});
+      await agreementParties.add(Number(req.params.id),
+        { partyId: input.partyId, role: input.role ?? null, note: input.note ?? null }, actor(res));
+      res.status(201).json({ parties: await agreementParties.list(Number(req.params.id)) });
+    }));
+
+  router.patch("/agreements/:id/parties/:partyId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        role: agreementPartyRole,
+        note: z.string().trim().max(200).nullable().optional(),
+        seq: z.coerce.number().int().min(2).nullable().optional()
+      }).parse(req.body ?? {});
+      await agreementParties.update(Number(req.params.id), Number(req.params.partyId),
+        { role: input.role ?? null, note: input.note, seq: input.seq }, actor(res));
+      res.json({ parties: await agreementParties.list(Number(req.params.id)) });
+    }));
+
+  router.delete("/agreements/:id/parties/:partyId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      await agreementParties.remove(Number(req.params.id), Number(req.params.partyId), actor(res));
+      res.json({ parties: await agreementParties.list(Number(req.params.id)) });
+    }));
+
+  router.post("/agreements/:id/parties/:partyId/make-primary", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      await agreementParties.makePrimary(Number(req.params.id), Number(req.params.partyId), actor(res));
+      res.json({ parties: await agreementParties.list(Number(req.params.id)) });
+    }));
 
   router.post("/agreements", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

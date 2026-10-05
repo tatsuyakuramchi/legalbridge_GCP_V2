@@ -5,6 +5,7 @@ import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.
 import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { agreementDatedTitle } from "../documents/legacy-variables.js";
 import type { AgreementCsvRow } from "./csv.js";
+import { AGREEMENT_HAS_RESOLVED, EXTRA_PARTIES_SQL, partiesOf, type AgreementParty } from "./parties.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -20,7 +21,12 @@ import type { AgreementCsvRow } from "./csv.js";
  * 種別の無い基本契約、同じ種別の基本契約が並んでいる …）は「ずれ」として出し、
  * その場で種類・親・種別・方向・相手先を付け替えられるようにする。
  *
- * 表は増やさない。直すのは agreements の列だけ（番号は振り直さない）。
+ * 直すのは agreements の列だけ（番号は振り直さない）。
+ *
+ * 三社間契約（A-068）：相手方が 1 対 N の契約は、主たる相手先（counterparty_id）に
+ * 他の当事者（agreement_parties）を足して表す。この図は「当事者として入っている契約」
+ * を全部引くので、丙として参加する契約も、その取引先の図に出る。親子の相手先の
+ * 突き合わせも、親の当事者集合に入っていれば「ずれ」にしない。
  */
 
 export type MapIssueCode =
@@ -46,8 +52,12 @@ export interface MapAgreement {
   terminatedOn: string | null;
   /** 契約が指している取引先（統合元のこともある）。 */
   counterparty: { id: number; name: string; merged: boolean };
+  /** 当事者の列（主たる相手先 seq 1 ＋ 他の当事者）。三社間契約は 3 行。 */
+  parties: AgreementParty[];
   /** 親の契約の取引先を統合で辿った先。親が無ければ null。 */
   parentResolvedPartyId: number | null;
+  /** 親の契約の当事者（主たる相手先＋他の当事者）を統合で辿った先。親が無ければ空。 */
+  parentPartyIds: number[];
   parentKind: AgreementKind | null;
   conditionCount: number;
   documentCount: number;
@@ -156,7 +166,10 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
       loose.push(a);
       continue;
     }
-    if (a.parentResolvedPartyId !== null && a.parentResolvedPartyId !== party.id) {
+    // 親の当事者（主たる相手先＋他の当事者）にこの取引先が入っていれば、親子の相手先は合っている。
+    const parentParties = a.parentPartyIds.length
+      ? a.parentPartyIds : (a.parentResolvedPartyId !== null ? [a.parentResolvedPartyId] : []);
+    if (parentParties.length && !parentParties.includes(party.id)) {
       issues.push({ code: "parent_party_mismatch", agreementId: a.id,
         message: `${tag(a)} の親の契約は別の取引先のものです` });
       loose.push(a);
@@ -241,7 +254,9 @@ export interface RemapCurrent {
 }
 
 export interface RemapParent {
-  id: number; kind: AgreementKind; resolvedPartyId: number;
+  id: number; kind: AgreementKind;
+  /** 親の当事者（主たる相手先＋他の当事者）を統合で辿った先。 */
+  resolvedPartyIds: number[];
 }
 
 /**
@@ -278,8 +293,8 @@ export function planRemap(
     if (!isRootKind(parent.kind)) {
       throw new DomainError("VALIDATION", "親にできるのは基本契約か単体契約だけです");
     }
-    if (parent.resolvedPartyId !== targetResolvedPartyId) {
-      throw new DomainError("VALIDATION", "親の契約と相手先が違います");
+    if (!parent.resolvedPartyIds.includes(targetResolvedPartyId)) {
+      throw new DomainError("VALIDATION", "親の契約と相手先が違います（親の当事者に入っていません）");
     }
   }
   return { kind, domain, direction, parentId, counterpartyId };
@@ -330,6 +345,12 @@ export interface MapPartyRow {
   looseConditions: number;
 }
 
+/** 親の契約の当事者（主たる相手先＋他の当事者）を統合で辿った id の配列。別名 a が agreements。 */
+const PARENT_PARTY_IDS_SQL = `
+  (SELECT array_agg(DISTINCT ppr.resolved_id)
+     FROM v_agreement_parties pp JOIN v_party_resolved ppr ON ppr.party_id = pp.party_id
+    WHERE pp.agreement_id = a.parent_id)`;
+
 /** 契約に載っていない条件明細（取り消し・差し替え済みは数えない）。別名 co。 */
 const LOOSE_CONDITION_WHERE = `co.agreement_id IS NULL AND co.status NOT IN ('superseded', 'void')`;
 
@@ -338,6 +359,8 @@ const MAP_SELECT = `
          a.executed_on, a.terminated_on,
          a.counterparty_id, p.name AS party_name, (r.party_id <> r.resolved_id) AS party_merged,
          pr.resolved_id AS parent_resolved_id, pa.kind AS parent_kind,
+         ${PARENT_PARTY_IDS_SQL} AS parent_party_ids,
+         ${EXTRA_PARTIES_SQL} AS extra_parties,
          (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
          (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count
     FROM agreements a
@@ -358,7 +381,12 @@ export function mapAgreementRow(row: any): MapAgreement {
     executedOn: dateStr(row.executed_on), terminatedOn: dateStr(row.terminated_on),
     counterparty: { id: Number(row.counterparty_id), name: String(row.party_name ?? ""),
                     merged: row.party_merged === true },
+    parties: partiesOf({ id: Number(row.counterparty_id), name: String(row.party_name ?? ""),
+                         merged: row.party_merged === true }, row.extra_parties),
     parentResolvedPartyId: int(row.parent_resolved_id),
+    parentPartyIds: Array.isArray(row.parent_party_ids)
+      ? (row.parent_party_ids as unknown[]).map(Number).filter((n) => Number.isFinite(n))
+      : (row.parent_resolved_id ? [Number(row.parent_resolved_id)] : []),
     parentKind: row.parent_id ? ((str(row.parent_kind) ?? "master") as AgreementKind) : null,
     conditionCount: Number(row.condition_count ?? 0),
     documentCount: Number(row.document_count ?? 0)
@@ -383,20 +411,20 @@ export class PartyAgreementMapService {
                OR COALESCE(p.name_kana, '') ILIKE $1
                OR EXISTS (SELECT 1 FROM unnest(p.aliases) al WHERE al ILIKE $1)),
          x AS (
+           -- 当事者として入っている契約を数える（主たる相手先＋他の当事者。三社間契約は両方の取引先に出る）。
            SELECT r.resolved_id AS party_id,
-                  count(*)::int AS total,
-                  count(*) FILTER (WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone'))::int AS roots,
-                  count(*) FILTER (WHERE a.kind = 'document')::int AS documents,
-                  count(*) FILTER (
+                  count(DISTINCT a.id)::int AS total,
+                  count(DISTINCT a.id) FILTER (WHERE COALESCE(a.kind, 'master') IN ('master', 'standalone'))::int AS roots,
+                  count(DISTINCT a.id) FILTER (WHERE a.kind = 'document')::int AS documents,
+                  count(DISTINCT a.id) FILTER (
                     WHERE (a.kind IN ('supplement', 'termination') AND a.parent_id IS NULL)
-                       OR (a.parent_id IS NOT NULL AND pr.resolved_id IS DISTINCT FROM r.resolved_id)
+                       OR (a.parent_id IS NOT NULL AND NOT ${AGREEMENT_HAS_RESOLVED("a.parent_id", "r.resolved_id")})
                        OR (COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.domain IS NULL)
                        OR (COALESCE(a.kind, 'master') IN ('master', 'standalone') AND a.parent_id IS NOT NULL)
                   )::int AS issues
              FROM agreements a
-             JOIN v_party_resolved r ON r.party_id = a.counterparty_id
-             LEFT JOIN agreements pa ON pa.id = a.parent_id
-             LEFT JOIN v_party_resolved pr ON pr.party_id = pa.counterparty_id
+             JOIN v_agreement_parties vap ON vap.agreement_id = a.id
+             JOIN v_party_resolved r ON r.party_id = vap.party_id
             GROUP BY r.resolved_id),
          u AS (
            SELECT r.resolved_id AS party_id, count(*)::int AS unlinked
@@ -451,7 +479,7 @@ export class PartyAgreementMapService {
       const resolvedId = Number(head.resolved_id);
       const r = await this.database.query(
         `${MAP_SELECT}
-          WHERE r.resolved_id = $1
+          WHERE r.resolved_id = $1 OR ${AGREEMENT_HAS_RESOLVED("a.id", "$1")}
           ORDER BY COALESCE(a.parent_id, a.id), a.parent_id NULLS FIRST, a.id`, [resolvedId]);
       const map = buildPartyMap({ id: resolvedId, name: String(head.resolved_name ?? "") },
                                 (r.rows as any[]).map(mapAgreementRow));
@@ -503,7 +531,8 @@ export class PartyAgreementMapService {
                 a.terminated_on, a.counterparty_id, p.name AS party_name,
                 (r.party_id <> r.resolved_id) AS party_merged,
                 r.resolved_id, r.resolved_name, rp.party_code AS resolved_code,
-                pa.agreement_no AS parent_no, pr.resolved_id AS parent_resolved_id, pa.kind AS parent_kind
+                pa.agreement_no AS parent_no, pr.resolved_id AS parent_resolved_id, pa.kind AS parent_kind,
+                ${PARENT_PARTY_IDS_SQL} AS parent_party_ids, ${EXTRA_PARTIES_SQL} AS extra_parties
            FROM agreements a
            JOIN parties p ON p.id = a.counterparty_id
            JOIN v_party_resolved r ON r.party_id = a.counterparty_id
@@ -559,7 +588,9 @@ export class PartyAgreementMapService {
            JOIN v_document_display v ON v.document_id = d.id
            LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
            LEFT JOIN document_templates t ON t.id = tv.template_id
-          WHERE v.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $1)
+          WHERE (v.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $1)
+                 -- 三社間契約の文書は、他の当事者の側からも選べる。
+                 OR (d.agreement_id IS NOT NULL AND ${AGREEMENT_HAS_RESOLVED("d.agreement_id", "$1")}))
             AND d.document_no IS NOT NULL
             AND d.status NOT IN ('void', 'superseded', 'draft')
             AND (t.template_key IN ('purchase_order', 'intl_purchase_order')
@@ -625,12 +656,16 @@ export class PartyAgreementMapService {
         let parent: RemapParent | null = null;
         if (parentId) {
           const pr = await client.query(
-            `SELECT a.id, a.kind, r.resolved_id
+            `SELECT a.id, a.kind, r.resolved_id,
+                    (SELECT array_agg(DISTINCT ppr.resolved_id)
+                       FROM v_agreement_parties pp JOIN v_party_resolved ppr ON ppr.party_id = pp.party_id
+                      WHERE pp.agreement_id = a.id) AS party_ids
                FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
               WHERE a.id = $1`, [parentId]);
           const p = pr.rows[0] as any;
           if (p) parent = { id: Number(p.id), kind: (str(p.kind) ?? "master") as AgreementKind,
-                            resolvedPartyId: Number(p.resolved_id) };
+                            resolvedPartyIds: Array.isArray(p.party_ids) && p.party_ids.length
+                              ? (p.party_ids as unknown[]).map(Number) : [Number(p.resolved_id)] };
         }
 
         const next = planRemap(current, input, parent, targetResolved);
@@ -675,6 +710,13 @@ export class PartyAgreementMapService {
             WHERE id = $1`,
           [id, next.kind, next.domain, next.direction, next.parentId, next.counterpartyId,
            extra.title, extra.effectiveOn, extra.expiresOn, extra.autoRenewal, extra.counterpartyRefNo]);
+        if (next.counterpartyId !== current.counterpartyId) {
+          // 新しい相手先が他の当事者に入っていたら入れ替える（元の相手先がその席に下がる）。
+          // 入っていなければ何も起きない（他の当事者はそのまま）。
+          await client.query(
+            "UPDATE agreement_parties SET party_id = $3 WHERE agreement_id = $1 AND party_id = $2",
+            [id, next.counterpartyId, current.counterpartyId]);
+        }
         if (executed) {
           await client.query(
             `UPDATE agreements

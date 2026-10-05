@@ -73,7 +73,8 @@ export class PartyRepository {
         this.database.query(
           `SELECT (SELECT count(*)::int FROM conditions WHERE counterparty_id = $1) AS conditions,
                   (SELECT count(*)::int FROM payments   WHERE party_id = $1)        AS payments,
-                  (SELECT count(*)::int FROM agreements WHERE counterparty_id = $1) AS agreements,
+                  -- 当事者として入っている契約（三社間契約の他の当事者としてのものも数える）。
+                  (SELECT count(DISTINCT agreement_id)::int FROM v_agreement_parties WHERE party_id = $1) AS agreements,
                   (SELECT count(*)::int FROM matters    WHERE counterparty_id = $1) AS matters`, [id]),
         // 口座は表ごと GRANT していないので、権限不足はそのまま null にする。
         this.database.query(

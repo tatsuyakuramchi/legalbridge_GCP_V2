@@ -1,4 +1,5 @@
 import type { Transactable } from "../core/db.js";
+import { AGREEMENT_HAS_RESOLVED } from "../agreements/parties.js";
 import { dateStr, int, str } from "../core/db.js";
 import { termHistory } from "../agreements/term-history.js";
 import { translate } from "../core/errors.js";
@@ -121,8 +122,8 @@ export class ContractCheckRepository {
                   CASE WHEN a.expires_on IS NULL THEN NULL
                        ELSE (a.expires_on - current_date) END AS days_to_expiry
              FROM agreements a
-             JOIN v_party_resolved pr ON pr.party_id = a.counterparty_id
-            WHERE pr.resolved_id = $1
+            -- 当事者として入っている契約（主たる相手先＋三社間契約の他の当事者）。統合を辿る。
+            WHERE ${AGREEMENT_HAS_RESOLVED("a.id", "$1")}
             ORDER BY a.expires_on DESC NULLS FIRST, a.id DESC LIMIT 50`, [partyId]),
         this.database.query(
           `SELECT c.id, c.condition_no, c.name, c.direction, c.status, c.term_start, c.term_end

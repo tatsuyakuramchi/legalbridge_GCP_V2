@@ -98,3 +98,11 @@ test("契約の側から条件を載せるときも、向きの違う契約に�
   } } as any;
   await assert.rejects(() => RELATIONS.agreement.conditions.attach!(client, 1, 2), /向きが違う契約には載せられません/);
 });
+
+test("契約の当事者は主たる相手先と他の当事者を並べ、取引先からは丙として入っている契約も見える", async () => {
+  const seen: string[] = [];
+  const client = { query: async (text: string) => { seen.push(text); return { rows: [] }; } } as any;
+  await RELATIONS.agreement.party.list(client, 1);
+  await RELATIONS.party.agreements.list(client, 5);
+  for (const text of seen) assert.ok(text.includes("v_agreement_parties"), "当事者の集合で引く");
+});

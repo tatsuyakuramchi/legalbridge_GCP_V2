@@ -205,6 +205,9 @@ export class DocumentRepository {
       where.push(`(COALESCE(d.document_no,'') ILIKE $${i} OR COALESCE(v.title,'') ILIKE $${i}
                    OR COALESCE(d.manual_inputs->>'title','') ILIKE $${i}
                    OR COALESCE(v.counterparty,'') ILIKE $${i}
+                   -- 三社間契約の文書は、他の当事者の名前でも当てる。
+                   OR EXISTS (SELECT 1 FROM agreement_parties ap JOIN parties ap_p ON ap_p.id = ap.party_id
+                               WHERE ap.agreement_id = d.agreement_id AND ap_p.name ILIKE $${i})
                    OR EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
                                WHERE dc.document_id = d.id
                                  AND (COALESCE(c.condition_no,'') ILIKE $${i} OR COALESCE(c.name,'') ILIKE $${i})))`);

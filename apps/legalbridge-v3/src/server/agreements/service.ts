@@ -3,6 +3,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import { termHistory, type TermEvent, type TermHistory, type TermInput } from "./term-history.js";
+import { AGREEMENT_HAS_PARTY, EXTRA_PARTIES_SQL, partiesOf, roleOf, type AgreementParty, type AgreementPartyRole } from "./parties.js";
 
 /**
  * 契約（合意）。
@@ -54,6 +55,11 @@ export interface AgreementInput {
   counterpartyRefNo?: string | null;
   /** 契約書の現物（Drive リンク）。 */
   sourceUrl?: string | null;
+  /**
+   * 他の当事者（三社間契約。A-068）。主たる相手先（counterpartyId）はここに入れない。
+   * 並べた順に丙・丁 … と頭書きに出る。
+   */
+  parties?: Array<{ partyId: number; role?: AgreementPartyRole | null; note?: string | null }> | null;
 }
 
 export interface AgreementRow {
@@ -64,6 +70,8 @@ export interface AgreementRow {
   renewalStoppedOn: string | null; terminatedOn: string | null;
   counterpartyRefNo: string | null; sourceUrl: string | null;
   counterparty: { id: number; name: string };
+  /** 当事者の列（主たる相手先 seq 1 ＋ 他の当事者）。三社間契約は 3 行になる。 */
+  parties: AgreementParty[];
   conditionCount: number; documentCount: number; totalFlat: number;
   /** いまの終了日（更新履歴の最終行）。 */
   currentEnd: string | null;
@@ -92,12 +100,14 @@ const HEAD = `
          a.executed_on, a.effective_on, a.expires_on, a.auto_renewal, a.renewal_months,
          a.renewal_notice_months, a.renewal_stopped_on, a.terminated_on,
          a.counterparty_ref_no, a.source_url,
-         p.id AS party_id, p.name AS party_name,
+         p.id AS party_id, p.name AS party_name, (r.party_id <> r.resolved_id) AS party_merged,
+         ${EXTRA_PARTIES_SQL} AS extra_parties,
          (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
          (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count,
          (SELECT COALESCE(sum(c.flat_amount), 0) FROM conditions c
            WHERE c.agreement_id = a.id AND c.status = 'active')::bigint AS total_flat
-    FROM agreements a JOIN parties p ON p.id = a.counterparty_id`;
+    FROM agreements a JOIN parties p ON p.id = a.counterparty_id
+    JOIN v_party_resolved r ON r.party_id = a.counterparty_id`;
 
 export class AgreementService {
   constructor(private readonly database: Transactable) {}
@@ -112,9 +122,11 @@ export class AgreementService {
     try {
       const r = await this.database.query(
         `${HEAD}
-          WHERE ($1 = '' OR a.title ILIKE $1 OR COALESCE(a.agreement_no,'') ILIKE $1 OR p.name ILIKE $1)
-            AND ($2::bigint IS NULL OR a.counterparty_id = $2
-                 OR a.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $2))
+          WHERE ($1 = '' OR a.title ILIKE $1 OR COALESCE(a.agreement_no,'') ILIKE $1 OR p.name ILIKE $1
+                 OR EXISTS (SELECT 1 FROM agreement_parties ap JOIN parties ap_p ON ap_p.id = ap.party_id
+                             WHERE ap.agreement_id = a.id AND ap_p.name ILIKE $1))
+            -- 取引先で絞るときは当事者の集合で見る（三社間契約は他の当事者からも出る）。統合を辿る。
+            AND ($2::bigint IS NULL OR ${AGREEMENT_HAS_PARTY("a.id", "$2")})
             AND ($3::boolean = false OR a.status = 'executed')
           ORDER BY COALESCE(a.parent_id, a.id) DESC, a.parent_id NULLS FIRST, a.id
           LIMIT 300`,
@@ -197,10 +209,14 @@ export class AgreementService {
     if ((input.kind === "supplement" || input.kind === "termination") && !input.parentId) {
       throw new DomainError("VALIDATION", "補助文書・解除合意は親の契約（基本契約か単体契約）を選んでください");
     }
+    const extras = extraPartiesOf(input);
     try {
       return await inTransaction(this.database, async (client) => {
-        const party = await client.query("SELECT id, name FROM parties WHERE id = $1", [input.counterpartyId]);
+        const party = await client.query(
+          "SELECT p.id, p.name, r.resolved_id FROM parties p JOIN v_party_resolved r ON r.party_id = p.id WHERE p.id = $1",
+          [input.counterpartyId]);
         if (!party.rows[0]) throw new DomainError("NOT_FOUND", `取引先 ${input.counterpartyId} が見つかりません`);
+        const primaryResolved = int((party.rows[0] as any).resolved_id) ?? input.counterpartyId;
 
         let parent: any = null;
         if (input.parentId) {
@@ -231,10 +247,25 @@ export class AgreementService {
            input.autoRenewal === true, input.renewalMonths ?? null, input.renewalNoticeMonths ?? null,
            str(input.counterpartyRefNo), str(input.sourceUrl)]);
         const id = Number((r.rows[0] as { id: number }).id);
+        // 他の当事者（三社間契約）。主たる相手先と同じ取引先（統合先が同じ）は入れない。
+        for (const [n, extra] of extras.entries()) {
+          const pr = await client.query(
+            "SELECT resolved_id FROM v_party_resolved WHERE party_id = $1", [extra.partyId]);
+          const resolved = int((pr.rows[0] as any)?.resolved_id);
+          if (!resolved) throw new DomainError("NOT_FOUND", `取引先 ${extra.partyId} が見つかりません`);
+          if (resolved === primaryResolved) {
+            throw new DomainError("VALIDATION", "他の当事者に主たる相手先と同じ取引先が入っています");
+          }
+          await client.query(
+            `INSERT INTO agreement_parties (agreement_id, party_id, role, seq, note, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [id, extra.partyId, extra.role, n + 2, extra.note, actor]);
+        }
         await recordAudit(client, {
           actor, action: "agreement.create", targetType: "agreement", targetId: id,
           detail: { agreementNo, kind: input.kind, domain: input.domain ?? null,
-                    parentId: input.parentId ?? null, counterpartyId: input.counterpartyId, status }
+                    parentId: input.parentId ?? null, counterpartyId: input.counterpartyId, status,
+                    parties: extras.map((x) => ({ partyId: x.partyId, role: x.role })) }
         });
         return { id, agreementNo };
       });
@@ -434,6 +465,11 @@ export class AgreementService {
           [terminationNo, input.scope === "whole" ? "解除合意" : "一部条件の解除合意",
            parent.counterparty_id, parent.direction, parent.domain, id, input.on, str(input.sourceUrl)]);
         const terminationId = Number((made.rows[0] as { id: number }).id);
+        // 三社間契約の解除合意も同じ当事者で結ぶ。親の他の当事者をそのまま写す。
+        await client.query(
+          `INSERT INTO agreement_parties (agreement_id, party_id, role, seq, note, created_by)
+           SELECT $1, party_id, role, seq, note, $2 FROM agreement_parties WHERE agreement_id = $3`,
+          [terminationId, actor, id]);
 
         if (input.scope === "whole") {
           await client.query(
@@ -512,10 +548,27 @@ export function mapRow(row: any, events: TermEvent[] = []): AgreementRow {
     renewalStoppedOn: dateStr(row.renewal_stopped_on), terminatedOn: dateStr(row.terminated_on),
     counterpartyRefNo: str(row.counterparty_ref_no), sourceUrl: str(row.source_url),
     counterparty: { id: Number(row.party_id), name: String(row.party_name ?? "") },
+    parties: partiesOf({ id: Number(row.party_id), name: String(row.party_name ?? ""), merged: row.party_merged === true },
+                       row.extra_parties),
     conditionCount: Number(row.condition_count ?? 0), documentCount: Number(row.document_count ?? 0),
     totalFlat: Number(row.total_flat ?? 0),
     currentEnd: h.currentEnd, renewals: h.renewals
   };
+}
+
+/** 登録の入力から他の当事者を取り出す（重複・主たる相手先を除く）。 */
+function extraPartiesOf(input: AgreementInput): Array<{ partyId: number; role: AgreementPartyRole; note: string | null }> {
+  const out: Array<{ partyId: number; role: AgreementPartyRole; note: string | null }> = [];
+  for (const x of input.parties ?? []) {
+    const partyId = Number(x.partyId);
+    if (!Number.isInteger(partyId) || partyId <= 0) throw new DomainError("VALIDATION", "他の当事者の取引先が読めません");
+    if (partyId === input.counterpartyId) {
+      throw new DomainError("VALIDATION", "他の当事者に主たる相手先と同じ取引先が入っています");
+    }
+    if (out.some((o) => o.partyId === partyId)) continue;
+    out.push({ partyId, role: roleOf(x.role), note: str(x.note) });
+  }
+  return out;
 }
 
 /**

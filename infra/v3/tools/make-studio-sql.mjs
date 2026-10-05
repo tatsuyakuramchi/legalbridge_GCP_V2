@@ -303,6 +303,10 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 68, '契約の他の当事者（A-068。表 1・ビュー 1 で 2 であること）',
+         ((SELECT count(*) FROM information_schema.tables WHERE table_schema='v3' AND table_name='agreement_parties')
+          + (SELECT count(*) FROM information_schema.views WHERE table_schema='v3' AND table_name='v_agreement_parties'))::text
+  UNION ALL
   SELECT 67, '計算書に取引モデルを混ぜるか（A-067。列 1 であること）',
          (SELECT count(*) FROM information_schema.columns
            WHERE table_schema='v3' AND table_name='parties' AND column_name='royalty_mix_models')::text

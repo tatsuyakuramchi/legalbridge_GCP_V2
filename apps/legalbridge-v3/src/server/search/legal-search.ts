@@ -143,7 +143,10 @@ export class LegalSearchService {
           WHERE d.status = 'issued'
             AND EXISTS (SELECT 1 FROM v_party_resolved pr
                          WHERE pr.resolved_id = $1
-                           AND pr.party_id IN (a.counterparty_id, m.counterparty_id))
+                           AND (pr.party_id IN (a.counterparty_id, m.counterparty_id)
+                                -- 三社間契約の文書は、他の当事者の側からも出す。
+                                OR EXISTS (SELECT 1 FROM agreement_parties ap
+                                            WHERE ap.agreement_id = a.id AND ap.party_id = pr.party_id)))
           ORDER BY d.issued_at DESC NULLS LAST, d.id DESC
           LIMIT 5`, [partyId]),
       this.database.query(

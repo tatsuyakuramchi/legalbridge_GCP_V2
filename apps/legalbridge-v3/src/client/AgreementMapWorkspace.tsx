@@ -9,6 +9,7 @@ import { CsvImport } from "./CsvImport.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
+import { AgreementParties, PartyChips } from "./AgreementParties.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
 import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
 
@@ -23,6 +24,9 @@ import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapPartyRow, Part
  *
  * 「既定」の印は、他の画面がその取引先の基本契約として拾うべき1本
  * （種別 × 方向ごとに、締結済み・未解除の基本契約のうち新しいもの）。
+ *
+ * 三社間契約（A-068）はこの取引先が丙として入っている契約も図に出す
+ * （「主たる相手先：◯◯」の印つき）。当事者の足す・外すは各契約の「当事者」から。
  */
 
 const KIND_LABEL: Record<AgreementKind, string> = {
@@ -157,6 +161,7 @@ function PartyMapView(
 
   const node = (a: MapAgreement, extra?: { primary?: boolean }) => (
     <AgreementNode key={a.id} a={a} issues={issuesOf(a.id)} primary={extra?.primary}
+      mapPartyId={map.party.id}
       editing={editing === a.id} onEdit={() => setEditing(editing === a.id ? null : a.id)}
       onOpen={onOpen} roots={map.roots}
       onSaved={(msg) => { setEditing(null); onChanged(msg); }}
@@ -409,8 +414,10 @@ function LooseConditions(
 }
 
 function AgreementNode(
-  { a, issues, primary, editing, onEdit, onOpen, roots, onSaved, onDocsChanged, onError }: {
+  { a, issues, primary, mapPartyId, editing, onEdit, onOpen, roots, onSaved, onDocsChanged, onError }: {
     a: MapAgreement; issues: MapIssue[]; primary?: boolean; editing: boolean; onEdit: () => void;
+    /** 図の取引先（統合先）。この契約の主たる相手先と違えば「丙として参加」と出す。 */
+    mapPartyId: number;
     onOpen?: (kind: EntityKind, id: number) => void; roots: MapNode[];
     onSaved: (msg: string) => void;
     /** 文書を取り込んだ・繋いだ・外したとき。図（文書の件数）を読み直す。 */
@@ -424,6 +431,11 @@ function AgreementNode(
   const [docsVersion, setDocsVersion] = useState(0);
   /** 条件明細の欄（載っている条件を見る・載せる・外す）を開いているか。 */
   const [condsOpen, setCondsOpen] = useState(false);
+  /** 当事者の欄（三社間契約の他の当事者を足す・外す）を開いているか。 */
+  const [partiesOpen, setPartiesOpen] = useState(false);
+  /** この取引先が主たる相手先でなく、他の当事者（丙 …）としてこの契約に入っているか。 */
+  const asExtra = a.parties.find((p) => !p.primary && p.partyId === mapPartyId) ?? null;
+  const primaryIsOther = a.parties.length > 1 && !a.parties.some((p) => p.primary && p.partyId === mapPartyId) && !a.counterparty.merged;
   return (
     <div className={`amap-node${issues.length ? " bad" : ""}`}>
       <div className="amap-line">
@@ -442,14 +454,22 @@ function AgreementNode(
           : a.kind !== "document" && <span className="tag ghost warn">締結日なし</span>}
         {a.terminatedOn && <span className="faint">解除 {a.terminatedOn}</span>}
         {a.counterparty.merged && <span className="faint" title="統合前の取引先を指しています（参照は付け替えない決まり）">統合元：{a.counterparty.name}</span>}
+        {(asExtra || primaryIsOther) && (
+          <span className="tag ghost" title="三社間契約。この取引先は主たる相手先ではなく、他の当事者として入っています">
+            主たる相手先：{a.counterparty.name}{asExtra ? `／この取引先は${asExtra.ordinal}（${asExtra.roleLabel}）` : ""}
+          </span>
+        )}
+        <PartyChips parties={a.parties} onOpen={onOpen} />
         <span className="faint">条件 {a.conditionCount}・文書 {a.documentCount}</span>
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setPartiesOpen((v) => !v)}>
+          {partiesOpen ? "当事者を閉じる" : `当事者${a.parties.length > 1 ? ` ${a.parties.length}` : ""}`}
+        </button>
         {a.kind !== "document" && (
-          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setCondsOpen((v) => !v)}>
+          <button className="btn btn-sm" onClick={() => setCondsOpen((v) => !v)}>
             {condsOpen ? "条件を閉じる" : "条件"}
           </button>
         )}
-        <button className="btn btn-sm" style={a.kind === "document" ? { marginLeft: "auto" } : undefined}
-                onClick={() => setDocsOpen((v) => !v)}>
+        <button className="btn btn-sm" onClick={() => setDocsOpen((v) => !v)}>
           {docsOpen ? "文書を閉じる" : "文書"}
         </button>
         <button className="btn btn-sm" disabled={readOnly} onClick={onEdit}>
@@ -458,6 +478,14 @@ function AgreementNode(
       </div>
       {issues.map((i, n) => <div key={n} className="amap-issue">⚠ {i.message}</div>)}
       {editing && <RemapForm a={a} roots={roots} onSaved={onSaved} onError={onError} />}
+      {partiesOpen && (
+        <div className="amap-form stack" style={{ gap: 8 }}>
+          {/* 三社間契約の他の当事者。主たる相手先は上の「編集」（付け替え）で。 */}
+          <AgreementParties agreementId={a.id} parties={a.parties} compact
+            onOpen={(kind, id) => onOpen?.(kind, id)}
+            onChanged={(msg) => onDocsChanged(`${a.agreementNo ?? `#${a.id}`}：${msg}`)} />
+        </div>
+      )}
       {condsOpen && (
         <div className="amap-form stack" style={{ gap: 8 }}>
           {/* この契約に載っている条件明細。同じ取引先・同じ向きの条件から載せる・外す。 */}
@@ -558,7 +586,7 @@ function RemapForm(
         <button className="btn primary btn-sm" disabled={busy || (needsParent && !parentId)} onClick={save}>保存する</button>
         <span className="faint">
           番号は振り直しません。文書には「{executedOn ? `${Number(executedOn.slice(0, 4))}年${Number(executedOn.slice(5, 7))}月${Number(executedOn.slice(8, 10))}日付` : ""}{a.title}」と出ます。{isRoot ? "基本契約・単体契約にすると親は外れます。" : ""}
-          相手先を別の取引先にすると、この取引先の図から外れます。
+          相手先を別の取引先にすると、この取引先の図から外れます（他の当事者として入っていれば残ります）。
         </span>
       </div>
     </div>

@@ -7,7 +7,9 @@ import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { useReadOnly } from "./read-only.js";
+import { AgreementParties, PartyChips, ROLE_LABEL } from "./AgreementParties.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
+import type { AgreementPartyRole } from "../server/agreements/parties.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
 
 /**
@@ -184,7 +186,14 @@ export function AgreementsWorkspace(
                     </td>
                     <td><KindTag kind={r.kind} /></td>
                     <td>{r.title}</td>
-                    <td>{r.counterparty.name}</td>
+                    <td>
+                      {r.counterparty.name}
+                      {r.parties.length > 1 && (
+                        <span className="faint" title={r.parties.filter((p) => !p.primary).map((p) => `${p.ordinal} ${p.name}（${p.roleLabel}）`).join("、")}>
+                          {" "}＋{r.parties.length - 1}社
+                        </span>
+                      )}
+                    </td>
                     <td className="num">{r.conditionCount || "—"}</td>
                     <td className="faint">
                       {r.kind === "termination"
@@ -214,6 +223,7 @@ export function AgreementsWorkspace(
                 <span className={`tag ${a.direction}`}>{a.direction === "in" ? "IN" : "OUT"}</span>
                 <StatusTag kind="agreement" value={a.status} />
                 <span className="faint" style={{ marginLeft: "auto" }}>{a.counterparty.name}</span>
+                <PartyChips parties={a.parties} onOpen={onOpen} />
               </div>
               <div className="panel-bd stack">
                 <div className="row" style={{ flexWrap: "wrap", gap: 16 }}>
@@ -280,6 +290,19 @@ export function AgreementsWorkspace(
                     onDone={() => { setAddingCondition(false); bump(); setNotice("条件明細を登録しました"); }}
                     onCancel={() => setAddingCondition(false)} />
                 )}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-hd">
+                <h2>当事者 {a.parties.length}</h2>
+                <span className="faint">
+                  {a.parties.length > 1 ? "三社間契約。丙以降はここで足す・外す" : "2 者間の契約。三社間契約ならここで他の当事者を足す"}
+                </span>
+              </div>
+              <div className="panel-bd">
+                <AgreementParties agreementId={a.id} parties={a.parties} onOpen={onOpen}
+                  onChanged={(msg) => { setNotice(msg); bump(); }} />
               </div>
             </div>
 
@@ -408,6 +431,8 @@ function AgreementCreate({ preset, onDone, onCancel }: {
   const [noticeMonths, setNoticeMonths] = useState("");
   const [refNo, setRefNo] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
+  /** 他の当事者（三社間契約）。並べた順に丙・丁 … と頭書きに出る。 */
+  const [extras, setExtras] = useState<Array<{ partyId: string; label: string; role: AgreementPartyRole }>>([]);
   /** 「条件明細がぶら下がりますか」。null はまだ答えていない。 */
   const [hasConditions, setHasConditions] = useState<boolean | null>(preset.kind ? true : null);
   const [kind, setKind] = useState<AgreementKind>(preset.kind ?? "master");
@@ -440,7 +465,8 @@ function AgreementCreate({ preset, onDone, onCancel }: {
         effectiveOn: effectiveOn || executedOn, expiresOn: expiresOn || null,
         autoRenewal, renewalMonths: renewalMonths ? Number(renewalMonths) : null,
         renewalNoticeMonths: noticeMonths ? Number(noticeMonths) : null,
-        counterpartyRefNo: refNo || null, sourceUrl: sourceUrl || null
+        counterpartyRefNo: refNo || null, sourceUrl: sourceUrl || null,
+        parties: extras.filter((x) => x.partyId).map((x) => ({ partyId: Number(x.partyId), role: x.role }))
       });
       onDone(made.id, made.agreementNo);
       // 「登録して、条件明細の登録へ」は、開いた詳細で登録欄を出す（親は detail 側）。
@@ -502,6 +528,30 @@ function AgreementCreate({ preset, onDone, onCancel }: {
         <label className="fld"><span>契約書（Drive）</span>
           <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://drive.google.com/…" />
           <small>現物は Drive に置く。ここにはリンクだけ</small></label>
+
+        {/* 三社間契約。相手先（乙）のほかに丙・丁 … がいるとき。条件明細・支払の相手先は 1 社のまま。 */}
+        <div className="fld">
+          <span>他の当事者（三社間契約のとき）</span>
+          {extras.map((x, n) => (
+            <div key={n} className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+              <span className="code" style={{ width: 24 }}>{["丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"][n] ?? `${n + 3}`}</span>
+              <div style={{ minWidth: 240 }}>
+                <SearchSelect value={x.partyId} valueLabel={x.label || null} search={searchParties}
+                  placeholder="取引先名・コードで探す"
+                  onChange={(v, opt) => setExtras((list) => list.map((y, m) => m === n ? { ...y, partyId: v, label: opt?.label ?? y.label } : y))} />
+              </div>
+              <select value={x.role} onChange={(e) => setExtras((list) => list.map((y, m) => m === n ? { ...y, role: e.target.value as AgreementPartyRole } : y))}>
+                {(Object.keys(ROLE_LABEL) as AgreementPartyRole[]).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+              </select>
+              <button type="button" className="btn btn-sm" onClick={() => setExtras((list) => list.filter((_, m) => m !== n))}>外す</button>
+            </div>
+          ))}
+          <div className="row" style={{ marginTop: 4 }}>
+            <button type="button" className="btn btn-sm" disabled={extras.length >= 8}
+                    onClick={() => setExtras((list) => [...list, { partyId: "", label: "", role: "co_party" }])}>当事者を足す</button>
+            <small>相手先（乙）と同じ取引先は足せません。あとから契約の画面「当事者」でも足せます</small>
+          </div>
+        </div>
 
         {preset.kind !== "supplement" && (
           <div className="ask">
