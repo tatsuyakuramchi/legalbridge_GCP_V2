@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { printableText } from "./printable.js";
 
 const execute = promisify(execFile);
 
@@ -20,7 +21,8 @@ export class ChromiumPdfRenderer implements PdfRenderer {
     const htmlPath = path.join(directory, "document.html");
     const pdfPath = path.join(directory, "document.pdf");
     try {
-      await writeFile(htmlPath, html, "utf8");
+      // フォントに無い字（住所の珍しいハイフンなど）は☒になるので、刷れる字に揃える。
+      await writeFile(htmlPath, printableText(html), "utf8");
       await execute(this.executable, [
         "--headless",
         "--no-sandbox",
