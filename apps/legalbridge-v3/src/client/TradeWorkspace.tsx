@@ -72,13 +72,15 @@ interface Agreement { id: number; agreementNo: string | null; title: string; sta
 type Compose = (conditionIds: number[], eventIds?: number[], matterId?: number | null, templateKey?: string | null) => void;
 
 export function TradeWorkspace(
-  { ctx, onCtx, onCompose, onOpenDocument, onOpenMatter, onRegisterAgreement }: {
+  { ctx, onCtx, onCompose, onOpenDocument, onOpenMatter, onRegisterAgreement, onOpenPayments }: {
     ctx: TradeCtx | null;
     onCtx: (ctx: TradeCtx | null) => void;
     onCompose: Compose;
     onOpenDocument: (id: number) => void;
     onOpenMatter: (id: number) => void;
     onRegisterAgreement: (partyId: number, partyName: string | null) => void;
+    /** 支払文書（検収書・利用許諾計算書）は支払文書処理の画面で作る。 */
+    onOpenPayments: () => void;
   }
 ) {
   if (!ctx) {
@@ -96,10 +98,10 @@ export function TradeWorkspace(
               <span className="faint" style={{ fontSize: 12 }}>{p.detail}</span>
             </button>
           ))}
-          <button className="ledger-party" onClick={() => undefined} disabled>
+          <button className="ledger-party" onClick={onOpenPayments}>
             <span className="faint" style={{ fontSize: 11, letterSpacing: ".06em" }}>支払</span>
             <b>検収書・利用許諾計算書</b>
-            <span className="faint" style={{ fontSize: 12 }}>支払文書処理の画面と作品の台帳で（時期が来たら）</span>
+            <span className="faint" style={{ fontSize: 12 }}>支払文書処理の画面へ（納品・計算期が来たものを検収・計算書にする）</span>
           </button>
         </div>
       </section>
