@@ -218,6 +218,16 @@ test("見出しの発注番号も、V3 の発注書が無ければ条件の控�
                "ARC-PO-2025-0123・ARC-PO-2025-0124");
 });
 
+test("見出しの発注番号：発注書も控えも無く、条件が単体契約（取り込んだ発注書）に載っていれば契約番号", () => {
+  const context = {
+    related: [], conditions: [{ id: 1, orderNo: null }],
+    agreement: { kind: "standalone", no: "ARC-PO-2026-0079" }
+  } as any;
+  assert.equal(resolveLegacyVariable("parent_po_number", context), "ARC-PO-2026-0079");
+  // 基本契約の番号は発注番号にしない。
+  assert.equal(resolveLegacyVariable("parent_po_number", { ...context, agreement: { kind: "master", no: "ARC-SVC-1" } }), undefined);
+});
+
 test("「発注番号」は文書自身の番号を指す（検収書の親は parent_po_number）", () => {
   // 同じ名前が2か所にあり、先に見つかったほうが勝つ。発注書では自分の番号が正しい。
   // 検収書のひな形で親の発注番号を出したいときは parent_po_number を使う。

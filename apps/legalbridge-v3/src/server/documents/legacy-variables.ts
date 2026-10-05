@@ -159,7 +159,7 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["parent_po_number", "PARENT_PO_NUMBER", "発注番号", "元発注番号"],
     get: (c) => (c as { parentPoNo?: string | null }).parentPoNo
              ?? relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order")
-             ?? conditionOrderNos(c) },
+             ?? conditionOrderNos(c) ?? standaloneOrderNo(c) },
   { names: ["issueKey", "BACKLOG_KEY", "課題キー"], get: (c) => c.backlogKey },
 
   // ---- 相手先（受注者・許諾者） ----
@@ -414,6 +414,15 @@ const conditionOrderNos = (c: Ctx): string | undefined => {
   const list = (c.conditions ?? []) as Array<Record<string, any>>;
   const nos = [...new Set(list.map((x) => String(x.orderNo ?? "").trim()).filter(Boolean))];
   return nos.length ? nos.join("・") : undefined;
+};
+
+/**
+ * 条件が載っている単体契約の番号。取り込んだ発注書は文書ではなく単体契約として
+ * 登録されていることがあり、そのときは契約番号が発注番号になる。
+ */
+const standaloneOrderNo = (c: Ctx): string | undefined => {
+  const a = (c as { agreement?: { kind?: string | null; no?: string | null } | null }).agreement;
+  return a && (a.kind === "standalone" || a.kind === "document") && a.no ? a.no : undefined;
 };
 
 const relatedNo = (c: Ctx, templateKey: string): string | undefined => {

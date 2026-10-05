@@ -315,6 +315,13 @@ export interface DocumentRefs {
   }>;
   /** 決定済みの発注書。検収書の「発注番号」に選ぶ。 */
   purchaseOrders: RefDocument[];
+  /**
+   * 選んだ条件につながっている発注書（conditionIds を渡したときだけ）。
+   * 条件が載っている単体契約（取り込んだ発注書を契約として登録したもの）と、
+   * 条件に結びついた発注書の文書。purchaseOrders は作った発注書しか拾わないので、
+   * 取り込んだ発注書に対する検収で番号が選べなかった。
+   */
+  linkedOrders: Array<RefDocument & { source: "agreement" | "document"; conditionNos: string[] }>;
   /** 個別契約（条件書・取り込んだ利用許諾契約書・覚書）。計算書の「契約番号」に選ぶ。 */
   terms: RefDocument[];
 }
@@ -548,7 +555,7 @@ export class PartyAgreementMapService {
    * 文書フォームはこれまで契約一覧を 300 件取ってから画面で取引先に絞っていた
    * （統合元の契約が落ち、補助文書や文書だけも並んでいた）。マップと同じ引き方にする。
    */
-  async documentRefs(partyId: number): Promise<DocumentRefs | null> {
+  async documentRefs(partyId: number, conditionIds: number[] = []): Promise<DocumentRefs | null> {
     const map = await this.forParty(partyId);
     if (!map) return null;
     try {
@@ -573,6 +580,7 @@ export class PartyAgreementMapService {
         label: String(d.label ?? "文書"), issuedOn: dateStr(d.issued_at),
         isOrder: d.template_key === "purchase_order" || d.template_key === "intl_purchase_order"
       }));
+      const linkedOrders = conditionIds.length ? await this.linkedOrders(conditionIds) : [];
       return {
         party: map.party,
         // 文書の「基本契約」に出せるのは基本契約だけ（単体契約は基本契約なし扱い）。
@@ -582,9 +590,60 @@ export class PartyAgreementMapService {
           primary: r.primary, datedTitle: agreementDatedTitle(r.title, r.executedOn) ?? r.title
         })),
         purchaseOrders: rows.filter((d) => d.isOrder).map(({ isOrder: _, ...d }) => d),
-        terms: rows.filter((d) => !d.isOrder).map(({ isOrder: _, ...d }) => d)
+        terms: rows.filter((d) => !d.isOrder).map(({ isOrder: _, ...d }) => d),
+        linkedOrders
       };
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 条件につながっている発注書。条件が載っている単体契約（基本契約・補助文書は除く）と、
+   * 条件（同じ系列の版を含む）に結びついた発注書の文書（作ったもの・取り込んだもの）。
+   */
+  private async linkedOrders(conditionIds: number[]): Promise<DocumentRefs["linkedOrders"]> {
+    const r = await this.database.query(
+      `WITH wanted AS (
+         SELECT y.id, y.condition_no, COALESCE(y.series_id, y.id) AS series
+           FROM conditions y WHERE y.id = ANY($1::bigint[])
+       )
+       SELECT 'agreement' AS source, a.id, a.agreement_no AS no, a.title,
+              a.executed_on AS issued_on, array_agg(DISTINCT w.condition_no) AS condition_nos
+         FROM wanted w
+         JOIN conditions c ON c.id = w.id
+         JOIN agreements a ON a.id = c.agreement_id
+        WHERE COALESCE(a.kind, 'master') IN ('standalone', 'document')
+          AND a.agreement_no IS NOT NULL
+          AND COALESCE(a.status, '') NOT IN ('void', 'superseded')
+        GROUP BY a.id, a.agreement_no, a.title, a.executed_on
+       UNION ALL
+       SELECT 'document' AS source, d.id, d.document_no AS no, v.title,
+              d.issued_at::date AS issued_on, array_agg(DISTINCT w.condition_no) AS condition_nos
+         FROM wanted w
+         JOIN conditions x ON COALESCE(x.series_id, x.id) = w.series
+         JOIN document_conditions dc ON dc.condition_id = x.id
+         JOIN documents d ON d.id = dc.document_id
+         JOIN v_document_display v ON v.document_id = d.id
+         LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+         LEFT JOIN document_templates t ON t.id = tv.template_id
+        WHERE d.document_no IS NOT NULL
+          AND d.status NOT IN ('void', 'superseded', 'draft')
+          AND (t.template_key IN ('purchase_order', 'intl_purchase_order')
+               OR COALESCE(d.manual_inputs->>'documentKind', t.label, '') LIKE '%発注%')
+        GROUP BY d.id, d.document_no, v.title, d.issued_at
+        ORDER BY issued_on DESC NULLS LAST, id DESC`, [conditionIds]);
+    const seen = new Set<string>();
+    return (r.rows as any[]).flatMap((row) => {
+      const no = String(row.no);
+      if (seen.has(no)) return [];
+      seen.add(no);
+      return [{
+        id: Number(row.id), documentNo: no, title: String(row.title ?? ""),
+        label: row.source === "agreement" ? "単体契約" : "発注書",
+        issuedOn: dateStr(row.issued_on),
+        source: row.source === "agreement" ? "agreement" as const : "document" as const,
+        conditionNos: ((row.condition_nos ?? []) as unknown[]).filter(Boolean).map(String)
+      }];
+    });
   }
 
   /**

@@ -528,11 +528,13 @@ export function DocumentsWorkspace(
   useEffect(() => {
     if (!partyId) { setRefs(null); return; }
     let live = true;
-    api.get<DocumentRefs>(`/agreement-map/parties/${partyId}/document-refs`)
+    // 選んだ条件も渡す。検収書の発注番号に、条件につながっている発注書（取り込んだものも）を出す。
+    const ids = [...picked].sort((a, b) => a - b).join(",");
+    api.get<DocumentRefs>(`/agreement-map/parties/${partyId}/document-refs${ids ? `?conditionIds=${ids}` : ""}`)
       .then((r) => { if (live) setRefs(r); })
       .catch(() => { if (live) setRefs(null); });
     return () => { live = false; };
-  }, [partyId]);
+  }, [partyId, [...picked].sort((a, b) => a - b).join(",")]);
   /** 選んだ条件に付いている契約（人が選ばなければこれに従う）。 */
   const conditionAgreement = (() => {
     const found = picked.map((id) => conditions.find((c) => c.id === id)?.agreement).filter(Boolean);
@@ -1257,17 +1259,35 @@ export function DocumentsWorkspace(
                     <span>発注書番号</span>
                     <span className="stack" style={{ gap: 2 }}>
                       <select value={parentPoNo} onChange={(e) => setParentPoNo(e.target.value)}>
-                        <option value="">自動（同じ条件から出ている発注書）</option>
-                        {parentPoNo && !(refs?.purchaseOrders ?? []).some((d) => d.documentNo === parentPoNo) && (
+                        <option value="">自動（条件につながっている発注書）</option>
+                        {parentPoNo && ![...(refs?.linkedOrders ?? []), ...(refs?.purchaseOrders ?? [])].some((d) => d.documentNo === parentPoNo) && (
                           <option value={parentPoNo}>{parentPoNo}</option>
                         )}
-                        {(refs?.purchaseOrders ?? []).map((d) => (
-                          <option key={d.id} value={d.documentNo}>
-                            {d.documentNo}　{d.title}{d.issuedOn ? `（${d.issuedOn}）` : ""}
-                          </option>
-                        ))}
+                        {(refs?.linkedOrders ?? []).length > 0 && (
+                          <optgroup label="選んだ条件につながっている発注書">
+                            {(refs?.linkedOrders ?? []).map((d) => (
+                              <option key={`l-${d.source}-${d.id}`} value={d.documentNo}>
+                                {d.documentNo}　{d.title}{d.issuedOn ? `（${d.issuedOn}）` : ""}
+                                {d.source === "agreement" ? "［単体契約］" : ""}{d.conditionNos.length ? `　${d.conditionNos.join("・")}` : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {(() => {
+                          const linked = new Set((refs?.linkedOrders ?? []).map((d) => d.documentNo));
+                          const rest = (refs?.purchaseOrders ?? []).filter((d) => !linked.has(d.documentNo));
+                          return rest.length > 0 && (
+                            <optgroup label="この取引先のほかの発注書">
+                              {rest.map((d) => (
+                                <option key={d.id} value={d.documentNo}>
+                                  {d.documentNo}　{d.title}{d.issuedOn ? `（${d.issuedOn}）` : ""}
+                                </option>
+                              ))}
+                            </optgroup>
+                          );
+                        })()}
                       </select>
-                      <small className="faint">この取引先の決定済みの発注書から選べます。検収書の「発注番号」に「基本契約番号 / 発注書番号」で出ます（基本契約が無ければ発注書番号だけ）</small>
+                      <small className="faint">選んだ条件につながっている発注書（取り込んで単体契約として登録したものを含む）と、この取引先の決定済みの発注書から選べます。検収書の「発注番号」に「基本契約番号 / 発注書番号」で出ます（基本契約が無ければ発注書番号だけ）</small>
                     </span>
                   </label>
                 )}
