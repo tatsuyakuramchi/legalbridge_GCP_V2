@@ -179,6 +179,26 @@ test("文書フォームの選択肢：基本契約は締結日付きの呼び�
   assert.deepEqual(db.find("FROM documents d")!.params[0], 5, "統合先で引く");
 });
 
+test("文書フォームの選択肢：条件を渡すと、その条件につながっている発注書（単体契約・文書）も返す", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT resolved_id, resolved_name FROM v_party_resolved")) return [{ resolved_id: 5, resolved_name: "タンサン" }];
+    if (t.includes("WITH wanted AS")) return [
+      { source: "agreement", id: 100, no: "ARC-PO-2026-0079", title: "TANSAN 発注書", issued_on: "2026-06-23",
+        condition_nos: ["CL-2026-00768", "CL-2026-00770"] },
+      { source: "document", id: 501, no: "ARC-PO-2026-0079", title: "重複", issued_on: null, condition_nos: [] }
+    ];
+    return [];
+  });
+  const svc = new PartyAgreementMapService(db);
+  const refs = (await svc.documentRefs(5, [768, 770]))!;
+  assert.deepEqual(refs.linkedOrders.map((d) => [d.documentNo, d.source, d.conditionNos]),
+    [["ARC-PO-2026-0079", "agreement", ["CL-2026-00768", "CL-2026-00770"]]], "同じ番号は 1 つ");
+  assert.deepEqual(db.find("WITH wanted AS")!.params[0], [768, 770]);
+  assert.match(db.find("WITH wanted AS")!.text, /'standalone', 'document'/, "基本契約の番号は出さない");
+  const none = (await svc.documentRefs(5))!;
+  assert.deepEqual(none.linkedOrders, []);
+});
+
 test("何も変わらなければ書かない。試算は書いてから巻き戻す", async () => {
   const row = { id: 1, kind: "master", domain: "license", direction: "out", parent_id: null, counterparty_id: 5,
                 resolved_id: 5, child_count: 0, status: "executed", executed_on: "2024-04-01",

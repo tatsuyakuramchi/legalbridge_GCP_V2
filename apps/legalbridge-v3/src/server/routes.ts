@@ -339,7 +339,10 @@ export function createRoutes(database: Transactable) {
 
   /** 文書フォームの選択肢（基本契約・発注書番号・個別契約番号）。 */
   router.get("/agreement-map/parties/:id/document-refs", asyncRoute(async (req, res) => {
-    const refs = await agreementMap.documentRefs(Number(req.params.id));
+    // 選んだ条件（カンマ区切り）。検収書の発注番号に、条件につながっている発注書を出す。
+    const conditionIds = String(req.query.conditionIds ?? "").split(",")
+      .map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200);
+    const refs = await agreementMap.documentRefs(Number(req.params.id), conditionIds);
     if (!refs) return res.status(404).json({ error: "取引先が見つかりません" });
     res.json(refs);
   }));
