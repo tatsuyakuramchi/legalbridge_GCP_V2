@@ -73,6 +73,17 @@ export interface PartyMap {
    * 取り込んだだけで契約（合意）に載っていない紙を、ここから契約に繋ぐ。
    */
   unlinked: UnlinkedDocument[];
+  /**
+   * 契約に載っていない条件明細（取り消し・差し替え済みは除く）。契約を登録したあと、
+   * ここから契約に載せる（条件のつながり「契約（合意）」と同じ）。
+   */
+  looseConditions: LooseCondition[];
+}
+
+export interface LooseCondition {
+  id: number; conditionNo: string | null; name: string;
+  kind: string; direction: "in" | "out"; status: string;
+  workTitle: string | null; termStart: string | null;
 }
 
 export interface UnlinkedDocument {
@@ -190,7 +201,7 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
     x.direction.localeCompare(y.direction) || x.id - y.id);
   for (const r of roots) r.children.sort((x, y) => x.id - y.id);
 
-  return { party, roots, loose, documents, issues, unlinked: [] };
+  return { party, roots, loose, documents, issues, unlinked: [], looseConditions: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +326,12 @@ export interface MapPartyRow {
   issues: number;
   /** 契約に繋がっていない契約文書の数。 */
   unlinked: number;
+  /** 契約に載っていない条件明細の数。 */
+  looseConditions: number;
 }
+
+/** 契約に載っていない条件明細（取り消し・差し替え済みは数えない）。別名 co。 */
+const LOOSE_CONDITION_WHERE = `co.agreement_id IS NULL AND co.status NOT IN ('superseded', 'void')`;
 
 const MAP_SELECT = `
   SELECT a.id, a.agreement_no, a.title, a.kind, a.domain, a.direction, a.status, a.parent_id,
@@ -390,25 +406,37 @@ export class PartyAgreementMapService {
              LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
              LEFT JOIN document_templates t ON t.id = tv.template_id
             WHERE ${UNLINKED_WHERE}
+            GROUP BY r.resolved_id),
+         lc AS (
+           SELECT r.resolved_id AS party_id, count(*)::int AS loose_conditions
+             FROM conditions co
+             JOIN v_party_resolved r ON r.party_id = co.counterparty_id
+            WHERE ${LOOSE_CONDITION_WHERE}
             GROUP BY r.resolved_id)
          SELECT rp.id AS party_id, rp.name,
                 COALESCE(x.total, 0) AS total, COALESCE(x.roots, 0) AS roots,
                 COALESCE(x.documents, 0) AS documents, COALESCE(x.issues, 0) AS issues,
-                COALESCE(u.unlinked, 0) AS unlinked
+                COALESCE(u.unlinked, 0) AS unlinked,
+                COALESCE(lc.loose_conditions, 0) AS loose_conditions
            FROM matched m
            JOIN parties rp ON rp.id = m.resolved_id
            LEFT JOIN x ON x.party_id = m.resolved_id
            LEFT JOIN u ON u.party_id = m.resolved_id
-          WHERE ($1 <> '' OR COALESCE(x.total, 0) > 0 OR COALESCE(u.unlinked, 0) > 0)
-            AND ($2::boolean = false OR COALESCE(x.issues, 0) > 0 OR COALESCE(u.unlinked, 0) > 0)
-          ORDER BY (COALESCE(x.issues, 0) > 0 OR COALESCE(u.unlinked, 0) > 0) DESC, rp.name
+           LEFT JOIN lc ON lc.party_id = m.resolved_id
+          WHERE ($1 <> '' OR COALESCE(x.total, 0) > 0 OR COALESCE(u.unlinked, 0) > 0
+                 OR COALESCE(lc.loose_conditions, 0) > 0)
+            AND ($2::boolean = false OR COALESCE(x.issues, 0) > 0 OR COALESCE(u.unlinked, 0) > 0
+                 OR COALESCE(lc.loose_conditions, 0) > 0)
+          ORDER BY (COALESCE(x.issues, 0) > 0 OR COALESCE(u.unlinked, 0) > 0
+                    OR COALESCE(lc.loose_conditions, 0) > 0) DESC, rp.name
           LIMIT 500`,
         [q ? `%${q}%` : "", query.issuesOnly === true]);
       return (r.rows as any[]).map((row) => ({
         id: Number(row.party_id), name: String(row.name ?? ""),
         total: Number(row.total ?? 0), roots: Number(row.roots ?? 0),
         documents: Number(row.documents ?? 0), issues: Number(row.issues ?? 0),
-        unlinked: Number(row.unlinked ?? 0)
+        unlinked: Number(row.unlinked ?? 0),
+        looseConditions: Number(row.loose_conditions ?? 0)
       }));
     } catch (error) { throw translate(error); }
   }
@@ -440,6 +468,19 @@ export class PartyAgreementMapService {
       map.unlinked = (docs.rows as any[]).map((d) => ({
         id: Number(d.id), documentNo: str(d.document_no), label: String(d.label ?? "文書"),
         title: str(d.manual_title) ?? str(d.title), status: String(d.status ?? ""), issuedOn: dateStr(d.issued_at)
+      }));
+      const conds = await this.database.query(
+        `SELECT co.id, co.condition_no, co.name, co.kind, co.direction, co.status, co.term_start,
+                w.title AS work_title
+           FROM conditions co
+           JOIN v_party_resolved r ON r.party_id = co.counterparty_id
+           LEFT JOIN works w ON w.id = co.work_id
+          WHERE r.resolved_id = $1 AND ${LOOSE_CONDITION_WHERE}
+          ORDER BY co.direction, co.id DESC`, [resolvedId]);
+      map.looseConditions = (conds.rows as any[]).map((c) => ({
+        id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
+        kind: String(c.kind ?? ""), direction: c.direction === "out" ? "out" : "in",
+        status: String(c.status ?? ""), workTitle: str(c.work_title), termStart: dateStr(c.term_start)
       }));
       return map;
     } catch (error) { throw translate(error); }

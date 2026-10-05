@@ -197,15 +197,41 @@ test("何も変わらなければ書かない。試算は書いてから巻き�
 
 test("取引先の一覧：名称・コード・カナ・別名で探し、統合先で出す。契約の無い取引先も未紐づけの数を持つ", async () => {
   const db = new FakeDatabase((t) => t.includes("WITH matched AS") ? [
-    { party_id: 7, name: "石野謙介", total: 0, roots: 0, documents: 0, issues: 0, unlinked: 2 }
+    { party_id: 7, name: "石野謙介", total: 0, roots: 0, documents: 0, issues: 0, unlinked: 2, loose_conditions: 3 }
   ] : []);
   const rows = await new PartyAgreementMapService(db).parties({ keyword: "イシノ" });
-  assert.deepEqual(rows, [{ id: 7, name: "石野謙介", total: 0, roots: 0, documents: 0, issues: 0, unlinked: 2 }]);
+  assert.deepEqual(rows, [{ id: 7, name: "石野謙介", total: 0, roots: 0, documents: 0, issues: 0, unlinked: 2, looseConditions: 3 }]);
   const q = db.find("WITH matched AS")!;
   assert.equal(q.params[0], "%イシノ%");
   for (const col of ["p.name ILIKE", "party_code", "name_kana", "unnest(p.aliases)"]) assert.ok(q.text.includes(col), col);
   assert.ok(q.text.includes("d.agreement_id IS NULL"), "契約に繋がっていない文書を数える");
   assert.ok(q.text.includes("'purchase_order'") && q.text.includes("'royalty_statement'"), "発注書・計算書は数えない");
+});
+
+test("取引先の一覧：契約に載っていない条件明細を数え、それだけの取引先も出す", async () => {
+  const db = new FakeDatabase((t) => t.includes("WITH matched AS") ? [] : []);
+  await new PartyAgreementMapService(db).parties({});
+  const q = db.find("WITH matched AS")!;
+  assert.ok(q.text.includes("co.agreement_id IS NULL AND co.status NOT IN ('superseded', 'void')"),
+    "取り消し・差し替え済みは数えない");
+  assert.ok(q.text.includes("OR COALESCE(lc.loose_conditions, 0) > 0)"), "条件だけの取引先も一覧に出す");
+});
+
+test("取引先のマップに、契約に載っていない条件明細を並べる（統合先で引く）", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("SELECT resolved_id, resolved_name FROM v_party_resolved")) return [{ resolved_id: 7, resolved_name: "石野謙介" }];
+    if (t.includes("FROM conditions co")) return [
+      { id: 31, condition_no: "CL-2026-00331", name: "ito｜自社製造・自社販売", kind: "license", direction: "in",
+        status: "active", term_start: "2026-10-01", work_title: "ito" }
+    ];
+    return [];
+  });
+  const map = (await new PartyAgreementMapService(db).forParty(7))!;
+  assert.deepEqual(map.looseConditions, [{ id: 31, conditionNo: "CL-2026-00331", name: "ito｜自社製造・自社販売",
+    kind: "license", direction: "in", status: "active", workTitle: "ito", termStart: "2026-10-01" }]);
+  const q = db.find("FROM conditions co")!;
+  assert.deepEqual(q.params, [7]);
+  assert.ok(q.text.includes("r.resolved_id = $1"), "統合元の取引先に付いた条件も拾う");
 });
 
 test("取引先のマップに、契約に繋がっていない契約文書を並べる", async () => {

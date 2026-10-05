@@ -10,7 +10,7 @@ import { DocumentImport } from "./DocumentImport.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
-import type { MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
+import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -114,7 +114,7 @@ export function AgreementMapWorkspace(
               ずれ・未紐づけのあるものだけ{issueCount > 0 && !issuesOnly ? `（${issueCount}）` : ""}
             </label>
             <span className="faint" style={{ flexBasis: "100%" }}>
-              {keyword.trim() ? "契約の無い取引先も出します" : "契約か、契約に繋がっていない文書のある取引先。名前で探すと全取引先から"}
+              {keyword.trim() ? "契約の無い取引先も出します" : "契約か、契約に繋がっていない文書・条件明細のある取引先。名前で探すと全取引先から"}
             </span>
           </div>
           <div className="ledger-tree">
@@ -124,6 +124,7 @@ export function AgreementMapWorkspace(
                 <span className="grow">{p.name}</span>
                 {p.issues > 0 && <span className="tag warn">ずれ {p.issues}</span>}
                 {p.unlinked > 0 && <span className="tag warn">未紐づけ {p.unlinked}</span>}
+                {p.looseConditions > 0 && <span className="tag warn" title="契約に載っていない条件明細">条件 {p.looseConditions}</span>}
                 <span className="faint">{p.roots}本</span>
               </button>
             ))}
@@ -204,7 +205,7 @@ function PartyMapView(
               ))}
               {!map.roots.length && (
                 <div className="faint">
-                  基本契約・単体契約はありません。{map.unlinked.length > 0 && "「契約を登録」で契約を立てると、下の文書を繋げます。"}
+                  基本契約・単体契約はありません。{(map.unlinked.length > 0 || map.looseConditions.length > 0) && "「契約を登録」で契約を立てると、下の文書・条件明細を繋げます。"}
                 </div>
               )}
             </div>
@@ -214,6 +215,10 @@ function PartyMapView(
 
       {map.unlinked.length > 0 && (
         <UnlinkedDocuments docs={map.unlinked} map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+      )}
+
+      {map.looseConditions.length > 0 && (
+        <LooseConditions conds={map.looseConditions} map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
       )}
 
       {map.loose.length > 0 && (
@@ -308,6 +313,101 @@ function UnlinkedDocuments(
   );
 }
 
+/**
+ * 契約に載っていない条件明細。契約（基本契約・単体契約など）を登録したあと、ここで
+ * 選んでまとめて載せる（条件のつながり「契約（合意）」と同じ。向きの違う契約には載せない）。
+ * 条件が載ると、計算書の「契約番号」や文書の基本契約がこの契約から出る。
+ */
+function LooseConditions(
+  { conds, map, onOpen, onChanged, onError }: {
+    conds: LooseCondition[]; map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
+    onChanged: (msg: string) => void; onError: (msg: string) => void;
+  }
+) {
+  const readOnly = useReadOnly();
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const chosen = conds.filter((c) => picked.has(c.id));
+  const directions = [...new Set(chosen.map((c) => c.direction))];
+  // 載せ先は契約本体（基本契約・単体契約・補助文書）。文書だけ・解除合意には載せない。
+  const targets = [...map.roots.flatMap((r) => [r as MapAgreement, ...r.children]), ...map.loose]
+    .filter((a) => a.kind !== "document" && a.kind !== "termination" && a.status !== "terminated")
+    .filter((a) => directions.length !== 1 || a.direction === directions[0]);
+  const toggle = (id: number) => setPicked((p) => {
+    const next = new Set(p); if (next.has(id)) next.delete(id); else next.add(id); return next;
+  });
+
+  async function attach() {
+    const agreementId = Number(target);
+    if (!agreementId || !chosen.length) return;
+    setBusy(true);
+    const done: string[] = [];
+    try {
+      for (const c of chosen) {
+        await api.post(`/links/condition/${c.id}/agreement`, { targetId: agreementId });
+        done.push(c.conditionNo ?? `#${c.id}`);
+      }
+      const a = targets.find((t) => t.id === agreementId);
+      setPicked(new Set()); setTarget("");
+      onChanged(`${done.join("・")} を ${a?.agreementNo ?? `#${agreementId}`} に載せました`);
+    } catch (e) {
+      // 途中で止まったら、載せたぶんを知らせて読み直す（残りは一覧に残る）。
+      onError(`${done.length ? `${done.join("・")} は載せました。` : ""}${(e as ApiError).message}`);
+      if (done.length) onChanged(`${done.join("・")} を載せました（残りは載っていません）`);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-hd" style={{ flexWrap: "wrap", gap: 6 }}>
+        <h2>契約に載っていない条件明細</h2>
+        <span className="tag warn">{conds.length}</span>
+        <span className="faint">選んで契約に載せます。取り消し・差し替え済みの条件は出しません</span>
+      </div>
+      <div className="tablewrap">
+        <table>
+          <thead><tr><th></th><th>条件番号</th><th>条件名</th><th>作品</th><th>向き</th><th>状態</th></tr></thead>
+          <tbody>
+            {conds.map((c) => (
+              <tr key={c.id}>
+                <td><input type="checkbox" aria-label={`${c.conditionNo ?? c.id} を選ぶ`} disabled={readOnly}
+                           checked={picked.has(c.id)} onChange={() => toggle(c.id)} /></td>
+                <td className="code">
+                  {onOpen ? <button className="linky" onClick={() => onOpen("condition", c.id)}>{c.conditionNo ?? `#${c.id}`}</button>
+                          : c.conditionNo ?? `#${c.id}`}
+                </td>
+                <td>{c.name}</td>
+                <td className="faint">{c.workTitle ?? "—"}</td>
+                <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
+                <td><StatusTag kind="condition" value={c.status} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="panel-bd row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <span>選んだ {chosen.length} 本を</span>
+        {directions.length > 1
+          ? <span className="tag warn">IN と OUT が混ざっています。向きごとに分けて載せてください</span>
+          : targets.length
+            ? <select value={target} disabled={readOnly || !chosen.length} style={{ maxWidth: 360 }}
+                      onChange={(e) => setTarget(e.target.value)}>
+                <option value="">載せる契約を選んでください</option>
+                {targets.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.agreementNo ?? `#${a.id}`} {a.title}（{KIND_LABEL[a.kind]}・{a.direction === "in" ? "IN" : "OUT"}）
+                  </option>
+                ))}
+              </select>
+            : <span className="faint">{chosen.length ? "載せられる契約がありません。先に「契約を登録」" : "条件を選んでください"}</span>}
+        <button className="btn btn-sm primary" disabled={readOnly || busy || !target || !chosen.length || directions.length > 1}
+                onClick={() => void attach()}>契約に載せる</button>
+      </div>
+    </div>
+  );
+}
+
 function AgreementNode(
   { a, issues, primary, editing, onEdit, onOpen, roots, onSaved, onDocsChanged, onError }: {
     a: MapAgreement; issues: MapIssue[]; primary?: boolean; editing: boolean; onEdit: () => void;
@@ -322,6 +422,8 @@ function AgreementNode(
   /** 文書の欄（取り込む・既存を繋ぐ）を開いているか。 */
   const [docsOpen, setDocsOpen] = useState(false);
   const [docsVersion, setDocsVersion] = useState(0);
+  /** 条件明細の欄（載っている条件を見る・載せる・外す）を開いているか。 */
+  const [condsOpen, setCondsOpen] = useState(false);
   return (
     <div className={`amap-node${issues.length ? " bad" : ""}`}>
       <div className="amap-line">
@@ -341,7 +443,13 @@ function AgreementNode(
         {a.terminatedOn && <span className="faint">解除 {a.terminatedOn}</span>}
         {a.counterparty.merged && <span className="faint" title="統合前の取引先を指しています（参照は付け替えない決まり）">統合元：{a.counterparty.name}</span>}
         <span className="faint">条件 {a.conditionCount}・文書 {a.documentCount}</span>
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setDocsOpen((v) => !v)}>
+        {a.kind !== "document" && (
+          <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setCondsOpen((v) => !v)}>
+            {condsOpen ? "条件を閉じる" : "条件"}
+          </button>
+        )}
+        <button className="btn btn-sm" style={a.kind === "document" ? { marginLeft: "auto" } : undefined}
+                onClick={() => setDocsOpen((v) => !v)}>
           {docsOpen ? "文書を閉じる" : "文書"}
         </button>
         <button className="btn btn-sm" disabled={readOnly} onClick={onEdit}>
@@ -350,6 +458,13 @@ function AgreementNode(
       </div>
       {issues.map((i, n) => <div key={n} className="amap-issue">⚠ {i.message}</div>)}
       {editing && <RemapForm a={a} roots={roots} onSaved={onSaved} onError={onError} />}
+      {condsOpen && (
+        <div className="amap-form stack" style={{ gap: 8 }}>
+          {/* この契約に載っている条件明細。同じ取引先・同じ向きの条件から載せる・外す。 */}
+          <Relations kind="agreement" id={a.id} exclude={["documents", "party"]} initialOpen="conditions" onOpen={onOpen}
+            onChanged={() => onDocsChanged(`${a.agreementNo ?? `#${a.id}`} の条件明細を更新しました`)} />
+        </div>
+      )}
       {docsOpen && (
         <div className="amap-form stack" style={{ gap: 8 }}>
           {/* 外で結んだ契約書（PDF など）を、この契約に繋いだ状態で登録する。 */}
