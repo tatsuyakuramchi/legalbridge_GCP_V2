@@ -89,6 +89,14 @@ export interface LooseCondition {
 export interface UnlinkedDocument {
   id: number; documentNo: string | null; label: string; title: string | null;
   status: string; issuedOn: string | null;
+  /**
+   * この文書から立てられる契約。master＝基本契約書（基本契約を立てる）、
+   * terms＝条件書（基本契約があればその下の個別契約、無ければ単体契約を立てる）。
+   * どちらでもない文書（NDA・覚書など）は null で、既にある契約に繋ぐだけ。
+   */
+  role: "master" | "terms" | null;
+  /** この文書に載っている条件明細の数（契約を立てると一緒に載る）。 */
+  conditionCount: number;
 }
 
 /**
@@ -113,6 +121,15 @@ const UNLINKED_WHERE = `d.agreement_id IS NULL
  */
 const MASTER_DOCUMENT_SQL = `t.template_key IN ('license_master', 'service_master', 'pub_master_individual', 'pub_master_corporate')
   OR COALESCE(d.manual_inputs->>'documentKind', t.label, '') LIKE '%基本契約%'`;
+
+/** 条件書（相手と結ぶ個別の契約そのもの）。取り込んだ利用許諾契約書も同じ扱い。 */
+const TERMS_DOCUMENT_SQL = `t.template_key IN ('individual_license_terms_v3', 'individual_license_terms_v4',
+                                                 'pub_license_terms_v3', 'pub_license_terms_v3_annex')
+  OR d.manual_inputs->>'documentKind' = '利用許諾契約書'`;
+
+/** 文書から立てられる契約の役割（d・t を使う）。 */
+const DOCUMENT_ROLE_SQL = `CASE WHEN (${MASTER_DOCUMENT_SQL}) THEN 'master'
+                                WHEN (${TERMS_DOCUMENT_SQL}) THEN 'terms' END`;
 
 const isRootKind = (kind: AgreementKind) => kind === "master" || kind === "standalone";
 const isChildKind = (kind: AgreementKind) => kind === "supplement" || kind === "termination";
@@ -484,7 +501,9 @@ export class PartyAgreementMapService {
                                 (r.rows as any[]).map(mapAgreementRow));
       const docs = await this.database.query(
         `SELECT d.id, d.document_no, d.status, d.issued_at, v.title, d.manual_inputs->>'title' AS manual_title,
-                COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label
+                COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label,
+                ${DOCUMENT_ROLE_SQL} AS role,
+                (SELECT count(*)::int FROM document_conditions dc WHERE dc.document_id = d.id) AS condition_count
            FROM documents d
            JOIN v_document_display v ON v.document_id = d.id
            JOIN v_party_resolved r ON r.party_id = v.counterparty_id
@@ -494,7 +513,9 @@ export class PartyAgreementMapService {
           ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [resolvedId]);
       map.unlinked = (docs.rows as any[]).map((d) => ({
         id: Number(d.id), documentNo: str(d.document_no), label: String(d.label ?? "文書"),
-        title: str(d.manual_title) ?? str(d.title), status: String(d.status ?? ""), issuedOn: dateStr(d.issued_at)
+        title: str(d.manual_title) ?? str(d.title), status: String(d.status ?? ""), issuedOn: dateStr(d.issued_at),
+        role: d.role === "master" || d.role === "terms" ? d.role : null,
+        conditionCount: Number(d.condition_count ?? 0)
       }));
       const conds = await this.database.query(
         `SELECT co.id, co.condition_no, co.name, co.kind, co.direction, co.status, co.term_start,
@@ -723,6 +744,107 @@ export class PartyAgreementMapService {
                     before: { kind: "standalone", domain: str(a.domain) } }
         });
         return { conditionsMoved: conditionIds.length, masterId, masterNo: str(m.agreement_no), masterCreated };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 契約に繋がっていない文書から、契約（合意）を立てる。
+   *
+   * 取り込んだ・作った基本契約書や条件書が、契約として登録されないまま残っている
+   * ことがある。「契約を登録」で一から入れ直すと番号が別に振られ、紙と合わない。
+   * 文書の番号・件名をそのまま使って立てる。
+   *   基本契約書 → 基本契約
+   *   条件書     → 同じ相手・同じ向きの基本契約があればその下の個別契約、無ければ単体契約
+   * 文書はその契約に繋ぎ、文書に載っていて契約に載っていない条件明細も載せる
+   * （個別契約のときは基本契約の明細にする。条件書を決定したときと同じ形）。
+   * 状態は「交渉中」で立てる。締結日は「編集」で入れる（入れると締結済み）。
+   */
+  async agreementFromDocument(documentId: number, actor: string): Promise<{
+    agreementId: number; agreementNo: string; kind: "master" | "supplement" | "standalone";
+    parentNo: string | null; conditionsLinked: number;
+  }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const dr = await client.query(
+          `SELECT d.id, d.document_no, d.status, d.agreement_id, d.issued_at, v.title, v.counterparty_id,
+                  d.manual_inputs->>'title' AS manual_title, t.template_key,
+                  COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label,
+                  ${DOCUMENT_ROLE_SQL} AS role, r.resolved_id
+             FROM documents d
+             JOIN v_document_display v ON v.document_id = d.id
+             LEFT JOIN v_party_resolved r ON r.party_id = v.counterparty_id
+             LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+             LEFT JOIN document_templates t ON t.id = tv.template_id
+            WHERE d.id = $1 FOR UPDATE OF d`, [documentId]);
+        const d = dr.rows[0] as any;
+        if (!d) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (d.agreement_id) throw new DomainError("CONFLICT", "この文書は既に契約に繋がっています");
+        if (!d.document_no || d.status === "draft" || d.status === "void" || d.status === "superseded") {
+          throw new DomainError("VALIDATION", "決定済みの文書からだけ契約を立てられます");
+        }
+        const role = d.role as "master" | "terms" | null;
+        if (!role) throw new DomainError("VALIDATION", "基本契約書・条件書でない文書からは契約を立てられません（既にある契約に繋いでください）");
+        if (!d.counterparty_id) throw new DomainError("VALIDATION", "この文書は相手先が決まっていません");
+        const no = String(d.document_no);
+        const clash = await client.query("SELECT id FROM agreements WHERE agreement_no = $1", [no]);
+        if (clash.rows[0]) throw new DomainError("CONFLICT", `番号 ${no} の契約が既にあります。その契約に繋いでください`);
+
+        // 向き：文書に載っている条件 → 相手の契約に載っていない条件 → IN。
+        const dirOf = async (sql: string, params: unknown[]) => {
+          const x = await client.query(sql, params);
+          const dirs = [...new Set((x.rows as Array<{ direction: string }>).map((r) => r.direction))];
+          return dirs.length === 1 ? (dirs[0] === "out" ? "out" : "in") : null;
+        };
+        const direction = await dirOf(
+          `SELECT DISTINCT c.direction FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+            WHERE dc.document_id = $1`, [documentId])
+          ?? await dirOf(
+          `SELECT DISTINCT co.direction FROM conditions co JOIN v_party_resolved r ON r.party_id = co.counterparty_id
+            WHERE r.resolved_id = $1 AND ${LOOSE_CONDITION_WHERE}`, [Number(d.resolved_id)])
+          ?? "in";
+        const domain = String(d.template_key ?? "").startsWith("service") ? "service" : "license";
+        const name = str(d.manual_title) ?? str(d.title);
+        // ひな形の名前の末尾の注記（「（個人版）」「（V3・一覧形式／…）」）は契約の件名に要らない。
+        // 文書には「2026年9月18日付出版等許諾基本契約書」のように件名で出る。
+        const rawLabel = String(d.label ?? "文書");
+        const label = rawLabel.replace(/[（(][^（）()]*[）)]\s*$/, "").trim() || rawLabel;
+
+        let kind: "master" | "supplement" | "standalone" = "master";
+        let parentId: number | null = null;
+        let parentNo: string | null = null;
+        if (role === "terms") {
+          // 同じ相手・同じ向きの、解除されていない基本契約。種別が同じ・締結済み・新しいものを先に。
+          const mr = await client.query(
+            `SELECT a.id, a.agreement_no FROM agreements a
+               JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+              WHERE r.resolved_id = $1 AND COALESCE(a.kind, 'master') = 'master' AND a.direction = $2
+                AND a.terminated_on IS NULL
+              ORDER BY (a.domain = $3) DESC, (a.status = 'executed') DESC, a.executed_on DESC NULLS LAST, a.id DESC
+              LIMIT 1`, [Number(d.resolved_id), direction, domain]);
+          const m = mr.rows[0] as any;
+          if (m) { kind = "supplement"; parentId = Number(m.id); parentNo = str(m.agreement_no); }
+          else kind = "standalone";
+        }
+        const title = role === "master" ? label : `${label}${name && name !== label ? `（${name}）` : ""}`;
+        const ins = await client.query(
+          `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id)
+           VALUES ($1, $2, $3, $4, 'negotiating', $5, $6, $7) RETURNING id`,
+          [no, title, Number(d.counterparty_id), direction, kind, domain, parentId]);
+        const agreementId = Number((ins.rows[0] as { id: number }).id);
+        await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1", [documentId, agreementId]);
+        // 文書に載っていて契約に載っていない条件明細を載せる。個別契約なら基本契約の明細に。
+        const linked = await client.query(
+          `UPDATE conditions SET agreement_id = $2
+            WHERE agreement_id IS NULL AND status NOT IN ('superseded', 'void')
+              AND id IN (SELECT condition_id FROM document_conditions WHERE document_id = $1)
+            RETURNING id`, [documentId, parentId ?? agreementId]);
+        const conditionIds = (linked.rows as Array<{ id: number }>).map((x) => Number(x.id));
+        await recordAudit(client, {
+          actor, action: "agreement.from_document", targetType: "agreement", targetId: agreementId,
+          detail: { documentId, documentNo: no, kind, parentId, conditionIds, created: true }
+        });
+        return { agreementId, agreementNo: no, kind, parentNo, conditionsLinked: conditionIds.length };
       });
     } catch (error) { throw translate(error); }
   }

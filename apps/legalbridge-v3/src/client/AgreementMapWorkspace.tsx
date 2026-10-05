@@ -214,7 +214,10 @@ function PartyMapView(
               ))}
               {!map.roots.length && (
                 <div className="faint">
-                  基本契約・単体契約はありません。{(map.unlinked.length > 0 || map.looseConditions.length > 0) && "「契約を登録」で契約を立てると、下の文書・条件明細を繋げます。"}
+                  基本契約・単体契約はありません。
+                  {map.unlinked.some((d) => d.role)
+                    ? "下の「契約に繋がっていない文書」で、基本契約書 → 条件書 の順に「この文書から立てる」を押してください。残った条件明細は、その下で契約に載せます。"
+                    : (map.unlinked.length > 0 || map.looseConditions.length > 0) && "「契約を登録」で契約を立てると、下の文書・条件明細を繋げます。"}
                 </div>
               )}
             </div>
@@ -266,6 +269,20 @@ function UnlinkedDocuments(
   ];
   const [choice, setChoice] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState<number | null>(null);
+  // 基本契約書 → 条件書 の順に立てる。基本契約がまだ無く、基本契約書が残っているうちは
+  // 条件書を立てない（先に立てると単体契約になり、あとで個別契約にし直す手間が出る）。
+  const hasMaster = map.roots.some((r) => r.kind === "master");
+  const masterDocLeft = docs.some((d) => d.role === "master");
+  async function create(doc: UnlinkedDocument) {
+    setBusy(doc.id);
+    try {
+      const r = await api.post<{ agreementNo: string; kind: string; parentNo: string | null; conditionsLinked: number }>(
+        `/agreement-map/documents/${doc.id}/agreement`, {});
+      const what = r.kind === "master" ? "基本契約" : r.kind === "supplement" ? `${r.parentNo ?? "基本契約"} の下の個別契約` : "単体契約";
+      onChanged(`${doc.documentNo ?? `#${doc.id}`} から${what}を立てました（番号 ${r.agreementNo}${r.conditionsLinked ? `・条件明細 ${r.conditionsLinked} 本を${r.kind === "supplement" ? "基本契約に" : ""}載せました` : ""}）。締結日は「編集」で入れてください`);
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setBusy(null); }
+  }
   async function link(doc: UnlinkedDocument) {
     const target = Number(choice[doc.id] ?? "");
     if (!target) return;
@@ -284,9 +301,17 @@ function UnlinkedDocuments(
         <span className="tag warn">{docs.length}</span>
         <span className="faint">契約書・覚書・NDA など。発注書・検収書・計算書は契約に繋がないので出しません</span>
       </div>
+      {docs.some((d) => d.role) && (
+        <div className="panel-bd" style={{ paddingBottom: 0 }}>
+          <div className="note">
+            基本契約書・条件書は「この文書から立てる」で契約にできます（番号・件名は文書のまま）。<b>基本契約書 → 条件書</b> の順に押すと、
+            条件書は基本契約の下の個別契約になり、条件書に載っている条件明細も基本契約に載ります。基本契約が無ければ条件書は単体契約になります。
+          </div>
+        </div>
+      )}
       <div className="tablewrap">
         <table>
-          <thead><tr><th>文書番号</th><th>種別・件名</th><th>日付</th><th>繋ぐ契約</th><th></th></tr></thead>
+          <thead><tr><th>文書番号</th><th>種別・件名</th><th>日付</th><th>この文書から立てる</th><th>既にある契約に繋ぐ</th><th></th></tr></thead>
           <tbody>
             {docs.map((d) => (
               <tr key={d.id}>
@@ -296,6 +321,23 @@ function UnlinkedDocuments(
                 </td>
                 <td>{d.label}{d.title ? `（${d.title}）` : ""}</td>
                 <td className="faint" style={{ whiteSpace: "nowrap" }}>{d.issuedOn ?? "—"}</td>
+                <td>
+                  {d.role === "master" && (
+                    <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || busy === d.id}
+                            onClick={() => void create(d)}>基本契約として立てる</button>
+                  )}
+                  {d.role === "terms" && (
+                    !hasMaster && masterDocLeft
+                      ? <span className="faint">先に基本契約書を立ててください</span>
+                      : <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || busy === d.id}
+                                title={d.conditionCount ? `載っている条件明細 ${d.conditionCount} 本も一緒に載せます` : undefined}
+                                onClick={() => void create(d)}>
+                          {hasMaster ? "個別契約として立てる" : "単体契約として立てる"}
+                        </button>
+                  )}
+                  {!d.role && <span className="faint">—</span>}
+                  {d.role && d.conditionCount > 0 && <div className="faint" style={{ fontSize: 12 }}>条件明細 {d.conditionCount} 本</div>}
+                </td>
                 <td>
                   {targets.length
                     ? <select value={choice[d.id] ?? ""} disabled={readOnly} style={{ maxWidth: 320 }}
@@ -307,7 +349,7 @@ function UnlinkedDocuments(
                           </option>
                         ))}
                       </select>
-                    : <span className="faint">先に「契約を登録」</span>}
+                    : <span className="faint">{d.role ? "左のボタンで立てる" : "先に「契約を登録」"}</span>}
                 </td>
                 <td>
                   <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || !choice[d.id] || busy === d.id}
