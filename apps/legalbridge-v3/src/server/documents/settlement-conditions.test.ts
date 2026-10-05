@@ -127,3 +127,20 @@ test("繋がっている fee / expense の条件は、その他手数料・経�
   assert.equal(isSettlementKind("fee"), true);
   assert.equal(isSettlementKind("service"), false);
 });
+
+test("決定した検収書の経費・手数料の行から、実績を立てる行を拾う（条件が付いて金額のあるもの。発注書は拾わない）", async () => {
+  const { settlementEventRows } = await import("./settlement-conditions.js");
+  const values = {
+    expenses: [
+      { condition_id: 31, expense_name: "交通費", amount_inc_tax: "3,200", spent_date: "2026-09-28", remarks: "東京⇔大阪" },
+      { condition_id: 32, expense_name: "宿泊費", amount_inc_tax: "", amount: "0" },
+      { expense_name: "条件の無い行", amount_inc_tax: 500 }
+    ],
+    other_fees: [{ condition_id: 33, fee_name: "振込手数料", amount: 440 }]
+  };
+  assert.deepEqual(settlementEventRows("inspection_certificate", values), [
+    { conditionId: 31, kind: "expense", name: "交通費", amount: 3200, occurredOn: "2026-09-28", remarks: "東京⇔大阪" },
+    { conditionId: 33, kind: "fee", name: "振込手数料", amount: 440, occurredOn: null, remarks: null }
+  ]);
+  assert.deepEqual(settlementEventRows("purchase_order", values), []);
+});

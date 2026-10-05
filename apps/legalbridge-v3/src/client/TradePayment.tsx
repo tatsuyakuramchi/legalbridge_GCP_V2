@@ -79,15 +79,17 @@ export function TradePayment(
   const [error, setError] = useState<string | null>(null);
 
   // 相手が決まったら、その相手との取得側（当社が払う）の条件を並べる。
+  /** 条件の一覧を引き直す（実費・手数料を足したあと）。選んだ条件は保つ。 */
+  const [listVersion, setListVersion] = useState(0);
+  useEffect(() => { setChosenIds([]); setConditions(null); }, [partyId, workId]);
   useEffect(() => {
-    setChosenIds([]); setConditions(null);
     if (!partyId) return;
     const q = new URLSearchParams({ counterpartyId: partyId, direction: "in" });
     if (workId) q.set("workId", workId);
     api.get<{ conditions: ConditionSummary[] }>(`/conditions?${q}`)
       .then((r) => setConditions(r.conditions.filter((c) => c.status === "active" || c.status === "draft" || c.status === "scheduled")))
       .catch((e) => setError(e instanceof ApiError ? e.message : String(e)));
-  }, [partyId, workId]);
+  }, [partyId, workId, listVersion]);
 
   const ofKind = (c: ConditionSummary) => kind === "license" ? c.kind === "license" : c.kind !== "license";
   const shown = (conditions ?? []).filter(ofKind);
@@ -110,7 +112,7 @@ export function TradePayment(
         setPicked(new Set(all.filter((e) => liveEvent(e) && !liveDoc(e)).map((e) => e.id)));
       });
     return () => { alive = false; };
-  }, [chosenIds.join(","), kind, reloadKey]);
+  }, [chosen.map((c) => c.id).join(","), kind, reloadKey]);
 
   const toggleCondition = (id: number) =>
     setChosenIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -233,6 +235,15 @@ export function TradePayment(
                   : "まず利用の報告を実績にします。下の「実績を足す」から、報告の期間・製造数や売上・控除を入れてください。"}
               </div>
             )}
+            {kind === "service" && !readOnly && (
+              <ExtraCharge base={recording}
+                onMade={(conditionId) => {
+                  // 足した実費の条件を選んだ条件に加え、③ に実績が並ぶようにする。
+                  setChosenIds((prev) => prev.includes(conditionId) ? prev : [...prev, conditionId]);
+                  setListVersion((v) => v + 1);
+                }}
+                onError={setError} />
+            )}
             <ConditionEvents key={recording.id}
               conditionId={recording.id} currency={recording.currency}
               editable={!readOnly && (recording.status === "active" || recording.status === "draft")}
@@ -315,5 +326,78 @@ export function TradePayment(
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * 実費・手数料を後から足す（交通費の漏れなど）。選んでいる委託料の条件から相手先・契約・
+ * 案件を写して実費（または手数料）の条件を作り、実績まで一度に立てる。
+ * 足した実績は ③ に並び、委託料の実績と一緒に 1 枚の検収書にできる。
+ */
+function ExtraCharge(
+  { base, onMade, onError }: {
+    base: ConditionSummary; onMade: (conditionId: number) => void; onError: (m: string) => void;
+  }
+) {
+  const [open, setOpen] = useState(false);
+  const [extraKind, setExtraKind] = useState<"expense" | "fee">("expense");
+  const [name, setName] = useState("交通費");
+  const [amount, setAmount] = useState("");
+  const [occurredOn, setOccurredOn] = useState(new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const value = Math.round(Number(amount.replace(/[,，¥￥\s]/g, "")) || 0);
+
+  async function save() {
+    setBusy(true); setDone(null);
+    try {
+      const r = await api.post<{ conditionId: number; conditionNo: string | null }>(`/conditions/${base.id}/extras`, {
+        kind: extraKind, name: name.trim(), amount: value, occurredOn, note: note.trim() || null
+      });
+      setDone(`${r.conditionNo ?? "条件"}（${name.trim()} ${money(value, base.currency)}${extraKind === "expense" ? "・税込" : ""}）を足し、実績を立てました。③ に並びます`);
+      setAmount(""); setNote(""); setOpen(false);
+      onMade(r.conditionId);
+    } catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  if (!open) {
+    return (
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <button className="btn btn-sm" onClick={() => setOpen(true)}>実費・手数料を足す（交通費の漏れなど）</button>
+        {done && <span className="faint">{done}</span>}
+      </div>
+    );
+  }
+  return (
+    <div className="note stack" style={{ gap: 8 }}>
+      <b>実費・手数料を足す</b>
+      <span className="faint">
+        {base.conditionNo ?? `#${base.id}`} {base.name} と同じ相手先・契約・案件で条件を作り、実績まで立てます。
+      </span>
+      <div className="row" role="group" aria-label="種類" style={{ gap: 6 }}>
+        {([["expense", "実費（交通費・宿泊費など。税込）"], ["fee", "手数料（税抜）"]] as const).map(([v, label]) => (
+          <button key={v} type="button" className="chip" aria-pressed={extraKind === v}
+                  onClick={() => { setExtraKind(v); if (v === "fee" && name === "交通費") setName("振込手数料"); if (v === "expense" && name === "振込手数料") setName("交通費"); }}>{label}</button>
+        ))}
+      </div>
+      <div className="form-grid">
+        <label className="field"><span>名前（検収書の経費の行に出る）</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <label className="field"><span>金額（{extraKind === "expense" ? "税込" : "税抜"}）</span>
+          <input value={amount} placeholder="3200" inputMode="numeric" onChange={(e) => setAmount(e.target.value)} /></label>
+        <label className="field"><span>{extraKind === "expense" ? "利用日" : "発生日"}</span>
+          <input type="date" value={occurredOn} onChange={(e) => setOccurredOn(e.target.value)} /></label>
+        <label className="field"><span>備考</span>
+          <input value={note} placeholder="東京⇔大阪 往復 など" onChange={(e) => setNote(e.target.value)} /></label>
+      </div>
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn primary btn-sm" disabled={busy || !name.trim() || value <= 0 || !occurredOn} onClick={() => void save()}>
+          {busy ? "足しています…" : "足して実績を立てる"}
+        </button>
+        <button className="btn btn-sm" onClick={() => setOpen(false)}>やめる</button>
+      </div>
+    </div>
   );
 }
