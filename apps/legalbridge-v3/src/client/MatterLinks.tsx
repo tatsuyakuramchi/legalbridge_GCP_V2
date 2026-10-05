@@ -222,6 +222,7 @@ export function MatterConditions(
       {making === "service" && (
         <ServiceLinesForm
           counterpartyName={detail.counterparty?.name ?? last?.counterparty?.name ?? null}
+          workOptions={detail.works ?? []}
           preset={{
             matterId: String(detail.id),
             ...(detail.counterparty

@@ -342,7 +342,7 @@ function TradeFlow(
                   </div>
                 </div>
               )}
-              {(adding || mine.length === 0) && caseWorks.length > 1 && (
+              {(adding || mine.length === 0) && caseWorks.length > 1 && p !== "service" && (
                 <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                   <b>どの作品の条件を入れるか</b>
                   <span className="chips" role="group" aria-label="条件を入れる作品">
@@ -356,6 +356,7 @@ function TradeFlow(
               )}
               {(adding || mine.length === 0) && (
                 <ConditionStage key={condWork?.id ?? 0} pattern={p} preset={preset} partyName={party?.name ?? null} workTitle={condWork?.title ?? null}
+                  works={caseWorks}
                   matterId={detail.id} title={detail.title}
                   onDone={async () => { setAdding(false); await load(); setNotice("条件を登録しました"); if (mine.length === 0) setStage(3); }}
                   onCancel={() => setAdding(false)} onError={setError} />
@@ -648,14 +649,16 @@ function BasicsStage(
 
 /** 段階 2：パターンごとの条件の登録フォーム。 */
 function ConditionStage(
-  { pattern, preset, partyName, workTitle, matterId, title, onDone, onCancel, onError }: {
+  { pattern, preset, partyName, workTitle, works, matterId, title, onDone, onCancel, onError }: {
     pattern: TradePattern; preset: Record<string, string>; partyName: string | null; workTitle: string | null;
+    /** 案件の作品。業務委託は行ごとにここから作品を選べる。 */
+    works: Array<{ id: number; title: string }>;
     /** 案件なしで進めているときは null（条件明細を案件に繋がない）。 */
     matterId: number | null; title: string | null; onDone: () => void | Promise<void>; onCancel: () => void; onError: (m: string) => void;
   }
 ) {
   if (pattern === "service") {
-    return <ServiceLinesForm preset={preset} counterpartyName={partyName} initialTitle={title}
+    return <ServiceLinesForm preset={preset} counterpartyName={partyName} workTitle={workTitle} workOptions={works} initialTitle={title}
                              onDone={() => void onDone()} onCancel={onCancel} />;
   }
   if (pattern === "game_in") {

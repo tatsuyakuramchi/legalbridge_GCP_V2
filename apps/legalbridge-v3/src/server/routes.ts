@@ -1757,6 +1757,7 @@ export function createRoutes(database: Transactable) {
       deliveryDue: z.string().date().nullable().optional(),
       contractForm: z.string().trim().max(60).nullable().optional(),
       deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
+      workId: z.coerce.number().int().positive().nullable().optional(),
       taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional()
     })).min(1).max(60),
     license: z.object({

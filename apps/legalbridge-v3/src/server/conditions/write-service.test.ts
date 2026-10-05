@@ -370,6 +370,34 @@ test("業務委託の明細：1 行＝条件 1 本。行の納期・契約形式
   assert.equal(r.licenseConditions.length, 1); assert.equal(r.licenseConditions[0].existed, false);
 });
 
+test("業務委託の明細：行ごとに作品を持てる。受注者帰属なら作品ごとに利用許諾条件が立つ（同じ作品は 1 本）", async () => {
+  const titles: Record<number, string> = { 5: "J-TAG", 7: "K-POP" };
+  const db: FakeDatabase = new FakeDatabase((t, params) => {
+    if (t.includes("FROM parties WHERE id = $1")) return [{ id: 3, name: "ブエノデザイン" }];
+    if (t.includes("SELECT title FROM works")) return [{ title: titles[Number(params?.[0])] }];
+    if (t.includes("FROM works WHERE id")) return [{ id: Number(params?.[0]) }];
+    if (t.includes("current_value")) return [{ current_value: 1 }];
+    if (t.includes("INSERT INTO conditions")) return [{ id: 10 + db.all("INSERT INTO conditions").length, condition_no: "CL-x" }];
+    if (t.includes("usage_type = $3 AND status IN")) return Number(params?.[0]) === 7 ? [{ id: 99, condition_no: "CL-99" }] : [];
+    return [];
+  });
+  const r = await new ConditionWriteService(db).createServiceSet({
+    title: "素材制作", counterpartyId: 3, workId: 5, deliverableOwnership: "contractor",
+    rows: [
+      { kind: "service", name: "J-TAG ロゴ", flatAmount: 100 },
+      { kind: "service", name: "K-POP ロゴ", flatAmount: 200, workId: 7 },
+      { kind: "service", name: "社内資料", flatAmount: 300, workId: null, deliverableOwnership: "orderer" },
+      { kind: "service", name: "J-TAG バナー", flatAmount: 400, workId: 5 }
+    ],
+    license: { mode: "free", usageType: "in_house" }
+  }, "a");
+  const inserts = db.all("INSERT INTO conditions").map((q) => q.params);
+  assert.deepEqual(inserts.slice(0, 4).map((p) => p[6]), [5, 7, null, 5], "行の作品（未指定は上の作品、null は作品なし）");
+  assert.equal(inserts.length, 5, "委託料 4 本＋J-TAG の利用許諾 1 本（K-POP は既にある）");
+  assert.equal(inserts[4][6], 5);
+  assert.deepEqual(r.licenseConditions.map((c) => [c.id, c.existed]), [[15, false], [99, true]]);
+});
+
 test("業務委託の明細：委託料の行が複数なら品目名が要る。受注者帰属で作品が無ければ止める", async () => {
   const svc = new ConditionWriteService(new FakeDatabase(() => []));
   await assert.rejects(() => svc.createServiceSet({ title: "x", counterpartyId: 3,

@@ -16,7 +16,10 @@ import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
  * 実費・手数料の行は別の種類の条件になる。
  *
  * 帰属先が受注者の行があれば、当社が成果物を使うための利用許諾条件（IN）を
- * 同じ作品 × 受託者に立てる（許諾料は 別途／委託報酬に含む／無償／立てない）。
+ * 作品 × 受託者に立てる（許諾料は 別途／委託報酬に含む／無償／立てない）。
+ *
+ * 作品は行ごとに持てる（1つの発注で複数作品の素材を頼むことがある）。行の作品が
+ * 「上と同じ」なら上で選んだ作品。受注者帰属の行の作品が違えば、利用許諾条件も作品ごとに立つ。
  * 支払方法は 納品ごと／定期払い／一括。
  */
 
@@ -29,7 +32,12 @@ interface Line {
   kind: "service" | "expense" | "fee";
   name: string; spec: string; quantity: string; unit: string; unitPrice: string;
   deliveryDue: string; contractForm: string; ownership: string; tax: string;
+  /** 行の作品。"" は上と同じ、"none" は作品なし、ほかは作品 id。 */
+  workId: string;
+  /** 一覧に無い作品を探している最中。 */
+  pickingWork?: boolean;
 }
+interface WorkOption { id: number; title: string }
 export interface ServiceLinesCreated {
   conditions: Array<{ usageType: string; id: number; conditionNo: string | null }>;
   licenseConditions: Array<{ id: number; conditionNo: string | null; existed: boolean }>;
@@ -42,7 +50,7 @@ const text = (v: string) => { const s = String(v ?? "").trim(); return s || unde
 const yen = (n: number) => n.toLocaleString("ja-JP");
 let keySeq = 1;
 const blank = (kind: Line["kind"] = "service"): Line =>
-  ({ key: keySeq++, kind, name: "", spec: "", quantity: "1", unit: "式", unitPrice: "", deliveryDue: "", contractForm: "", ownership: "", tax: "" });
+  ({ key: keySeq++, kind, name: "", spec: "", quantity: "1", unit: "式", unitPrice: "", deliveryDue: "", contractForm: "", ownership: "", tax: "", workId: "" });
 const amountOf = (l: Line) => Math.round(num(l.quantity || "1") * num(l.unitPrice));
 
 /** Excel／CSV の貼り付け。列は 品目・仕様・数量・単位・単価・納期 の順（足りなければ右が空）。 */
@@ -59,9 +67,13 @@ function parsePaste(raw: string): Line[] {
 }
 
 export function ServiceLinesForm(
-  { preset, counterpartyName, initialTitle, onDone, onCancel }: {
+  { preset, counterpartyName, workTitle, workOptions, initialTitle, onDone, onCancel }: {
     preset?: Partial<Record<"counterpartyId" | "agreementId" | "matterId" | "workId", string>>;
     counterpartyName?: string | null;
+    /** preset.workId の作品名（無いと「#489」のように番号で出る）。 */
+    workTitle?: string | null;
+    /** 行の作品の選択肢（案件の作品など）。ここに無い作品は行で探せる。 */
+    workOptions?: WorkOption[];
     /** 件名の初期値（進行画面の案件名など）。 */
     initialTitle?: string | null;
     onDone: (created: ServiceLinesCreated) => void;
@@ -74,6 +86,20 @@ export function ServiceLinesForm(
   const [title, setTitle] = useState(initialTitle ?? "");
   const [agreementId, setAgreementId] = useState(preset?.agreementId ?? "");
   const [workId, setWorkId] = useState(preset?.workId ?? "");
+  const [workLabel, setWorkLabel] = useState<string | null>(workTitle ?? null);
+  // 行の作品の選択肢：案件の作品＋上の作品＋行で探して選んだ作品。
+  const [extraWorks, setExtraWorks] = useState<WorkOption[]>(
+    preset?.workId && workTitle ? [{ id: Number(preset.workId), title: workTitle }] : []);
+  const knownWorks = useMemo(() => {
+    const out: WorkOption[] = [];
+    for (const w of [...(workOptions ?? []), ...extraWorks]) if (!out.some((o) => o.id === w.id)) out.push(w);
+    return out;
+  }, [workOptions, extraWorks]);
+  const remember = (id: number, title: string) =>
+    setExtraWorks((prev) => (prev.some((w) => w.id === id) ? prev : [...prev, { id, title }]));
+  const workName = (id: string) => knownWorks.find((w) => String(w.id) === id)?.title ?? (id === workId ? workLabel : null) ?? `#${id}`;
+  /** 行の実際の作品 id（"" は作品なし）。 */
+  const rowWork = (l: Line) => (l.workId === "" ? workId : l.workId === "none" ? "" : l.workId);
   const [contractForm, setContractForm] = useState("");
   const [ownership, setOwnership] = useState("orderer");
   const [paymentTerms, setPaymentTerms] = useState("");
@@ -109,12 +135,16 @@ export function ServiceLinesForm(
   const serviceLines = lines.filter((l) => l.kind === "service");
   const subtotal = useMemo(() => lines.filter((l) => l.kind !== "expense").reduce((a, l) => a + amountOf(l), 0), [lines]);
   const expenses = useMemo(() => lines.filter((l) => l.kind === "expense").reduce((a, l) => a + amountOf(l), 0), [lines]);
-  const hasContractor = lines.some((l) => l.kind === "service" && (l.ownership || ownership) === "contractor");
+  const contractorLines = lines.filter((l) => l.kind === "service" && (l.ownership || ownership) === "contractor");
+  const hasContractor = contractorLines.length > 0;
+  // 受注者帰属の行に作品が無いと利用許諾条件が立てられない（サーバは上の作品で補う）。
+  const contractorWithoutWork = contractorLines.filter((l) => !rowWork(l) && !workId);
+  const licenseWorks = [...new Set(contractorLines.map((l) => rowWork(l) || workId).filter(Boolean))];
   const agreementOptions = agreements.filter((a) => !partyId || String(a.counterparty?.id ?? "") === partyId);
 
   const ready = Boolean(partyId) && title.trim() !== "" && serviceLines.length > 0
     && serviceLines.every((l) => l.name.trim() && num(l.unitPrice) >= 0)
-    && (!hasContractor || licMode === "none" || Boolean(workId))
+    && (!hasContractor || licMode === "none" || contractorWithoutWork.length === 0)
     && (payMode !== "periodic" || (periodFrom && periodTo));
 
   async function submit() {
@@ -142,7 +172,9 @@ export function ServiceLinesForm(
           deliveryDue: text(l.deliveryDue) ?? null,
           contractForm: l.kind === "service" ? (text(l.contractForm) ?? null) : null,
           deliverableOwnership: l.kind === "service" ? (l.ownership || null) : null,
-          taxCategory: l.kind === "service" && l.tax ? l.tax : null
+          taxCategory: l.kind === "service" && l.tax ? l.tax : null,
+          // 「上と同じ」は送らない（サーバが上の作品を使う）。
+          ...(l.workId === "" ? {} : { workId: l.workId === "none" ? null : int(l.workId) ?? null })
         })),
         license: hasContractor ? {
           mode: licMode, workId: int(workId) ?? null, usageType: licUsage,
@@ -186,7 +218,12 @@ export function ServiceLinesForm(
             </select></label>
           <label className="field"><span>作品（任意。受注者帰属の行があれば必要）</span>
             <SearchSelect value={workId} search={searchWorks} emptyLabel="（なし）" placeholder="作品名・コードで探す"
-                          onChange={(v) => setWorkId(v)} /></label>
+                          valueLabel={workLabel}
+                          onChange={(v, o) => {
+                            setWorkId(v); setWorkLabel(o?.label ?? null);
+                            if (v && o) remember(Number(v), o.label);
+                          }} />
+            <small className="faint">行の作品の既定。行ごとに変えられる</small></label>
           <label className="field"><span>契約形式（既定）</span>
             <select value={contractForm} onChange={(e) => setContractForm(e.target.value)}>
               <option value="">（未定）</option>
@@ -234,9 +271,9 @@ export function ServiceLinesForm(
           </div>
         )}
         <div style={{ overflowX: "auto" }}>
-          <table className="table" style={{ minWidth: 1100 }}>
+          <table className="table" style={{ minWidth: 1260 }}>
             <thead><tr>
-              <th>#</th><th>種類</th><th>品目（条件名）</th><th>仕様・成果物</th><th>数量</th><th>単位</th><th>単価（税抜）</th><th>金額</th><th>納期</th><th>契約形式</th><th>帰属</th><th>税</th><th></th>
+              <th>#</th><th>種類</th><th>品目（条件名）</th><th>作品</th><th>仕様・成果物</th><th>数量</th><th>単位</th><th>単価（税抜）</th><th>金額</th><th>納期</th><th>契約形式</th><th>帰属</th><th>税</th><th></th>
             </tr></thead>
             <tbody>
               {lines.map((l, i) => (
@@ -244,6 +281,28 @@ export function ServiceLinesForm(
                   <td>{i + 1}</td>
                   <td>{l.kind === "service" ? "委託料" : l.kind === "expense" ? "実費" : "手数料"}</td>
                   <td style={{ minWidth: 200 }}>{cell(l, "name", { placeholder: "TOP ページ デザイン費用" })}</td>
+                  <td style={{ minWidth: 170 }}>
+                    {l.pickingWork ? (
+                      <SearchSelect value="" search={searchWorks} placeholder="作品名・コードで探す" autoFocus
+                                    onChange={(v, o) => {
+                                      if (!v) { update(l.key, { pickingWork: false }); return; }
+                                      if (o) remember(Number(v), o.label);
+                                      update(l.key, { workId: v, pickingWork: false });
+                                    }} />
+                    ) : (
+                      <select value={l.workId} aria-label={`${i + 1} 行目の作品`}
+                              onChange={(e) => e.target.value === "?"
+                                ? update(l.key, { pickingWork: true })
+                                : update(l.key, { workId: e.target.value })}>
+                        <option value="">{workId ? `上と同じ（${workName(workId)}）` : "上と同じ（なし）"}</option>
+                        {knownWorks.map((w) => <option key={w.id} value={String(w.id)}>{w.title}</option>)}
+                        {l.workId && l.workId !== "none" && !knownWorks.some((w) => String(w.id) === l.workId) &&
+                          <option value={l.workId}>{workName(l.workId)}</option>}
+                        <option value="none">作品なし</option>
+                        <option value="?">ほかの作品を探す…</option>
+                      </select>
+                    )}
+                  </td>
                   <td style={{ minWidth: 200 }}>{cell(l, "spec")}</td>
                   {l.kind === "service" ? (<>
                     <td style={{ width: 70 }}>{cell(l, "quantity", { style: { textAlign: "right" } })}</td>
@@ -297,7 +356,9 @@ export function ServiceLinesForm(
                 <label className="field"><span>許諾終了（空なら期間の定めなし）</span><input type="date" value={licTermEnd} onChange={(e) => setLicTermEnd(e.target.value)} /></label>
                 <div className="field"><span>地域（許諾範囲）</span><RightsScopePicker kind="region" value={licRegions} onChange={setLicRegions} /></div>
                 <div className="field"><span>言語（許諾範囲）</span><RightsScopePicker kind="language" value={licLanguages} onChange={setLicLanguages} /></div>
-                {!workId && <div className="alert">作品を選んでください（利用許諾条件は作品にぶら下がります）</div>}
+                {contractorWithoutWork.length > 0
+                  ? <div className="alert">受注者帰属の行（{contractorWithoutWork.map((l) => lines.indexOf(l) + 1).join("・")} 行目）に作品を選んでください（利用許諾条件は作品にぶら下がります）</div>
+                  : licenseWorks.length > 0 && <div className="faint">利用許諾条件を立てる作品：{licenseWorks.map(workName).join("、")}（作品ごとに 1 本。同じ作品・利用形態の条件が既にあればそれを使う）</div>}
               </div>
             )}
             {licMode === "none" && <span className="faint">発注書に許諾条項が出ず、台帳からも権利が見えません。</span>}

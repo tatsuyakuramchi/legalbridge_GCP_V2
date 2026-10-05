@@ -135,6 +135,11 @@ export interface ServiceSetRow {
   contractForm?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
   taxCategory?: "taxable" | "reduced" | "exempt" | "included" | null;
+  /**
+   * 行の作品。未指定（undefined）なら束の作品、null なら作品なし。
+   * 1つの発注で複数作品の素材を頼むことがあるので、行ごとに持てる。
+   */
+  workId?: number | null;
 }
 
 /**
@@ -640,6 +645,8 @@ export class ConditionWriteService {
     if (serviceRows.length > 1 && serviceRows.some((r) => !String(r.name ?? "").trim())) {
       throw new DomainError("VALIDATION", "委託料の行が複数あるときは、行ごとに品目名を入れてください");
     }
+    const workOf = (row: ServiceSetRow): number | null =>
+      row.workId !== undefined ? row.workId : (input.workId ?? null);
     const ownershipOf = (row: ServiceSetRow) =>
       row.kind === "service" ? (row.deliverableOwnership ?? input.deliverableOwnership ?? null) : null;
     const inputs = rows.map((row): ConditionInput => {
@@ -652,7 +659,7 @@ export class ConditionWriteService {
         kind: row.kind,
         counterpartyId: input.counterpartyId,
         agreementId: input.agreementId ?? null,
-        workId: input.workId ?? null,
+        workId: workOf(row),
         termStart: input.termStart ?? null,
         termEnd: input.termEnd ?? null,
         // 納期は行ごと。無ければ束の終了日。
@@ -674,13 +681,19 @@ export class ConditionWriteService {
     });
     for (const one of inputs) validateConditionInput(one);
 
-    // 帰属先＝受注者の行があれば、当社が使うための利用許諾条件（IN）を同じ作品×受注者に立てる。
+    // 帰属先＝受注者の行があれば、当社が使うための利用許諾条件（IN）を作品×受注者に立てる。
+    // 行ごとに作品が違えば作品ごとに1本（作品の無い行は許諾の作品で補う）。
     const contractorRows = rows.filter((r) => ownershipOf(r) === "contractor");
     const license = input.license ?? null;
-    let licenseInput: ConditionInput | null = null;
+    const licenseInputs: ConditionInput[] = [];
     if (contractorRows.length && license && license.mode !== "none") {
-      const workId = license.workId ?? input.workId ?? null;
-      if (!workId) throw new DomainError("VALIDATION", "受注者帰属の成果物の利用許諾条件には作品が要ります（無ければ作品を登録するか、「条件を立てない」を選ぶ）");
+      const fallback = license.workId ?? input.workId ?? null;
+      const workIds: number[] = [];
+      for (const row of contractorRows) {
+        const w = workOf(row) ?? fallback;
+        if (!w) throw new DomainError("VALIDATION", "受注者帰属の成果物の利用許諾条件には作品が要ります（行に作品を入れるか、作品を登録するか、「条件を立てない」を選ぶ）");
+        if (!workIds.includes(w)) workIds.push(w);
+      }
       const usageType: ConditionUsageType = license.usageType ?? "in_house";
       const basis: LicenseFeeBasis = license.mode;
       const ratePct = basis === "separate" ? license.ratePct ?? null : null;
@@ -688,20 +701,23 @@ export class ConditionWriteService {
       if (basis === "separate" && ratePct == null && flat == null) {
         throw new DomainError("VALIDATION", "許諾料を別途にするなら、料率か定額を入れてください");
       }
-      licenseInput = {
-        matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
-        counterpartyId: input.counterpartyId, agreementId: input.agreementId ?? null, workId,
-        usageType, licenseFeeBasis: basis,
-        pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",
-        ratePpm: ratePct != null ? Math.round(ratePct * 10000) : null,
-        flatAmount: flat, currency: input.currency ?? "JPY",
-        termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
-        exclusivity: "non_exclusive",
-        scopes: license.scopes?.length ? license.scopes : undefined,
-        notes: `業務委託（${title}）の成果物の利用許諾。許諾料の扱い：${
-          basis === "separate" ? "別途" : basis === "included" ? "委託報酬に含む" : "無償"}`
-      };
-      validateConditionInput(licenseInput);
+      for (const workId of workIds) {
+        const one: ConditionInput = {
+          matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
+          counterpartyId: input.counterpartyId, agreementId: input.agreementId ?? null, workId,
+          usageType, licenseFeeBasis: basis,
+          pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",
+          ratePpm: ratePct != null ? Math.round(ratePct * 10000) : null,
+          flatAmount: flat, currency: input.currency ?? "JPY",
+          termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
+          exclusivity: "non_exclusive",
+          scopes: license.scopes?.length ? license.scopes : undefined,
+          notes: `業務委託（${title}）の成果物の利用許諾。許諾料の扱い：${
+            basis === "separate" ? "別途" : basis === "included" ? "委託報酬に含む" : "無償"}`
+        };
+        validateConditionInput(one);
+        licenseInputs.push(one);
+      }
     }
 
     let result: ServiceSetResult;
@@ -712,7 +728,7 @@ export class ConditionWriteService {
           const made = await this.createWithin(client, one, actor);
           out.conditions.push({ usageType: rows[index].kind as unknown as ConditionUsageType, ...made });
         }
-        if (licenseInput) {
+        for (const licenseInput of licenseInputs) {
           const w = await client.query("SELECT title FROM works WHERE id = $1", [licenseInput.workId]);
           const workTitle = (w.rows[0] as { title?: string } | undefined)?.title ?? null;
           if (!workTitle) throw new DomainError("NOT_FOUND", `作品 ${licenseInput.workId} が見つかりません`);
