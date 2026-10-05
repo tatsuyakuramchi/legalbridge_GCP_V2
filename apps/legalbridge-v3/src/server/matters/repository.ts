@@ -123,7 +123,7 @@ export class MatterRepository {
     const row = head.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
 
-    const [conditions, documents, payments, communications, links, tasks, family, agreements] = await Promise.all([
+    const [conditions, documents, payments, communications, links, tasks, family, agreements, extraWorks] = await Promise.all([
       // 出版は作品 80 点・条件 170 本で1案件になる。100 だと条件タブに出ない
       // 条件ができ、案件から実績も支払も立てられなくなる。
       this.conditions.list({ matterId: id, limit: 500 }),
@@ -133,11 +133,23 @@ export class MatterRepository {
       this.links(id),
       this.tasks(id),
       this.family(id, row.parent_id ? Number(row.parent_id) : null),
-      this.agreements(id)
+      this.agreements(id),
+      this.database.query(
+        `SELECT w.id, w.work_code, w.title FROM matter_links ml
+           JOIN works w ON ml.target_type = 'work' AND w.id::text = ml.target_ref
+          WHERE ml.matter_id = $1 ORDER BY ml.id`, [id])
     ]);
+    const summary = mapSummary(row);
+    const works = [
+      ...(summary.work ? [summary.work] : []),
+      ...(extraWorks.rows as any[])
+        .map((w) => ({ id: Number(w.id), workCode: str(w.work_code), title: String(w.title ?? "") }))
+        .filter((w) => w.id !== summary.work?.id)
+    ];
 
     return {
-      ...mapSummary(row),
+      ...summary,
+      works,
       remarks: str(row.remarks),
       driveFolderUrl: str(row.drive_folder_url),
       conditions, documents, payments, communications, links, tasks,

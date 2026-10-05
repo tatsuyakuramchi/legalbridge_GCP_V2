@@ -66,7 +66,8 @@ const LINK_LABEL: Record<string, string> = {
  * 実際、条件と文書は3か所（タブ・この表・つながり）に出ていた。
  * ここに出すのは、専用の置き場が無いもの（Backlog・Slack・メール）だけにする。
  */
-const OWNED_BY_TABS = new Set(["condition", "document", "payment"]);
+// 作品は案件の見出し（作品）に出す。外部リンクには並べない。
+const OWNED_BY_TABS = new Set(["condition", "document", "payment", "work"]);
 
 /** 紐づけに写してある状態。Backlog なら課題の状態、メールなら最後の件名。 */
 function linkState(snapshot: Record<string, unknown>): string {

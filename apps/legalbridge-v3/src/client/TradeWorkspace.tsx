@@ -184,10 +184,14 @@ function TradeFlow(
     : isOut(p) ? "以後：計算書（受け取る側）は 作品の台帳 で（締めごと）" : "以後：計算書は 作品の台帳 で（締めごと）";
 
   const party = detail?.counterparty ?? null;
+  // 作品を複数扱う案件では、許諾条件をどの作品について入れるかを選ぶ（既定は軸の作品）。
+  const caseWorks = detail?.works ?? (detail?.work ? [detail.work] : []);
+  const [condWorkId, setCondWorkId] = useState<number | null>(null);
+  const condWork = caseWorks.find((w) => w.id === condWorkId) ?? caseWorks[0] ?? null;
   const preset = {
     ...(detail ? { matterId: String(detail.id) } : {}),
     ...(party ? { counterpartyId: String(party.id) } : {}),
-    ...(detail?.work ? { workId: String(detail.work.id) } : {}),
+    ...(condWork ? { workId: String(condWork.id) } : {}),
     ...(agreementId ? { agreementId } : {})
   };
   const conditionIdsFor = (which: "license_in" | "license_out" | "service" | "none") =>
@@ -199,7 +203,7 @@ function TradeFlow(
         <h1 style={{ margin: 0 }}>{patternLabel(p)}</h1>
         {detail && <>
           <span className="faint">取引先 <b>{party?.name ?? "—"}</b></span>
-          {detail.work && <span className="faint">作品 <b>{detail.work.title}</b></span>}
+          {(detail.works ?? []).length > 0 && <span className="faint">作品 <b>{detail.works.map((w) => w.title).join("・")}</b></span>}
           <span className="faint">担当 <b>{detail.ownerName ?? "—"}</b></span>
           <button className="linky" onClick={() => onOpenMatter(detail.id)}>案件 {detail.matterNo ?? `#${detail.id}`} を開く</button>
         </>}
@@ -303,8 +307,20 @@ function TradeFlow(
                   </div>
                 </div>
               )}
+              {(adding || mine.length === 0) && caseWorks.length > 1 && (
+                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <b>どの作品の条件を入れるか</b>
+                  <span className="chips" role="group" aria-label="条件を入れる作品">
+                    {caseWorks.map((w) => (
+                      <button key={w.id} type="button" className="chip" aria-pressed={w.id === condWork?.id}
+                              onClick={() => setCondWorkId(w.id)}>{w.title}</button>
+                    ))}
+                  </span>
+                  <span className="faint">1 作品ずつ入れます。入れ終えたら「条件を足す」で次の作品へ</span>
+                </div>
+              )}
               {(adding || mine.length === 0) && (
-                <ConditionStage pattern={p} preset={preset} partyName={party?.name ?? null} workTitle={detail.work?.title ?? null}
+                <ConditionStage key={condWork?.id ?? 0} pattern={p} preset={preset} partyName={party?.name ?? null} workTitle={condWork?.title ?? null}
                   matterId={detail.id} title={detail.title}
                   onDone={async () => { setAdding(false); await load(detail.id); setNotice("条件を登録しました"); if (mine.length === 0) setStage(3); }}
                   onCancel={() => setAdding(false)} onError={setError} />
@@ -420,26 +436,38 @@ function BasicsStage(
   const [staff, setStaff] = useState<Staff[]>([]);
   const [partyId, setPartyId] = useState("");
   const [partyName, setPartyName] = useState<string | null>(null);
-  const [workId, setWorkId] = useState("");
-  const [workName, setWorkName] = useState<string | null>(null);
+  // ライセンスは作品が必須で複数選べる（数作品をまとめて取得・許諾する案件）。業務委託は任意で 1 つ。
+  const [works, setWorks] = useState<Array<{ id: string; label: string }>>([]);
+  const workId = works[0]?.id ?? "";
+  const workName = works.length ? works.map((w) => w.label).join("・") : null;
   const [title, setTitle] = useState("");
   const [requester, setRequester] = useState("");
   const [owner, setOwner] = useState("");
   const [line, setLine] = useState(pattern.startsWith("pub") ? "publishing" : "boardgame");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    api.get<{ staff: Staff[] }>("/staff").then((r) => setStaff(r.staff.filter((s) => (s.status ?? "active") === "active"))).catch(() => undefined);
+    // 法務担当は案件に必須（期限の通知先）。ログインしている人を既定にする。
+    Promise.all([
+      api.get<{ staff: Staff[] }>("/staff"),
+      api.get<{ user?: { email: string } }>("/me").catch(() => ({ user: undefined }))
+    ]).then(([r, me]) => {
+      const active = r.staff.filter((s) => (s.status ?? "active") === "active");
+      setStaff(active);
+      const mine = active.find((s) => s.email && me.user?.email && s.email.toLowerCase() === me.user.email.toLowerCase());
+      if (mine) setOwner((cur) => cur || String(mine.id));
+    }).catch(() => undefined);
   }, []);
   const license = isLicense(pattern);
   const autoTitle = () => {
     const base = pattern === "service" ? `${partyName ?? ""} 業務委託` : `${workName ?? ""} ${isOut(pattern) ? "許諾" : "権利取得"}（${partyName ?? ""}）`;
     return base.trim();
   };
-  const ready = Boolean(partyId) && (!license || Boolean(workId));
+  const ready = Boolean(partyId) && (!license || Boolean(workId)) && Boolean(owner);
   /** まだ足りないもの。ボタンが押せない理由をボタンの横に出す（出さないと押しても何も起きないように見える）。 */
   const missing = [
     !partyId ? (pattern === "service" ? "受託者" : isOut(pattern) ? "許諾先" : "権利元") : null,
-    license && !workId ? "作品" : null
+    license && !workId ? "作品" : null,
+    !owner ? "法務担当" : null
   ].filter(Boolean);
 
   if (detail) {
@@ -448,7 +476,7 @@ function BasicsStage(
         <div className="panel-bd stack">
           <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
             <span>取引先 <b>{detail.counterparty?.name ?? "—"}</b></span>
-            {detail.work && <span>作品 <b>{detail.work.title}</b></span>}
+            {(detail.works ?? []).length > 0 && <span>作品 <b>{detail.works.map((w) => w.title).join("・")}</b></span>}
             <span>法務担当 <b>{detail.ownerName ?? "—"}</b></span>
           </div>
           <span className="faint">事業部担当者（依頼者のメール）と法務担当は案件の画面で直せます。文書の当社担当者・メールの宛先・CloudSign の確認者はここから入ります。</span>
@@ -463,10 +491,35 @@ function BasicsStage(
           <label className="field"><span>{pattern === "service" ? "受託者（相手先）" : isOut(pattern) ? "許諾先（相手先）" : "権利元（相手先）"}</span>
             <SearchSelect value={partyId} search={searchParties} placeholder="取引先名・コードで探す"
                           onChange={(v, o) => { setPartyId(v); setPartyName(o?.label ?? null); }} /></label>
-          <label className="field"><span>作品{license ? "" : "（任意）"}</span>
-            <SearchSelect value={workId} search={searchWorks} emptyLabel={license ? undefined : "（なし）"} placeholder="作品名・コードで探す"
-                          onChange={(v, o) => { setWorkId(v); setWorkName(o?.label ?? null); }} />
-            {license && <small className="faint">{isOut(pattern) ? "許諾する作品。OUT 条件はこの作品の IN 条件の範囲内で入れます" : "取得する作品（原作）。無ければ作品の画面で先に登録します"}</small>}</label>
+          {license ? (
+            <div className="field"><span>作品（必須・複数可）</span>
+              {/* 許諾地域・言語と同じく複数選べる。選ぶたびに下に並び、× で外す。 */}
+              <SearchSelect value="" search={searchWorks} placeholder={works.length ? "作品を足す" : "作品名・コードで探す"}
+                            onChange={(v, o) => {
+                              if (!v) return;
+                              setWorks((cur) => cur.some((w) => w.id === v) ? cur : [...cur, { id: v, label: o?.label ?? `#${v}` }]);
+                            }} />
+              {works.length > 0 && (
+                <span className="chips" style={{ marginTop: 4 }}>
+                  {works.map((w, i) => (
+                    <button key={w.id} type="button" className="chip" aria-pressed="true" title="外す"
+                            onClick={() => setWorks((cur) => cur.filter((x) => x.id !== w.id))}>
+                      {w.label}{i === 0 && works.length > 1 ? "（軸）" : ""} ×
+                    </button>
+                  ))}
+                </span>
+              )}
+              <small className="faint">{isOut(pattern) ? "許諾する作品。OUT 条件は各作品の IN 条件の範囲内で入れます" : "取得する作品（原作）。無ければ作品の画面で先に登録します"}。
+                複数の作品をまとめて扱えます（先頭が案件の軸の作品）</small>
+            </div>
+          ) : (
+            <label className="field"><span>作品（任意）</span>
+              <SearchSelect value={workId} search={searchWorks} emptyLabel="（なし）" placeholder="作品名・コードで探す"
+                            valueLabel={works[0]?.label ?? null}
+                            onChange={(v, o) => setWorks(v ? [{ id: v, label: o?.label ?? `#${v}` }] : [])} />
+              <small className="faint">業務委託は作品に結びつかないこともあります。結びつくときだけ選びます</small>
+            </label>
+          )}
           <label className="field"><span>{pattern === "service" ? "業務名（件名）" : "件名"}</span>
             <input value={title} placeholder={autoTitle() || "空なら自動で付く"} onChange={(e) => setTitle(e.target.value)} /></label>
           <label className="field"><span>事業区分</span>
@@ -478,8 +531,8 @@ function BasicsStage(
             <input list="trade-requester" value={requester} placeholder="例：seisaku-a@example.co.jp" onChange={(e) => setRequester(e.target.value)} />
             <datalist id="trade-requester">{staff.filter((s) => s.email).map((s) => <option key={s.id} value={s.email ?? ""}>{s.name}</option>)}</datalist>
             <small className="faint">担当者への確認メールの宛先、CloudSign の確認者（CC）になる</small></label>
-          <label className="field"><span>法務担当</span>
-            <SearchSelect value={owner} options={staffOptions(staff)} emptyLabel="あとで決める" valueLabel="あとで決める" placeholder="氏名・部署で探す"
+          <label className="field"><span>法務担当（必須）</span>
+            <SearchSelect value={owner} options={staffOptions(staff)} placeholder="氏名・部署で探す"
                           onChange={(v) => setOwner(v)} />
             <small className="faint">文書の【ご連絡先】・検収者、メールの cc、CloudSign の CC になる</small></label>
         </div>
@@ -491,6 +544,7 @@ function BasicsStage(
                 kind: pattern === "service" ? "outsourcing" : "work",
                 title: title.trim() || autoTitle() || null,
                 workId: workId ? Number(workId) : null, counterpartyId: Number(partyId),
+                workIds: works.map((w) => Number(w.id)),
                 ownerStaffId: owner ? Number(owner) : null,
                 requesterEmail: requester.trim() || null,
                 businessLine: line,

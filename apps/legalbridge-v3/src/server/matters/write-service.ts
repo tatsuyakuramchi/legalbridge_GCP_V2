@@ -14,6 +14,12 @@ export interface MatterInput {
   title?: string | null;
   /** 作品案件の軸。 */
   workId?: number | null;
+  /**
+   * 作品を複数扱う案件（ライセンスで同じ相手から数作品をまとめて取得するなど）。
+   * 先頭（workId があればそれ）が軸の作品で matters.work_id に入り、残りは
+   * matter_links（target_type = 'work'）に入る。
+   */
+  workIds?: number[] | null;
   /** 業務案件の事業区分と業務名。 */
   businessLine?: BusinessLine | null;
   businessName?: string | null;
@@ -57,6 +63,10 @@ export class MatterWriteService {
     if (!["work", "outsourcing", "single"].includes(input.kind)) {
       throw new DomainError("VALIDATION", "案件の種類は 作品案件 / 業務案件 / その他案件 のいずれかです");
     }
+    // 作品は複数選べる。軸の作品（work_id）は workId か、無ければ先頭。
+    const workIds = [...new Set([input.workId, ...(input.workIds ?? [])]
+      .filter((w): w is number => Number.isInteger(w) && Number(w) > 0))];
+    input = { ...input, workId: workIds[0] ?? null };
     // 軸。作品案件は作品、業務案件は事業区分と業務名。その他は件名を人が打つ。
     if (input.kind === "work" && !input.workId) {
       throw new DomainError("VALIDATION", "作品案件は作品を選んでください（作品 1 つが 1 案件）");
@@ -92,10 +102,10 @@ export class MatterWriteService {
           }
         }
         let workTitle: string | null = null;
-        if (input.workId) {
-          const w = await client.query("SELECT id, title FROM works WHERE id = $1", [input.workId]);
-          if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
-          workTitle = String((w.rows[0] as { title: string }).title);
+        for (const workId of workIds) {
+          const w = await client.query("SELECT id, title FROM works WHERE id = $1", [workId]);
+          if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${workId} が見つかりません`);
+          if (workId === input.workId) workTitle = String((w.rows[0] as { title: string }).title);
         }
         if (input.parentId) await assertParentOk(client, null, input.parentId);
 
@@ -120,11 +130,19 @@ export class MatterWriteService {
            input.production ?? null, input.parentId ?? null, Boolean(manualTitle)]);
         const row = inserted.rows[0] as { id: number; matter_no: string | null };
         const id = Number(row.id);
+        // 2つ目以降の作品。案件は参照するだけ（matter_links。infra/v3/156 で 'work' を通す）。
+        for (const workId of workIds.slice(1)) {
+          await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation)
+             VALUES ($1, 'work', $2, 'related') ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+            [id, String(workId)]);
+        }
 
         await recordAudit(client, {
           actor, action: "matter.create", targetType: "matter", targetId: id,
           detail: { title, kind: input.kind, matterNo: row.matter_no,
                     counterpartyId: input.counterpartyId ?? null, workId: input.workId ?? null,
+                    workIds: workIds.length > 1 ? workIds : undefined,
                     businessLine: input.businessLine ?? null, parentId: input.parentId ?? null }
         });
         return { id, matterNo: row.matter_no };

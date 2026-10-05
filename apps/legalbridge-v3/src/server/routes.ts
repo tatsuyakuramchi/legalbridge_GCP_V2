@@ -1434,6 +1434,8 @@ export function createRoutes(database: Transactable) {
     title: z.string().trim().max(300).nullable().optional(),
     kind: z.enum(["work", "outsourcing", "single"]),
     workId: z.coerce.number().int().positive().nullable().optional(),
+    // 作品を複数扱う案件。先頭が軸の作品（workId があればそちら）。
+    workIds: z.array(z.coerce.number().int().positive()).max(100).nullable().optional(),
     businessLine: z.enum(BUSINESS_LINE_VALUES).nullable().optional(),
     businessName: z.string().trim().max(300).nullable().optional(),
     production: z.boolean().nullable().optional(),

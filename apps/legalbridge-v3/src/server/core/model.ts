@@ -225,6 +225,11 @@ export interface MatterAgreementRef {
 }
 
 export interface MatterDetail extends MatterSummary {
+  /**
+   * 案件が扱う作品すべて。先頭が軸の作品（work と同じ）、続けて matter_links の作品。
+   * ライセンスで数作品をまとめて扱う案件のため（infra/v3/156）。
+   */
+  works: Array<{ id: number; workCode: string | null; title: string }>;
   remarks: string | null;
   driveFolderUrl: string | null;
   parent: MatterRef | null;
