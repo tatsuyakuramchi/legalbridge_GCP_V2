@@ -271,6 +271,9 @@ export function DocumentsWorkspace(
   // 別の文書に移ったら、前の文書で開いた欄は閉じる。
   useEffect(() => { setLinkConditions(false); }, [selected]);
 
+  /** 一覧を一度でも読んだか（下の「消えたら次へ」を、読む前には効かせない）。 */
+  const listLoaded = useRef(false);
+
   /**
    * 選んでいた文書が一覧から消えたら、次の1件へ送る。
    *
@@ -279,6 +282,9 @@ export function DocumentsWorkspace(
    */
   useEffect(() => {
     if (selected === null) return;
+    // 一覧をまだ一度も読んでいない間は送らない。他の画面から文書を指定して来たとき、
+    // 一覧より先に届いた空の一覧で「消えた」と見て、選んだ文書を外していた。
+    if (!listLoaded.current) return;
     if (documents.some((d) => d.id === selected)) return;
     setSelected(documents[0]?.id ?? null);
   }, [documents]);
@@ -307,6 +313,7 @@ export function DocumentsWorkspace(
         const one = await api.get<DocumentRow>(`/documents/${openDocumentId}`).catch(() => null);
         if (one) list = [one, ...list];
       }
+      listLoaded.current = true;
       setDocuments(list);
       setConditions(c.conditions);
       setIntegrations(i);
@@ -409,7 +416,10 @@ export function DocumentsWorkspace(
     api.get<DocumentRow>(`/documents/${selected}`)
       .then((one) => {
         if (!alive || !one) return;
-        setDocuments((prev) => prev.map((d) => (d.id === one.id ? { ...d, ...one } : d)));
+        // 一覧にまだ無ければ触らない（一覧を読み終えたときに入る）。空の一覧を map すると
+        // 中身の同じ別の配列ができ、「一覧が変わった」として選択が外れていた。
+        setDocuments((prev) => prev.some((d) => d.id === one.id)
+          ? prev.map((d) => (d.id === one.id ? { ...d, ...one } : d)) : prev);
       })
       .catch(() => { /* 一覧の行のままでも読むぶんには困らない */ });
     return () => { alive = false; };
