@@ -270,3 +270,34 @@ test("取引先のマップに、契約に繋がっていない契約文書を�
     title: "利用許諾契約書（おたずねマもの村）", status: "issued", issuedOn: "2025-07-31" }]);
   assert.deepEqual(db.find("d.agreement_id IS NULL")!.params, [7]);
 });
+
+test("条件明細の載った単体契約があり、同じ向きの基本契約もあれば「個別契約にできる」と出す", () => {
+  const map = buildPartyMap(party, [
+    a({ id: 1, direction: "in" }),
+    a({ id: 2, kind: "standalone", direction: "in", conditionCount: 3 }),
+    a({ id: 3, kind: "standalone", direction: "in", conditionCount: 0 }),
+    a({ id: 4, kind: "standalone", direction: "out", conditionCount: 2 })
+  ]);
+  assert.deepEqual(map.issues.filter((i) => i.code === "standalone_with_master").map((i) => i.agreementId), [2],
+    "条件の無い単体契約・向きの違う単体契約は出さない");
+  assert.match(map.issues.find((i) => i.agreementId === 2)!.message, /ARC-1（基本契約）/);
+});
+
+test("個別契約にする：単体契約以外・向き違い・別の取引先は断る", async () => {
+  const db = (agreement: Record<string, unknown>, master: Record<string, unknown>) => new FakeDatabase((t, p) => {
+    if (t.includes("FOR UPDATE OF a")) return [{ id: 2, agreement_no: "ARC-ILT-1", kind: "standalone", direction: "in",
+      domain: "license", resolved_id: 5, child_count: 0, ...agreement }];
+    if (t.includes("terminated_on, r.resolved_id")) return [{ id: 1, agreement_no: "ARC-LIC-1", kind: "master",
+      direction: "in", domain: "license", terminated_on: null, resolved_id: 5, ...master }];
+    if (t.includes("UPDATE conditions")) return [{ id: 10 }, { id: 11 }];
+    return [];
+  });
+  const ok = db({}, {});
+  assert.deepEqual(await new PartyAgreementMapService(ok).demoteToIndividual(2, 1, "k"), { conditionsMoved: 2 });
+  assert.deepEqual(ok.find("SET kind = 'supplement'")!.params, [2, 1, "license"]);
+  assert.deepEqual(ok.find("UPDATE conditions")!.params, [2, 1], "条件明細は基本契約へ");
+  await assert.rejects(() => new PartyAgreementMapService(db({ kind: "master" }, {})).demoteToIndividual(2, 1, "k"), /単体契約だけ/);
+  await assert.rejects(() => new PartyAgreementMapService(db({}, { direction: "out" })).demoteToIndividual(2, 1, "k"), /向き/);
+  await assert.rejects(() => new PartyAgreementMapService(db({}, { resolved_id: 9 })).demoteToIndividual(2, 1, "k"), /相手先/);
+  await assert.rejects(() => new PartyAgreementMapService(db({ child_count: 1 }, {})).demoteToIndividual(2, 1, "k"), /覚書・解除合意/);
+});

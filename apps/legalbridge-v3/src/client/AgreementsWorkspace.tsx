@@ -43,7 +43,7 @@ interface Detail {
 }
 
 export const KIND_LABEL: Record<AgreementKind, string> = {
-  master: "基本契約", standalone: "単体契約", supplement: "補助文書", termination: "解除合意", document: "文書だけ"
+  master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書", termination: "解除合意", document: "文書だけ"
 };
 const KIND_TONE: Record<AgreementKind, string> = {
   master: "ghost accent", standalone: "ghost warn", supplement: "ghost", termination: "ghost out", document: "ghost"

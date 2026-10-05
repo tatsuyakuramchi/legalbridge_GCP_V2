@@ -25,7 +25,7 @@ import type { AgreementCsvRow } from "./csv.js";
 
 export type MapIssueCode =
   | "orphan" | "parent_party_mismatch" | "parent_not_master" | "master_with_parent"
-  | "no_domain" | "duplicate_master";
+  | "no_domain" | "duplicate_master" | "standalone_with_master";
 
 export interface MapIssue {
   code: MapIssueCode;
@@ -193,6 +193,19 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
           message: `${label} の生きた基本契約が ${masters.length} 本あります。画面により ${tag(m)} と ${tag(pick)} のどちらが出るかが変わります（古い方を解除するか、種別・方向を直してください）` });
       }
     }
+  }
+
+  // 条件明細の載った単体契約があり、同じ向きの基本契約もある。取引は
+  // （1）基本契約＋個別契約 か（2）単体契約 のどちらかなので、基本契約があるなら
+  // その下の個別契約にできる（「個別契約にする」）。単体契約のままだと、文書は
+  // 「基本契約なし」で出て、基本契約の条項に拠らない。
+  for (const r of roots) {
+    if (r.kind !== "standalone" || r.conditionCount === 0) continue;
+    const masters = roots.filter((m) => m.kind === "master" && m.direction === r.direction && !m.terminatedOn);
+    if (!masters.length) continue;
+    const m = masters.find((x) => x.primary) ?? masters[0];
+    issues.push({ code: "standalone_with_master", agreementId: r.id,
+      message: `${tag(r)} は単体契約ですが、${tag(m)}（基本契約）があります。基本契約の下の個別契約にするなら「個別契約にする」` });
   }
 
   roots.sort((x, y) =>
@@ -644,6 +657,98 @@ export class PartyAgreementMapService {
         conditionNos: ((row.condition_nos ?? []) as unknown[]).filter(Boolean).map(String)
       }];
     });
+  }
+
+  /**
+   * 単体契約を、基本契約の下の個別契約にする（順位を落とす）。
+   *
+   * 取引の形は（1）基本契約＋個別契約 か（2）単体契約。条件書を先に結び、あとから
+   * 基本契約を結んだ相手は、条件書が単体契約のまま残る。ここで基本契約の下に入れ、
+   * 載っていた条件明細を基本契約の明細に移す（条件書を決定したときに基本契約の下へ
+   * 起こすのと同じ形。agreements/auto.ts）。番号は振り直さない（紙に刷ってある）。
+   */
+  async demoteToIndividual(id: number, masterId: number, actor: string)
+    : Promise<{ conditionsMoved: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const r = await client.query(
+          `SELECT a.id, a.agreement_no, a.kind, a.direction, a.domain, a.parent_id, r.resolved_id,
+                  (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count
+             FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+            WHERE a.id = $1 FOR UPDATE OF a`, [id]);
+        const a = r.rows[0] as any;
+        if (!a) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
+        if ((str(a.kind) ?? "master") !== "standalone") {
+          throw new DomainError("VALIDATION", "個別契約にできるのは単体契約だけです");
+        }
+        if (Number(a.child_count) > 0) {
+          throw new DomainError("VALIDATION",
+            `この単体契約の下に覚書・解除合意が ${a.child_count} 件あります。先にそちらの親を基本契約に付け替えてください`);
+        }
+        const mr = await client.query(
+          `SELECT a.id, a.agreement_no, a.kind, a.direction, a.domain, a.terminated_on, r.resolved_id
+             FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+            WHERE a.id = $1`, [masterId]);
+        const m = mr.rows[0] as any;
+        if (!m) throw new DomainError("NOT_FOUND", `基本契約 ${masterId} が見つかりません`);
+        if ((str(m.kind) ?? "master") !== "master") throw new DomainError("VALIDATION", "親にできるのは基本契約だけです");
+        if (Number(m.resolved_id) !== Number(a.resolved_id)) throw new DomainError("VALIDATION", "基本契約と相手先が違います");
+        if (m.direction !== a.direction) throw new DomainError("VALIDATION", "基本契約と向き（IN／OUT）が違います");
+        if (m.terminated_on) throw new DomainError("VALIDATION", "解除済みの基本契約の下には入れられません");
+
+        await client.query(
+          `UPDATE agreements SET kind = 'supplement', parent_id = $2, domain = COALESCE($3, domain), updated_at = now()
+            WHERE id = $1`, [id, masterId, str(m.domain)]);
+        // 条件明細は基本契約の明細にする（個別契約＝条件書は、その明細を定めた紙）。
+        const moved = await client.query(
+          "UPDATE conditions SET agreement_id = $2 WHERE agreement_id = $1 RETURNING id", [id, masterId]);
+        const conditionIds = (moved.rows as Array<{ id: number }>).map((x) => Number(x.id));
+        await recordAudit(client, {
+          actor, action: "agreement.demote", targetType: "agreement", targetId: id,
+          detail: { agreementNo: str(a.agreement_no), masterId, masterNo: str(m.agreement_no), conditionIds,
+                    before: { kind: "standalone", domain: str(a.domain) } }
+        });
+        return { conditionsMoved: conditionIds.length };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 個別契約を単体契約に戻す（demoteToIndividual の逆）。基本契約に移した条件明細のうち、
+   * この契約の文書（条件書）に載っているものを戻す。
+   */
+  async promoteToStandalone(id: number, actor: string): Promise<{ conditionsMoved: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const r = await client.query(
+          `SELECT a.id, a.agreement_no, a.kind, a.parent_id, a.domain, p.domain AS parent_domain
+             FROM agreements a LEFT JOIN agreements p ON p.id = a.parent_id
+            WHERE a.id = $1 FOR UPDATE OF a`, [id]);
+        const a = r.rows[0] as any;
+        if (!a) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
+        if (str(a.kind) !== "supplement") throw new DomainError("VALIDATION", "単体契約に戻せるのは個別契約（補助文書）だけです");
+        const parentId = int(a.parent_id);
+        await client.query(
+          `UPDATE agreements SET kind = 'standalone', parent_id = NULL,
+                  domain = COALESCE(domain, $2, 'license'), updated_at = now()
+            WHERE id = $1`, [id, str(a.parent_domain)]);
+        const moved = parentId
+          ? await client.query(
+              `UPDATE conditions c SET agreement_id = $1
+                WHERE c.agreement_id = $2
+                  AND EXISTS (SELECT 1 FROM document_conditions dc JOIN documents d ON d.id = dc.document_id
+                               WHERE dc.condition_id = c.id AND d.agreement_id = $1
+                                 AND d.status NOT IN ('void', 'superseded'))
+                RETURNING c.id`, [id, parentId])
+          : { rows: [] };
+        const conditionIds = (moved.rows as Array<{ id: number }>).map((x) => Number(x.id));
+        await recordAudit(client, {
+          actor, action: "agreement.promote", targetType: "agreement", targetId: id,
+          detail: { agreementNo: str(a.agreement_no), parentId, conditionIds }
+        });
+        return { conditionsMoved: conditionIds.length };
+      });
+    } catch (error) { throw translate(error); }
   }
 
   /**

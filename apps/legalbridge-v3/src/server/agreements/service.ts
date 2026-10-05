@@ -25,7 +25,7 @@ export type AgreementKind = "master" | "standalone" | "supplement" | "terminatio
 export type AgreementDomain = "service" | "license";
 
 export const KIND_LABEL: Record<AgreementKind, string> = {
-  master: "基本契約", standalone: "単体契約", supplement: "補助文書",
+  master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書",
   termination: "解除合意", document: "文書だけ"
 };
 

@@ -358,7 +358,7 @@ export function ContinuePanel({ detail }: { detail: MatterDetail }) {
 }
 
 const AGREEMENT_KIND: Record<string, string> = {
-  master: "基本契約", standalone: "単体契約", supplement: "付帯文書", termination: "解除合意", document: "文書のみ"
+  master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書", termination: "解除合意", document: "文書のみ"
 };
 
 /** 案件の状態。完了は、付帯する契約が終わり 子の案件も閉じて初めて通る（サーバが断る）。 */

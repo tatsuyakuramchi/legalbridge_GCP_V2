@@ -30,7 +30,7 @@ const KIND_BY_TEXT: Record<string, AgreementKind> = {
   master: "master", standalone: "standalone", supplement: "supplement",
   termination: "termination", document: "document",
   // 画面ごとに呼び方が違っていた名前も読む。
-  付帯文書: "supplement", 覚書: "supplement", "覚書・変更": "supplement",
+  付帯文書: "supplement", 補助文書: "supplement", 個別契約: "supplement", 覚書: "supplement", "覚書・変更": "supplement",
   単発の契約: "standalone", 文書: "document", 文書のみ: "document"
 };
 

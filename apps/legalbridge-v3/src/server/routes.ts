@@ -347,6 +347,17 @@ export function createRoutes(database: Transactable) {
     res.json(refs);
   }));
 
+  // 単体契約 → 基本契約の下の個別契約（条件明細は基本契約へ）。その逆。
+  router.post("/agreement-map/agreements/:id/demote", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { masterId } = z.object({ masterId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await agreementMap.demoteToIndividual(Number(req.params.id), masterId, actor(res)));
+    }));
+  router.post("/agreement-map/agreements/:id/promote", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await agreementMap.promoteToStandalone(Number(req.params.id), actor(res)));
+    }));
+
   router.patch("/agreement-map/agreements/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({
