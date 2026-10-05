@@ -6,6 +6,7 @@ import { searchWorks } from "./MatterAxis.js";
 import { ConditionEvents } from "./ConditionEvents.js";
 import { CONDITION_KIND_LABEL, SettlementTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
+import { settlementDocFor } from "../server/documents/settlement-docs.js";
 
 /**
  * 取引を進める：支払（検収書・利用許諾計算書）。
@@ -17,17 +18,23 @@ import { useReadOnly } from "./read-only.js";
  *   ③ 検収書・計算書 … 立てた実績を選んで作る（実績の無い文書は作れない）
  *   ④ 送る … 決めた文書を開いて送る（メール／CloudSign）
  *   ⑤ 支払 … 決めた文書から立つ
- * ②③ は条件の画面と同じ部品（ConditionEvents）を使う。欄も動きも同じ。
+ * ② は条件の画面と同じ部品（ConditionEvents）で実績を足す。
+ * ③ は選んだ条件（複数可）の実績を 1 つの表に並べ、チェックした実績で文書を 1 枚作る。
+ *    検収書は条件をまたいでまとめられる（1 回の納品で複数の発注行を検収する）。
+ *    計算書は料率が条件ごとなので 1 枚に 1 条件。
  * 予定（回）が並んでいるものを月でまとめて締めるのは、支払文書処理の画面。
  */
 
 type Kind = "service" | "license";
 
 interface EventLite {
-  id: number; status: string;
-  documentId: number | null; documentStatus: string | null;
+  id: number; status: string; eventType: string; occurredOn: string | null;
+  quantity: number | null; amount: number; deliverable?: string | null; period?: string | null;
+  documentId: number | null; documentNo?: string | null; documentStatus: string | null;
   paymentId?: number | null;
 }
+/** 実績に、どの条件のものかを添えたもの（複数の条件の実績を 1 つの表に並べる）。 */
+type PayEvent = EventLite & { condition: ConditionSummary };
 
 const STEPS = ["相手と条件", "実績（納品・利用の報告）", "検収書・計算書", "送る", "支払"] as const;
 
@@ -61,14 +68,19 @@ export function TradePayment(
   const [workId, setWorkId] = useState("");
   const [workLabel, setWorkLabel] = useState<string | null>(null);
   const [conditions, setConditions] = useState<ConditionSummary[] | null>(null);
-  const [chosen, setChosen] = useState<ConditionSummary | null>(null);
-  const [events, setEvents] = useState<EventLite[]>([]);
+  /** 選んだ条件（複数可）。1 枚の検収書に複数の条件の実績をまとめられる。 */
+  const [chosenIds, setChosenIds] = useState<number[]>([]);
+  /** 実績を足す条件（選んだ条件のうち 1 つ）。 */
+  const [recordingId, setRecordingId] = useState<number | null>(null);
+  const [events, setEvents] = useState<PayEvent[]>([]);
+  /** 文書にする実績。既定は文書になっていない実績ぜんぶ。 */
+  const [picked, setPicked] = useState<Set<number>>(new Set());
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // 相手が決まったら、その相手との取得側（当社が払う）の条件を並べる。
   useEffect(() => {
-    setChosen(null); setConditions(null);
+    setChosenIds([]); setConditions(null);
     if (!partyId) return;
     const q = new URLSearchParams({ counterpartyId: partyId, direction: "in" });
     if (workId) q.set("workId", workId);
@@ -77,20 +89,44 @@ export function TradePayment(
       .catch((e) => setError(e instanceof ApiError ? e.message : String(e)));
   }, [partyId, workId]);
 
-  // 選んだ条件の実績。段の進み具合を出すのに使う（表そのものは ConditionEvents が出す）。
-  useEffect(() => {
-    if (!chosen) { setEvents([]); return; }
-    api.get<{ events: EventLite[] }>(`/conditions/${chosen.id}/events`)
-      .then((r) => setEvents(r.events))
-      .catch(() => setEvents([]));
-  }, [chosen?.id, reloadKey]);
-
   const ofKind = (c: ConditionSummary) => kind === "license" ? c.kind === "license" : c.kind !== "license";
   const shown = (conditions ?? []).filter(ofKind);
-  const stage = paymentStageOf(Boolean(chosen), events);
+  const chosen = shown.filter((c) => chosenIds.includes(c.id));
+  const recording = chosen.find((c) => c.id === recordingId) ?? chosen[0] ?? null;
+  const docLabel = kind === "service" ? "検収書" : "利用許諾計算書";
+
+  // 選んだ条件の実績をまとめて引く。表（③）と段の進み具合に使う。
+  useEffect(() => {
+    if (!chosen.length) { setEvents([]); return; }
+    let alive = true;
+    Promise.all(chosen.map((c) => api.get<{ events: EventLite[] }>(`/conditions/${c.id}/events`)
+      .then((r) => r.events.map((e) => ({ ...e, condition: c })))
+      .catch(() => [] as PayEvent[])))
+      .then((lists) => {
+        if (!alive) return;
+        const all = lists.flat();
+        setEvents(all);
+        // 文書になっていない実績は既定で選んでおく（まとめて 1 枚が普通）。
+        setPicked(new Set(all.filter((e) => liveEvent(e) && !liveDoc(e)).map((e) => e.id)));
+      });
+    return () => { alive = false; };
+  }, [chosenIds.join(","), kind, reloadKey]);
+
+  const toggleCondition = (id: number) =>
+    setChosenIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  const togglePick = (id: number) =>
+    setPicked((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+
+  const stage = paymentStageOf(chosen.length > 0, events);
   const live = events.filter(liveEvent);
-  const waitingDoc = live.filter((e) => !liveDoc(e)).length;
+  const waiting = live.filter((e) => !liveDoc(e));
   const drafts = live.filter((e) => e.documentStatus === "draft");
+  const pickedEvents = waiting.filter((e) => picked.has(e.id));
+  const pickedConditionIds = [...new Set(pickedEvents.map((e) => e.condition.id))];
+  // 計算書は条件ごとに料率で計算するので、1 枚に 1 条件。検収書は条件をまたいでまとめられる。
+  const tooManyForStatement = kind === "license" && pickedConditionIds.length > 1;
+  const pickedTotal = pickedEvents.reduce((a, e) => a + (e.amount ?? 0), 0);
+  const currency = pickedEvents[0]?.condition.currency ?? "JPY";
 
   return (
     <section className="stack">
@@ -119,12 +155,12 @@ export function TradePayment(
 
       <div className="panel">
         <div className="panel-hd"><h2>① 相手と条件</h2>
-          <span className="faint">誰の、どの取り決めの支払か</span></div>
+          <span className="faint">誰の、どの取り決めの支払か。{kind === "service" ? "1 枚の検収書にまとめる条件は複数選べます" : ""}</span></div>
         <div className="panel-bd stack" style={{ gap: 10 }}>
           <div className="row" role="group" aria-label="支払の種類" style={{ gap: 6 }}>
             {([["service", "業務委託の納品 → 検収書"], ["license", "ライセンスの利用報告 → 利用許諾計算書"]] as const).map(([v, label]) => (
               <button key={v} type="button" className="chip" aria-pressed={kind === v}
-                      onClick={() => { setKind(v); setChosen(null); }}>{label}</button>
+                      onClick={() => { setKind(v); setChosenIds([]); }}>{label}</button>
             ))}
           </div>
           <div className="form-grid">
@@ -147,21 +183,24 @@ export function TradePayment(
               <table>
                 <thead><tr><th></th><th>条件</th><th>種類</th><th>作品</th><th className="num">金額・料率</th><th>進み具合</th></tr></thead>
                 <tbody>
-                  {shown.map((c) => (
-                    <tr key={c.id} tabIndex={0} className={chosen?.id === c.id ? "sel" : undefined}
-                        onClick={() => setChosen(c)}
-                        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setChosen(c)}>
-                      <td><input type="radio" name="pay-condition" checked={chosen?.id === c.id} onChange={() => setChosen(c)}
-                                 aria-label={`${c.name} を選ぶ`} /></td>
-                      <td><div>{c.name}</div><div className="faint code">{c.conditionNo ?? `#${c.id}`}</div></td>
-                      <td>{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</td>
-                      <td>{c.work?.title ?? "—"}</td>
-                      <td className="num">{c.ratePpm != null ? `${c.ratePpm / 10000}%`
-                        : c.flatAmount != null ? money(c.flatAmount, c.currency)
-                        : c.unitAmount != null ? `単価 ${money(c.unitAmount, c.currency)}` : "—"}</td>
-                      <td><SettlementTag settlement={c.settlement} compact /></td>
-                    </tr>
-                  ))}
+                  {shown.map((c) => {
+                    const on = chosenIds.includes(c.id);
+                    return (
+                      <tr key={c.id} tabIndex={0} className={on ? "sel" : undefined}
+                          onClick={() => toggleCondition(c.id)}
+                          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggleCondition(c.id))}>
+                        <td><input type="checkbox" checked={on} onClick={(e) => e.stopPropagation()} onChange={() => toggleCondition(c.id)}
+                                   aria-label={`${c.name} を選ぶ`} /></td>
+                        <td><div>{c.name}</div><div className="faint code">{c.conditionNo ?? `#${c.id}`}</div></td>
+                        <td>{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</td>
+                        <td>{c.work?.title ?? "—"}</td>
+                        <td className="num">{c.ratePpm != null ? `${c.ratePpm / 10000}%`
+                          : c.flatAmount != null ? money(c.flatAmount, c.currency)
+                          : c.unitAmount != null ? `単価 ${money(c.unitAmount, c.currency)}` : "—"}</td>
+                        <td><SettlementTag settlement={c.settlement} compact /></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -169,43 +208,109 @@ export function TradePayment(
         </div>
       </div>
 
-      {chosen && (
+      {recording && (
         <div className="panel">
           <div className="panel-hd">
-            <h2>② 実績 → ③ {kind === "service" ? "検収書" : "利用許諾計算書"}</h2>
-            <span className="faint">{chosen.conditionNo ?? `#${chosen.id}`} {chosen.name}</span>
+            <h2>② 実績を立てる</h2>
+            <span className="faint">{kind === "service" ? "納品が来たら、条件ごとに納品の実績を足す" : "利用の報告が来たら、報告の期間・製造数や売上を実績にする"}</span>
           </div>
           <div className="panel-bd stack" style={{ gap: 10 }}>
-            <div className={stage === 2 ? "note" : "note ok"}>
-              {stage === 2
-                ? (kind === "service"
-                    ? "まず納品の実績を立てます。下の「実績を足す」から、納品日・成果物・数量・金額・検収日を入れてください。"
-                    : "まず利用の報告を実績にします。下の「実績を足す」から、報告の期間・製造数や売上・控除を入れてください。")
-                : stage === 3
-                ? `文書になっていない実績が ${waitingDoc} 件あります。下の実績の行の「…を作る」（料率の実績はまとめて選んで「計算書を作る」）で文書の画面へ進んでください。`
-                : stage === 4
-                ? `下書きの文書が ${drafts.length} 件あります。文書を開いて決定し、送ってください。`
-                : stage === 5
-                ? "文書は決まっています。支払は決めた文書から立ちます（支払タブ・支払文書処理の画面で確かめられます）。"
-                : "この条件の実績は、文書・支払まで済んでいます。次の納品・報告が来たら、また実績から立ててください。"}
-              {drafts.length > 0 && (
-                <span className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-                  {[...new Set(drafts.map((e) => e.documentId!))].map((id) => (
-                    <button key={id} className="btn btn-sm" onClick={() => onOpenDocument(id)}>文書 #{id} を開く</button>
-                  ))}
-                </span>
-              )}
-            </div>
-            <ConditionEvents key={chosen.id}
-              conditionId={chosen.id} currency={chosen.currency}
-              editable={!readOnly && (chosen.status === "active" || chosen.status === "draft")}
+            {chosen.length > 1 && (
+              <div className="row" role="group" aria-label="実績を足す条件" style={{ gap: 6, flexWrap: "wrap" }}>
+                <span className="faint">実績を足す条件：</span>
+                {chosen.map((c) => (
+                  <button key={c.id} type="button" className="chip" aria-pressed={c.id === recording.id}
+                          onClick={() => setRecordingId(c.id)}>
+                    {c.work?.title ? `${c.work.title}｜` : ""}{c.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!live.length && (
+              <div className="note">
+                {kind === "service"
+                  ? "まず納品の実績を立てます。下の「実績を足す」から、納品日・成果物・数量・金額・検収日を入れてください。"
+                  : "まず利用の報告を実績にします。下の「実績を足す」から、報告の期間・製造数や売上・控除を入れてください。"}
+              </div>
+            )}
+            <ConditionEvents key={recording.id}
+              conditionId={recording.id} currency={recording.currency}
+              editable={!readOnly && (recording.status === "active" || recording.status === "draft")}
               reloadKey={reloadKey}
-              pricingModel={chosen.pricingModel} ratePpm={chosen.ratePpm}
-              conditionUnitAmount={chosen.unitAmount} conditionQuantity={chosen.quantity}
-              direction={chosen.direction} kind={chosen.kind}
-              workTitle={chosen.work?.title ?? null} workId={chosen.work?.id ?? null}
+              pricingModel={recording.pricingModel} ratePpm={recording.ratePpm}
+              conditionUnitAmount={recording.unitAmount} conditionQuantity={recording.quantity}
+              direction={recording.direction} kind={recording.kind}
+              workTitle={recording.work?.title ?? null} workId={recording.work?.id ?? null}
               onCompose={onCompose} onOpenDocument={onOpenDocument}
               onChanged={() => setReloadKey((v) => v + 1)} />
+          </div>
+        </div>
+      )}
+
+      {chosen.length > 0 && (
+        <div className="panel">
+          <div className="panel-hd">
+            <h2>③ {docLabel}にする実績を選ぶ</h2>
+            <span className="faint">
+              {kind === "service"
+                ? "チェックした実績を 1 枚の検収書にまとめます（条件をまたいでも可）。分けたいときは、チェックを外して 2 回に分けて作ります"
+                : "計算書は条件ごとに 1 枚。同じ条件の報告はまとめて 1 枚にできます"}
+            </span>
+          </div>
+          <div className="panel-bd stack" style={{ gap: 10 }}>
+            {!waiting.length
+              ? <span className="faint">{live.length ? "文書になっていない実績はありません。" : "まだ実績がありません。② で実績を足すと、ここに並びます。"}</span>
+              : (
+                <div className="tablewrap">
+                  <table>
+                    <thead><tr>
+                      <th><input type="checkbox" aria-label="すべて選ぶ"
+                                 checked={waiting.every((e) => picked.has(e.id))}
+                                 onChange={(e) => setPicked(e.target.checked ? new Set(waiting.map((x) => x.id)) : new Set())} /></th>
+                      <th>条件</th><th>作品</th><th>{kind === "service" ? "納品日" : "発生日・期間"}</th><th>成果物・摘要</th>
+                      <th className="num">数量</th><th className="num">金額（税抜）</th>
+                    </tr></thead>
+                    <tbody>
+                      {waiting.map((e) => (
+                        <tr key={e.id} className={picked.has(e.id) ? "sel" : undefined} onClick={() => togglePick(e.id)}>
+                          <td><input type="checkbox" checked={picked.has(e.id)} onClick={(x) => x.stopPropagation()} onChange={() => togglePick(e.id)}
+                                     aria-label={`実績 ${e.occurredOn ?? ""} を選ぶ`} /></td>
+                          <td><div>{e.condition.name}</div><div className="faint code">{e.condition.conditionNo ?? `#${e.condition.id}`}</div></td>
+                          <td>{e.condition.work?.title ?? "—"}</td>
+                          <td className="code">{e.occurredOn ?? "—"}{e.period ? `（${e.period}）` : ""}</td>
+                          <td>{e.deliverable ?? "—"}</td>
+                          <td className="num">{e.quantity ?? "—"}</td>
+                          <td className="num">{money(e.amount ?? 0, e.condition.currency)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            {waiting.length > 0 && (
+              <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+                <button className="btn primary" disabled={readOnly || !pickedEvents.length || tooManyForStatement}
+                        onClick={() => onCompose(pickedConditionIds, pickedEvents.map((e) => e.id), null, settlementDocFor(pickedEvents[0]?.condition.kind).templateKey)}>
+                  選んだ実績 {pickedEvents.length} 件で{docLabel}を 1 枚作る
+                </button>
+                {pickedEvents.length > 0 && <span>合計（税抜） <b>{money(pickedTotal, currency)}</b>　条件 {pickedConditionIds.length} 本</span>}
+                {tooManyForStatement && <span className="alert">計算書は条件ごとに作ります。1 つの条件の実績だけを選んでください。</span>}
+                <span className="faint">文書の画面に移り、選んだ実績が入った状態で開きます。決定すると実績に結びつきます。</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {drafts.length > 0 && (
+        <div className="panel">
+          <div className="panel-hd"><h2>④ 送る</h2><span className="faint">下書きの文書を開いて決定し、送ります。支払（⑤）は決めた文書から立ちます</span></div>
+          <div className="panel-bd row" style={{ gap: 6, flexWrap: "wrap" }}>
+            {[...new Map(drafts.map((e) => [e.documentId!, e])).values()].map((e) => (
+              <button key={e.documentId} className="btn btn-sm" onClick={() => onOpenDocument(e.documentId!)}>
+                {e.documentNo ?? `文書 #${e.documentId}`} を開く
+              </button>
+            ))}
           </div>
         </div>
       )}
