@@ -2,7 +2,7 @@ import type { Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { termHistory } from "../agreements/term-history.js";
 import { translate } from "../core/errors.js";
-import type { MatterAgreementRef, MatterDetail, MatterKind, MatterRef, MatterStatus, MatterSummary } from "../core/model.js";
+import type { MatterAgreementRef, MatterDetail, MatterKind, MatterRef, MatterStatus, MatterSummary, TradeContext } from "../core/model.js";
 import { ConditionRepository } from "../conditions/repository.js";
 
 function mapSummary(row: Record<string, any>): MatterSummary {
@@ -127,7 +127,7 @@ export class MatterRepository {
       // 出版は作品 80 点・条件 170 本で1案件になる。100 だと条件タブに出ない
       // 条件ができ、案件から実績も支払も立てられなくなる。
       this.conditions.list({ matterId: id, limit: 500 }),
-      this.documents(id),
+      this.documents("d.matter_id = $1", [id]),
       this.payments(id),
       this.communications(id),
       this.links(id),
@@ -154,6 +154,44 @@ export class MatterRepository {
       driveFolderUrl: str(row.drive_folder_url),
       conditions, documents, payments, communications, links, tasks,
       ...family, agreements
+    };
+  }
+
+  /**
+   * 案件を立てずに取引を進めるときの文脈（取引を進める画面の「案件なしで進める」）。
+   * 案件の詳細と同じ形で、相手先と作品から組む：
+   *   条件明細 … この相手先（統合を辿る）の、選んだ作品の条件（作品を選ばなければ相手先の条件すべて）
+   *   文書     … その条件明細を載せた文書と、この相手先の基本契約書
+   * 案件の id・番号・担当は無い（null）。
+   */
+  async tradeContext(input: { partyId: number; workIds: number[] }): Promise<TradeContext | null> {
+    const party = (await this.database.query(
+      "SELECT id, name, kind FROM parties WHERE id = $1", [input.partyId])).rows[0] as any;
+    if (!party) return null;
+    const works = input.workIds.length
+      ? (await this.database.query(
+          "SELECT id, work_code, title FROM works WHERE id = ANY($1::bigint[])", [input.workIds])).rows as any[]
+      : [];
+    // 選んだ順に並べる（先頭が軸）。
+    const ordered = input.workIds
+      .map((id) => works.find((w) => Number(w.id) === id))
+      .filter(Boolean)
+      .map((w: any) => ({ id: Number(w.id), workCode: str(w.work_code), title: String(w.title ?? "") }));
+    const conditions = await this.conditions.list({
+      counterpartyId: input.partyId, workIds: ordered.length ? ordered.map((w) => w.id) : undefined, limit: 500 });
+    const documents = await this.documents(
+      `(d.id IN (SELECT dc.document_id FROM document_conditions dc WHERE dc.condition_id = ANY($1::bigint[]))
+        OR (t.template_key = ANY($2::text[]) AND v.counterparty_id IN (
+              SELECT party_id FROM v_party_resolved
+               WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $3))))
+       AND d.status <> 'void'`,
+      [conditions.map((c) => c.id), ["license_master", "service_master"], input.partyId]);
+    return {
+      id: null, matterNo: null, ownerName: null,
+      title: [ordered.map((w) => w.title).join("・"), String(party.name ?? "")].filter(Boolean).join("（") + (ordered.length ? "）" : ""),
+      counterparty: { id: Number(party.id), name: String(party.name ?? ""), kind: party.kind },
+      work: ordered[0] ?? null, works: ordered,
+      conditions, documents, agreements: []
     };
   }
 
@@ -212,7 +250,7 @@ export class MatterRepository {
     });
   }
 
-  private async documents(id: number) {
+  private async documents(where: string, params: unknown[]) {
     const r = await this.database.query(
       `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label,
               v.counterparty, v.counterparty_id, t.template_key, a.status AS agreement_status,
@@ -230,8 +268,8 @@ export class MatterRepository {
               AND x.action IN ('gmail.send', 'cloudsign.send')
             ORDER BY x.occurred_at DESC LIMIT 1
          ) snd ON true
-        WHERE d.matter_id = $1
-        ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [id]);
+        WHERE ${where}
+        ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, params);
     return r.rows.map((d) => ({
       id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),
       templateLabel: str(d.template_label),

@@ -42,3 +42,46 @@ test("作品案件で作品が 1 つも無ければ断る。無い作品が混�
   await assert.rejects(() => new MatterWriteService(db()).create({ ...base, workIds: [] }, "x"), /作品を選んでください/);
   await assert.rejects(() => new MatterWriteService(db()).create({ ...base, workIds: [11, 404] }, "x"), /作品 404 が見つかりません/);
 });
+
+/** 案件の作品を後から足す・外す。 */
+const editDb = (matter: Record<string, unknown>, links: string[] = []) => new FakeDatabase((t) => {
+  if (t.includes("FROM matters WHERE id = $1 FOR UPDATE")) return [matter];
+  if (t.includes("FROM works WHERE id")) return [{ id: 1 }];
+  if (t.includes("SELECT target_ref FROM matter_links")) return links.slice(0, 1).map((r) => ({ target_ref: r }));
+  if (t.includes("UNION ALL")) return [];
+  return undefined;
+});
+
+test("作品を足す：作品の無い案件なら軸に、あればつながりに入れる", async () => {
+  const empty = editDb({ id: 3, kind: "outsourcing", work_id: null });
+  await new MatterWriteService(empty).addWork(3, 12, "x");
+  assert.deepEqual(empty.find("UPDATE matters SET work_id")!.params, [3, 12]);
+  assert.ok(!empty.find("INSERT INTO matter_links"));
+
+  const has = editDb({ id: 3, kind: "work", work_id: 11 });
+  await new MatterWriteService(has).addWork(3, 12, "x");
+  assert.deepEqual(has.find("INSERT INTO matter_links")!.params, [3, "12"]);
+  assert.ok(!has.find("UPDATE matters SET work_id"));
+
+  const same = editDb({ id: 3, kind: "work", work_id: 11 });
+  await new MatterWriteService(same).addWork(3, 11, "x");
+  assert.ok(!same.find("INSERT INTO matter_links") && !same.find("UPDATE matters SET work_id"), "既に軸なら何もしない");
+});
+
+test("作品を外す：軸を外すとつながりの最初の作品が軸に上がる。作品案件の最後の 1 つは外せない", async () => {
+  const promote = editDb({ id: 3, kind: "work", work_id: 11 }, ["12", "13"]);
+  await new MatterWriteService(promote).removeWork(3, 11, "x");
+  assert.deepEqual(promote.find("UPDATE matters SET work_id")!.params, [3, 12]);
+  assert.deepEqual(promote.find("DELETE FROM matter_links")!.params, [3, "12"], "上がった作品はつながりから抜く");
+
+  const extra = editDb({ id: 3, kind: "work", work_id: 11 }, ["12"]);
+  await new MatterWriteService(extra).removeWork(3, 12, "x");
+  assert.deepEqual(extra.find("DELETE FROM matter_links")!.params, [3, "12"]);
+  assert.ok(!extra.find("UPDATE matters SET work_id"), "軸はそのまま");
+
+  await assert.rejects(() => new MatterWriteService(editDb({ id: 3, kind: "work", work_id: 11 })).removeWork(3, 11, "x"),
+    /最後の作品は外せません/);
+  const service = editDb({ id: 3, kind: "outsourcing", work_id: 11 });
+  await new MatterWriteService(service).removeWork(3, 11, "x");
+  assert.deepEqual(service.find("UPDATE matters SET work_id")!.params, [3, null], "業務委託は作品なしにできる");
+});

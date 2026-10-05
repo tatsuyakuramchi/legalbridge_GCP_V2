@@ -224,6 +224,23 @@ export interface MatterAgreementRef {
   live: boolean;
 }
 
+/**
+ * 取引を進める画面が読む、案件か「案件なし」の文脈。案件の詳細と同じ名前で持つ。
+ * 案件なしのときは id・番号・担当が null（取引先と作品から組む）。
+ */
+export interface TradeContext {
+  id: number | null;
+  matterNo: string | null;
+  title: string;
+  ownerName: string | null;
+  counterparty: MatterSummary["counterparty"];
+  work: MatterSummary["work"];
+  works: MatterDetail["works"];
+  conditions: MatterDetail["conditions"];
+  documents: MatterDetail["documents"];
+  agreements: MatterDetail["agreements"];
+}
+
 export interface MatterDetail extends MatterSummary {
   /**
    * 案件が扱う作品すべて。先頭が軸の作品（work と同じ）、続けて matter_links の作品。

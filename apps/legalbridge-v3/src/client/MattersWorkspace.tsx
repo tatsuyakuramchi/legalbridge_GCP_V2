@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { MatterWorks } from "./MatterWorks.js";
 import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
@@ -518,6 +519,18 @@ export function MattersWorkspace(
                             : undefined} />
                   <dl className="dl">
                     <AxisPanel detail={detail} onChanged={relink} onError={setError} />
+                    {/* 作品を複数扱う案件（ライセンスで数作品をまとめて扱う）。先頭が軸の作品。 */}
+                    {detail.kind !== "single" && (
+                      <>
+                        <dt>作品（すべて）</dt>
+                        <dd>
+                          <MatterWorks works={detail.works ?? []} required={detail.kind === "work"}
+                            onAdd={async (workId) => { setError(null); await api.post(`/matters/${detail.id}/works`, { workId }); relink(); }}
+                            onRemove={async (workId) => { setError(null); await api.del(`/matters/${detail.id}/works/${workId}`); relink(); }}
+                            onError={setError} />
+                        </dd>
+                      </>
+                    )}
                     <StatusPanel detail={detail} onChanged={relink} onError={setError} />
                     <dt>種類</dt>
                     <dd>
