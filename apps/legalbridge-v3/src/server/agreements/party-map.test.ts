@@ -293,7 +293,8 @@ test("個別契約にする：単体契約以外・向き違い・別の取引�
     return [];
   });
   const ok = db({}, {});
-  assert.deepEqual(await new PartyAgreementMapService(ok).demoteToIndividual(2, 1, "k"), { conditionsMoved: 2 });
+  assert.deepEqual(await new PartyAgreementMapService(ok).demoteToIndividual(2, 1, "k"),
+    { conditionsMoved: 2, masterId: 1, masterNo: "ARC-LIC-1", masterCreated: false });
   assert.deepEqual(ok.find("SET kind = 'supplement'")!.params, [2, 1, "license"]);
   assert.deepEqual(ok.find("UPDATE conditions")!.params, [2, 1], "条件明細は基本契約へ");
   await assert.rejects(() => new PartyAgreementMapService(db({ kind: "master" }, {})).demoteToIndividual(2, 1, "k"), /単体契約だけ/);

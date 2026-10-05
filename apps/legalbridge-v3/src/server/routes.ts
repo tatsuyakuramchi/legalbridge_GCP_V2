@@ -350,9 +350,18 @@ export function createRoutes(database: Transactable) {
   // 単体契約 → 基本契約の下の個別契約（条件明細は基本契約へ）。その逆。
   router.post("/agreement-map/agreements/:id/demote", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { masterId } = z.object({ masterId: z.coerce.number().int().positive() }).parse(req.body ?? {});
-      res.json(await agreementMap.demoteToIndividual(Number(req.params.id), masterId, actor(res)));
+      // 親は既にある基本契約（masterId）か、繋いでいる基本契約の文書（masterDocumentId。契約を起こす）。
+      const body = z.object({
+        masterId: z.coerce.number().int().positive().optional(),
+        masterDocumentId: z.coerce.number().int().positive().optional()
+      }).refine((b) => Boolean(b.masterId) !== Boolean(b.masterDocumentId), "基本契約か基本契約の文書を1つ選んでください")
+        .parse(req.body ?? {});
+      res.json(await agreementMap.demoteToIndividual(Number(req.params.id),
+        body.masterId ?? { masterDocumentId: body.masterDocumentId! }, actor(res)));
     }));
+  router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
+    res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
+  }));
   router.post("/agreement-map/agreements/:id/promote", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await agreementMap.promoteToStandalone(Number(req.params.id), actor(res)));

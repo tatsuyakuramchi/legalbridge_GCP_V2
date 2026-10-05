@@ -1,4 +1,4 @@
-import { type Transactable, inTransaction, dateStr, int, str } from "../core/db.js";
+import { type Queryable, type Transactable, inTransaction, dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.js";
@@ -106,6 +106,13 @@ const CONTRACT_DOCUMENT_SQL = `(
 const UNLINKED_WHERE = `d.agreement_id IS NULL
   AND d.status NOT IN ('void', 'superseded', 'draft')
   AND ${CONTRACT_DOCUMENT_SQL}`;
+
+/**
+ * 基本契約の文書。作った基本契約書（ひな形）か、取り込んだ文書で種類が基本契約のもの。
+ * 出版許諾契約書は基本契約を兼ねる（出版 IN の取引）。
+ */
+const MASTER_DOCUMENT_SQL = `t.template_key IN ('license_master', 'service_master', 'pub_master_individual', 'pub_master_corporate')
+  OR COALESCE(d.manual_inputs->>'documentKind', t.label, '') LIKE '%基本契約%'`;
 
 const isRootKind = (kind: AgreementKind) => kind === "master" || kind === "standalone";
 const isChildKind = (kind: AgreementKind) => kind === "supplement" || kind === "termination";
@@ -667,10 +674,17 @@ export class PartyAgreementMapService {
    * 載っていた条件明細を基本契約の明細に移す（条件書を決定したときに基本契約の下へ
    * 起こすのと同じ形。agreements/auto.ts）。番号は振り直さない（紙に刷ってある）。
    */
-  async demoteToIndividual(id: number, masterId: number, actor: string)
-    : Promise<{ conditionsMoved: number }> {
+  async demoteToIndividual(id: number, target: number | { masterDocumentId: number }, actor: string)
+    : Promise<{ conditionsMoved: number; masterId: number; masterNo: string | null; masterCreated: boolean }> {
     try {
       return await inTransaction(this.database, async (client) => {
+        // 親は既にある基本契約か、この契約に繋いでいる基本契約の文書（契約にまだなっていない紙）。
+        let masterCreated = false;
+        const masterId = typeof target === "number"
+          ? target
+          : await this.masterFromDocument(client, id, target.masterDocumentId, actor).then((r) => {
+              masterCreated = r.created; return r.id;
+            });
         const r = await client.query(
           `SELECT a.id, a.agreement_no, a.kind, a.direction, a.domain, a.parent_id, r.resolved_id,
                   (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count
@@ -708,9 +722,78 @@ export class PartyAgreementMapService {
           detail: { agreementNo: str(a.agreement_no), masterId, masterNo: str(m.agreement_no), conditionIds,
                     before: { kind: "standalone", domain: str(a.domain) } }
         });
-        return { conditionsMoved: conditionIds.length };
+        return { conditionsMoved: conditionIds.length, masterId, masterNo: str(m.agreement_no), masterCreated };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * この契約に繋いでいる文書のうち、基本契約の紙。基本契約を結んでも契約（合意）として
+   * 登録せず、条件書の単体契約に文書だけ繋いでいることがある。ここから基本契約を起こす。
+   */
+  async masterDocuments(id: number): Promise<Array<{ id: number; documentNo: string; title: string; label: string; issuedOn: string | null }>> {
+    const r = await this.database.query(
+      `SELECT d.id, d.document_no, v.title, COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label, d.issued_at
+         FROM documents d
+         JOIN v_document_display v ON v.document_id = d.id
+         LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+         LEFT JOIN document_templates t ON t.id = tv.template_id
+        WHERE d.agreement_id = $1 AND d.document_no IS NOT NULL
+          AND d.status NOT IN ('void', 'superseded', 'draft')
+          AND (${MASTER_DOCUMENT_SQL})
+        ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [id]);
+    return (r.rows as any[]).map((d) => ({
+      id: Number(d.id), documentNo: String(d.document_no), title: String(d.title ?? ""),
+      label: String(d.label ?? "文書"), issuedOn: dateStr(d.issued_at)
+    }));
+  }
+
+  /**
+   * 基本契約の文書から基本契約（合意）を起こす。番号は文書の番号を使う（紙に刷ってある）。
+   * 同じ番号の基本契約が既にあればそれを使う。文書はその基本契約に付け替える。
+   */
+  private async masterFromDocument(client: Queryable, childId: number, documentId: number, actor: string)
+    : Promise<{ id: number; created: boolean }> {
+    const dr = await client.query(
+      `SELECT d.id, d.document_no, d.agreement_id, d.issued_at, v.title, t.template_key,
+              COALESCE(d.manual_inputs->>'title', t.label, d.manual_inputs->>'documentKind') AS label,
+              a.counterparty_id, a.direction, a.domain
+         FROM documents d
+         JOIN v_document_display v ON v.document_id = d.id
+         JOIN agreements a ON a.id = $2
+         LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+         LEFT JOIN document_templates t ON t.id = tv.template_id
+        WHERE d.id = $1 AND (${MASTER_DOCUMENT_SQL})`, [documentId, childId]);
+    const d = dr.rows[0] as any;
+    if (!d) throw new DomainError("NOT_FOUND", "基本契約の文書が見つかりません");
+    if (int(d.agreement_id) !== childId) throw new DomainError("VALIDATION", "この契約に繋いでいる文書から選んでください");
+    const no = String(d.document_no);
+    const same = await client.query(
+      "SELECT id, kind FROM agreements WHERE agreement_no = $1", [no]);
+    const found = same.rows[0] as any;
+    let masterId: number;
+    let created = false;
+    if (found) {
+      if ((str(found.kind) ?? "master") !== "master") {
+        throw new DomainError("VALIDATION", `番号 ${no} の契約が既にあり、基本契約ではありません。取引先⇔基本契約で直してください`);
+      }
+      masterId = Number(found.id);
+    } else {
+      const key = str(d.template_key) ?? "";
+      const domain = key.startsWith("service") ? "service" : key ? "license" : (str(d.domain) ?? "license");
+      const ins = await client.query(
+        `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain)
+         VALUES ($1, $2, $3, $4, 'negotiating', 'master', $5) RETURNING id`,
+        [no, String(d.label ?? "基本契約"), Number(d.counterparty_id), d.direction === "out" ? "out" : "in", domain]);
+      masterId = Number((ins.rows[0] as { id: number }).id);
+      created = true;
+    }
+    await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1", [documentId, masterId]);
+    await recordAudit(client, {
+      actor, action: "agreement.from_document", targetType: "agreement", targetId: masterId,
+      detail: { documentId, documentNo: no, created, from: childId }
+    });
+    return { id: masterId, created };
   }
 
   /**

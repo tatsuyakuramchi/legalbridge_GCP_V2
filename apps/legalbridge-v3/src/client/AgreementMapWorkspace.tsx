@@ -517,22 +517,34 @@ function DemoteForm(
 ) {
   const masters = roots.filter((r) => r.kind === "master" && r.direction === a.direction && !r.terminatedOn)
     .sort((x, y) => Number(y.domain === a.domain) - Number(x.domain === a.domain) || Number(y.primary) - Number(x.primary));
-  const [masterId, setMasterId] = useState<string>(masters[0] ? String(masters[0].id) : "");
+  // この契約に繋いでいる基本契約の文書。基本契約を結んでも契約として登録せず、
+  // 条件書の単体契約に紙だけ繋いでいることがある。選ぶとその紙から基本契約を起こす。
+  const [docs, setDocs] = useState<Array<{ id: number; documentNo: string; title: string; label: string; issuedOn: string | null }> | null>(null);
+  useEffect(() => {
+    api.get<{ documents: NonNullable<typeof docs> }>(`/agreement-map/agreements/${a.id}/master-documents`)
+      .then((r) => setDocs(r.documents)).catch(() => setDocs([]));
+  }, [a.id]);
+  // 値は "m:基本契約id" か "d:文書id"。
+  const [pick, setPick] = useState<string>("");
+  const chosen = pick || (masters[0] ? `m:${masters[0].id}` : docs?.[0] ? `d:${docs[0].id}` : "");
   const [busy, setBusy] = useState(false);
   async function save() {
     setBusy(true);
     try {
-      const r = await api.post<{ conditionsMoved: number }>(`/agreement-map/agreements/${a.id}/demote`, { masterId: Number(masterId) });
-      const m = masters.find((x) => String(x.id) === masterId);
-      onSaved(`${a.agreementNo ?? `#${a.id}`} を ${m?.agreementNo ?? "基本契約"} の下の個別契約にしました（条件明細 ${r.conditionsMoved} 本を基本契約へ）`);
+      const [k, v] = chosen.split(":");
+      const r = await api.post<{ conditionsMoved: number; masterNo: string | null; masterCreated: boolean }>(
+        `/agreement-map/agreements/${a.id}/demote`, k === "d" ? { masterDocumentId: Number(v) } : { masterId: Number(v) });
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を ${r.masterNo ?? "基本契約"} の下の個別契約にしました（条件明細 ${r.conditionsMoved} 本を基本契約へ）`
+        + (r.masterCreated ? `。${r.masterNo} は文書から基本契約として登録しました。締結日は「編集」で入れてください` : ""));
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
   }
-  if (!masters.length) {
+  if (docs === null) return <div className="amap-form faint">基本契約の候補を探しています…</div>;
+  if (!masters.length && !docs.length) {
     return (
       <div className="amap-form note">
-        この取引先に、{a.direction === "in" ? "IN" : "OUT"} の基本契約がありません。個別契約にするには、先に「契約を登録」で基本契約を立ててください
-        （基本契約の紙を取り込むなら、登録した基本契約の「文書」から）。
+        この取引先に、{a.direction === "in" ? "IN" : "OUT"} の基本契約がありません。この契約に繋いでいる文書にも基本契約書がありません。
+        先に基本契約書をこの契約の「文書」に繋ぐ（取り込む）か、「契約を登録」で基本契約を立ててください。
       </div>
     );
   }
@@ -540,20 +552,38 @@ function DemoteForm(
     <div className="amap-form stack" style={{ gap: 8 }}>
       <b>（2）単体契約 → （1）基本契約＋個別契約</b>
       <label className="field"><span>ぶら下げる基本契約</span>
-        <select value={masterId} onChange={(e) => setMasterId(e.target.value)}>
-          {masters.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.agreementNo ?? `#${m.id}`} {m.title}（{m.domain ? DOMAIN_LABEL[m.domain] : "種別なし"}{m.executedOn ? `・締結 ${m.executedOn}` : "・未締結"}{m.primary ? "・既定" : ""}）
-            </option>
-          ))}
+        <select value={chosen} onChange={(e) => setPick(e.target.value)}>
+          {masters.length > 0 && (
+            <optgroup label="登録済みの基本契約">
+              {masters.map((m) => (
+                <option key={m.id} value={`m:${m.id}`}>
+                  {m.agreementNo ?? `#${m.id}`} {m.title}（{m.domain ? DOMAIN_LABEL[m.domain] : "種別なし"}{m.executedOn ? `・締結 ${m.executedOn}` : "・未締結"}{m.primary ? "・既定" : ""}）
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {docs.length > 0 && (
+            <optgroup label="この契約に繋いでいる基本契約の文書（基本契約として登録する）">
+              {docs.map((d) => (
+                <option key={d.id} value={`d:${d.id}`}>
+                  {d.documentNo} {d.label}{d.issuedOn ? `（${d.issuedOn.slice(0, 10)}）` : ""}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </label>
+      {chosen.startsWith("d:") && (
+        <span className="faint">
+          選んだ文書を基本契約（番号は文書の番号のまま）として登録し、文書はその基本契約に付け替えます。締結日は登録後に「編集」で入れてください（入れると締結済み・既定になります）。
+        </span>
+      )}
       <span className="faint">
         この契約は選んだ基本契約の下の個別契約になり、載っている条件明細 {a.conditionCount} 本は基本契約の明細に移ります。
         これから作る発注書・検収書・計算書は、この基本契約に拠って出ます。番号（{a.agreementNo ?? `#${a.id}`}）と文書はそのまま。「単体契約に戻す」で戻せます。
       </span>
       <div className="row">
-        <button className="btn primary btn-sm" disabled={busy || !masterId} onClick={() => void save()}>
+        <button className="btn primary btn-sm" disabled={busy || !chosen} onClick={() => void save()}>
           {busy ? "移しています…" : "個別契約にする"}
         </button>
       </div>
@@ -652,6 +682,9 @@ function RemapForm(
               </option>
             ))}
           </select>
+          {!parents.length && (
+            <small className="faint">親にできる契約がありません。単体契約なら「個別契約にする」から、繋いでいる基本契約書を基本契約として登録して親にできます</small>
+          )}
         </label>
       )}
       <label className="field"><span>契約締結日</span>
