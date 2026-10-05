@@ -35,6 +35,7 @@ import { ConditionBundleService } from "./conditions/bundle-service.js";
 import { MatterGraphService } from "./matters/graph-service.js";
 import { WorkCreditService } from "./works/credits.js";
 import { settlesEvents } from "./documents/settlement-docs.js";
+import { settlementEventRows } from "./documents/settlement-conditions.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
@@ -115,7 +116,7 @@ import type { IntegrationChannel } from "./integrations/gate.js";
 import { parseCompanyProfile } from "./ops/company-profile-schema.js";
 import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-alert-settings.js";
 import { MAIL_TEMPLATES_KEY, parseMailTemplates } from "./ops/mail-templates.js";
-import { DeliveryAlertJob } from "./jobs/delivery-alert.js";
+import { DeliveryAlertJob, tokyoToday } from "./jobs/delivery-alert.js";
 import { RingiService, type RingiTarget } from "./ringi/service.js";
 import { RptService } from "./rpt/service.js";
 import { RequesterUploadService } from "./intake/upload-service.js";
@@ -2235,6 +2236,56 @@ export function createRoutes(database: Transactable) {
     followUpDueOn: z.string().date().nullable().optional(),
     ...inspectionFields
   });
+  /**
+   * 実費・手数料を後から足す（交通費の漏れなど）。
+   *
+   * 実費・手数料の実績は、その種類の条件に付く。発注のときに実費の条件を作って
+   * いなかったら「条件を作る → 実績を足す」の往復になる。委託料の条件から
+   * 相手先・契約・通貨・期間・案件・作品を写して条件を作り、実績まで一度に立てる。
+   * 金額は経費なら税込（非課税で受ける）。
+   */
+  router.post("/conditions/:id/extras",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        kind: z.enum(["expense", "fee"]),
+        name: z.string().trim().min(1).max(200),
+        amount: z.coerce.number().int().positive(),
+        occurredOn: z.string().date(),
+        note: z.string().trim().max(1000).nullable().optional()
+      }).parse(req.body ?? {});
+      const baseId = Number(req.params.id);
+      const base = (await database.query(
+        `SELECT c.id, c.kind, c.direction, c.counterparty_id, c.agreement_id, c.currency, c.term_start, c.term_end,
+                c.tax_category, c.work_id,
+                (SELECT ml.matter_id FROM matter_links ml
+                  WHERE ml.target_type = 'condition' AND ml.target_ref = c.id::text ORDER BY ml.id LIMIT 1) AS matter_id
+           FROM conditions c WHERE c.id = $1`, [baseId])).rows[0] as Record<string, any> | undefined;
+      if (!base) throw new DomainError("NOT_FOUND", `条件 ${baseId} が見つかりません`);
+      if (!["service", "expense", "fee"].includes(String(base.kind))) {
+        throw new DomainError("VALIDATION", "実費・手数料を足せるのは業務委託の条件（委託料・実費・手数料）からです");
+      }
+      const who = actor(res);
+      const made = await conditionWrites.create({
+        matterId: base.matter_id ? Number(base.matter_id) : null,
+        name: input.name, direction: base.direction === "out" ? "out" : "in", kind: input.kind,
+        counterpartyId: Number(base.counterparty_id),
+        agreementId: base.agreement_id ? Number(base.agreement_id) : null,
+        workId: base.work_id ? Number(base.work_id) : null,
+        currency: String(base.currency ?? "JPY"), pricingModel: "fixed", flatAmount: input.amount,
+        // 経費は税込の実費なので消費税を重ねない。手数料は元の条件と同じ扱い（海外は税込）。
+        taxCategory: input.kind === "expense" ? "exempt" : base.tax_category === "included" ? "included" : "taxable",
+        termStart: dateStr(base.term_start), termEnd: dateStr(base.term_end),
+        notes: [input.kind === "expense" ? "税込の実費" : "", input.note ?? "", `後から足した（${baseId} の業務）`]
+          .filter(Boolean).join("／")
+      }, who);
+      const event = await conditionEvents.add(made.id, {
+        eventType: "inspection", occurredOn: input.occurredOn, amount: input.amount,
+        note: [input.name, input.note].filter(Boolean).join("／")
+      }, who);
+      res.status(201).json({ conditionId: made.id, conditionNo: made.conditionNo, eventId: event.id });
+    }));
+
   router.post("/conditions/:id/events",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -3438,8 +3489,35 @@ export function createRoutes(database: Transactable) {
       for (const [conditionId, ids] of groups) {
         await conditionEvents.linkDocument(conditionId, ids, id, who);
       }
+      await settleExtraRows(id, draft.templateKey, issuedOn ?? null, who);
     }
     return issued;
+  };
+
+  /**
+   * 検収書の経費・その他手数料の行に、実績を立てて文書に結ぶ。
+   *
+   * 行は決定のときに条件になる（settlement-conditions）が、実績が無いと支払
+   * （検収書に結び付いた実績から立つ）に入らず、紙に載った交通費が払われない。
+   * この文書に結び付いた実績がまだ無い条件だけに立てる（選んだ実績・訂正版で
+   * 移ってきた実績があれば立てない）。金額は行の額（経費は税込）。
+   */
+  const settleExtraRows = async (id: number, templateKey: string | null, issuedOn: string | null, who: string) => {
+    const doc = await database.query("SELECT rendered_values, issued_at FROM documents WHERE id = $1", [id]);
+    const head = doc.rows[0] as { rendered_values?: Record<string, unknown>; issued_at?: unknown } | undefined;
+    const rows = settlementEventRows(templateKey ?? "", head?.rendered_values ?? {});
+    const day = issuedOn ?? tokyoToday();
+    for (const r of rows) {
+      const has = await database.query(
+        `SELECT 1 FROM condition_events
+          WHERE condition_id = $1 AND document_id = $2 AND status = 'active' LIMIT 1`, [r.conditionId, id]);
+      if (has.rows.length) continue;
+      const made = await conditionEvents.add(r.conditionId, {
+        eventType: "inspection", occurredOn: r.occurredOn ?? day, amount: r.amount,
+        note: [r.name, r.remarks].filter(Boolean).join("／") || null
+      }, who);
+      await conditionEvents.linkDocument(r.conditionId, [made.id], id, who);
+    }
   };
 
   /**

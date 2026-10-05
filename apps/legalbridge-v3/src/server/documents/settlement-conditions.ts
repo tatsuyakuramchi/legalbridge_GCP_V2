@@ -141,3 +141,45 @@ export function expenseLinesFrom(conditions: Array<Record<string, any>>): Row[] 
 
 /** 発注書の品目から外す種類。手数料・経費は別の表（other_fees / expenses）に出る。 */
 export const isSettlementKind = (kind: unknown): boolean => kind === "fee" || kind === "expense";
+
+/** 実績を立てる行（検収書の経費・その他手数料のうち、条件の付いたもの）。 */
+export interface SettlementEventRow {
+  conditionId: number; kind: "fee" | "expense"; name: string; amount: number;
+  /** 利用日。無ければ決定日で立てる。 */
+  occurredOn: string | null; remarks: string | null;
+}
+
+/** 実績まで立てるひな形。発注書は実績の出どころではない（行は条件になるだけ）。 */
+const EVENT_TEMPLATES = new Set([
+  "inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate"
+]);
+
+/**
+ * 決定した検収書の経費・その他手数料の行（焼き付けた値）から、実績にする行を拾う。
+ *
+ * 支払は検収書に結び付いた実績から立つ（payments.createFromInspection）。行を打って
+ * 条件ができても実績が無いと、紙に載った交通費が支払から落ちる。紙と支払を揃える
+ * ため、ここで拾った行のうち、この文書に結び付いた実績の無い条件に実績を立てる。
+ */
+export function settlementEventRows(templateKey: string, values: Record<string, unknown>): SettlementEventRow[] {
+  if (!EVENT_TEMPLATES.has(templateKey)) return [];
+  const out: SettlementEventRow[] = [];
+  const date = (v: unknown) => (/^\d{4}-\d{2}-\d{2}/.test(text(v)) ? text(v).slice(0, 10) : null);
+  for (const row of rowsOf(values.expenses)) {
+    const id = int(row.condition_id);
+    const amount = firstAmount(row, "amount_inc_tax", "amount");
+    if (id && amount && amount > 0) {
+      out.push({ conditionId: id, kind: "expense", name: text(row.expense_name) || "経費", amount,
+                 occurredOn: date(row.spent_date), remarks: text(row.remarks) || null });
+    }
+  }
+  for (const row of rowsOf(values.other_fees)) {
+    const id = int(row.condition_id);
+    const amount = amountOf(row.amount);
+    if (id && amount && amount > 0) {
+      out.push({ conditionId: id, kind: "fee", name: text(row.fee_name) || "その他手数料", amount,
+                 occurredOn: null, remarks: text(row.remarks) || null });
+    }
+  }
+  return out;
+}
