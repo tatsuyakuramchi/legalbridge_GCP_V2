@@ -21,7 +21,7 @@ const HELPERS = new Set([
  * ここに無いヘルパは名前そのものが点検に出て「formatDate が空」と誤報する。
  */
 const VALUE_HELPERS = new Set([
-  "formatDate", "formatDateCompact", "formatCurrency", "formatMoney", "formatPct", "formatYen",
+  "formatDate", "formatDateCompact", "formatDateDot", "formatCurrency", "formatMoney", "formatPct", "formatYen",
   "circledNum", "index1", "add", "multiply", "or", "gt", "lt", "eq", "ne", "join", "length",
   "concat", "cycleLabel", "cycleLabelEn", "billingDayLabel", "billingDayLabelEn", "invoiceLabel"
 ]);

@@ -65,7 +65,8 @@ export interface DocumentSetDeps {
 }
 
 /** 条件書（決定で合意を起こす）か。これには文書の合意を付けない（付けると自動の合意が立たない）。 */
-const TERMS_KEYS = new Set(["individual_license_terms_v3", "pub_license_terms_v3", "pub_license_terms_v3_annex"]);
+const TERMS_KEYS = new Set(["individual_license_terms_v3", "individual_license_terms_v4",
+  "pub_license_terms_v3", "pub_license_terms_v3_annex"]);
 
 export async function issueDocumentSet(deps: DocumentSetDeps, input: DocumentSetInput, actor: string): Promise<DocumentSetResult> {
   const docs = input.docs.filter((d) => d.templateKey);

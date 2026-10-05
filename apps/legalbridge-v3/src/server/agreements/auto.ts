@@ -18,7 +18,7 @@ import { allocateNumber } from "../core/numbering.js";
 
 /** 合意を起こす条件書のひな形。 */
 export const TERMS_TEMPLATE_KEYS = new Set([
-  "individual_license_terms_v3", "pub_license_terms_v3", "pub_license_terms_v3_annex"
+  "individual_license_terms_v3", "individual_license_terms_v4", "pub_license_terms_v3", "pub_license_terms_v3_annex"
 ]);
 
 export interface AutoAgreementInput {

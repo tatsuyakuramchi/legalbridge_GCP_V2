@@ -48,6 +48,16 @@ test("基本契約を作る → 条件を載せる → 基本契約書 → 条�
   assert.deepEqual(r.documents.map((d) => d.role), ["master", "main", "extra"]);
 });
 
+test("個別利用許諾条件書V4 も条件書として扱う（文書の合意を付けない。V3 と混ぜて作れる）", async () => {
+  const { deps, calls } = harness();
+  await issueDocumentSet(deps, { ...input, docs: [
+    { ...input.docs[0], templateKey: "individual_license_terms_v4" },
+    { ...input.docs[1], templateKey: "individual_license_terms_v3" }
+  ] }, "legal@x");
+  const drafts = calls.filter((c) => c.startsWith("draft:"));
+  assert.deepEqual(drafts, ["draft:license_master:50:", "draft:individual_license_terms_v4:null:1", "draft:individual_license_terms_v3:null:2"]);
+});
+
 test("必須の欄が空なら何も決定せず、作った基本契約と条件の載せ替えを戻す", async () => {
   const { deps, calls, db } = harness({ missingFor: "individual_license_terms_v3" });
   await assert.rejects(() => issueDocumentSet(deps, input, "x"), /何も決定していません[\s\S]*発行日/);

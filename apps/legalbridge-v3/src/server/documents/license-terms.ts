@@ -1,5 +1,8 @@
 /**
- * 個別利用許諾条件書（individual_license_terms_v3）。
+ * 個別利用許諾条件書（individual_license_terms_v3 / v4）。
+ *
+ * V4（2026-10 ローンチ）は本文だけが違う（CloudSign 向けの体裁。infra/v3/155）。
+ * 項目・表の種・計算ブロックは V3 と共通で、ここが両方に効く。
  *
  * この書類だけ、項目の一覧が V1・V2 では **コードの中** にあった
  * （V2 template-repository の `databaseFields.length === 0 ? individualLicenseV3Fields`）。
@@ -18,8 +21,11 @@ import type { TemplateVariable } from "./binding.js";
 import { dealIdOfUsage } from "../core/condition-usage.js";
 
 export const LICENSE_TERMS_KEY = "individual_license_terms_v3";
+/** V4。新しく作る条件書はこちら（V3 で作った文書は V3 のまま）。 */
+export const LICENSE_TERMS_V4_KEY = "individual_license_terms_v4";
+export const LICENSE_TERMS_KEYS = [LICENSE_TERMS_KEY, LICENSE_TERMS_V4_KEY];
 export const isLicenseTermsTemplate = (templateKey: string): boolean =>
-  templateKey === LICENSE_TERMS_KEY;
+  LICENSE_TERMS_KEYS.includes(templateKey);
 
 type Data = Record<string, any>;
 
@@ -47,6 +53,32 @@ export const CALC_MODEL_LABEL: Record<string, string> = {
   SUBSCRIPTION: "サブスク", SUPPLY_QTY: "供給価格×個数×料率"
 };
 
+/**
+ * 取引モデル（許諾料の算定式のモデル）がどの場面に当たるか。許諾料の条に書く。
+ * 何を許諾するか（許諾内容）とは別の話なので、許諾内容の条には書かない。
+ */
+export const DEAL_DESCRIPTION: Record<string, string> = {
+  "自社製造・自社販売": "被許諾者が対象製品を製造し、自ら販売する場合",
+  "権利許諾（サブライセンス）": "被許諾者が第三者に再許諾し、許諾収入を得る場合",
+  "自社製造・他社販売": "被許諾者が対象製品を製造し、販売店その他の第三者に供給する場合"
+};
+
+/** 取引モデルの英語の見出し（V4 の許諾料の欄）。 */
+export const DEAL_NAME_EN: Record<string, string> = {
+  "自社製造・自社販売": "SELF-PUBLISHING",
+  "権利許諾（サブライセンス）": "SUBLICENSE",
+  "自社製造・他社販売": "WHOLESALE"
+};
+
+/** 取引モデル名を見出し2行に分ける。括弧の前か「・」で分け、分けられなければ1行。 */
+export function headLines(name: string): { condHead1: string; condHead2: string } {
+  const paren = name.search(/[（(]/);
+  if (paren > 0) return { condHead1: name.slice(0, paren), condHead2: name.slice(paren) };
+  const dot = name.indexOf("・");
+  if (dot > 0) return { condHead1: name.slice(0, dot), condHead2: name.slice(dot + 1) };
+  return { condHead1: name, condHead2: "" };
+}
+
 /** 加算型の形態。構成要素の料率を合算する側で、料率の列がここの数だけ出る。 */
 export const addonDeals = (deals: Data[]): Data[] => deals.filter((d) => Boolean(d.addon));
 
@@ -64,9 +96,12 @@ export const LICENSE_TERMS_VARIABLES: TemplateVariable[] = [
   { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "masterAgreement.datedTitle" },
   { name: "work_id", label: "作品ID", group: "I. 基本情報",
     helpText: "作品台帳との参照キー", dbField: "work.code", noGuess: true },
-  { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["表示する", "表示しない"],
+  // 「署名」「押印」は署名欄の形（署名の枠／印の枠）。どちらも本番の現行ひな形では
+  // 「表示する」と同じに働く（現行ひな形は「表示しない」かどうかしか見ない）。
+  // 以前の「表示する」は「署名」として扱う。
+  { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["署名", "押印", "表示しない"],
     group: "I. 基本情報", noGuess: true,
-    helpText: "基本契約と一括で電子署名する場合は「表示しない」にすると、基本契約側の署名欄だけになります。" },
+    helpText: "署名＝署名日と署名の枠、押印＝署名日と印の枠。基本契約と一括で電子署名する場合は「表示しない」にすると、基本契約側の署名欄だけになります。" },
 
   { name: "Licensor_氏名会社名", label: "Licensor 名称", group: "II. Licensor", required: true,
     dbField: "vendor.vendor_name", noGuess: true },
@@ -256,6 +291,8 @@ export function dealSeeds(context: Data): Data[] {
       rateConflict: !deal.addon
         && new Set(matches.map((c) => text(c.ratePct ?? ""))).size > 1,
       reg: joined(match.scopes?.region) || String(deal.maxReg),
+      // 取引モデルごとの独占性。条件明細ごとに持っている（同じ作品でも形態で違うことがある）。
+      excl: text(match.exclusivityLabel ?? ""),
       lang: joined(match.scopes?.language) || String(deal.maxLang),
       ag: text(match.agAmount ?? 0), mg: text(match.mgAmount ?? 0),
       cur: match.currency ?? deal.cur
@@ -340,29 +377,71 @@ export function materialSeeds(context: Data): Data[] {
     groups.get(key)!.push(condition);
   }
 
-  return [...groups.values()].map((group) => {
+  const rows = [...groups.values()].map((group) => {
     const head = group[0];
     const source = acquisitions.find((a) => Number(a.id) === Number(head.id))
       ?? acquisitions.find((a) => a.partName && a.partName === head.work?.part);
     const rates: Data = {};
+    // 非加算型の料率は合算に混ぜないよう別の置き場所に置く（紙の列に出すだけ）。
+    const fixedRates: Data = {};
     for (const condition of group) {
       const dealId = assigned.get(Number(condition.id));
       if (dealId && addonIds.has(dealId)) rates[String(dealId)] = text(condition.ratePct ?? "");
+      else if (dealId) fixedRates[String(dealId)] = text(condition.ratePct ?? "");
     }
     return {
       material_code: text(source?.conditionNo ?? head.conditionNo ?? ""),
-      // 構成要素の名前は素材（パート）の名前。無ければ作品名。条件名は
-      // 「作品名｜取引モデル」なので、ここに出すと構成要素の欄に取引の名前が並ぶ。
-      name: text(head.work?.part || head.work?.title || ""),
+      // 構成要素の名前は「原作名_何の要素か」。素材（パート）の名前は台帳の
+      // 呼び名で、相手方には何を指すのか分からない（重複を見分けるのに残す）。
+      name: componentName(head.work ?? {}, roleOfPart(head.work ?? {})),
+      part_name: text(head.work?.part ?? ""),
       holder: text(head.counterparty?.name ?? ""),
       source_doc: text(source?.agreementNo ?? ""),
       region: joined(head.scopes?.region) || joined(source?.regions) || "全世界",
       language: joined(head.scopes?.language) || joined(source?.languages) || "全言語",
       // 構成上の役割。素材の種別から決める。人が直せる。
       role: roleOfPart(head.work ?? {}),
-      rates
+      rates,
+      fixed_rates: fixedRates
     };
   });
+  // 同じ種別のサブが2つあると同じ名前になる（どちらも「_イラスト・グラフィック等」）。
+  // そのときだけ台帳の素材名を添えて見分ける。
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.name, (counts.get(row.name) ?? 0) + 1);
+  return rows.map((row) => (counts.get(row.name)! > 1 && row.part_name
+    ? { ...row, name: `${row.name}（${row.part_name}）` } : row));
+}
+
+/** オリジナルゲームデザイン一式の定義。コアロジックの行の下に出す。 */
+export const CORE_DEFINITION =
+  "オリジナルゲームデザインとは、本著作物を構成するゲームデザイン、イラスト、グラフィック、コンポーネント等の総称をいう。";
+
+/** サブコンポーネントの名前に付ける「何の要素か」。素材の種別（work_parts.part_type）から。 */
+const SUB_LABEL: Record<string, string> = {
+  illustration: "イラスト・グラフィック等", design: "イラスト・グラフィック等",
+  photo: "写真等", text: "テキスト等", music: "音楽等"
+};
+
+/**
+ * 構成要素の紙の上の名前。原作名（作品が原作ならその名前）に、何の要素かを付ける。
+ *   コアロジック      … ito_オリジナルゲームデザイン一式
+ *   サブコンポーネント … ito_イラスト・グラフィック等
+ * 種別が決まっていないサブは、台帳の素材名から原作名の接頭辞を外して使う。
+ * 素材の指定が無ければ（作品まるごと）作品名だけ。
+ */
+export function componentName(
+  work: { sourceTitle?: string | null; title?: string | null; part?: string | null; partType?: string | null },
+  role: "core" | "sub"
+): string {
+  const base = text(work.sourceTitle || work.title || "").trim();
+  const part = text(work.part ?? "").trim();
+  const ownPart = base && part.startsWith(base) ? part.slice(base.length).replace(/^[_＿\s]+/, "") : part;
+  const label = role === "core" ? "オリジナルゲームデザイン一式"
+    : SUB_LABEL[String(work.partType ?? "").toLowerCase()] ?? ownPart;
+  // 素材の指定が無い条件（作品まるごと）は、作品名だけにする。
+  if (!label) return base;
+  return base ? `${base}_${label}` : label;
 }
 
 /**
@@ -411,42 +490,91 @@ export function licenseScopeSentence(context: Data, bound: Data = {}): string {
 
   const product = value("対象製品予定名", "productName");
   const exclusivity = value("独占性", "exclusivity");
-  const condition = context.condition ?? {};
-  const sublicensable = condition.sublicensable;
+  const terms = licenseTermParts(context, bound);
 
   const parts: string[] = [];
   parts.push(`本許諾の範囲は、${region || "全世界"}における${language || "全言語"}`
     + `${product ? `の${product}` : ""}とする。`);
   if (exclusivity) parts.push(`本許諾は${exclusivity}とする。`);
+  parts.push(terms.term, terms.renewal, terms.report, terms.payment, terms.sublicense);
+  return parts.join("");
+}
+
+/** 地域・言語の並びを比べるための鍵。区切り（・、,）と順序の違いは同じとみなす。 */
+const scopeKey = (value: unknown): string =>
+  text(value).split(/[・、,，\s]+/).filter(Boolean).sort().join("・");
+
+/**
+ * 報告と支払を1文で書く（V4 の書き方）。
+ * 締日の翌月の期日（個人＝20日／法人＝末日）までに計算書を交付し、同日までに振り込む。
+ * 期日は報告も支払も許諾者の種別だけで決まる。条件明細の支払条件（移行で一律の
+ * 文字列が入っていることがある）では変えない。
+ */
+export function reportSentence(context: Data, bound: Data = {}): string {
+  const condition = context.condition ?? {};
+  const day = paymentDayOf(context, bound);
+  const head = String(condition.statementTiming ?? "") === "event"
+    ? `被許諾者は、対象製品の製造のつど、製造月の翌月${day}までに許諾料計算書を許諾者に交付する`
+    : `被許諾者は、各計算期間の末日を締日とし、締日の翌月${day}までに許諾料計算書を許諾者に交付する`;
+  return `${head}とともに、同日までに算定された許諾料を許諾者の指定する銀行口座へ振り込む方法により支払うものとする。`;
+}
+
+/** 報告日・支払日。許諾者が個人なら翌月20日、法人なら翌月末日。 */
+export const paymentDayOf = (context: Data, bound: Data = {}): "20日" | "末日" =>
+  licensorIsIndividual(context, bound) ? "20日" : "末日";
+
+/**
+ * 許諾者が個人か。条件書の「Licensor 種別」が先、無ければ取引先の種別。
+ * どちらも無ければ法人として扱う（本文の licensorIsCorp と同じ既定）。
+ */
+export function licensorIsIndividual(context: Data, bound: Data = {}): boolean {
+  const chosen = text(bound["許諾者種別"] ?? context["許諾者種別"] ?? "").trim();
+  if (chosen) return chosen === "個人";
+  return text(context.condition?.counterparty?.kind) === "individual";
+}
+
+/**
+ * 許諾範囲の文のうち、条件明細から決まる部分（期間・更新・計算書・支払・再許諾）。
+ * 条件書の本文は、これを1文にまとめず欄ごとに出す（地域・言語・独占性は
+ * 別の欄にあるので、まとめた文を載せると同じことが2回書かれる）。
+ */
+export function licenseTermParts(context: Data, bound: Data = {}): Record<
+  "term" | "renewal" | "report" | "payment" | "sublicense", string
+> {
+  const condition = context.condition ?? {};
+  const out = { term: "", renewal: "", report: "", payment: "", sublicense: "" };
   // 許諾期間と更新。終了日・自動更新は条件明細にある（A-039）。書かないと
   // 「期間の定めなし」と読まれる。
-  const start = value("許諾開始日") || text(condition.termStart ?? "");
+  const start = text(bound["許諾開始日"] ?? context["許諾開始日"] ?? "").trim() || text(condition.termStart ?? "");
   const end = text(condition.termEnd ?? "");
   if (end) {
-    parts.push(`許諾期間は${start ? `${japanese(start)}から` : ""}${japanese(end)}までとする。`);
+    out.term = `許諾期間は${start ? `${japanese(start)}から` : ""}${japanese(end)}までとする。`;
     if (condition.autoRenew === true) {
       const months = Number(condition.renewMonths ?? 12) || 12;
       const unit = months % 12 === 0 ? `${months / 12}年` : `${months}か月`;
-      parts.push(`期間満了の3か月前までにいずれの当事者からも書面による申出がないときは、同一条件で${unit}間更新され、以後も同様とする。`);
+      out.renewal = `期間満了の3か月前までにいずれの当事者からも書面による申出がないときは、同一条件で${unit}間更新され、以後も同様とする。`;
     }
   } else if (start) {
-    parts.push(`許諾期間は${japanese(start)}から期間の定めなしとする。`);
+    out.term = `許諾期間は${japanese(start)}から期間の定めなしとする。`;
   }
-  // 計算書と支払。計算書の時期（締めごと／製造ごと）と支払条件は条件明細にある。
+  // 計算書と支払。計算書の時期（締めごと／製造ごと）は条件明細にある。
+  // 期日は報告も支払も許諾者が個人か法人かだけで決まる（個人＝翌月20日、法人＝翌月末日）。
+  const day = paymentDayOf(context, bound);
   const timing = String(condition.statementTiming ?? "");
-  const payment = text(condition.paymentTerms ?? "").trim();
-  if (timing === "periodic") parts.push("被許諾者は、各計算期間の末日で締め、締め後30日以内に許諾料計算書を許諾者に送付する。");
-  if (timing === "event") parts.push("被許諾者は、対象製品の製造のつど許諾料計算書を許諾者に送付する。");
-  if (payment) parts.push(`許諾料の支払は、${payment}とする。`);
+  out.report = timing === "event"
+    ? `被許諾者は、対象製品の製造のつど、製造月の翌月${day}までに許諾料計算書を許諾者に送付する。`
+    : `被許諾者は、各計算期間の末日で締め、締め日の翌月${day}までに許諾料計算書を許諾者に送付する。`;
+  out.payment = "被許諾者は、同日までに許諾料を許諾者の指定する口座に振り込んで支払う。";
   // 再許諾は「書いていない＝できない」と読まれる。条件明細で決まっているので、
   // どちらであっても書く。承諾の要否（A-033）で条文を分ける。
+  const sublicensable = condition.sublicensable;
   if (sublicensable === true) {
-    parts.push(condition.sublicenseConsent === "covered"
+    out.sublicense = condition.sublicenseConsent === "covered"
       ? "被許諾者は、本許諾の範囲内で第三者に再許諾することができる。"
-      : "被許諾者は、許諾者の事前の書面による承諾を得て、第三者に再許諾することができる。");
+      : "被許諾者は、許諾者の事前の書面による承諾を得て、第三者に再許諾することができる。";
   }
-  if (sublicensable === false) parts.push("被許諾者は、第三者に再許諾することができない。");
-  return parts.join("");
+  if (sublicensable === false) out.sublicense = "被許諾者は、第三者に再許諾することができない。";
+  return out;
 }
 
 /**
@@ -512,6 +640,16 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     return found ? percent(total) : "—";
   };
 
+  const pick = (...keys: string[]): string => {
+    for (const key of keys) {
+      const value = manual[key] ?? context[key];
+      if (value != null && String(value).trim() !== "") return String(value);
+    }
+    return "";
+  };
+  const formulaOf = (deal: Data): string => (/料率/.test(text(deal.basePrice)) ? text(deal.basePrice)
+    : `${text(deal.basePrice) || "基準価格"} × 料率`);
+
   const conds = deals.map((deal, index) => ({
     condLabel: `条件${index + 1}`,
     condName: text(deal.name),
@@ -524,20 +662,28 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     quantity: text(deal.qty) || "1",
     ag: text(deal.ag) || "0",
     mg: text(deal.mg) || "0",
-    currency: text(deal.cur) || "JPY"
+    currency: text(deal.cur) || "JPY",
+    // 算定式の文。基準価格の欄に「料率」まで書いてあればそのまま使う。
+    condFormula: formulaOf(deal),
+    // 料率を数字で埋めた算定式（「上代（MSRP）× 数量 × 5%」）。料率が無ければ「料率」のまま。
+    condFormulaRated: appliedRate(deal) === "—" ? formulaOf(deal)
+      : formulaOf(deal).replace(/料率\s*$/, appliedRate(deal)),
+    condNameEn: DEAL_NAME_EN[text(deal.name)] ?? "",
+    // 狭い列の見出し用に2行へ分けた名前（「自社製造／自社販売」「権利許諾／（サブライセンス）」）。
+    // 文字数で折り返すと「自社製造・自社販／売」のように語の途中で切れる。
+    ...headLines(text(deal.name)),
+    /** 取引モデルごとの独占性。条件明細に無ければ書類の独占性。 */
+    condExclusivity: text(deal.excl) || pick("独占性", "exclusivity"),
+    /** 許諾料の条に書く、その取引モデルが当たる場面。 */
+    condDesc: DEAL_DESCRIPTION[text(deal.name)] ?? "",
+    /** AG・MG は 0 なら紙に書かない（「AG 0 JPY」を並べない）。 */
+    hasGuarantee: (number(deal.ag) ?? 0) > 0 || (number(deal.mg) ?? 0) > 0
   }));
 
   const addons = deals.map((deal, index) => ({ deal, index })).filter(({ deal }) => Boolean(deal.addon));
   const holders = new Set(materials.map((m) => text(m.holder).trim()).filter(Boolean));
   const showHolder = holders.size > 1;
 
-  const pick = (...keys: string[]): string => {
-    for (const key of keys) {
-      const value = manual[key] ?? context[key];
-      if (value != null && String(value).trim() !== "") return String(value);
-    }
-    return "";
-  };
   const contact = (...keys: string[]) =>
     keys.map((k) => manual[k]).filter((v) => v != null && String(v).trim() !== "").join(" ／ ");
 
@@ -565,10 +711,47 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
     maxRegion: pick("v3_maxRegion", "許諾地域", "maxRegion"),
     maxLanguage: pick("v3_maxLanguage", "許諾言語", "maxLanguage"),
     scope: pick("v3_scope", "許諾範囲", "scope"),
+    /**
+     * 許諾範囲の文を人が直したか。直していなければ、文の中身は許諾条件の各欄
+     * （地域・言語・独占性・期間・支払・再許諾）と同じなので紙に載せない。
+     * 直したときだけ、その文を「補足」として載せる（人の手入力を落とさない）。
+     */
+    scopeEdited: (() => {
+      const written = pick("v3_scope", "許諾範囲", "scope").trim();
+      return Boolean(written) && written !== licenseScopeSentence(context, manual);
+    })(),
+    ...(() => {
+      const parts = licenseTermParts(context, manual);
+      return {
+        termText: parts.term + parts.renewal,
+        reportText: parts.report + parts.payment,
+        sublicenseText: parts.sublicense
+      };
+    })(),
     conds,
     addonConds: addons.map(({ deal, index }) => ({
       condLabel: conds[index].condLabel, condName: conds[index].condName, appliedRate: appliedRate(deal)
     })),
+    /** 再許諾の取引モデル（非加算型）を載せているか。許諾内容に再許諾を書くかを決める。 */
+    hasSublicense: deals.some((deal) => !deal.addon),
+    /**
+     * 取引モデルによって地域・言語が違うか。違うときだけ、許諾条件の
+     * 「地域・言語」欄に取引モデルごとの内訳を出す（同じなら1行で足りる）。
+     */
+    /**
+     * 再許諾の書き方。consent=許諾者の事前の書面承諾が要る / covered=範囲内なら要らない /
+     * none=できない。条件明細で決まっていなければ、再許諾の取引モデルを載せていれば
+     * 承諾が要る側（安全な側）で書き、載せていなければ書かない。
+     */
+    sublicenseMode: (() => {
+      const condition = context.condition ?? {};
+      if (condition.sublicensable === false) return "none";
+      if (condition.sublicensable === true) return condition.sublicenseConsent === "covered" ? "covered" : "consent";
+      return deals.some((deal) => !deal.addon) ? "consent" : "";
+    })(),
+    /** 報告・支払の1文（V4）。期日は許諾者の種別で決まる。 */
+    reportSentence: reportSentence(context, manual),
+    scopeVaries: new Set(conds.map((c) => `${scopeKey(c.condRegion)}|${scopeKey(c.condLang)}`)).size > 1,
     showHolder,
     scopeColCount: 5 + (showHolder ? 1 : 0),
     rateColCount: 2 + addons.length,
@@ -586,7 +769,18 @@ export function licenseTermsPatch(context: Data, manual: Data = {}): Data {
         /** 構成上の役割。本文が出し分けるならこれを見る。 */
         lcRole: material.role === "sub" ? "サブコンポーネント" : "コアロジック",
         lcIsCore: material.role !== "sub",
-        addonRates: addons.map(({ deal }) => percent(number(rates[String(deal.id ?? "")])))
+        /** 構成要素の説明。コアロジックはオリジナルゲームデザインの定義。 */
+        lcNote: material.role === "sub" ? "" : CORE_DEFINITION,
+        addonRates: addons.map(({ deal }) => percent(number(rates[String(deal.id ?? "")]))),
+        /**
+         * 載せる取引形態すべての列（加算型も非加算型も）。出版等の条件書が
+         * 紙・電子を列にしているのと同じ形で、構成要素1行に取引形態ぶんの料率が並ぶ。
+         */
+        dealRates: deals.map((deal) => {
+          const map = deal.addon ? rates
+            : (material.fixed_rates && typeof material.fixed_rates === "object" ? material.fixed_rates as Data : {});
+          return percent(number(map[String(deal.id ?? "")]));
+        })
       };
     }),
     calcBaseRows: calcBaseRows.length ? calcBaseRows

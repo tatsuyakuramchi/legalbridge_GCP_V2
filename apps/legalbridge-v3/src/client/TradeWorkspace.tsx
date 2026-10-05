@@ -39,7 +39,11 @@ const patternLabel = (p: TradePattern) => { const x = PATTERNS.find((q) => q.val
 
 /** 段階 3 で作る文書。ひな形は本番 DB のもの（template_key）。 */
 const DOCS: Record<TradePattern, Array<{ key: string; label: string; conditions: "license_in" | "license_out" | "service" | "none" }>> = {
-  game_in: [{ key: "individual_license_terms_v3", label: "個別利用許諾条件書", conditions: "license_in" }],
+  // V4（2026-10 ローンチ。CloudSign 体裁）を先に、V3 を後に並べて選ばせる。
+  // ボタンは有効なひな形だけ出す（V3 を止めれば V4 だけになる）。V3 で作った文書は
+  // どちらでも一覧に出る（一覧はここに並ぶ鍵すべてで拾う）。
+  game_in: [{ key: "individual_license_terms_v4", label: "個別利用許諾条件書V4", conditions: "license_in" },
+            { key: "individual_license_terms_v3", label: "個別利用許諾条件書V3", conditions: "license_in" }],
   pub_in: [{ key: "pub_master_individual", label: "出版許諾契約書（個人）", conditions: "license_in" },
            { key: "pub_master_corporate", label: "出版許諾契約書（法人）", conditions: "license_in" }],
   game_out: [{ key: "pub_license_terms_v3", label: "利用許諾条件書（一覧形式）", conditions: "license_out" },
@@ -116,6 +120,17 @@ function TradeFlow(
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  /**
+   * 有効なひな形の鍵。作るボタンはここにある鍵だけ出す（止めたひな形で作ろうとすると
+   * 「テンプレートが見つかりません」で落ちる）。読めなかったら null のまま＝全部出す。
+   */
+  const [activeKeys, setActiveKeys] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    api.get<{ templates: Array<{ templateKey: string }> }>("/document-templates")
+      .then((r) => setActiveKeys(new Set(r.templates.map((t) => t.templateKey))))
+      .catch(() => undefined);
+  }, []);
+  const creatable = DOCS[p].filter((d) => !activeKeys || activeKeys.has(d.key));
   /** 文書をまとめて作る（基本契約書＋条件書・追加／基本契約書＋発注書・追加）。 */
   const [setOpen, setSetOpen] = useState(false);
   /** 送信・締結：決定した文書をまとめて送る（① メール 1 通 → ② CloudSign 1 封筒）。 */
@@ -300,7 +315,8 @@ function TradeFlow(
           {stage === 3 && detail && setOpen && party && SET_PATTERNS.has(p) && (
             <DocumentSet domain={p === "service" ? "service" : "license"} matterId={detail.id} partyId={party.id} partyName={party.name}
               masterKey={MASTER[p].key} masterLabel={MASTER[p].label}
-              termsOptions={p === "service" ? [{ key: "purchase_order", label: "発注書" }, { key: "intl_purchase_order", label: "発注書（海外）" }] : DOCS[p]}
+              termsOptions={p === "service" ? [{ key: "purchase_order", label: "発注書" }, { key: "intl_purchase_order", label: "発注書（海外）" }]
+                : creatable.length ? creatable : DOCS[p]}
               conditions={mine.map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name, work: c.work ? { id: c.work.id, title: c.work.title } : null }))}
               agreements={agreements} channels={channels} isAdmin={isAdmin}
               onIssued={() => void load(detail.id)} onOpenDocument={onOpenDocument} onClose={() => setSetOpen(false)} />
@@ -319,7 +335,7 @@ function TradeFlow(
                   </div>
                 )}
                 <div className="row" style={{ flexWrap: "wrap" }}>
-                  {DOCS[p].map((d) => (
+                  {creatable.map((d) => (
                     <button key={d.key} className="btn primary" disabled={!mine.length}
                             onClick={() => onCompose(conditionIdsFor(d.conditions), [], detail.id, d.key)}>
                       {d.label}を作る

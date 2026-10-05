@@ -46,6 +46,10 @@ const rows = (r: { rows: unknown[] }) => r.rows as Array<Record<string, any>>;
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 
 const like = (keyword: string) => `%${keyword.trim()}%`;
+/** 2つの取引先が同じか（統合を辿った先で比べる）。式は取引先の id を返す SQL。 */
+const SAME_PARTY = (left: string, right: string) =>
+  `(SELECT resolved_id FROM v_party_resolved WHERE party_id = ${left})
+     = (SELECT resolved_id FROM v_party_resolved WHERE party_id = ${right})`;
 
 // ---------------------------------------------------------------------------
 // 行の形をそろえる
@@ -189,11 +193,13 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
         `SELECT a.id, a.agreement_no, a.title, a.direction, a.status
            FROM conditions co JOIN agreements a ON a.id = co.agreement_id
           WHERE co.id = $1`, [id])).map(asAgreement),
+      // 候補は同じ相手先（統合を辿る）の契約だけ。他社の契約が並ぶと選び間違える。
       candidates: async (c, id, q) => rows(await c.query(
         `SELECT a.id, a.agreement_no, a.title, a.direction, a.status
            FROM agreements a
           WHERE ($2 = '' OR a.title ILIKE $2 OR COALESCE(a.agreement_no,'') ILIKE $2)
             AND a.direction = (SELECT direction FROM conditions WHERE id = $1)
+            AND ${SAME_PARTY("(SELECT counterparty_id FROM conditions WHERE id = $1)", "a.counterparty_id")}
           ORDER BY a.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asAgreement),
       attach: async (c, id, targetId) => {
         await assertExists(c, "agreements", targetId, "契約");
@@ -374,14 +380,26 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
       list: async (c, id) => rows(await c.query(
         `SELECT co.id, co.condition_no, co.name, co.kind, co.status
            FROM conditions co WHERE co.agreement_id = $1 ORDER BY co.id`, [id])).map(asCondition),
+      // 候補は同じ相手先（統合を辿る）・同じ向きの、生きている条件だけ。契約に
+      // 載っていないものを先に出す（載せ替えより、まだどこにも無いものを繋ぐことが多い）。
       candidates: async (c, id, q) => rows(await c.query(
         `SELECT co.id, co.condition_no, co.name, co.kind, co.status FROM conditions co
           WHERE co.agreement_id IS DISTINCT FROM $1
             AND co.direction = (SELECT direction FROM agreements WHERE id = $1)
+            AND co.status NOT IN ('superseded', 'void')
+            AND ${SAME_PARTY("co.counterparty_id", "(SELECT counterparty_id FROM agreements WHERE id = $1)")}
             AND ($2 = '' OR co.name ILIKE $2 OR COALESCE(co.condition_no,'') ILIKE $2)
-          ORDER BY co.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asCondition),
+          ORDER BY (co.agreement_id IS NULL) DESC, co.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asCondition),
       attach: async (c, id, targetId) => {
         await assertExists(c, "conditions", targetId, "条件");
+        // 条件の側から付けるときと同じ決まり（向きの違う契約には載せない）。
+        const d = await c.query(
+          `SELECT co.direction AS cd, a.direction AS ad
+             FROM conditions co, agreements a WHERE co.id = $1 AND a.id = $2`, [targetId, id]);
+        const row = d.rows[0] as { cd: string; ad: string } | undefined;
+        if (row && row.cd !== row.ad) {
+          throw new DomainError("VALIDATION", "向きが違う契約には載せられません（IN の条件は IN の契約へ）");
+        }
         await c.query("UPDATE conditions SET agreement_id = $1 WHERE id = $2", [id, targetId]);
       },
       detach: async (c, id, targetId) => {

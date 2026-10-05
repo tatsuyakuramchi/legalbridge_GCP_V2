@@ -1,0 +1,388 @@
+-- =====================================================================
+-- 155 個別利用許諾条件書V4（individual_license_terms_v4）を登録する
+--
+--   CloudSign で締結する前提の新しい体裁（利用者作成の CloudSign_LicenseTerms_v6_fixed.docx）。
+--   本文は 01 対象著作物／02 許諾条件／03 再許諾／04 通知先＋署名欄を1ページに収め、
+--   可変長の一覧は改ページして別紙に回す（別紙1 特記事項／別紙2 対象著作物一覧／
+--   別紙3 再許諾先一覧）。本文は infra/v3/templates/individual_license_terms_v4.html と同じ。
+--
+--   ・V3（individual_license_terms_v3）とは別のひな形として足す。V3 で作った文書は
+--     V3 の版のまま開ける・出し直せる（文書は自分の版を持っている）。
+--   ・採番のプレフィックスと分類は V3 からそのまま写す（ARC-ILT-年-連番 の帯を続ける）。
+--   ・項目（入力欄）は V3 と同じでコードが持つ（LICENSE_TERMS_VARIABLES）。variables は空。
+--   ・アプリ側は V4 を V3 と同じ条件書として扱う版が先に出ていること
+--     （isLicenseTermsTemplate・TERMS_TEMPLATES・TERMS_TEMPLATE_KEYS に v4）。
+--     出ていないと、V4 の入力欄が空で出る。
+--
+--   何度流しても同じ（登録済みで本文が同じなら何もしない。本文が違えば新しい版）。
+--   実行: Cloud SQL Studio にそのまま貼る／ローカルは
+--     docker compose run --rm ops sql /v3/155_individual_license_terms_v4.sql
+--
+--   V3 を新規作成の候補から外すとき（V4 で問題が無いのを確かめてから。既存の文書は開ける）:
+--     UPDATE v3.document_templates SET is_active = false
+--      WHERE template_key = 'individual_license_terms_v3';
+--   V4 を止めるとき（V3 に戻す）:
+--     UPDATE v3.document_templates SET is_active = false
+--      WHERE template_key = 'individual_license_terms_v4';
+--     UPDATE v3.document_templates SET is_active = true
+--      WHERE template_key = 'individual_license_terms_v3';
+-- =====================================================================
+
+BEGIN;
+
+DO $do$
+DECLARE
+  html constant text := $tpl$<!-- individual_license_terms_v4 r1 -->
+<!--
+  個別利用許諾条件書V4（individual_license_terms_v4）。本番へは infra/v3/155 が運ぶ
+  （この本文をそのまま埋めてある。直すときはここを直して 155 を作り直す）。
+  元は利用者作成の CloudSign_LicenseTerms_v6_fixed.docx。
+
+  本文は 01〜04 の4条＋署名欄を1ページに収める。可変長の一覧は改ページして別紙に回す：
+    別紙1 特記事項（無ければ「なし」）/ 別紙2 対象著作物一覧 / 別紙3 再許諾先一覧（締結後に行が増える）
+  差し込みは licenseTermsPatch（apps/legalbridge-v3/src/server/documents/license-terms.ts）の値。
+  署名欄（署名／押印／表示しない）は formData をそのまま描画に渡しているので直接参照できる。
+
+  見出し・余白は docx の値に合わせる（本文 7pt・表題 19pt・見出し 9pt、罫線は上の濃い線と
+  行間の薄い線だけ）。ヘッダー・フッターは @page の余白ボックスで出す
+  （描画器は Chromium の既定のヘッダー・フッターを切っている）。
+-->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>個別利用許諾条件書 {{contractNo}}</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm 11mm;
+    @top-right {
+      content: "ARC-LICENSE / INDIVIDUAL TERMS";
+      font: 6pt "Aptos", "Yu Gothic", "Noto Sans CJK JP", "IPAGothic", sans-serif; color: #888;
+      vertical-align: bottom; padding-bottom: 3mm;
+    }
+    @bottom-right {
+      content: "{{contractNo}}　個別利用許諾条件書";
+      font: 6pt "Aptos", "Yu Gothic", "Noto Sans CJK JP", "IPAGothic", sans-serif; color: #777;
+      vertical-align: top; padding-top: 3mm;
+    }
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Aptos", "Yu Gothic", "Noto Sans CJK JP", "IPAGothic", sans-serif;
+    font-size: 7pt; line-height: 1.5; color: #1c1c1c;
+  }
+  p { margin: 0 0 1.2mm; }
+  .en { color: #777; font-weight: normal; letter-spacing: .04em; }
+  h1 { font-size: 19pt; margin: 0; letter-spacing: .04em; }
+  .title-en { font-size: 7pt; color: #777; margin: 0 0 3mm; letter-spacing: .08em; }
+
+  /* 罫線は上の濃い線と行の下の薄い線だけ（縦線なし）。 */
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: .6mm 1.2mm; vertical-align: top; text-align: left; font-weight: normal; }
+  .meta td { border-top: 1px solid #222; border-bottom: .5px solid #bebebe; }
+  .meta .k, .party .k { color: #888; font-weight: bold; margin-right: 1.5em; }
+  .meta b { font-weight: bold; }
+  .parties { margin: 1.5mm 0 2mm; }
+  .parties td { width: 50%; border-top: 1px solid #222; border-bottom: .5px solid #bebebe; padding: 1.2mm 1.5mm; }
+  .party .k { display: block; margin: 0 0 .5mm; letter-spacing: .06em; }
+  .party .name { font-weight: bold; }
+
+  h2 { font-size: 9pt; margin: 3mm 0 1.2mm; padding-bottom: .6mm; border-bottom: 1px solid #222;
+       break-after: avoid; page-break-after: avoid; }
+  h2 .no { color: #999; font-size: 7.5pt; margin-right: 1.2em; }
+  h2 .en { font-size: 6.5pt; margin-left: 1.2em; }
+  h3 { font-size: 7pt; margin: 2.5mm 0 1mm; break-after: avoid; }
+
+  .kv td { border-bottom: .5px solid #d0d0d0; }
+  .kv tr:first-child td { border-top: .5px solid #555; }
+  .kv td.k { width: 22mm; background: #f5f5f5; font-weight: bold; white-space: nowrap; }
+  .kv tr { break-inside: avoid; page-break-inside: avoid; }
+
+  .grid th { background: #f2f2f2; font-weight: bold; border-top: 1px solid #555; border-bottom: .5px solid #999; }
+  .grid td { border-bottom: .5px solid #d0d0d0; }
+  .grid td.c, .grid th.c { text-align: center; }
+  .grid tr { break-inside: avoid; page-break-inside: avoid; }
+  .grid thead { display: table-header-group; }
+  .grid tfoot td { background: #f5f5f5; font-weight: bold; border-top: .5px solid #555; }
+  .grid td.sub { color: #555; border-bottom: .5px solid #d0d0d0; }
+  .grid tr.has-sub td { border-bottom: none; }
+  .grid tr.memo td { background: #fafafa; color: #555; }
+  .role { color: #777; display: block; }
+
+  /* 許諾料の欄。取引モデルごとのカードを横に並べる。 */
+  .cards { display: flex; gap: 2mm; margin: 1mm 0 2mm; break-inside: avoid; }
+  .card { flex: 1; border-top: 1px solid #555; border-bottom: .5px solid #d0d0d0; padding: 1mm 1.5mm; }
+  .card .en { display: block; color: #1c1c1c; font-weight: bold; letter-spacing: .06em; }
+  .card .name { font-weight: bold; }
+  .card .rate { margin-top: .6mm; }
+  .card .rate b { font-size: 10pt; margin-left: .6em; }
+  .card .f { color: #555; }
+
+  .sign { margin-top: 4mm; break-inside: avoid; page-break-inside: avoid; }
+  .sign td { width: 50%; border-top: 1px solid #222; padding: 1.5mm 1.5mm 2mm; }
+  .sign td + td { padding-left: 5mm; }
+  .sign .who { color: #888; font-weight: bold; letter-spacing: .06em; }
+  .party-sign { display: flex; align-items: flex-start; gap: 3mm; min-height: 9mm; }
+  .party-sign .names { flex: 1; }
+  /* 印の枠。 */
+  .stamp { width: 15mm; height: 15mm; border: .5px dashed #888; border-radius: 50%;
+           display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 8pt; }
+  /* 署名日・署名の枠。高さは 12pt 固定（CloudSign の入力欄をこの枠に合わせる）。 */
+  .field { display: flex; align-items: center; gap: 2mm; margin-top: 1.2mm; }
+  .field .lbl { width: 10mm; color: #555; }
+  .field .box { flex: 1; height: 12pt; box-sizing: border-box; border: .5px solid #999; }
+  /* 通知先は 12pt 固定の枠（1行。長い連絡先ははみ出さず切る）。 */
+  .notice td { padding-top: 0; padding-bottom: 0; vertical-align: middle; }
+  .notice .fix { height: 12pt; line-height: 12pt; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* 通知先と署名欄は割らない（署名欄だけが次のページに送られないように）。 */
+  .tail { break-inside: avoid; page-break-inside: avoid; }
+
+  .annex { break-before: page; page-break-before: always; }
+  /* 別紙の見出しは3つとも同じ形（本文の 01〜04 と同じ組み方で、少し大きく）。 */
+  .annex h2 { font-size: 10pt; margin: 0 0 1.5mm; }
+  .annex h2 .no { font-size: 8pt; }
+  .annex .part + .part { margin-top: 6mm; }
+  .lead { color: #555; }
+  .grid th .l2 { display: block; font-weight: normal; font-size: 6.5pt; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1>個別利用許諾条件書</h1>
+<p class="title-en">INDIVIDUAL LICENSE TERMS</p>
+
+<table class="meta">
+  <tr>
+    <td><span class="k">ISSUED</span><b>{{formatDateDot issueDate}}</b></td>
+    <td><span class="k">NO.</span><b>{{contractNo}}</b></td>
+    <td>{{#if workId}}<span class="k">WORK ID</span><b>{{workId}}</b>{{/if}}</td>
+  </tr>
+</table>
+
+<table class="parties">
+  <tr>
+    <td class="party">
+      <span class="k">LICENSOR / 許諾者</span>
+      <div class="name">{{licensorName}}</div>
+      <div>{{licensorAddress}}</div>
+      {{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}
+    </td>
+    <td class="party">
+      <span class="k">LICENSEE / 被許諾者</span>
+      <div class="name">{{licenseeName}}</div>
+      <div>{{licenseeAddress}}</div>
+      {{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}
+    </td>
+  </tr>
+</table>
+
+<p>許諾者と被許諾者は、両者間の{{#if masterAgreement}}{{masterAgreement}}{{else}}基本契約{{/if}}（以下「基本契約」という。）に基づき、以下のとおり個別の利用許諾条件を定める。本条件書に定めのない事項は基本契約による。</p>
+
+<h2><span class="no">01</span>対象著作物<span class="en">LICENSED WORKS</span></h2>
+<p>許諾の対象となる著作物、構成要素、権利元、取引モデル別料率及び根拠文書は、別紙2「対象著作物一覧」に定める。別紙2の「適用料率」を第2条の許諾料計算に用いる。</p>
+
+<h2><span class="no">02</span>許諾条件<span class="en">LICENSE TERMS</span></h2>
+<table class="kv">
+  <tr><td class="k">対象製品</td><td>「{{productName}}」（以下「対象製品」という。）</td></tr>
+  <tr><td class="k">利用の範囲</td><td>被許諾者は、第1条に定める対象著作物を対象製品に利用し、対象製品を企画、開発、製造及び販売（販売店その他の第三者を通じた販売を含む。）し、並びに対象製品の広告、宣伝その他販売促進のために必要な範囲で対象著作物を利用することができる。これら以外の利用については、許諾者及び被許諾者が別途書面により合意するものとする。</td></tr>
+  <tr><td class="k">許諾期間</td><td>本許諾の開始日は{{formatDate startDate}}とする。本許諾の終了、更新その他の有効期間に関する事項は、{{#if masterAgreement}}{{masterAgreement}}{{else}}基本契約{{/if}}の定めに従う。</td></tr>
+  {{#if (eq sublicenseMode "consent")}}<tr><td class="k">再許諾</td><td>被許諾者は、許諾者の事前の書面による承諾を得た場合に限り、第三者に対して対象著作物の利用を再許諾することができる。再許諾に関する条件及び再許諾先は、第3条及び別紙3「再許諾先一覧」に定める。</td></tr>{{/if}}
+  {{#if (eq sublicenseMode "covered")}}<tr><td class="k">再許諾</td><td>被許諾者は、本条件書に定める範囲内で、第三者に対して対象著作物の利用を再許諾することができる。再許諾に関する条件及び再許諾先は、第3条及び別紙3「再許諾先一覧」に定める。</td></tr>{{/if}}
+  {{#if (eq sublicenseMode "none")}}<tr><td class="k">再許諾</td><td>被許諾者は、第三者に対して対象著作物の利用を再許諾することができない。</td></tr>{{/if}}
+  {{#if supervisor}}<tr><td class="k">監修</td><td>被許諾者は、対象製品の内容について、許諾者が指定する監修者（{{supervisor}}）による監修を受けるものとする。</td></tr>{{/if}}
+  <tr><td class="k">特記事項</td><td>{{#if specialExtras.length}}本条件書に関する個別の追加条件、例外その他の特記事項は、別紙1「特記事項」に定める。別紙1は本条件書の一部を構成し、本条件書の本文と一体として適用される。{{else}}なし{{/if}}</td></tr>
+</table>
+
+<p style="margin-top:2mm">各取引モデルにおける独占性、許諾地域及び許諾言語は、次のとおりとする。</p>
+<h3>取引モデル別の許諾範囲 <span class="en">/ LICENSE SCOPE BY MODEL</span></h3>
+<table class="grid">
+  <thead><tr><th>取引モデル</th><th>独占性</th><th>許諾地域</th><th>許諾言語</th></tr></thead>
+  <tbody>
+  {{#each conds}}
+    <tr><td>{{condName}}</td><td>{{condExclusivity}}</td><td>{{condRegion}}</td><td>{{condLang}}</td></tr>
+  {{/each}}
+  </tbody>
+</table>
+
+<h3>許諾料 <span class="en">/ ROYALTY</span></h3>
+<p>被許諾者が許諾者に支払う許諾料は、各取引モデルに応じ、以下の算定基礎及び適用料率により算定する。構成要素ごとの料率及びその内訳は別紙2に定める。</p>
+<div class="cards">
+  {{#each conds}}
+  <div class="card">
+    {{#if condNameEn}}<span class="en">{{condNameEn}}</span>{{/if}}
+    <div class="name">{{condName}}</div>
+    <div class="rate">適用料率<b>{{appliedRate}}</b></div>
+    <div class="f">{{condFormulaRated}}</div>
+    {{#if hasGuarantee}}<div class="f">{{#if (gt ag 0)}}前払保証金 {{ag}} {{currency}}　{{/if}}{{#if (gt mg 0)}}最低保証 {{mg}} {{currency}}{{/if}}</div>{{/if}}
+  </div>
+  {{/each}}
+</div>
+<table class="kv">
+  <tr><td class="k">算定基準日</td><td>許諾料の算定に用いる数量の基準日は、{{#each calcBaseRows}}{{edition}}については{{trigger}}{{#if note}}（{{note}}）{{/if}}{{#unless @last}}、{{/unless}}{{/each}}とする。</td></tr>
+  <tr><td class="k">報告・支払</td><td>{{reportSentence}}</td></tr>
+</table>
+
+<h2><span class="no">03</span>再許諾<span class="en">SUBLICENSE</span></h2>
+<p>第三者に再許諾したときは、再許諾先・取引モデル・地域・言語・料率・開始日を別紙3「再許諾先一覧」に記載する。追加時は別紙3に行を加え、その更新をもって本条件書の一部とする。</p>
+
+<div class="tail">
+<h2><span class="no">04</span>通知先<span class="en">NOTICES</span></h2>
+<table class="kv notice">
+  <tr><td class="k"><div class="fix">許諾者</div></td><td><div class="fix">{{licensorContact}}</div></td></tr>
+  <tr><td class="k"><div class="fix">被許諾者</div></td><td><div class="fix">{{licenseeContact}}</div></td></tr>
+</table>
+
+{{#unless (eq 署名欄 "表示しない")}}
+<!-- 署名欄。署名日・署名の枠は空のまま刷る（CloudSign の入力欄を重ねる。年月日は刷らない）。
+     署名欄=押印 なら署名の枠の代わりに印の枠。 -->
+<table class="sign">
+  <tr>
+    <td>
+      <span class="who">LICENSOR / 許諾者</span>
+      <div class="party-sign">
+        <div class="names">
+          <div class="name"><b>{{licensorName}}</b></div>{{#if licensorIsCorp}}{{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}{{/if}}
+        </div>
+        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
+      </div>
+      <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
+      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+    </td>
+    <td>
+      <span class="who">LICENSEE / 被許諾者</span>
+      <div class="party-sign">
+        <div class="names">
+          <div class="name"><b>{{licenseeName}}</b></div>{{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}
+        </div>
+        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
+      </div>
+      <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
+      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+    </td>
+  </tr>
+</table>
+{{/unless}}
+</div>
+
+<!-- 別紙。本文（署名欄まで）の後ろに改ページして付ける。 -->
+<div class="annex">
+<div class="part">
+<h2><span class="no">別紙1</span>特記事項<span class="en">SPECIAL TERMS</span></h2>
+{{#if specialExtras.length}}
+<p class="lead">本条件書の本文に定める条件に加え、次の特記事項を適用する。</p>
+{{#each specialExtras}}<p>{{#if seId}}({{seId}}) {{/if}}{{seText}}</p>{{/each}}
+{{else}}
+<p>なし</p>
+{{/if}}
+</div>
+
+<div class="part">
+<h2><span class="no">別紙2</span>対象著作物一覧<span class="en">LICENSED WORKS REGISTER</span></h2>
+<p class="lead">一覧の1行が構成要素1点。コアロジックは許諾の対象そのもの、サブコンポーネントは追加の許諾料が発生する要素を示す。料率は取引モデルごとの合意料率を示し、「—」は当該モデルで料率がないことを示す。</p>
+<table class="grid">
+  <thead>
+    <tr>
+      <th class="c" style="width:7mm">No.</th>
+      <th>構成要素</th>
+      {{#if showHolder}}<th style="width:30mm">権利元</th>{{/if}}
+      {{#each conds}}<th class="c" style="width:22mm">{{condHead1}}{{#if condHead2}}<span class="l2">{{condHead2}}</span>{{/if}}</th>{{/each}}
+    </tr>
+  </thead>
+  <tbody>
+  {{#each lcs}}
+    <tr class="has-sub">
+      <td class="c">{{index1 @index}}</td>
+      <td><b>{{lcName}}</b><span class="role">{{lcRole}}</span></td>
+      {{#if ../showHolder}}<td>{{lcHolder}}</td>{{/if}}
+      {{#each dealRates}}<td class="c">{{this}}</td>{{/each}}
+    </tr>
+    <tr>
+      <td class="sub"></td>
+      <td class="sub" colspan="{{add (add ../conds.length 1) (or ../showHolder 0)}}">{{#if lcNote}}{{lcNote}}<br>{{/if}}根拠文書　{{lcSourceDoc}}</td>
+    </tr>
+  {{/each}}
+  </tbody>
+  {{#if conds.length}}
+  <tfoot>
+    <tr>
+      <td></td>
+      <td{{#if showHolder}} colspan="2"{{/if}}>適用料率</td>
+      {{#each conds}}<td class="c">{{appliedRate}}</td>{{/each}}
+    </tr>
+  </tfoot>
+  {{/if}}
+</table>
+</div>
+
+<div class="part">
+<h2><span class="no">別紙3</span>再許諾先一覧<span class="en">SUBLICENSE REGISTER</span></h2>
+<p class="lead">一覧の1行が再許諾1件。再許諾先を追加したときは、その都度本別紙に行を加える。料率は、当該再許諾について被許諾者が許諾者に支払う許諾料の料率を示す。</p>
+<table class="grid">
+  <thead>
+    <tr><th class="c" style="width:7mm">No.</th><th>再許諾先</th><th>取引モデル</th><th>地域 / 言語</th><th class="c" style="width:14mm">料率</th><th class="c" style="width:20mm">開始日</th></tr>
+  </thead>
+  <tbody>
+  {{#each sublicensees}}
+    <tr><td class="c">{{index1 @index}}</td><td>{{slPartner}}</td><td>{{slCond}}</td><td>{{slRegion}} / {{slLang}}</td>
+      <td class="c">{{#if slRate}}{{slRate}}%{{/if}}</td><td class="c">{{formatDateDot slDate}}</td></tr>
+    {{#if slNote}}<tr class="memo"><td></td><td>備考</td><td colspan="4">{{slNote}}</td></tr>{{/if}}
+  {{/each}}
+  {{#unless sublicensees.length}}
+    <tr><td></td><td colspan="5">（本条件書の締結時点で再許諾先はない）</td></tr>
+  {{/unless}}
+  </tbody>
+</table>
+</div>
+</div>
+
+</body>
+</html>
+$tpl$;
+  tpl_id bigint;
+  cur text;
+  base_prefix text;
+  base_category text;
+  next_no int;
+  new_id bigint;
+BEGIN
+  SELECT number_prefix, category INTO base_prefix, base_category
+    FROM v3.document_templates WHERE template_key = 'individual_license_terms_v3';
+  IF COALESCE(btrim(base_prefix), '') = '' THEN
+    RAISE EXCEPTION '個別利用許諾条件書V3（individual_license_terms_v3）が見つからないか、採番プレフィックスがありません';
+  END IF;
+
+  SELECT t.id, v.html_source INTO tpl_id, cur
+    FROM v3.document_templates t
+    LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
+   WHERE t.template_key = 'individual_license_terms_v4';
+  IF tpl_id IS NULL THEN
+    INSERT INTO v3.document_templates (template_key, label, category, number_prefix, is_active)
+    VALUES ('individual_license_terms_v4', '個別利用許諾条件書V4', base_category, base_prefix, true)
+    RETURNING id INTO tpl_id;
+  END IF;
+  IF cur IS NOT DISTINCT FROM html THEN
+    RAISE NOTICE '155: 個別利用許諾条件書V4 は登録済み（本文も同じ）。何もしません';
+    RETURN;
+  END IF;
+  SELECT COALESCE(max(version_no), 0) + 1 INTO next_no
+    FROM v3.document_template_versions WHERE template_id = tpl_id;
+  INSERT INTO v3.document_template_versions (template_id, version_no, html_source, variables, comment, created_by)
+  VALUES (tpl_id, next_no, html, '[]'::jsonb,
+          '155: 個別利用許諾条件書V4 r1（CloudSign 体裁・別紙1〜3・署名／押印）', 'sql:155')
+  RETURNING id INTO new_id;
+  UPDATE v3.document_templates SET current_version_id = new_id WHERE id = tpl_id;
+  RAISE NOTICE '155: individual_license_terms_v4 版 %（id=%）。採番は %', next_no, new_id, base_prefix;
+END
+$do$;
+
+COMMIT;
+
+-- 確認（V3 と V4 が並び、V4 の本文に r1 の目印がある）
+SELECT t.template_key AS ひな形, t.label AS 名前, t.category AS 分類, t.number_prefix AS 採番,
+       t.is_active AS 有効, v.version_no AS 版, v.id AS 版id,
+       (strpos(v.html_source, '<!-- individual_license_terms_v4 r1 -->') > 0) AS v4本文
+  FROM v3.document_templates t
+  JOIN v3.document_template_versions v ON v.id = t.current_version_id
+ WHERE t.template_key IN ('individual_license_terms_v3', 'individual_license_terms_v4')
+ ORDER BY 1;

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds, dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, licenseScopeSentence, licenseTermsPatch, licenseTermsSeeds, licenseTermsSuggestions, materialSeeds, calcOfCondition
+  FIXED_DEALS, LICENSE_TERMS_VARIABLES, assignDeals, dealIdFor, dealInUse, dealSeeds, dealModelFromNotes, isLicenseTermsTemplate, roleOfPart, componentName, licenseScopeSentence, licenseTermParts, licensorIsIndividual, licenseTermsPatch, licenseTermsSeeds, licenseTermsSuggestions, materialSeeds, calcOfCondition
 } from "./license-terms.js";
 
 /**
@@ -53,6 +53,7 @@ const context = {
 
 test("条件書のひな形だけを見分ける", () => {
   assert.equal(isLicenseTermsTemplate("individual_license_terms_v3"), true);
+  assert.equal(isLicenseTermsTemplate("individual_license_terms_v4"), true, "V4 も同じ項目・計算");
   assert.equal(isLicenseTermsTemplate("royalty_statement"), false);
 });
 
@@ -138,7 +139,9 @@ test("取引形態の種：条件明細の範囲・MG・AG・通貨を重ねる"
 test("構成要素の種：条件明細が指す素材で行を立て、加算型の列にだけ料率を置く", () => {
   const materials = materialSeeds(context);
   assert.equal(materials.length, 2, "条件4本でも素材は2つ");
-  assert.equal(materials[0].name, "ito_イラスト");
+  // 名前は「原作名_何の要素か」。同じ種別のサブが2つあるので台帳の素材名を添えて見分ける。
+  assert.equal(materials[0].name, "ito_イラスト・グラフィック等（ito_イラスト）");
+  assert.equal(materials[1].name, "ito_イラスト・グラフィック等（追加イラスト）");
   assert.equal(materials[0].holder, "株式会社オリジナル");
   assert.equal(materials[0].source_doc, "ARC-ILT-2026-0030");
   // 加算型は 1 と 3。非加算型（2）の 50% はここに入れない。
@@ -379,7 +382,9 @@ test("許諾範囲の文：期間・自動更新・計算書の時期・支払�
   assert.match(s, /許諾期間は2026年10月1日から2029年9月30日までとする/);
   assert.match(s, /同一条件で1年間更新され/);
   assert.match(s, /各計算期間の末日で締め/);
-  assert.match(s, /計算書送付後30日以内とする/);
+  // 支払の期日は許諾者の種別で決まる（条件明細の支払条件では変えない）。法人なので翌月末日。
+  assert.match(s, /締め日の翌月末日までに許諾料計算書を許諾者に送付する。被許諾者は、同日までに許諾料を/);
+  assert.doesNotMatch(s, /計算書送付後30日以内/);
   assert.match(s, /本許諾の範囲内で第三者に再許諾することができる/);
   const strict = licenseScopeSentence({ ...ctx, condition: { ...ctx.condition, sublicenseConsent: "required", autoRenew: false } });
   assert.match(strict, /事前の書面による承諾を得て/);
@@ -397,10 +402,45 @@ test("計算モデルは条件明細の計算方式から（定額・サブス�
   assert.equal(calcOfCondition({ pricingModel: "revenue_rate", royaltyBase: "上代" }, deal).basePrice, "上代 × 数量 × 料率");
 });
 
-test("構成要素の名前は素材か作品名。条件名（作品名｜取引モデル）は使わない", () => {
+test("素材の指定が無い条件の構成要素は作品名。条件名（作品名｜取引モデル）は使わない", () => {
   const materials = materialSeeds({ conditions: [
     { id: 1, conditionNo: "CL-1", name: "作品A｜自社製造・自社販売", usageType: "in_house", ratePct: 2,
       work: { title: "作品A", part: null }, counterparty: { name: "権利元" }, scopes: {} }
   ] });
   assert.equal(materials[0].name, "作品A");
+});
+
+test("構成要素の名前：コアは原作名_オリジナルゲームデザイン一式、サブは原作名_何の要素か", () => {
+  assert.equal(componentName({ title: "ito 新装版", sourceTitle: "ito", part: "ito_原作ゲームデザイン",
+    partType: "game_design" }, "core"), "ito_オリジナルゲームデザイン一式", "原作名があればそちら");
+  assert.equal(componentName({ title: "ito", part: "ito_イラスト", partType: "illustration" }, "sub"),
+    "ito_イラスト・グラフィック等");
+  assert.equal(componentName({ title: "ito", part: "ito_ルールブック文章", partType: "other" }, "sub"),
+    "ito_ルールブック文章", "種別が決まっていなければ素材名から原作名の接頭辞を外す");
+  const patch = licenseTermsPatch(context, { v3_lcs: [
+    { name: "ito_オリジナルゲームデザイン一式", role: "core", rates: { "1": "3" } },
+    { name: "ito_イラスト・グラフィック等", role: "sub", rates: { "1": "2" } }
+  ] });
+  assert.match(patch.lcs[0].lcNote, /^オリジナルゲームデザインとは、本著作物を構成する/);
+  assert.equal(patch.lcs[1].lcNote, "", "サブは名前で何の要素かが分かる");
+});
+
+test("計算書・支払の期日は許諾者が個人なら翌月20日、法人なら翌月末日", () => {
+  const condition = { statementTiming: "periodic", counterparty: { kind: "corporate" } };
+  const corp = licenseTermParts({ condition });
+  assert.match(corp.report, /締め日の翌月末日までに許諾料計算書を許諾者に送付する/);
+  assert.match(corp.payment, /同日までに許諾料を許諾者の指定する口座に振り込んで支払う/);
+  const person = licenseTermParts({ condition: { ...condition, counterparty: { kind: "individual" } } });
+  assert.match(person.report, /締め日の翌月20日までに/);
+  // 条件書の「Licensor 種別」が取引先の種別より先。
+  assert.equal(licensorIsIndividual({ condition }, { 許諾者種別: "個人" }), true);
+  assert.equal(licensorIsIndividual({ condition: { counterparty: { kind: "individual" } } }, { 許諾者種別: "法人" }), false);
+  assert.equal(licensorIsIndividual({}), false, "どちらも無ければ法人");
+  // 製造のつど報告する条件は製造月の翌月。
+  const event = licenseTermParts({ condition: { statementTiming: "event" } }, { 許諾者種別: "個人" });
+  assert.match(event.report, /製造のつど、製造月の翌月20日までに/);
+  // 条件明細に支払条件が入っていても、期日は種別のルールのまま。
+  const agreed = licenseTermParts({ condition: { ...condition, paymentTerms: "計算書送付後30日以内", counterparty: { kind: "individual" } } });
+  assert.match(agreed.report, /締め日の翌月20日までに/);
+  assert.equal(agreed.payment, "被許諾者は、同日までに許諾料を許諾者の指定する口座に振り込んで支払う。");
 });

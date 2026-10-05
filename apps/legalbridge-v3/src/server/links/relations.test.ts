@@ -76,3 +76,25 @@ test("文書の候補は文書番号だけでなく件名・取り込み時の�
   assert.deepEqual(seen[0].params, [7, "%業務委託%"]);
   assert.deepEqual(seen[1].params, [5, ""]);
 });
+
+test("契約⇔条件明細の候補は同じ取引先（統合を辿る）・同じ向きに絞る", async () => {
+  const seen: string[] = [];
+  const client = { query: async (text: string) => { seen.push(text); return { rows: [] }; } } as any;
+  await RELATIONS.agreement.conditions.candidates!(client, 1, "");
+  await RELATIONS.condition.agreement.candidates!(client, 1, "");
+  for (const text of seen) {
+    assert.ok(text.includes("v_party_resolved"), "相手先で絞る（他社の条件・契約を出さない）");
+    assert.ok(text.includes("direction"), "向きで絞る");
+  }
+  assert.ok(seen[0].includes("co.status NOT IN ('superseded', 'void')"), "取り消し・差し替え済みの条件は出さない");
+});
+
+test("契約の側から条件を載せるときも、向きの違う契約には載せない", async () => {
+  const client = { query: async (text: string) => {
+    if (text.includes("SELECT 1 FROM conditions")) return { rows: [{ "?column?": 1 }] };
+    if (text.includes("co.direction AS cd")) return { rows: [{ cd: "out", ad: "in" }] };
+    if (text.startsWith("UPDATE")) throw new Error("載せてはいけない");
+    return { rows: [{ id: 1 }] };
+  } } as any;
+  await assert.rejects(() => RELATIONS.agreement.conditions.attach!(client, 1, 2), /向きが違う契約には載せられません/);
+});
