@@ -76,6 +76,10 @@ export interface ConditionListQuery {
    * 削除は無効化 → 削除の2段階なので、無効化したものを見る道が無いと消せない。
    */
   includeVoid?: boolean;
+  /** 相手先（統合を辿る。統合元に付いた条件も拾う）。案件なしで取引を進めるときに使う。 */
+  counterpartyId?: number;
+  /** 作品のどれか（作品を複数扱う取引）。 */
+  workIds?: number[];
 }
 
 export class ConditionRepository {
@@ -95,6 +99,12 @@ export class ConditionRepository {
     if (query.direction) add("c.direction = $?", query.direction);
     if (query.kind) add("c.kind = $?", query.kind);
     if (query.workId) add("c.work_id = $?", query.workId);
+    if (query.workIds?.length) add("c.work_id = ANY($?::bigint[])", query.workIds);
+    if (query.counterpartyId) {
+      add(`c.counterparty_id IN (SELECT party_id FROM v_party_resolved
+                                  WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $?))`,
+          query.counterpartyId);
+    }
     if (query.matterId) {
       params.push(query.matterId);
       where.push(`EXISTS (SELECT 1 FROM matter_links ml

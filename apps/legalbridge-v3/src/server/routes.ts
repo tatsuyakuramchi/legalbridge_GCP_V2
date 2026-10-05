@@ -1434,6 +1434,8 @@ export function createRoutes(database: Transactable) {
     title: z.string().trim().max(300).nullable().optional(),
     kind: z.enum(["work", "outsourcing", "single"]),
     workId: z.coerce.number().int().positive().nullable().optional(),
+    // 作品を複数扱う案件。先頭が軸の作品（workId があればそちら）。
+    workIds: z.array(z.coerce.number().int().positive()).max(100).nullable().optional(),
     businessLine: z.enum(BUSINESS_LINE_VALUES).nullable().optional(),
     businessName: z.string().trim().max(300).nullable().optional(),
     production: z.boolean().nullable().optional(),
@@ -1478,6 +1480,27 @@ export function createRoutes(database: Transactable) {
     businessName: z.string().trim().max(300).nullable().optional(),
     production: z.boolean().nullable().optional()
   });
+  // 案件を立てずに取引を進めるときの文脈（相手先と作品から組む。案件の詳細と同じ形）。
+  router.get("/trade/context", asyncRoute(async (req, res) => {
+    const partyId = Number(req.query.partyId);
+    if (!Number.isInteger(partyId) || partyId <= 0) throw new DomainError("VALIDATION", "相手先を選んでください");
+    const workIds = String(req.query.workIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    const context = await matters.tradeContext({ partyId, workIds });
+    if (!context) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(context);
+  }));
+
+  // 案件の作品を足す・外す（ライセンスで数作品をまとめて扱う案件。infra/v3/156）。
+  router.post("/matters/:id/works", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { workId } = z.object({ workId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await matterWrites.addWork(Number(req.params.id), workId, actor(res)));
+    }));
+  router.delete("/matters/:id/works/:workId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await matterWrites.removeWork(Number(req.params.id), Number(req.params.workId), actor(res)));
+    }));
+
   router.patch("/matters/:id/axis", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await matterWrites.updateAxis(

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { MatterWorks } from "./MatterWorks.js";
 import type { MatterDetail, MatterKind, MatterSummary } from "../server/core/model.js";
 import { api, ApiError, money } from "./api.js";
 import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
@@ -66,7 +67,8 @@ const LINK_LABEL: Record<string, string> = {
  * 実際、条件と文書は3か所（タブ・この表・つながり）に出ていた。
  * ここに出すのは、専用の置き場が無いもの（Backlog・Slack・メール）だけにする。
  */
-const OWNED_BY_TABS = new Set(["condition", "document", "payment"]);
+// 作品は案件の見出し（作品）に出す。外部リンクには並べない。
+const OWNED_BY_TABS = new Set(["condition", "document", "payment", "work"]);
 
 /** 紐づけに写してある状態。Backlog なら課題の状態、メールなら最後の件名。 */
 function linkState(snapshot: Record<string, unknown>): string {
@@ -517,6 +519,18 @@ export function MattersWorkspace(
                             : undefined} />
                   <dl className="dl">
                     <AxisPanel detail={detail} onChanged={relink} onError={setError} />
+                    {/* 作品を複数扱う案件（ライセンスで数作品をまとめて扱う）。先頭が軸の作品。 */}
+                    {detail.kind !== "single" && (
+                      <>
+                        <dt>作品（すべて）</dt>
+                        <dd>
+                          <MatterWorks works={detail.works ?? []} required={detail.kind === "work"}
+                            onAdd={async (workId) => { setError(null); await api.post(`/matters/${detail.id}/works`, { workId }); relink(); }}
+                            onRemove={async (workId) => { setError(null); await api.del(`/matters/${detail.id}/works/${workId}`); relink(); }}
+                            onError={setError} />
+                        </dd>
+                      </>
+                    )}
                     <StatusPanel detail={detail} onChanged={relink} onError={setError} />
                     <dt>種類</dt>
                     <dd>

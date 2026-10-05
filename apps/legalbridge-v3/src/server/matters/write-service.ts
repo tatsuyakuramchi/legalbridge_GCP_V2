@@ -14,6 +14,12 @@ export interface MatterInput {
   title?: string | null;
   /** 作品案件の軸。 */
   workId?: number | null;
+  /**
+   * 作品を複数扱う案件（ライセンスで同じ相手から数作品をまとめて取得するなど）。
+   * 先頭（workId があればそれ）が軸の作品で matters.work_id に入り、残りは
+   * matter_links（target_type = 'work'）に入る。
+   */
+  workIds?: number[] | null;
   /** 業務案件の事業区分と業務名。 */
   businessLine?: BusinessLine | null;
   businessName?: string | null;
@@ -57,6 +63,10 @@ export class MatterWriteService {
     if (!["work", "outsourcing", "single"].includes(input.kind)) {
       throw new DomainError("VALIDATION", "案件の種類は 作品案件 / 業務案件 / その他案件 のいずれかです");
     }
+    // 作品は複数選べる。軸の作品（work_id）は workId か、無ければ先頭。
+    const workIds = [...new Set([input.workId, ...(input.workIds ?? [])]
+      .filter((w): w is number => Number.isInteger(w) && Number(w) > 0))];
+    input = { ...input, workId: workIds[0] ?? null };
     // 軸。作品案件は作品、業務案件は事業区分と業務名。その他は件名を人が打つ。
     if (input.kind === "work" && !input.workId) {
       throw new DomainError("VALIDATION", "作品案件は作品を選んでください（作品 1 つが 1 案件）");
@@ -92,10 +102,10 @@ export class MatterWriteService {
           }
         }
         let workTitle: string | null = null;
-        if (input.workId) {
-          const w = await client.query("SELECT id, title FROM works WHERE id = $1", [input.workId]);
-          if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
-          workTitle = String((w.rows[0] as { title: string }).title);
+        for (const workId of workIds) {
+          const w = await client.query("SELECT id, title FROM works WHERE id = $1", [workId]);
+          if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${workId} が見つかりません`);
+          if (workId === input.workId) workTitle = String((w.rows[0] as { title: string }).title);
         }
         if (input.parentId) await assertParentOk(client, null, input.parentId);
 
@@ -120,14 +130,85 @@ export class MatterWriteService {
            input.production ?? null, input.parentId ?? null, Boolean(manualTitle)]);
         const row = inserted.rows[0] as { id: number; matter_no: string | null };
         const id = Number(row.id);
+        // 2つ目以降の作品。案件は参照するだけ（matter_links。infra/v3/156 で 'work' を通す）。
+        for (const workId of workIds.slice(1)) {
+          await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation)
+             VALUES ($1, 'work', $2, 'related') ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+            [id, String(workId)]);
+        }
 
         await recordAudit(client, {
           actor, action: "matter.create", targetType: "matter", targetId: id,
           detail: { title, kind: input.kind, matterNo: row.matter_no,
                     counterpartyId: input.counterpartyId ?? null, workId: input.workId ?? null,
+                    workIds: workIds.length > 1 ? workIds : undefined,
                     businessLine: input.businessLine ?? null, parentId: input.parentId ?? null }
         });
         return { id, matterNo: row.matter_no };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 案件に作品を足す。案件に作品が無ければ軸の作品（work_id）になり、あれば
+   * つながり（matter_links の 'work'。infra/v3/156）に入る。既にあれば何もしない。
+   */
+  async addWork(matterId: number, workId: number, actor: string): Promise<{ works: number[] }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const cur = (await client.query(
+          "SELECT id, work_id FROM matters WHERE id = $1 FOR UPDATE", [matterId])).rows[0] as any;
+        if (!cur) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
+        const w = await client.query("SELECT id FROM works WHERE id = $1", [workId]);
+        if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${workId} が見つかりません`);
+        if (!cur.work_id) {
+          await client.query("UPDATE matters SET work_id = $2, updated_at = now() WHERE id = $1", [matterId, workId]);
+        } else if (Number(cur.work_id) !== workId) {
+          await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation)
+             VALUES ($1, 'work', $2, 'related') ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+            [matterId, String(workId)]);
+        }
+        await recordAudit(client, { actor, action: "matter.add_work", targetType: "matter", targetId: matterId,
+                                    detail: { workId } });
+        return { works: await worksOf(client, matterId) };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 案件から作品を外す。軸の作品を外すと、つながりの最初の作品が軸に上がる。
+   * 作品案件の最後の 1 つは外せない（作品案件は作品が軸）。条件明細の作品は変えない。
+   */
+  async removeWork(matterId: number, workId: number, actor: string): Promise<{ works: number[] }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const cur = (await client.query(
+          "SELECT id, kind, work_id FROM matters WHERE id = $1 FOR UPDATE", [matterId])).rows[0] as any;
+        if (!cur) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
+        if (Number(cur.work_id) === workId) {
+          const next = (await client.query(
+            `SELECT target_ref FROM matter_links WHERE matter_id = $1 AND target_type = 'work'
+              ORDER BY id LIMIT 1`, [matterId])).rows[0] as { target_ref: string } | undefined;
+          if (!next && cur.kind === "work") {
+            throw new DomainError("VALIDATION", "作品案件の最後の作品は外せません（先に別の作品を足してください）");
+          }
+          await client.query("UPDATE matters SET work_id = $2, updated_at = now() WHERE id = $1",
+            [matterId, next ? Number(next.target_ref) : null]);
+          if (next) {
+            await client.query(
+              "DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'work' AND target_ref = $2",
+              [matterId, next.target_ref]);
+          }
+        } else {
+          await client.query(
+            "DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'work' AND target_ref = $2",
+            [matterId, String(workId)]);
+        }
+        await recordAudit(client, { actor, action: "matter.remove_work", targetType: "matter", targetId: matterId,
+                                    detail: { workId } });
+        return { works: await worksOf(client, matterId) };
       });
     } catch (error) { throw translate(error); }
   }
@@ -479,4 +560,14 @@ export async function liveAgreementsOf(
     }
   }
   return out;
+}
+
+/** 案件の作品（軸を先に、続けてつながりの作品）。 */
+async function worksOf(client: { query: (t: string, p?: unknown[]) => Promise<{ rows: any[] }> }, matterId: number): Promise<number[]> {
+  const r = await client.query(
+    `SELECT work_id AS id, 0 AS ord FROM matters WHERE id = $1 AND work_id IS NOT NULL
+     UNION ALL
+     SELECT target_ref::bigint, id FROM matter_links WHERE matter_id = $1 AND target_type = 'work'
+     ORDER BY ord`, [matterId]);
+  return [...new Set(r.rows.map((x) => Number(x.id)))];
 }

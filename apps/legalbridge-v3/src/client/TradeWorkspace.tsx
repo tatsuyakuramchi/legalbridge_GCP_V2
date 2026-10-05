@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
-import { searchWorks } from "./MatterAxis.js";
+import { searchMatters, searchWorks } from "./MatterAxis.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { ServiceLinesForm } from "./ServiceLinesForm.js";
 import { StatusTag } from "./labels.js";
-import type { MatterDetail } from "../server/core/model.js";
+import type { TradeContext } from "../server/core/model.js";
+import { MatterWorks } from "./MatterWorks.js";
 import { DocumentSet } from "./DocumentSet.js";
 import { SendMany } from "./SendMany.js";
 
@@ -24,7 +25,11 @@ import { SendMany } from "./SendMany.js";
  */
 
 export type TradePattern = "game_in" | "game_out" | "pub_in" | "pub_out" | "service";
-export interface TradeCtx { pattern: TradePattern; matterId: number | null }
+/**
+ * 進めている取引。案件で進めるなら matterId、案件を立てずに進めるなら partyId と workIds
+ * （相手先と作品から文脈を組む。/trade/context）。
+ */
+export interface TradeCtx { pattern: TradePattern; matterId: number | null; partyId?: number | null; workIds?: number[] }
 
 const PATTERNS: Array<{ value: TradePattern; group: string; label: string; detail: string }> = [
   { value: "game_in", group: "ボードゲーム", label: "IN：権利を取得", detail: "権利元 → 当社。許諾セット → 個別利用許諾条件書" },
@@ -100,7 +105,7 @@ export function TradeWorkspace(
       </section>
     );
   }
-  return <TradeFlow key={`${ctx.pattern}-${ctx.matterId ?? 0}`} ctx={ctx} onCtx={onCtx} onCompose={onCompose}
+  return <TradeFlow key={`${ctx.pattern}-${ctx.matterId ?? `p${ctx.partyId ?? 0}`}`} ctx={ctx} onCtx={onCtx} onCompose={onCompose}
                     onOpenDocument={onOpenDocument} onOpenMatter={onOpenMatter} onRegisterAgreement={onRegisterAgreement} />;
 }
 
@@ -112,11 +117,13 @@ function TradeFlow(
   }
 ) {
   const p = ctx.pattern;
-  const [detail, setDetail] = useState<MatterDetail | null>(null);
+  const [detail, setDetail] = useState<TradeContext | null>(null);
+  /** 案件を立てずに進めている（相手先と作品だけで組んだ文脈）。 */
+  const caseless = !ctx.matterId && Boolean(ctx.partyId);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [agreementId, setAgreementId] = useState<string>("");
   const [noAgreement, setNoAgreement] = useState(false);
-  const [stage, setStage] = useState<number>(ctx.matterId ? 1 : 0);
+  const [stage, setStage] = useState<number>(ctx.matterId || ctx.partyId ? 1 : 0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -142,9 +149,13 @@ function TradeFlow(
     api.get<{ user?: { role: string } }>("/me").then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => undefined);
   }, []);
 
-  async function load(id: number) {
+  async function load() {
+    if (!ctx.matterId && !ctx.partyId) return;
     try {
-      const d = await api.get<MatterDetail>(`/matters/${id}`);
+      const d = ctx.matterId
+        ? await api.get<TradeContext>(`/matters/${ctx.matterId}`)
+        : await api.get<TradeContext>(`/trade/context?${new URLSearchParams({
+            partyId: String(ctx.partyId), workIds: (ctx.workIds ?? []).join(",") })}`);
       setDetail(d);
       if (d.counterparty) {
         const a = await api.get<{ agreements: Agreement[] }>(`/agreements?partyId=${d.counterparty.id}`);
@@ -156,7 +167,17 @@ function TradeFlow(
       }
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
-  useEffect(() => { if (ctx.matterId) void load(ctx.matterId); }, [ctx.matterId]);
+  useEffect(() => { void load(); }, [ctx.matterId, ctx.partyId, (ctx.workIds ?? []).join(",")]);
+
+  /** 作品を足す・外す。案件なら案件に、案件なしなら進めている取引（ctx）に。 */
+  const addWork = async (workId: number) => {
+    if (ctx.matterId) { await api.post(`/matters/${ctx.matterId}/works`, { workId }); await load(); }
+    else onCtx({ ...ctx, workIds: [...(ctx.workIds ?? []), workId] });
+  };
+  const removeWork = async (workId: number) => {
+    if (ctx.matterId) { await api.del(`/matters/${ctx.matterId}/works/${workId}`); await load(); }
+    else onCtx({ ...ctx, workIds: (ctx.workIds ?? []).filter((w) => w !== workId) });
+  };
 
   const conditions = detail?.conditions ?? [];
   const mine = useMemo(() => conditions.filter((c) => {
@@ -172,7 +193,8 @@ function TradeFlow(
   const sent = issued.filter((d) => d.sentAt);
 
   const stages = [
-    { no: 0, name: "基礎情報", done: Boolean(detail), st: detail ? `${detail.matterNo ?? `#${detail.id}`}` : "取引先・作品・担当者" },
+    { no: 0, name: "基礎情報", done: Boolean(detail),
+      st: detail ? (detail.id ? `${detail.matterNo ?? `#${detail.id}`}` : "案件なし") : "取引先・作品・担当者" },
     { no: 1, name: "基本契約", done: Boolean(agreementId) || noAgreement || masterDocs.some((d) => d.status === "issued"),
       st: agreementId ? (agreements.find((a) => String(a.id) === agreementId)?.agreementNo ?? "選択済") : noAgreement ? "なし（単独）" : "未選択" },
     { no: 2, name: p === "service" ? "明細（条件明細）" : "許諾条件", done: mine.length > 0, st: mine.length ? `${mine.length} 本` : "未登録" },
@@ -184,10 +206,14 @@ function TradeFlow(
     : isOut(p) ? "以後：計算書（受け取る側）は 作品の台帳 で（締めごと）" : "以後：計算書は 作品の台帳 で（締めごと）";
 
   const party = detail?.counterparty ?? null;
+  // 作品を複数扱う案件では、許諾条件をどの作品について入れるかを選ぶ（既定は軸の作品）。
+  const caseWorks = detail?.works ?? (detail?.work ? [detail.work] : []);
+  const [condWorkId, setCondWorkId] = useState<number | null>(null);
+  const condWork = caseWorks.find((w) => w.id === condWorkId) ?? caseWorks[0] ?? null;
   const preset = {
-    ...(detail ? { matterId: String(detail.id) } : {}),
+    ...(detail?.id ? { matterId: String(detail.id) } : {}),
     ...(party ? { counterpartyId: String(party.id) } : {}),
-    ...(detail?.work ? { workId: String(detail.work.id) } : {}),
+    ...(condWork ? { workId: String(condWork.id) } : {}),
     ...(agreementId ? { agreementId } : {})
   };
   const conditionIdsFor = (which: "license_in" | "license_out" | "service" | "none") =>
@@ -199,19 +225,31 @@ function TradeFlow(
         <h1 style={{ margin: 0 }}>{patternLabel(p)}</h1>
         {detail && <>
           <span className="faint">取引先 <b>{party?.name ?? "—"}</b></span>
-          {detail.work && <span className="faint">作品 <b>{detail.work.title}</b></span>}
-          <span className="faint">担当 <b>{detail.ownerName ?? "—"}</b></span>
-          <button className="linky" onClick={() => onOpenMatter(detail.id)}>案件 {detail.matterNo ?? `#${detail.id}`} を開く</button>
+          {detail.id
+            ? <>
+                <span className="faint">担当 <b>{detail.ownerName ?? "—"}</b></span>
+                <button className="linky" onClick={() => onOpenMatter(detail.id!)}>案件 {detail.matterNo ?? `#${detail.id}`} を開く</button>
+              </>
+            : <span className="tag ghost" title="案件を立てずに、取引先と作品だけで進めています">案件なし</span>}
         </>}
         <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
           {detail && (
-            <select value={p} onChange={(e) => onCtx({ pattern: e.target.value as TradePattern, matterId: detail.id })} aria-label="取引の種類">
+            <select value={p} onChange={(e) => onCtx({ ...ctx, pattern: e.target.value as TradePattern })} aria-label="取引の種類">
               {PATTERNS.map((x) => <option key={x.value} value={x.value}>{x.group} {x.label}</option>)}
             </select>
           )}
           <button className="btn btn-sm" onClick={() => onCtx(null)}>別の取引を選ぶ</button>
         </span>
       </div>
+      {detail && (isLicense(p) || caseWorks.length > 0) && (
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <span className="faint">作品{isLicense(p) ? "（必須・複数可）" : "（任意）"}</span>
+          <MatterWorks works={caseWorks} required={isLicense(p)}
+            onAdd={async (id) => { setError(null); await addWork(id); setNotice("作品を足しました"); }}
+            onRemove={async (id) => { setError(null); await removeWork(id); setNotice("作品を外しました（入れた条件明細はそのまま残ります）"); }}
+            onError={setError} />
+        </div>
+      )}
       {error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}
 
@@ -238,6 +276,7 @@ function TradeFlow(
           {stage === 0 && (
             <BasicsStage pattern={p} detail={detail}
               onCreated={(id) => { onCtx({ pattern: p, matterId: id }); setStage(1); setNotice("案件を立てました。文書の担当者・メールの宛先はこの案件から入ります"); }}
+              onUse={(next) => { onCtx(next); setStage(1); }}
               onError={setError} />
           )}
 
@@ -303,10 +342,22 @@ function TradeFlow(
                   </div>
                 </div>
               )}
+              {(adding || mine.length === 0) && caseWorks.length > 1 && (
+                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <b>どの作品の条件を入れるか</b>
+                  <span className="chips" role="group" aria-label="条件を入れる作品">
+                    {caseWorks.map((w) => (
+                      <button key={w.id} type="button" className="chip" aria-pressed={w.id === condWork?.id}
+                              onClick={() => setCondWorkId(w.id)}>{w.title}</button>
+                    ))}
+                  </span>
+                  <span className="faint">1 作品ずつ入れます。入れ終えたら「条件を足す」で次の作品へ</span>
+                </div>
+              )}
               {(adding || mine.length === 0) && (
-                <ConditionStage pattern={p} preset={preset} partyName={party?.name ?? null} workTitle={detail.work?.title ?? null}
+                <ConditionStage key={condWork?.id ?? 0} pattern={p} preset={preset} partyName={party?.name ?? null} workTitle={condWork?.title ?? null}
                   matterId={detail.id} title={detail.title}
-                  onDone={async () => { setAdding(false); await load(detail.id); setNotice("条件を登録しました"); if (mine.length === 0) setStage(3); }}
+                  onDone={async () => { setAdding(false); await load(); setNotice("条件を登録しました"); if (mine.length === 0) setStage(3); }}
                   onCancel={() => setAdding(false)} onError={setError} />
               )}
             </div>
@@ -319,7 +370,7 @@ function TradeFlow(
                 : creatable.length ? creatable : DOCS[p]}
               conditions={mine.map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name, work: c.work ? { id: c.work.id, title: c.work.title } : null }))}
               agreements={agreements} channels={channels} isAdmin={isAdmin}
-              onIssued={() => void load(detail.id)} onOpenDocument={onOpenDocument} onClose={() => setSetOpen(false)} />
+              onIssued={() => void load()} onOpenDocument={onOpenDocument} onClose={() => setSetOpen(false)} />
           )}
           {stage === 3 && detail && !setOpen && (
             <div className="panel">
@@ -380,7 +431,7 @@ function TradeFlow(
                       {sendingAll && (
                         <SendMany key={sendingAll} documents={all.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty }))}
                                   channels={channels} isAdmin={isAdmin} initialWay={sendingAll} prefillSigners={sendingAll === "cloudsign"} prefillMail={sendingAll === "mail"}
-                                  onDone={() => void load(detail.id)} onClose={() => setSendingAll(null)} />
+                                  onDone={() => void load()} onClose={() => setSendingAll(null)} />
                       )}
                     </div>
                   );
@@ -412,41 +463,71 @@ function TradeFlow(
 
 /** 段階 0：基礎情報。案件を立てる。 */
 function BasicsStage(
-  { pattern, detail, onCreated, onError }: {
-    pattern: TradePattern; detail: MatterDetail | null;
-    onCreated: (matterId: number) => void; onError: (m: string) => void;
+  { pattern, detail, onCreated, onUse, onError }: {
+    pattern: TradePattern; detail: TradeContext | null;
+    onCreated: (matterId: number) => void;
+    /** 既にある案件で進める／案件を立てずに進める。 */
+    onUse: (ctx: TradeCtx) => void;
+    onError: (m: string) => void;
   }
 ) {
+  /**
+   * 案件の扱い。new＝新しく立てる / existing＝既にある案件で進める / none＝立てずに進める
+   * （取引先と作品だけで、基本契約 → 許諾条件 → 条件書 と進める。あとから案件に繋げられる）。
+   */
+  const [mode, setMode] = useState<"new" | "existing" | "none">("new");
+  const [existing, setExisting] = useState("");
   const [staff, setStaff] = useState<Staff[]>([]);
   const [partyId, setPartyId] = useState("");
   const [partyName, setPartyName] = useState<string | null>(null);
-  const [workId, setWorkId] = useState("");
-  const [workName, setWorkName] = useState<string | null>(null);
+  // ライセンスは作品が必須で複数選べる（数作品をまとめて取得・許諾する案件）。業務委託は任意で 1 つ。
+  const [works, setWorks] = useState<Array<{ id: string; label: string }>>([]);
+  const workId = works[0]?.id ?? "";
+  const workName = works.length ? works.map((w) => w.label).join("・") : null;
   const [title, setTitle] = useState("");
   const [requester, setRequester] = useState("");
   const [owner, setOwner] = useState("");
   const [line, setLine] = useState(pattern.startsWith("pub") ? "publishing" : "boardgame");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    api.get<{ staff: Staff[] }>("/staff").then((r) => setStaff(r.staff.filter((s) => (s.status ?? "active") === "active"))).catch(() => undefined);
+    // 法務担当は案件に必須（期限の通知先）。ログインしている人を既定にする。
+    Promise.all([
+      api.get<{ staff: Staff[] }>("/staff"),
+      api.get<{ user?: { email: string } }>("/me").catch(() => ({ user: undefined }))
+    ]).then(([r, me]) => {
+      const active = r.staff.filter((s) => (s.status ?? "active") === "active");
+      setStaff(active);
+      const mine = active.find((s) => s.email && me.user?.email && s.email.toLowerCase() === me.user.email.toLowerCase());
+      if (mine) setOwner((cur) => cur || String(mine.id));
+    }).catch(() => undefined);
   }, []);
   const license = isLicense(pattern);
   const autoTitle = () => {
     const base = pattern === "service" ? `${partyName ?? ""} 業務委託` : `${workName ?? ""} ${isOut(pattern) ? "許諾" : "権利取得"}（${partyName ?? ""}）`;
     return base.trim();
   };
-  const ready = Boolean(partyId) && (!license || Boolean(workId));
+  // 案件を立てるなら法務担当も要る（期限の通知先）。立てないなら取引先と作品だけ。
+  const ready = Boolean(partyId) && (!license || Boolean(workId)) && (mode === "none" || Boolean(owner));
+  /** まだ足りないもの。ボタンが押せない理由をボタンの横に出す（出さないと押しても何も起きないように見える）。 */
+  const missing = [
+    !partyId ? (pattern === "service" ? "受託者" : isOut(pattern) ? "許諾先" : "権利元") : null,
+    license && !workId ? "作品" : null,
+    mode === "new" && !owner ? "法務担当" : null
+  ].filter(Boolean);
 
   if (detail) {
     return (
-      <div className="panel"><div className="panel-hd"><h2>基礎情報</h2><span className="tag ok">案件 {detail.matterNo ?? `#${detail.id}`}</span></div>
+      <div className="panel"><div className="panel-hd"><h2>基礎情報</h2>
+        {detail.id ? <span className="tag ok">案件 {detail.matterNo ?? `#${detail.id}`}</span> : <span className="tag ghost">案件なし</span>}</div>
         <div className="panel-bd stack">
           <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
             <span>取引先 <b>{detail.counterparty?.name ?? "—"}</b></span>
-            {detail.work && <span>作品 <b>{detail.work.title}</b></span>}
-            <span>法務担当 <b>{detail.ownerName ?? "—"}</b></span>
+            {(detail.works ?? []).length > 0 && <span>作品 <b>{detail.works.map((w) => w.title).join("・")}</b></span>}
+            {detail.id ? <span>法務担当 <b>{detail.ownerName ?? "—"}</b></span> : null}
           </div>
-          <span className="faint">事業部担当者（依頼者のメール）と法務担当は案件の画面で直せます。文書の当社担当者・メールの宛先・CloudSign の確認者はここから入ります。</span>
+          <span className="faint">{detail.id
+            ? "事業部担当者（依頼者のメール）と法務担当は案件の画面で直せます。文書の当社担当者・メールの宛先・CloudSign の確認者はここから入ります。"
+            : "案件を立てずに、取引先と作品だけで進めています。文書の当社担当者・メールの宛先は文書の画面で入れます。作品は上の欄で足す・外すができます。"}</span>
         </div></div>
     );
   }
@@ -454,14 +535,66 @@ function BasicsStage(
     <div className="panel">
       <div className="panel-hd"><h2>基礎情報</h2><span className="faint">ここで入れた相手先・担当者が、以後の文書とメールに入ります</span></div>
       <div className="panel-bd stack">
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <b>案件</b>
+          <span className="chips" role="group" aria-label="案件の扱い">
+            <button type="button" className="chip" aria-pressed={mode === "new"} onClick={() => setMode("new")}>新しく案件を立てる</button>
+            <button type="button" className="chip" aria-pressed={mode === "existing"} onClick={() => setMode("existing")}>既にある案件を使う</button>
+            <button type="button" className="chip" aria-pressed={mode === "none"} onClick={() => setMode("none")}>案件なしで進める</button>
+          </span>
+          <span className="faint">{{
+            new: "案件が器になり、担当者・依頼者が文書とメールに入ります",
+            existing: "その案件の取引先・作品・条件明細・文書で続きから進めます",
+            none: "取引先と作品だけで進めます（担当者・依頼者は文書の画面で入れます）"
+          }[mode]}</span>
+        </div>
+        {mode === "existing" ? (
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <span style={{ minWidth: 360 }}>
+              <SearchSelect value={existing} search={searchMatters([])} placeholder="案件番号・件名・相手先で探す"
+                            onChange={(v) => setExisting(v)} />
+            </span>
+            <button className="btn primary" disabled={!existing} onClick={() => onUse({ pattern, matterId: Number(existing) })}>
+              この案件で進める
+            </button>
+            {!existing && <span className="tag warn">あと：案件を候補から選んでください</span>}
+          </div>
+        ) : (
+        <>
         <div className="form-grid">
           <label className="field"><span>{pattern === "service" ? "受託者（相手先）" : isOut(pattern) ? "許諾先（相手先）" : "権利元（相手先）"}</span>
             <SearchSelect value={partyId} search={searchParties} placeholder="取引先名・コードで探す"
                           onChange={(v, o) => { setPartyId(v); setPartyName(o?.label ?? null); }} /></label>
-          <label className="field"><span>作品{license ? "" : "（任意）"}</span>
-            <SearchSelect value={workId} search={searchWorks} emptyLabel={license ? undefined : "（なし）"} placeholder="作品名・コードで探す"
-                          onChange={(v, o) => { setWorkId(v); setWorkName(o?.label ?? null); }} />
-            {license && <small className="faint">{isOut(pattern) ? "許諾する作品。OUT 条件はこの作品の IN 条件の範囲内で入れます" : "取得する作品（原作）。無ければ作品の画面で先に登録します"}</small>}</label>
+          {license ? (
+            <div className="field"><span>作品（必須・複数可）</span>
+              {/* 許諾地域・言語と同じく複数選べる。選ぶたびに下に並び、× で外す。 */}
+              <SearchSelect value="" search={searchWorks} placeholder={works.length ? "作品を足す" : "作品名・コードで探す"}
+                            onChange={(v, o) => {
+                              if (!v) return;
+                              setWorks((cur) => cur.some((w) => w.id === v) ? cur : [...cur, { id: v, label: o?.label ?? `#${v}` }]);
+                            }} />
+              {works.length > 0 && (
+                <span className="chips" style={{ marginTop: 4 }}>
+                  {works.map((w, i) => (
+                    <button key={w.id} type="button" className="chip" aria-pressed="true" title="外す"
+                            onClick={() => setWorks((cur) => cur.filter((x) => x.id !== w.id))}>
+                      {w.label}{i === 0 && works.length > 1 ? "（軸）" : ""} ×
+                    </button>
+                  ))}
+                </span>
+              )}
+              <small className="faint">{isOut(pattern) ? "許諾する作品。OUT 条件は各作品の IN 条件の範囲内で入れます" : "取得する作品（原作）。無ければ作品の画面で先に登録します"}。
+                複数の作品をまとめて扱えます（先頭が案件の軸の作品）</small>
+            </div>
+          ) : (
+            <label className="field"><span>作品（任意）</span>
+              <SearchSelect value={workId} search={searchWorks} emptyLabel="（なし）" placeholder="作品名・コードで探す"
+                            valueLabel={works[0]?.label ?? null}
+                            onChange={(v, o) => setWorks(v ? [{ id: v, label: o?.label ?? `#${v}` }] : [])} />
+              <small className="faint">業務委託は作品に結びつかないこともあります。結びつくときだけ選びます</small>
+            </label>
+          )}
+          {mode === "new" && <>
           <label className="field"><span>{pattern === "service" ? "業務名（件名）" : "件名"}</span>
             <input value={title} placeholder={autoTitle() || "空なら自動で付く"} onChange={(e) => setTitle(e.target.value)} /></label>
           <label className="field"><span>事業区分</span>
@@ -473,12 +606,19 @@ function BasicsStage(
             <input list="trade-requester" value={requester} placeholder="例：seisaku-a@example.co.jp" onChange={(e) => setRequester(e.target.value)} />
             <datalist id="trade-requester">{staff.filter((s) => s.email).map((s) => <option key={s.id} value={s.email ?? ""}>{s.name}</option>)}</datalist>
             <small className="faint">担当者への確認メールの宛先、CloudSign の確認者（CC）になる</small></label>
-          <label className="field"><span>法務担当</span>
-            <SearchSelect value={owner} options={staffOptions(staff)} emptyLabel="あとで決める" valueLabel="あとで決める" placeholder="氏名・部署で探す"
+          <label className="field"><span>法務担当（必須）</span>
+            <SearchSelect value={owner} options={staffOptions(staff)} placeholder="氏名・部署で探す"
                           onChange={(v) => setOwner(v)} />
             <small className="faint">文書の【ご連絡先】・検収者、メールの cc、CloudSign の CC になる</small></label>
+          </>}
         </div>
         <div className="row">
+          {mode === "none" ? (
+            <button className="btn primary" disabled={!ready} onClick={() => onUse({
+              pattern, matterId: null, partyId: Number(partyId), workIds: works.map((w) => Number(w.id)) })}>
+              案件なしで次へ：基本契約
+            </button>
+          ) : (
           <button className="btn primary" disabled={!ready || busy} onClick={async () => {
             setBusy(true);
             try {
@@ -486,6 +626,7 @@ function BasicsStage(
                 kind: pattern === "service" ? "outsourcing" : "work",
                 title: title.trim() || autoTitle() || null,
                 workId: workId ? Number(workId) : null, counterpartyId: Number(partyId),
+                workIds: works.map((w) => Number(w.id)),
                 ownerStaffId: owner ? Number(owner) : null,
                 requesterEmail: requester.trim() || null,
                 businessLine: line,
@@ -496,8 +637,15 @@ function BasicsStage(
             } catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
             finally { setBusy(false); }
           }}>{busy ? "作っています…" : "案件を立てて次へ：基本契約"}</button>
-          <span className="faint">案件が器になります。既にある案件で進めるなら、案件の画面の「取引を進める」から開いてください</span>
+          )}
+          {missing.length > 0
+            ? <span className="tag warn">あと：{missing.join("・")}を候補から選んでください{license && !workId ? "（作品が候補に出なければ、作品の画面で先に登録します）" : ""}</span>
+            : <span className="faint">{mode === "none"
+                ? "案件は作りません。あとで案件の画面から条件明細・文書を繋げられます"
+                : "案件が器になります"}</span>}
         </div>
+        </>
+        )}
       </div>
     </div>
   );
@@ -507,7 +655,8 @@ function BasicsStage(
 function ConditionStage(
   { pattern, preset, partyName, workTitle, matterId, title, onDone, onCancel, onError }: {
     pattern: TradePattern; preset: Record<string, string>; partyName: string | null; workTitle: string | null;
-    matterId: number; title: string | null; onDone: () => void | Promise<void>; onCancel: () => void; onError: (m: string) => void;
+    /** 案件なしで進めているときは null（条件明細を案件に繋がない）。 */
+    matterId: number | null; title: string | null; onDone: () => void | Promise<void>; onCancel: () => void; onError: (m: string) => void;
   }
 ) {
   if (pattern === "service") {
@@ -528,7 +677,7 @@ function ConditionStage(
                 usageType: pattern === "pub_out" ? "sublicense" : "sublicense" }}
       presetLabels={{ counterpartyId: partyName, workId: workTitle }}
       onDone={async (made) => {
-        try { await api.post(`/matters/${matterId}/conditions`, { conditionId: made.id }); }
+        try { if (matterId) await api.post(`/matters/${matterId}/conditions`, { conditionId: made.id }); }
         catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
         await onDone();
       }}

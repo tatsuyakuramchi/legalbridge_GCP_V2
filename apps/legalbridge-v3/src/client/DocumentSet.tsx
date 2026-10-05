@@ -33,7 +33,7 @@ export function DocumentSet({
   channels, isAdmin, onIssued, onOpenDocument, onClose
 }: {
   domain: "license" | "service";
-  matterId: number; partyId: number; partyName: string | null;
+  matterId: number | null; partyId: number; partyName: string | null;
   masterKey: string; masterLabel: string;
   /** 本体・追加に使えるひな形（条件書の一覧形式／別紙形式、発注書など）。最初が既定。 */
   termsOptions: Array<{ key: string; label: string }>;
