@@ -15,6 +15,7 @@ import { SearchSelect, staffOptions, type SearchOption } from "./SearchSelect.js
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
 import { ConditionLabel } from "./ConditionLabel.js";
+import { Working } from "./Working.js";
 import { BLANK_INPUT_KEY, blankedNames } from "../server/documents/binding.js";
 import { PUB_TERMS_TEMPLATE_HINT } from "../server/documents/pub-terms.js";
 import type { DocumentRefs } from "../server/agreements/party-map.js";
@@ -194,6 +195,13 @@ export function DocumentsWorkspace(
   const issuedRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * いま走っている操作（保存・決定・プレビュー）。busy はボタンを止めるだけで、何を
+   * しているかが見えない。押したボタンの文言と、ボタンの下の「作業中」の帯に使う。
+   */
+  const [working, setWorking] = useState<{ action: "save" | "issue" | "preview"; what: string; hint?: string } | null>(null);
+  /** プレビューを作り直した時刻。押しても見た目が変わらないと効いたか分からない。 */
+  const [previewedAt, setPreviewedAt] = useState<string | null>(null);
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
   const [me, setMe] = useState<{ user?: { email: string; role: string } } | null>(null);
   useEffect(() => { api.get<{ user?: { email: string; role: string } }>("/me").then(setMe).catch(() => setMe(null)); }, []);
@@ -602,12 +610,14 @@ export function DocumentsWorkspace(
   }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson, matterId, requestId]);
 
   async function runPreview() {
-    setError(null); setIssued(null); setBusy(true);
+    setError(null); setIssued(null); setBusy(true); setPreviewedAt(null);
+    setWorking({ action: "preview", what: "プレビューを作り直しています" });
     try {
       const r = await api.post<PreviewResponse>("/documents/preview", body);
       setRendered({ html: r.html, templateLabel: r.templateLabel });
+      setPreviewedAt(new Date().toLocaleTimeString("ja-JP"));
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setWorking(null); }
   }
 
   // 計算書の試算。選び直すたびに引き直す。保存しない。
@@ -643,7 +653,8 @@ export function DocumentsWorkspace(
    */
   async function saveDraft(): Promise<number | null> {
     if (!templateKey) return null;
-    setError(null); setIssued(null); setBusy(true);
+    setError(null); setIssued(null); setStored(null); setBusy(true); setPreviewedAt(null);
+    setWorking({ action: "save", what: "下書きを保存しています" });
     try {
       const manualInputs = { ...inputs, _eventIds: pickedEvents };
       let id: number;
@@ -662,7 +673,7 @@ export function DocumentsWorkspace(
       setSelected(id);
       return id;
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); return null; }
-    finally { setBusy(false); }
+    finally { setBusy(false); setWorking(null); }
   }
 
   /** 保存していない変更があれば、捨ててよいか聞く。 */
@@ -673,7 +684,9 @@ export function DocumentsWorkspace(
 
   // 下書きを作ってから発行する。採番は発行時にだけ進む。
   async function issue() {
-    setError(null); setBusy(true);
+    setError(null); setStored(null); setBusy(true); setPreviewedAt(null);
+    setWorking({ action: "issue", what: draft ? "直して決定しています" : "決定しています",
+                 hint: "番号を振り、文書を作って保存しています" });
     try {
       let done: { id: number; documentNo: string };
       if (isStatement && (reviseCtx || !draft)) {
@@ -743,7 +756,7 @@ export function DocumentsWorkspace(
       // 長いフォームの下で押すと、上に出た結果が見えない。結果まで運ぶ。
       issuedRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setWorking(null); }
   }
 
   /**
@@ -758,6 +771,7 @@ export function DocumentsWorkspace(
   async function issueDraft(id: number) {
     if (draft?.id === id) { await issue(); return; }
     setError(null); setIssued(null); setBusy(true);
+    setWorking({ action: "issue", what: "下書きを決定しています", hint: "番号を振り、文書を作って保存しています" });
     try {
       // 実績はサーバが持っているものを使う。画面で選び直していない下書きを
       // 空の実績で発行すると、前の版が結んでいた実績が宙に浮く。
@@ -771,7 +785,7 @@ export function DocumentsWorkspace(
       await reload();
       setSelected(id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setWorking(null); }
   }
 
   /**
@@ -968,6 +982,9 @@ export function DocumentsWorkspace(
         <p>文書は条件の出力物。相手先も件名も条件と合意から解決するので、入力するのはそこから決まらないものだけ。</p>
       </header>
 
+      {/* フォームを開いていないとき（一覧から下書きを決定したとき）の作業中の印。
+          フォームを開いているときはボタンの下に出す。 */}
+      {working && !(composing || draft) && <Working what={working.what} hint={working.hint} />}
       {error && <div className="alert">{error}</div>}
       {issued && (
         <div ref={issuedRef} className="note ok done-note">
@@ -1452,19 +1469,27 @@ export function DocumentsWorkspace(
                   <button className="btn" onClick={() => void saveDraft()}
                           disabled={busy || !templateKey || !dirty || isStatement}
                           title={isStatement ? "計算書は下書きにできません（試算した金額のまま出します）" : undefined}>
-                    {draft ? "下書きを保存" : "下書きとして保存"}
+                    {working?.action === "save" ? "保存しています…" : draft ? "下書きを保存" : "下書きとして保存"}
                   </button>
-                  <button className="btn primary" onClick={issue} disabled={busy || !ready}>
-                    {draft ? "直して決定する" : "決定する"}
+                  <button className="btn primary" onClick={issue} disabled={busy || !ready} aria-busy={working?.action === "issue"}>
+                    {working?.action === "issue" ? "決定しています…" : draft ? "直して決定する" : "決定する"}
                   </button>
                   <button className="btn" onClick={runPreview} disabled={busy || !templateKey}>
-                    プレビューを更新
+                    {working?.action === "preview" ? "作り直しています…" : "プレビューを更新"}
                   </button>
                   <span className="faint">
                     {dirty ? "保存していない変更があります。" : draft ? "保存済みです。" : ""}
                     決定すると番号が振られ、中身は直せなくなります
                   </span>
                 </div>
+                {/* 押したボタンのすぐ下に、作業中の印と結果を出す。ページの上の知らせは、
+                    長いフォームの下で押すと見えない。 */}
+                {working && <Working what={working.what} hint={working.hint} />}
+                {!working && error && <div className="alert" role="alert">{error}</div>}
+                {!working && stored && <div className="note ok">{stored}</div>}
+                {!working && !error && previewedAt && (
+                  <div className="faint">プレビューを更新しました（{previewedAt}）。右のプレビューと点検を確かめてください</div>
+                )}
               </div>
             </div>
 
