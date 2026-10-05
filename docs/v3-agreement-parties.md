@@ -52,7 +52,13 @@ API：`GET/POST /agreements/:id/parties`、`PATCH/DELETE /agreements/:id/parties
 - 取引先⇔基本契約：この取引先が丙として入っている契約も図に出す（「主たる相手先：◯◯」の印）。各契約に「当事者」の欄。
 - 取引先の画面：「合意」の件数と「契約（合意）」の関連が、丙としての契約も含む。
 
-## ひな形
+## 文書の作り方（運用）
 
-`agreement.parties.0.name`（丙の名称）、`agreement.parties.0.honorific`、`agreement.parties.0.address` のように添字で引く。
-`agreement.partyCount` が 2 以上なら三社間。既存の `agreement.counterparty.*`（乙）は変わらない。
+三社間契約の契約書はひな形で作らず、テンプレート外のワンオフ文書として作る。
+できた紙（PDF など）は、取引先⇔基本契約の各契約の「文書」から取り込んで契約に繋ぐ
+（`documents.agreement_id`）。文書は合意経由で全当事者に繋がるので、文書側に当事者の列は要らない。
+
+- 文書一覧・取引先の画面・法務検索は、契約の当事者集合を辿るので、丙の側からもその文書が見える。
+- 文書の表示上の相手先（`v_document_display.counterparty`）は主たる相手先（乙）のまま。
+- ひな形の文脈には `agreement.parties[]` / `agreement.partyCount` を渡しているが、
+  三社間の頭書きを出すひな形は作らない（将来ひな形化するときの入口として残すだけ）。
