@@ -6,6 +6,7 @@ import { LicenseSetForm } from "./LicenseSetForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { ServiceLinesForm } from "./ServiceLinesForm.js";
+import { TradePayment } from "./TradePayment.js";
 import { StatusTag } from "./labels.js";
 import type { TradeContext } from "../server/core/model.js";
 import { MatterWorks } from "./MatterWorks.js";
@@ -29,7 +30,11 @@ export type TradePattern = "game_in" | "game_out" | "pub_in" | "pub_out" | "serv
  * 進めている取引。案件で進めるなら matterId、案件を立てずに進めるなら partyId と workIds
  * （相手先と作品から文脈を組む。/trade/context）。
  */
-export interface TradeCtx { pattern: TradePattern; matterId: number | null; partyId?: number | null; workIds?: number[] }
+export interface TradeCtx {
+  pattern: TradePattern; matterId: number | null; partyId?: number | null; workIds?: number[];
+  /** 支払（検収書・利用許諾計算書）。実績 → 文書 → 送る → 支払 の順に進める別の流れ。pattern は使わない。 */
+  payment?: boolean;
+}
 
 const PATTERNS: Array<{ value: TradePattern; group: string; label: string; detail: string }> = [
   { value: "game_in", group: "ボードゲーム", label: "IN：権利を取得", detail: "権利元 → 当社。許諾セット → 個別利用許諾条件書" },
@@ -88,7 +93,7 @@ export function TradeWorkspace(
       <section className="stack">
         <div>
           <h1>取引を進める</h1>
-          <p className="faint">取引の種類を選ぶと、基礎情報 → 基本契約 → 条件 → 文書 → 送信 の順に 1 枚で進めます。支払文書（検収書・計算書）は時間差があるので、支払文書処理と作品の台帳で扱います。</p>
+          <p className="faint">取引の種類を選ぶと、基礎情報 → 基本契約 → 条件 → 文書 → 送信 の順に 1 枚で進めます。支払文書（検収書・計算書）は納品・利用の報告が来てから、実績 → 文書 → 送る → 支払 の順に進めます。</p>
         </div>
         <div className="ledger-parties">
           {PATTERNS.map((p) => (
@@ -98,14 +103,18 @@ export function TradeWorkspace(
               <span className="faint" style={{ fontSize: 12 }}>{p.detail}</span>
             </button>
           ))}
-          <button className="ledger-party" onClick={onOpenPayments}>
+          <button className="ledger-party" onClick={() => onCtx({ pattern: "service", matterId: null, payment: true })}>
             <span className="faint" style={{ fontSize: 11, letterSpacing: ".06em" }}>支払</span>
             <b>検収書・利用許諾計算書</b>
-            <span className="faint" style={{ fontSize: 12 }}>支払文書処理の画面へ（納品・計算期が来たものを検収・計算書にする）</span>
+            <span className="faint" style={{ fontSize: 12 }}>相手と条件 → 実績（納品・利用の報告）→ 検収書・計算書 → 送る → 支払</span>
           </button>
         </div>
       </section>
     );
+  }
+  if (ctx.payment) {
+    return <TradePayment onBack={() => onCtx(null)} onCompose={onCompose} onOpenDocument={onOpenDocument}
+                         onOpenPayments={onOpenPayments} />;
   }
   return <TradeFlow key={`${ctx.pattern}-${ctx.matterId ?? `p${ctx.partyId ?? 0}`}`} ctx={ctx} onCtx={onCtx} onCompose={onCompose}
                     onOpenDocument={onOpenDocument} onOpenMatter={onOpenMatter} onRegisterAgreement={onRegisterAgreement} />;
