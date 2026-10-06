@@ -411,27 +411,27 @@ const inspectionDb = (over: Record<string, unknown> = {}) => new FakeDatabase((t
   return undefined;
 });
 
-test("検収書：納期より早く納品されたら、納品日から支払条件で出した日で払う（予定の支払日より早いとき）", async () => {
+test("検収書：期日は納品日が起点。個人は翌月 20 日、法人は翌月末日（納期や予定の支払日ではない）", async () => {
+  // 納期より早い納品（8/15。予定の支払日は 10/20）。
   const early = await new PaymentService(inspectionDb({
     payment_terms: "月末締め翌月末払い", schedule_pay_on: "2026-10-20", occurred_on: "2026-08-15", inspected_on: "2026-08-20"
   })).createFromInspection(31, "kuramochi");
-  assert.equal(early.dueOn, "2026-09-30", "8/15 納品 → 翌月末。予定の 10/20 より早い");
-  // 納期より遅れた納品は予定の支払日のまま。
+  assert.equal(early.dueOn, "2026-09-20", "個人：8/15 納品 → 9/20");
+  // 納期より遅れた納品（10/5）も納品日から。予定の 10/20 には戻さない。
   const late = await new PaymentService(inspectionDb({
     payment_terms: "月末締め翌月末払い", schedule_pay_on: "2026-10-20", occurred_on: "2026-10-05", inspected_on: "2026-10-06"
   })).createFromInspection(31, "kuramochi");
-  assert.equal(late.dueOn, "2026-10-20");
+  assert.equal(late.dueOn, "2026-11-20", "個人：10/5 納品 → 11/20");
+  // 法人は翌月末日。条件の支払条件の文言は使わない。
+  const corp = await new PaymentService(inspectionDb({
+    party_kind: "corporate", withholding: false, payment_terms: "検収後30日以内", occurred_on: "2026-10-05", inspected_on: "2026-10-06"
+  })).createFromInspection(31, "kuramochi");
+  assert.equal(corp.dueOn, "2026-11-30", "法人：10/5 納品 → 11/30");
 });
 
-test("検収書：予定の回が無ければ、条件の支払条件から期日を出す", async () => {
-  const withTerms = await new PaymentService(inspectionDb({ payment_terms: "検収月の翌月末払い" }))
-    .createFromInspection(31, "kuramochi");
-  assert.equal(withTerms.dueOn, "2026-07-31", "検収日 2026-06-25 の翌月末");
-
-  // 支払条件が無い条件は、これまでどおり受領日 +60日。
-  const without = await new PaymentService(inspectionDb())
-    .createFromInspection(31, "kuramochi");
-  assert.equal(without.dueOn, "2026-08-24");
+test("検収書：予定の回も支払条件も無くても、納品日から期日が出る", async () => {
+  const r = await new PaymentService(inspectionDb()).createFromInspection(31, "kuramochi");
+  assert.equal(r.dueOn, "2026-07-20", "個人：納品 2026-06-20 → 7/20（検収日 6/25 ではなく納品日）");
 });
 
 test("支払条件が日付そのものなら、その日を期日にする（V1・V2 から来た条件）", async () => {
