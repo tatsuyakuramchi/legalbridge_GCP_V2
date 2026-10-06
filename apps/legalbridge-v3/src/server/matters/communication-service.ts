@@ -168,7 +168,8 @@ export class MatterCommunicationService {
     try {
       const matter = await this.matter(this.database, matterId);
       const thread = await this.slackThread(this.database, matterId);
-      const channelId = str(input.channelId) ?? thread?.channelId ?? matter.requester_slack_id ?? "";
+      const channelId = str(input.channelId) ?? thread?.channelId ?? matter.requester_slack_id
+        ?? (await this.slackOfEmail(this.database, str(matter.requester_email)))?.slackId ?? "";
       const threadRef = str(input.threadRef)
         ?? (thread && thread.channelId === channelId ? thread.threadTs : null);
 
@@ -316,9 +317,50 @@ export class MatterCommunicationService {
       })),
       slack: {
         requesterSlackId: str(matter.requester_slack_id),
-        channelId: thread?.channelId ?? null, threadTs: thread?.threadTs ?? null
+        channelId: thread?.channelId ?? null, threadTs: thread?.threadTs ?? null,
+        // 宛先が無いとき、依頼者のメールから社員を引いてその Slack ID へ送る。
+        fromRequesterEmail: str(matter.requester_slack_id) ? null : await this.slackOfEmail(this.database, str(matter.requester_email))
       }
     };
+  }
+
+  /** メールから社員を引き、その Slack ID。1人に決まらなければ null。 */
+  private async slackOfEmail(client: Queryable, email: string | null): Promise<{ slackId: string; name: string } | null> {
+    if (!email) return null;
+    const r = await client.query(
+      `SELECT name, slack_user_id FROM staff
+        WHERE lower(email) = lower($1) AND slack_user_id IS NOT NULL AND slack_user_id <> '' LIMIT 2`, [email]);
+    return r.rows.length === 1
+      ? { slackId: String((r.rows[0] as any).slack_user_id), name: String((r.rows[0] as any).name) } : null;
+  }
+
+  /**
+   * 案件の Slack の宛先を決める（依頼者の Slack ID の欄に持つ）。Slack の依頼から立てた
+   * 案件でないと入らないので、画面から入れられるようにする。人（U…）でもチャンネル（C…）でもよい。
+   * 宛先を変えたら、前の宛先で始めたスレッドの控えは外す（次の1通が新しいスレッドの根になる）。
+   * やり取りの記録は残る。
+   */
+  async setSlackRecipient(matterId: number, slackId: string | null, actor: string): Promise<{ slackId: string | null }> {
+    const next = slackId ? slackId.trim().toUpperCase() : null;
+    if (next && !/^[UWCG][A-Z0-9]{6,}$/.test(next)) {
+      throw new DomainError("VALIDATION", "Slack の ID は U（人）か C（チャンネル）から始まる英数字です");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await this.matter(client, matterId);
+        await client.query("UPDATE matters SET requester_slack_id = $2, updated_at = now() WHERE id = $1", [matterId, next]);
+        const thread = await this.slackThread(client, matterId);
+        if (thread && thread.channelId !== next) {
+          await client.query(
+            "DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'slack_thread'", [matterId]);
+        }
+        await recordAudit(client, {
+          actor, action: "matter.slack_recipient", targetType: "matter", targetId: matterId,
+          detail: { before: str(before.requester_slack_id), after: next, threadReset: Boolean(thread && thread.channelId !== next) }
+        });
+        return { slackId: next };
+      });
+    } catch (error) { throw translate(error); }
   }
 
   private async matter(client: Queryable, id: number) {

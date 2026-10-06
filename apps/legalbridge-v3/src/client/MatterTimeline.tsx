@@ -25,7 +25,9 @@ interface Recipients {
   requesterEmail: string | null;
   counterparty: { name: string; email: string | null } | null;
   contacts: Array<{ name: string | null; email: string; role: string | null; department: string | null }>;
-  slack: { requesterSlackId: string | null; channelId: string | null; threadTs: string | null };
+  slack: { requesterSlackId: string | null; channelId: string | null; threadTs: string | null;
+           /** 宛先が無いとき、依頼者のメールから引いた社員の Slack ID。 */
+           fromRequesterEmail?: { slackId: string; name: string } | null };
 }
 interface Channels {
   channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
@@ -74,6 +76,9 @@ export function MatterTimeline(
   const [driveTitle, setDriveTitle] = useState("");
   const [driveDirection, setDriveDirection] = useState<"in" | "out">("in");
   const [open, setOpen] = useState<Set<number>>(new Set());
+  /** Slack の宛先を変えたら読み直す。 */
+  const [recipientsVersion, setRecipientsVersion] = useState(0);
+  const [slackEditing, setSlackEditing] = useState(false);
 
   useEffect(() => {
     setError(null);
@@ -83,7 +88,7 @@ export function MatterTimeline(
       api.get<Channels>("/integrations")
     ]).then(([c, r, i]) => { setRows(c.communications); setRecipients(r); setChannels(i.channels); })
       .catch((e: ApiError) => setError(e.message));
-  }, [matterId, reloadKey]);
+  }, [matterId, reloadKey, recipientsVersion]);
 
   async function reload() {
     const c = await api.get<{ communications: Communication[] }>(`/matters/${matterId}/communications`);
@@ -170,12 +175,26 @@ export function MatterTimeline(
         </div>
 
         {mode === "slack" && recipients && (
-          <div className="faint">
-            宛先：{recipients.slack.channelId
-              ? <>この案件のスレッド（<span className="code">{recipients.slack.channelId}</span>）に続けます</>
-              : recipients.slack.requesterSlackId
-                ? <>依頼者 <span className="code">{recipients.slack.requesterSlackId}</span> へ DM。最初の1通がこの案件のスレッドになります</>
-                : "この案件に Slack の宛先がありません（依頼者の Slack ID もスレッドも未登録）"}
+          <div className="stack" style={{ gap: 4 }}>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <span className={recipients.slack.channelId || recipients.slack.requesterSlackId || recipients.slack.fromRequesterEmail ? "faint" : ""}>
+                宛先：{recipients.slack.channelId
+                  ? <>この案件のスレッド（<span className="code">{recipients.slack.channelId}</span>）に続けます</>
+                  : recipients.slack.requesterSlackId
+                    ? <><span className="code">{recipients.slack.requesterSlackId}</span> へ送ります。最初の1通がこの案件のスレッドになります</>
+                    : recipients.slack.fromRequesterEmail
+                      ? <>依頼者 {recipients.slack.fromRequesterEmail.name}（<span className="code">{recipients.slack.fromRequesterEmail.slackId}</span>）へ DM。依頼者のメールから社員を引きました</>
+                      : <span className="tag warn">宛先がありません。「宛先を決める」で選んでください</span>}
+              </span>
+              <button type="button" className="btn btn-sm" onClick={() => setSlackEditing((v) => !v)}>
+                {slackEditing ? "閉じる" : recipients.slack.channelId || recipients.slack.requesterSlackId ? "宛先を変える" : "宛先を決める"}
+              </button>
+            </div>
+            {slackEditing && (
+              <SlackRecipientPicker matterId={matterId} current={recipients.slack.requesterSlackId}
+                onSaved={(msg) => { setSlackEditing(false); setNote(msg); setRecipientsVersion((v) => v + 1); }}
+                onError={setError} />
+            )}
           </div>
         )}
 
@@ -289,6 +308,68 @@ export function MatterTimeline(
           {!rows.length && <li className="faint empty">まだ記録がありません</li>}
         </ol>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 案件の Slack の宛先を決める。社員（Slack ID の登録がある人）から選ぶか、
+ * メンバー ID（U…）・チャンネル ID（C…）を貼る。社員の Slack ID は「取引先・担当」の
+ * 担当者の一覧で登録する。
+ */
+function SlackRecipientPicker(
+  { matterId, current, onSaved, onError }: {
+    matterId: number; current: string | null;
+    onSaved: (msg: string) => void; onError: (msg: string) => void;
+  }
+) {
+  const [staff, setStaff] = useState<Array<{ id: number; name: string; department: string | null; slackUserId?: string | null; status: string }>>([]);
+  const [q, setQ] = useState("");
+  const [manual, setManual] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.get<{ staff: typeof staff }>("/staff").then((r) => setStaff(r.staff)).catch(() => setStaff([]));
+  }, []);
+  const withSlack = staff.filter((s) => s.slackUserId && s.status !== "retired");
+  const shown = withSlack.filter((s) => !q.trim() || `${s.name} ${s.department ?? ""}`.includes(q.trim())).slice(0, 30);
+
+  async function save(slackId: string | null, label: string) {
+    setBusy(true);
+    try {
+      await api.put(`/matters/${matterId}/slack-recipient`, { slackId });
+      onSaved(slackId ? `Slack の宛先を ${label} にしました` : "Slack の宛先を外しました");
+    } catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="note stack" style={{ gap: 6 }}>
+      <input value={q} placeholder="社員の名前・部門で探す" onChange={(e) => setQ(e.target.value)} />
+      <div className="picker" style={{ maxHeight: 200, overflowY: "auto" }}>
+        {shown.map((s) => (
+          <div key={s.id} className="row" style={{ justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
+            <span>{s.name}<span className="faint">　{s.department ?? ""}</span><span className="code faint">　{s.slackUserId}</span></span>
+            <button className="btn btn-sm" disabled={busy || s.slackUserId === current}
+                    onClick={() => void save(s.slackUserId!, s.name)}>この人に送る</button>
+          </div>
+        ))}
+        {!shown.length && (
+          <span className="faint">
+            {withSlack.length ? "当たる社員がいません" : "Slack ID を登録した社員がいません。「取引先・担当」の担当者の一覧で Slack ID を入れてください"}
+          </span>
+        )}
+      </div>
+      <div className="row" style={{ gap: 6 }}>
+        <input value={manual} placeholder="メンバー ID（U…）かチャンネル ID（C…）を貼る" style={{ flex: 1 }}
+               onChange={(e) => setManual(e.target.value)} />
+        <button className="btn btn-sm" disabled={busy || !/^[UWCGucwg][A-Za-z0-9]{6,}$/.test(manual.trim())}
+                onClick={() => void save(manual.trim(), manual.trim())}>この ID にする</button>
+        {current && <button className="btn btn-sm" disabled={busy} onClick={() => void save(null, "")}>宛先を外す</button>}
+      </div>
+      <small className="faint">
+        宛先を変えると、次の1通から新しいスレッドになります（これまでのやり取りは残ります）。
+        メンバー ID は Slack のプロフィールの「⋮」→「メンバー ID をコピー」で取れます。
+      </small>
     </div>
   );
 }

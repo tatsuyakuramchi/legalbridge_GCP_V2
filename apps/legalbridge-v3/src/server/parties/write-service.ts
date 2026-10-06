@@ -70,6 +70,8 @@ export interface StaffInput {
   /** 英語表記（A-049）。海外版の書類だけが使う。空なら日本語のまま。 */
   nameEn?: string | null;
   departmentEn?: string | null;
+  /** Slack のメンバー ID（U… / W…）。案件から Slack で送るときの宛先。 */
+  slackUserId?: string | null;
 }
 
 export interface BankAccountInput {
@@ -547,13 +549,20 @@ export class PartyWriteService {
     if (input.nameEn !== undefined) put("name_en", blankToNull(input.nameEn));
     if (input.departmentEn !== undefined) put("department_en", blankToNull(input.departmentEn));
     if (input.status !== undefined) put("status", input.status);
+    if (input.slackUserId !== undefined) {
+      const slack = blankToNull(input.slackUserId)?.toUpperCase() ?? null;
+      if (slack && !/^[UW][A-Z0-9]{6,}$/.test(slack)) {
+        throw new DomainError("VALIDATION", "Slack のメンバー ID は U から始まる英数字です（プロフィールの「⋮」→「メンバー ID をコピー」）");
+      }
+      put("slack_user_id", slack);
+    }
     if (!sets.length) throw new DomainError("VALIDATION", "直す項目がありません");
 
     try {
       return await inTransaction(this.database, async (client) => {
         const r = await client.query(
           `UPDATE staff SET ${sets.join(", ")} WHERE id = $1
-           RETURNING id, staff_code, name, email, department, phone, status, name_en, department_en`, params);
+           RETURNING id, staff_code, name, email, department, phone, status, name_en, department_en, slack_user_id`, params);
         const row = r.rows[0] as Record<string, any> | undefined;
         if (!row) throw new DomainError("NOT_FOUND", `担当者 ${id} が見つかりません`);
 
@@ -565,7 +574,8 @@ export class PartyWriteService {
           id: Number(row.id), staffCode: row.staff_code ?? null, name: String(row.name),
           email: row.email ?? null, department: row.department ?? null,
           phone: row.phone ?? null, status: String(row.status),
-          nameEn: row.name_en ?? null, departmentEn: row.department_en ?? null
+          nameEn: row.name_en ?? null, departmentEn: row.department_en ?? null,
+          slackUserId: row.slack_user_id ?? null
         };
       });
     } catch (error) { throw translate(error); }
