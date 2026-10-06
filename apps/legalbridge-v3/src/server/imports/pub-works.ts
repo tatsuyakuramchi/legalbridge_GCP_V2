@@ -115,18 +115,30 @@ function ratePct(value: string, header: string): number | null {
 }
 
 /**
- * 取り分の列。「作家B 10／作家C 5」のように 名前 と 数 の組を ／ ; | で区切る。
+ * 取り分の列。「作家B（V-0102） 10／作家C（V-0103） 5」のように 名前（取引先コード） と 数 の組を
+ * ／ ; | で区切る。権利者は取引先コードで当て、名前は登録の名前と照らす（同姓同名や表記違いを
+ * 間違って払わないため）。コードが無ければ止める。
  * 数は電子（無ければ紙）の料率を分けた率で、合計がその料率と同じなら比に直す。
  * 合計が 100 なら比率（%）として読む。どちらでもなければ止める。
  */
-export function parseShareText(value: string, wholeRatePct: number | null): Array<{ name: string; ppm: number }> {
+export function parseShareText(
+  value: string, wholeRatePct: number | null
+): Array<{ name: string; code: string; ppm: number }> {
   const s = value.trim();
   if (!s) return [];
   const parts = s.split(/[／/;|｜]/).map((p) => p.trim()).filter(Boolean);
   const pairs = parts.map((p) => {
     const m = p.match(/^(.+?)[\s　:：]+([0-9]+(?:\.[0-9]+)?)\s*[%％]?$/);
-    if (!m) throw new DomainError("VALIDATION", `取り分は「名前 10／名前 5」のように入れてください（"${p}"）`);
-    return { name: m[1].trim(), value: Number(m[2]) };
+    if (!m) {
+      throw new DomainError("VALIDATION", `取り分は「名前（取引先コード） 10／名前（取引先コード） 5」のように入れてください（"${p}"）`);
+    }
+    const who = m[1].trim();
+    const coded = who.match(/^(.*?)\s*[（(]\s*([^（）()]+?)\s*[）)]$/);
+    if (!coded || !coded[2].trim()) {
+      throw new DomainError("VALIDATION",
+        `取り分の権利者「${who}」に取引先コードがありません。「名前（取引先コード） 率」の形で入れてください`);
+    }
+    return { name: coded[1].trim(), code: coded[2].trim(), value: Number(m[2]) };
   });
   const sum = pairs.reduce((a, p) => a + p.value, 0);
   // 書き出した率は小数 4 桁に丸めてあるので、その分の誤差は同じとみなす。
@@ -142,7 +154,7 @@ export function parseShareText(value: string, wholeRatePct: number | null): Arra
   }
   const total = ppm.reduce((a, b) => a + b, 0);
   if (ppm.length && Math.abs(total - SHARE_TOTAL_PPM) <= ppm.length * 10) ppm[ppm.length - 1] += SHARE_TOTAL_PPM - total;
-  return pairs.map((p, i) => ({ name: p.name, ppm: ppm[i] }));
+  return pairs.map((p, i) => ({ name: p.name, code: p.code, ppm: ppm[i] }));
 }
 
 export class PubWorksImportService {
@@ -393,7 +405,7 @@ export class PubWorksImportService {
     else if (shareText) {
       shares = [];
       for (const s of parseShareText(shareText, wholeRate)) {
-        const p = await this.findParty("", s.name, "取り分の権利者");
+        const p = await this.findShareParty(s.code, s.name);
         shares.push({ partyId: p.id, name: p.name, sharePpm: s.ppm });
       }
       validateShareInput(shares);
@@ -509,7 +521,7 @@ export class PubWorksImportService {
     const ids = conds.map((c) => Number(c.id));
     const workIds = [...new Set(conds.map((c) => Number(c.work_id)))];
     const shareRows = ids.length ? (await this.database.query(
-      `SELECT s.condition_id, sp.name, s.share_ppm FROM condition_shares s JOIN parties sp ON sp.id = s.party_id
+      `SELECT s.condition_id, sp.name, sp.party_code, s.share_ppm FROM condition_shares s JOIN parties sp ON sp.id = s.party_id
         WHERE s.condition_id = ANY($1::bigint[]) ORDER BY s.sort_order, s.id`, [ids])).rows as Array<Record<string, any>> : [];
     const scopeRows = ids.length ? (await this.database.query(
       `SELECT condition_id, scope_type, label FROM condition_scopes WHERE condition_id = ANY($1::bigint[]) ORDER BY sort_order, label`,
@@ -536,7 +548,9 @@ export class PubWorksImportService {
       const whole = main.rate_ppm === null || main.rate_ppm === undefined ? null : Number(main.rate_ppm) / 10000;
       const shares = sharesOf.get(String(main.id)) ?? [];
       const shareText = whole === null ? "" : shares
-        .map((s) => `${s.name} ${trimNumber((whole * Number(s.share_ppm)) / SHARE_TOTAL_PPM)}`).join("／");
+        // 取引先コードの無い権利者はそのまま出す（取り込むときに「コードがありません」で止まる）。
+        .map((s) => `${s.name}${s.party_code ? `（${s.party_code}）` : ""} ${trimNumber((whole * Number(s.share_ppm)) / SHARE_TOTAL_PPM)}`)
+        .join("／");
       const scopes = scopesOf.get(String(main.id)) ?? [];
       return {
         "作品名": String(main.title ?? ""), "作品コード": main.work_code ?? "", "カナ": main.title_kana ?? "",
@@ -596,7 +610,7 @@ export class PubWorksImportService {
     const parsedShares = parseShareText(shareText, digital ?? print);
     const shares: PubWorkRow["shares"] = [];
     for (const s of parsedShares) {
-      const p = await this.findParty("", s.name, "取り分の権利者");
+      const p = await this.findShareParty(s.code, s.name);
       shares.push({ partyId: p.id, name: p.name, sharePpm: s.ppm });
     }
     validateShareInput(shares);
@@ -629,6 +643,31 @@ export class PubWorksImportService {
     };
   }
 
+  /**
+   * 取り分の権利者。取引先コードで当て、名前が登録（名称・カナ・別名）と合わなければ止める。
+   * 名前だけで当てると同姓同名や表記違いで別人に払う。コードだけだと打ち間違いに気づけない。
+   */
+  private async findShareParty(code: string, name: string): Promise<{ id: number; name: string }> {
+    const r = await this.database.query(
+      `SELECT id, name, name_kana, aliases FROM parties
+        WHERE status <> 'merged' AND lower(btrim(party_code)) = lower(btrim($1))
+        LIMIT 2`, [code]);
+    const rows = r.rows as Array<{ id: number; name: string; name_kana: string | null; aliases: string[] | null }>;
+    if (rows.length !== 1) {
+      throw new DomainError("VALIDATION", rows.length
+        ? `取り分の権利者の取引先コード「${code}」が複数当たります`
+        : `取り分の権利者の取引先コード「${code}」が見つかりません。先に取引先を登録してください`);
+    }
+    const hit = rows[0];
+    const norm = (v: string | null | undefined) => String(v ?? "").replace(/[\s　]+/g, "");
+    const names = [hit.name, hit.name_kana, ...(hit.aliases ?? [])].map(norm).filter(Boolean);
+    if (name && !names.includes(norm(name))) {
+      throw new DomainError("VALIDATION",
+        `取り分の権利者「${name}」と取引先コード「${code}」が合いません（コード ${code} は「${hit.name}」です）`);
+    }
+    return { id: Number(hit.id), name: String(hit.name) };
+  }
+
   private async findParty(code: string, name: string, what: string): Promise<{ id: number; name: string }> {
     if (!code && !name) throw new DomainError("VALIDATION", `${what}が空です`);
     const r = await this.database.query(
@@ -654,11 +693,11 @@ export const PUB_WORKS_HEADERS = [
 export const PUB_WORKS_SAMPLE =
   "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考\n" +
   "サタスペ エキスパンション デッドマン・ウォーキング,,,冒険支援株式会社,,10,15,非独占,,,BT000105758300100101,,2009-12-22,2031-09-30,,,日本語,© 冒険企画局 © 河嶋陶一朗,著：河嶋陶一朗,\n" +
-  "光砕のリヴァルチャー,,,瀧里フユ,,10,15,非独占,瀧里フユ 11.25／宝井ロメロ 3.75,当社,BT000110567300100101,,2025-07-01,,,,日本語,,,\n" +
-  "神我狩 ストーリー＆データ集 神化の誓約,,,合同会社ダックルーズ,,10,15,非独占,合同会社ダックルーズ 10／力造 5,代表,,,2025-07-01,,,,日本語,,,";
+  "光砕のリヴァルチャー,,,瀧里フユ,,10,15,非独占,瀧里フユ（V-0102） 11.25／宝井ロメロ（V-0188） 3.75,当社,BT000110567300100101,,2025-07-01,,,,日本語,,,\n" +
+  "神我狩 ストーリー＆データ集 神化の誓約,,,合同会社ダックルーズ,,10,15,非独占,合同会社ダックルーズ（V-0231） 10／力造（V-0232） 5,代表,,,2025-07-01,,,,日本語,,,";
 
 export const PUB_WORKS_UPDATE_SAMPLE =
   "作品コード,作品名,相手先,紙料率,電子料率,取り分,分配,CID\n" +
-  "WRK-2026-0012,,,10,15,瀧里フユ 11.25／宝井ロメロ 3.75,当社,BT000110567300100101\n" +
-  ",神我狩 ストーリー＆データ集 神化の誓約,合同会社ダックルーズ,,,合同会社ダックルーズ 10／力造 5,代表,\n" +
+  "WRK-2026-0012,,,10,15,瀧里フユ（V-0102） 11.25／宝井ロメロ（V-0188） 3.75,当社,BT000110567300100101\n" +
+  ",神我狩 ストーリー＆データ集 神化の誓約,合同会社ダックルーズ,,,合同会社ダックルーズ（V-0231） 10／力造（V-0232） 5,代表,\n" +
   "WRK-2026-0030,,,,,なし,,";
