@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, percentText,
-  pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, rowBlockerOf
+  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, payeeShareText, percentText,
+  pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, rowBlockerOf, sharesText
 } from "./pub-terms.js";
 import { pubMediaOf, pubMediaOfScopes } from "../core/pub-media.js";
 
@@ -141,7 +141,8 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
     translationConsentRequired: false,
     translationLabel: "翻訳版再許諾", translationDerivative: false,
     // 許諾期間（A-039）。条件が期間を持つので、下に続く行が出る。
-    term: "2026.10.1〜2032.3.31（更新なし）", hasTerm: true, hasNoteRow: true
+    term: "2026.10.1〜2032.3.31（更新なし）", hasTerm: true, hasNoteRow: true,
+    coAuthors: "", payeeShare: "", hasShares: false
   });
 });
 
@@ -246,4 +247,48 @@ test("翻訳版再許諾（A-033）：紙・電子の率を1つの欄にまと�
   // 同じ枠に2本あれば、これまでどおり重複として出す。
   const dup = { conditions: [...context.conditions, { ...base, id: 5, conditionNo: "CL-5", name: "もう1本", usageType: "pub_sub_print", ratePct: 30 }] };
   assert.match(pubTermsWarnings(dup).map((w) => w.message).join("｜"), /翻訳版の紙の条件が2本/);
+});
+
+// ---- 共同著作の取り分（A-068） ----------------------------------------
+
+const SHARES = [{ partyId: 21, name: "作家B", partyCode: "V-21", sharePpm: 666667 },
+                { partyId: 22, name: "作家C", partyCode: "V-22", sharePpm: 333333 }];
+const sharedContext = () => ({
+  ...context,
+  conditions: context.conditions.map((c: Record<string, any>) => (c.workId === 10 ? { ...c, shares: SHARES, distribution: "direct" } : c))
+});
+
+test("取り分のある作品：一覧の行に「共同著作 作家B 66.6667%・作家C 33.3333%」。料率の欄は全体のまま", () => {
+  assert.equal(sharesText({ shares: SHARES, distribution: "direct" }), "作家B 66.6667%・作家C 33.3333%");
+  assert.equal(sharesText({ shares: SHARES, distribution: "representative" }), "代表が分配：作家B 66.6667%・作家C 33.3333%");
+  assert.equal(sharesText({ shares: [] }), "");
+  const ctx = sharedContext();
+  const rows = pubTitleSeeds(ctx);
+  assert.equal(rows[0].co_authors, "作家B 66.6667%・作家C 33.3333%");
+  assert.equal(rows[1].co_authors, "", "取り分の無い作品は空");
+  const patch = pubTermsPatch(ctx, { [PUB_TITLES_FIELD]: rows });
+  const titles = patch.titles as Array<Record<string, any>>;
+  assert.equal(titles[0].coAuthors, "作家B 66.6667%・作家C 33.3333%");
+  assert.equal(titles[0].payeeShare, "", "相手先（代表）宛てなら取り分の併記は無い");
+  assert.equal(titles[0].hasShares, true);
+  assert.equal(titles[0].hasNoteRow, true);
+  assert.deepEqual([titles[0].printRate, titles[0].digitalRate], ["11%", "15%"], "全体の料率");
+  assert.equal(titles[1].hasShares, false);
+  assert.equal(patch.payeeTerms, false);
+});
+
+test("受取人（共著者の一人）宛て：甲がその人になり、全体率と取り分を併記。本文に取り分の一文が入る", () => {
+  const ctx = { ...sharedContext(), payee: { partyId: 21, name: "作家B" } };
+  ctx.condition = { ...ctx.condition, counterparty: { ...ctx.condition.counterparty, name: "作家B" } };
+  const patch = pubTermsPatch(ctx, { [PUB_TITLES_FIELD]: pubTitleSeeds(ctx) });
+  const titles = patch.titles as Array<Record<string, any>>;
+  assert.equal(titles[0].payeeShare, "甲の取り分 66.6667%（紙 7.3333%・電子 10%）");
+  assert.deepEqual([titles[0].printRate, titles[0].digitalRate], ["11%", "15%"], "一覧の料率は全体のまま（併記）");
+  assert.equal(titles[1].payeeShare, "", "取り分に入っていない作品には出ない");
+  assert.equal(patch.payeeTerms, true);
+  assert.equal(patch.payeeName, "作家B");
+  assert.equal(patch.licensorName, "作家B");
+  // 紙だけ・電子だけの作品でも落ちない。
+  assert.equal(payeeShareText({ partyId: 21 }, { ratePct: 10, shares: SHARES }, undefined), "甲の取り分 66.6667%（紙 6.6667%）");
+  assert.equal(payeeShareText({ partyId: 99 }, { ratePct: 10, shares: SHARES }, undefined), "");
 });

@@ -1,6 +1,7 @@
 import { type Queryable, int, str } from "../core/db.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
+import { DomainError } from "../core/errors.js";
 
 /**
  * 条件書を決定したとき、合意を自動で起こす（合意の生まれ方 ②）。
@@ -30,6 +31,13 @@ export interface AutoAgreementInput {
   /** 文書に付いている合意。あれば触らない。 */
   agreementId: number | null;
   issuedOn: string | null;
+  /**
+   * 受取人（共著の取り分。A-068）宛ての条件書。合意の相手は条件の相手先ではなく受取人で、
+   * 親は文書で選んだ受取人の基本契約（parentAgreementId）。無ければ受取人との単体契約。
+   * 条件の合意は触らない（条件は代表との契約の明細）。
+   */
+  payeePartyId?: number | null;
+  parentAgreementId?: number | null;
 }
 
 export interface AutoAgreementResult {
@@ -41,7 +49,8 @@ export async function ensureAgreementForTerms(
   client: Queryable, input: AutoAgreementInput, actor: string
 ): Promise<AutoAgreementResult | null> {
   if (!TERMS_TEMPLATE_KEYS.has(input.templateKey)) return null;
-  if (input.agreementId) return null;
+  const payeeId = input.payeePartyId ?? null;
+  if (input.agreementId && !payeeId) return null;
   if (!input.conditionIds.length) return null;
 
   const conds = await client.query(
@@ -56,21 +65,39 @@ export async function ensureAgreementForTerms(
   const parties = [...new Set(rows.map((r) => int(r.counterparty_id)).filter(Boolean))];
   // 相手が2社にまたがる条件書は無い。あれば合意を勝手に立てない。
   if (parties.length !== 1) return null;
-  const partyId = parties[0]!;
+  const partyId = payeeId ?? parties[0]!;
   const direction = rows.every((r) => r.direction === "out") ? "out" : "in";
 
   // 載せた条件の基本契約。基本契約そのもの（か単体契約）だけを親にする。
   // 補助文書に付いていれば、その親を辿る。
-  const parents = [...new Set(rows.map((r) => {
-    if (!r.agreement_id) return null;
-    if (r.agreement_kind === "master" || r.agreement_kind === "standalone") return int(r.agreement_id);
-    return int(r.agreement_parent);
-  }).filter((x): x is number => x !== null))];
-  if (parents.length > 1) return null;   // 基本契約が2本 → 人が決める
+  // 受取人宛てなら、文書で選んだ受取人の基本契約だけが親（条件の契約は代表のもの）。
+  let parents: number[];
+  if (payeeId) {
+    parents = [];
+    if (input.parentAgreementId) {
+      const p = (await client.query(
+        "SELECT id, counterparty_id, kind FROM agreements WHERE id = $1", [input.parentAgreementId])).rows[0] as any;
+      if (!p) throw new DomainError("NOT_FOUND", `契約 ${input.parentAgreementId} が見つかりません`);
+      if (int(p.counterparty_id) !== payeeId) {
+        throw new DomainError("VALIDATION", "選んだ基本契約は受取人の契約ではありません。受取人の基本契約を選んでください");
+      }
+      if (String(p.kind ?? "master") !== "master") {
+        throw new DomainError("VALIDATION", "受取人宛ての条件書の親に選べるのは基本契約だけです");
+      }
+      parents = [Number(p.id)];
+    }
+  } else {
+    parents = [...new Set(rows.map((r) => {
+      if (!r.agreement_id) return null;
+      if (r.agreement_kind === "master" || r.agreement_kind === "standalone") return int(r.agreement_id);
+      return int(r.agreement_parent);
+    }).filter((x): x is number => x !== null))];
+    if (parents.length > 1) return null;   // 基本契約が2本 → 人が決める
+  }
 
   const today = input.issuedOn ?? new Date().toISOString().slice(0, 10);
   const workTitle = str(rows[0].work_title);
-  const title = `${input.templateLabel}${workTitle ? `（${workTitle}）` : ""}`;
+  const title = `${input.templateLabel}${workTitle ? `（${workTitle}）` : ""}${payeeId ? "（共著の取り分）" : ""}`;
 
   let agreementId: number;
   let agreementNo: string | null;
@@ -100,11 +127,14 @@ export async function ensureAgreementForTerms(
     agreementId = Number((r.rows[0] as { id: number }).id);
   }
 
-  await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1 AND agreement_id IS NULL",
+  // 受取人宛ては、文書に付いていた基本契約（親）をこの合意に差し替える。
+  await client.query(
+    payeeId ? "UPDATE documents SET agreement_id = $2 WHERE id = $1"
+            : "UPDATE documents SET agreement_id = $2 WHERE id = $1 AND agreement_id IS NULL",
     [input.documentId, agreementId]);
   // 条件の合意は空のものだけ埋める。補助文書のときは親（基本契約）のままにする
-  // （条件は基本契約の明細であって、覚書の明細ではない）。
-  const linked = kind === "standalone"
+  // （条件は基本契約の明細であって、覚書の明細ではない）。受取人宛ては触らない。
+  const linked = kind === "standalone" && !payeeId
     ? await client.query(
         "UPDATE conditions SET agreement_id = $2 WHERE id = ANY($1::bigint[]) AND agreement_id IS NULL RETURNING id",
         [input.conditionIds, agreementId])

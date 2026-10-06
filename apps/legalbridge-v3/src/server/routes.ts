@@ -71,6 +71,7 @@ import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
+import { loadDistribution, loadShares } from "./royalty/shares.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
@@ -775,6 +776,16 @@ export function createRoutes(database: Transactable) {
        .set("Content-Disposition", `attachment; filename="conditions-${day}.csv"`)
        // Excel が UTF-8 と分かるように BOM を付ける（無いと日本語が化ける）。
        .send(`\ufeff${csv}`);
+  }));
+
+  // 選んだ条件の取り分（共著。A-068）。文書作成で「受取人」を選ぶ材料。:id より前に置く。
+  router.get("/conditions/shares", asyncRoute(async (req, res) => {
+    const ids = String(req.query.ids ?? "").split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200);
+    const out = [];
+    for (const id of ids) {
+      out.push({ id, shares: await loadShares(database, id), distribution: await loadDistribution(database, id) });
+    }
+    res.json({ conditions: out });
   }));
 
   router.get("/conditions/:id", asyncRoute(async (req, res) => {
