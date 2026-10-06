@@ -974,6 +974,7 @@ export class DocumentIssueService {
       matterId: input.matterId ?? null,
       requestId: input.requestId ?? null,
       ownerStaffId,
+      payeePartyId: refs.payeePartyId ?? null,
       eventIds: input.eventIds ?? [],
       royalty: input.royalty ?? null,
       issuedOn,
@@ -1028,9 +1029,14 @@ export class DocumentIssueService {
 }
 
 /** 文書フォームで人が選んだ番号（manual_inputs の内部の名前）。 */
-export interface ChosenRefs { parentPoNo?: string | null; termsNo?: string | null }
+export interface ChosenRefs {
+  parentPoNo?: string | null; termsNo?: string | null;
+  /** 共著の取り分（A-068）。計算書の受取人（manual_inputs._payeePartyId）。宛名・口座・源泉がこの人になる。 */
+  payeePartyId?: number | null;
+}
 
 export function chosenRefs(manual: Record<string, unknown> | null | undefined): ChosenRefs {
   const text = (v: unknown) => { const t = String(v ?? "").trim(); return t || null; };
-  return { parentPoNo: text(manual?._parentPoNo), termsNo: text(manual?._termsNo) };
+  return { parentPoNo: text(manual?._parentPoNo), termsNo: text(manual?._termsNo),
+           payeePartyId: int(manual?._payeePartyId) };
 }

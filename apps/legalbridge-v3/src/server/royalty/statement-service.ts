@@ -12,7 +12,8 @@ import {
   basisNoteOf, basisOf, methodLabelOf, usageTypeSpec,
   type PaymentStage, type UsageType
 } from "./usage-type.js";
-import { roundRoyalty } from "./rounding.js";
+import { roundRoyalty, taxOf } from "./rounding.js";
+import { allocateShares, loadShares, pickShare, type ConditionShareRow } from "./shares.js";
 
 export interface CalculationInput {
   conditionId: number;
@@ -35,6 +36,11 @@ export interface CalculationInput {
   freeDocumentId?: number | null;
   /** 複数の計算書を退かせて 1 枚にするとき。 */
   freeDocumentIds?: number[] | null;
+  /**
+   * 共著の取り分（A-068）。条件に取り分があるとき、この計算書が誰の分か。
+   * 試算では省ける（全体の額と取り分ごとの内訳を返す）。確定では必須。
+   */
+  payeePartyId?: number | null;
 }
 
 /** 計算書に載る実績1件。根拠（売上か数量）と、その比で按分した額。 */
@@ -112,6 +118,14 @@ export interface CalculationPreview {
   occurredOn: string | null;
   /** 実績の束から出したときの、実績ごとの根拠と按分。 */
   events: StatementBasis[];
+  /**
+   * 共著の取り分（A-068）。条件に取り分があるときだけ入る。受取人ごとの税抜実額
+   * （全体を取り分で割ったもの）。受取人を選んで試算したときは、fee・payment・
+   * amounts・events がその受取人の額になり、whole に割る前の全体が入る。
+   */
+  shares: Array<{ partyId: number; name: string; kind: string | null; sharePpm: number; netMinor: number }> | null;
+  payee: { partyId: number; name: string; sharePpm: number } | null;
+  whole: { grossMinor: number; netMinor: number } | null;
 }
 
 /**
@@ -205,11 +219,32 @@ export class RoyaltyStatementService {
       const known = new Set(rows.map((x) => Number(x.id)));
       throw new DomainError("NOT_FOUND", `実績が見つかりません：${ids.filter((i) => !known.has(i)).join(", ")}`);
     }
+    const free = new Set<number>([...(input.freeDocumentIds ?? []), ...(input.freeDocumentId ? [input.freeDocumentId] : [])]);
+    if (input.payeePartyId) {
+      // 共著の取り分（A-068）。同じ実績から受取人ごとに計算書を出すので、ほかの
+      // 受取人の計算書に結ばれた実績は「空いている」。同じ受取人にはもう出さない。
+      const siblings = await client.query(
+        `SELECT DISTINCT s.document_id, s.payee_party_id
+           FROM statements s
+           JOIN statement_lines l ON l.statement_id = s.id
+           JOIN documents d ON d.id = s.document_id
+          WHERE l.event_id = ANY($1::bigint[]) AND s.payee_party_id IS NOT NULL AND d.status = 'issued'`,
+        [ids]);
+      for (const row of siblings.rows as Array<{ document_id: number; payee_party_id: number }>) {
+        const documentId = Number(row.document_id);
+        if (Number(row.payee_party_id) === Number(input.payeePartyId)) {
+          if (!free.has(documentId)) {
+            throw new DomainError("CONFLICT", `この受取人の計算書はすでにあります（文書 #${documentId}）。訂正するならその文書から`);
+          }
+        } else {
+          free.add(documentId);
+        }
+      }
+    }
     for (const e of rows) {
       const tag = `実績 #${e.id}（${dateStr(e.occurred_on) ?? "日付なし"}）`;
       if (e.same_series !== true) throw new DomainError("VALIDATION", `${tag} はこの条件の実績ではありません`);
       if (e.status !== "active") throw new DomainError("CONFLICT", `${tag} は取り消されています`);
-      const free = new Set<number>([...(input.freeDocumentIds ?? []), ...(input.freeDocumentId ? [input.freeDocumentId] : [])]);
       if (e.document_id && !free.has(Number(e.document_id))) {
         throw new DomainError("CONFLICT", `${tag} はすでに別の文書に結ばれています`);
       }
@@ -447,7 +482,11 @@ export class RoyaltyStatementService {
     // 画面から来た金額は使わず、ここで計算し直す。
     const resolved = await this.resolveInput(client, input);
     const calcInput = resolved.input;
-    const result = await this.calculate(client, calcInput, resolved.events);
+    // 取り分のある条件は受取人が要る（試算は全体でも出せるが、確定は誰の分かを決める）。
+    const result = await this.calculate(client, calcInput, resolved.events, { requirePayee: true });
+    // 受取人の計算書なら、明細の額も取り分で割ったものになっている。
+    const events = result.events;
+    const payee = result.payee;
     // 実績と計算書は、実際に計算に使った版にぶら下げる。渡された版に
     // 付けると、料率と実績の版が食い違って後から検算できない。
     const conditionId = result.appliedVersion?.id ?? input.conditionId;
@@ -455,8 +494,9 @@ export class RoyaltyStatementService {
     // 同じ条件の計算書を1枚の文書に二重に作らない。条件が違えば作ってよい
     // （束ねた計算書は条件ごとに1行ずつ持つ）。
     const already = await client.query(
-      "SELECT id FROM statements WHERE document_id = $1 AND condition_id = $2",
-      [input.documentId, conditionId]);
+      `SELECT id FROM statements WHERE document_id = $1 AND condition_id = $2
+         AND COALESCE(payee_party_id, 0) = COALESCE($3::bigint, 0)`,
+      [input.documentId, conditionId, payee?.partyId ?? null]);
     if (already.rows[0]) {
       throw new DomainError("CONFLICT",
         `この文書には条件 ${result.condition.conditionNo ?? conditionId} の計算書がすでにあります`);
@@ -465,17 +505,18 @@ export class RoyaltyStatementService {
     const statement = await client.query(
       `INSERT INTO statements
          (document_id, condition_id, period, currency, gross_amount, mg_topup, ag_offset,
-          net_amount, tax_amount)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          net_amount, tax_amount, payee_party_id, share_ppm)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id`,
       [input.documentId, conditionId, calcInput.period, result.condition.currency,
        result.amounts.grossMinor, result.amounts.mgTopupMinor, result.amounts.agOffsetMinor,
-       result.amounts.netMinor, result.amounts.taxMinor]
+       result.amounts.netMinor, result.amounts.taxMinor,
+       payee?.partyId ?? null, payee?.sharePpm ?? null]
     );
     const statementId = Number((statement.rows[0] as { id: number }).id);
 
     let eventId: number;
-    if (resolved.events.length) {
+    if (events.length) {
       // 実績の束。新しい実績は作らず、選んだ実績を計算書と文書に結ぶ。
       // 明細は実績1件が1行。利用形態があれば行ごとの額、無ければ根拠の比で按分し、端数は最終行に寄せる
       // （MG の上乗せ・AG の相殺は明細に割らず、合計欄だけに出る）。
@@ -483,12 +524,11 @@ export class RoyaltyStatementService {
       // 利用形態の付いた実績は、行ごとに料率まで掛けて額が出ている。按分しない
       // （按分すると「この行の料率は何%か」が紙と合わなくなる）。MG・AG が
       // 効いたぶんだけ合計がずれるので、そのぶんを最終行に寄せる。
-      const byUsage = resolved.events.some((e) => e.usageType);
+      const byUsage = events.some((e) => e.usageType);
       const lineAmounts = byUsage
-        ? settleToTotal(resolved.events.map((e) => e.amount ?? 0), net)
-        : apportion(net, resolved.events.map((e) => e.share));
-      const shares = apportion(net, resolved.events.map((e) => e.share));
-      for (const [i, e] of resolved.events.entries()) {
+        ? settleToTotal(events.map((e) => e.amount ?? 0), net)
+        : apportion(net, events.map((e) => e.share));
+      for (const [i, e] of events.entries()) {
         await client.query(
           `INSERT INTO statement_lines
              (statement_id, line_no, condition_id, event_id, product_name,
@@ -504,15 +544,17 @@ export class RoyaltyStatementService {
       // 実績を新しく立てる道では入れているのに、束ねる道では入れていなかった。
       // そのため前払保証がいつまでも消化されず、次の計算書でも同じ額が
       // もう一度相殺されて、実額が出ないままになる。ここでも積む。
+      // 受取人ごとの計算書（取り分）は、最初に出した文書だけが実績を指す。
+      // ほかの受取人の文書は明細（statement_lines.event_id）で実績に繋がる。
       const offsets = apportion(result.amounts.agOffsetMinor,
-                                resolved.events.map((e) => e.share));
-      for (const [i, e] of resolved.events.entries()) {
+                                events.map((e) => e.share));
+      for (const [i, e] of events.entries()) {
         await client.query(
           `UPDATE condition_events SET document_id = $2, deductions = $3
             WHERE id = $1 AND (document_id IS NULL OR document_id = $2)`,
           [e.eventId, input.documentId, offsets[i]]);
       }
-      eventId = resolved.events[0].eventId;
+      eventId = events[0].eventId;
     } else {
       // 実績を渡されていない（試算からの近道）。実績を1件立てて結ぶ。
       const event = await client.query(
@@ -545,10 +587,11 @@ export class RoyaltyStatementService {
         conditionId, requestedConditionId: input.conditionId,
         appliedVersion: result.appliedVersion,
         documentId: input.documentId, period: calcInput.period,
-        eventIds: resolved.events.map((e) => e.eventId),
+        eventIds: events.map((e) => e.eventId),
         gross: result.amounts.grossMinor, net: result.amounts.netMinor,
         agOffset: result.amounts.agOffsetMinor, mgTopup: result.amounts.mgTopupMinor,
-        formula: result.fee.formula_breakdown
+        formula: result.fee.formula_breakdown,
+        ...(payee ? { payee: { partyId: payee.partyId, sharePpm: payee.sharePpm }, whole: result.whole } : {})
       }
     });
 
@@ -566,11 +609,13 @@ export class RoyaltyStatementService {
         `SELECT s.id, s.period, s.currency, s.gross_amount, s.mg_topup, s.ag_offset,
                 s.net_amount, s.tax_amount,
                 d.id AS document_id, d.document_no, c.condition_no, c.name AS condition_name,
-                p.name AS counterparty
+                -- 取り分のある条件（A-068）は受取人。空なら条件の相手先。
+                COALESCE(pp.name, p.name) AS counterparty
            FROM statements s
            JOIN documents d  ON d.id = s.document_id
            JOIN conditions c ON c.id = s.condition_id
            LEFT JOIN parties p ON p.id = c.counterparty_id
+           LEFT JOIN parties pp ON pp.id = s.payee_party_id
           ${where.length ? "WHERE " + where.join(" AND ") : ""}
           ORDER BY s.id DESC
           LIMIT $${params.length}`, params);
@@ -594,7 +639,8 @@ export class RoyaltyStatementService {
 
   private async calculate(
     client: Queryable, input: CalculationInput & { period: string; reported: ReportedResult },
-    events: StatementBasis[] = []
+    events: StatementBasis[] = [],
+    options: { requirePayee?: boolean } = {}
   ): Promise<CalculationPreview> {
     const resolved = await this.resolveVersion(client, input.conditionId, input.occurredOn ?? null);
     // 対象日に効いていた版で計算する。渡された版とずれたら、黙って差し替えずに
@@ -620,7 +666,7 @@ export class RoyaltyStatementService {
     });
 
     const currency = condition.currency;
-    return {
+    const whole: CalculationPreview = {
       condition: {
         id: condition.id, conditionNo: condition.conditionNo,
         currency, pricingModel: condition.pricingModel,
@@ -649,7 +695,82 @@ export class RoyaltyStatementService {
       reported: input.reported,
       period: input.period,
       occurredOn: input.occurredOn ?? null,
-      events
+      events,
+      shares: null, payee: null, whole: null
+    };
+
+    // 共著の取り分（A-068）。条件 1 本で全体を出してから、受取人の額に割る。
+    const shares = await loadShares(client, usedId);
+    if (!shares.length) {
+      if (input.payeePartyId) pickShare(shares, input.payeePartyId); // 取り分の無い条件に受取人は渡せない
+      return whole;
+    }
+    const ppm = shares.map((x) => x.sharePpm);
+    const netByShare = allocateShares(whole.amounts.netMinor, ppm);
+    whole.shares = shares.map((x, i) => ({
+      partyId: x.partyId, name: x.partyName, kind: x.partyKind, sharePpm: x.sharePpm, netMinor: netByShare[i]
+    }));
+    const share = options.requirePayee || input.payeePartyId ? pickShare(shares, input.payeePartyId) : null;
+    if (!share) return whole;
+    return this.forPayee(client, whole, shares, share, condition);
+  }
+
+  /**
+   * 受取人の試算。全体（条件 1 本の額）を取り分で割った額に、受取人の税区分の消費税と
+   * 受取人の源泉（個人かどうか・非居住者か）を当てる。明細の行も同じ比で割る。
+   */
+  private async forPayee(
+    client: Queryable, whole: CalculationPreview, shares: ConditionShareRow[], share: ConditionShareRow,
+    condition: Awaited<ReturnType<RoyaltyStatementService["loadCondition"]>>
+  ): Promise<CalculationPreview> {
+    const currency = whole.condition.currency;
+    const ppm = shares.map((x) => x.sharePpm);
+    const idx = shares.findIndex((x) => x.partyId === share.partyId);
+    const pick = (total: number) => allocateShares(total, ppm)[idx];
+    const grossMinor = pick(whole.amounts.grossMinor);
+    const netMinor = pick(whole.amounts.netMinor);
+    const mgTopupMinor = pick(whole.amounts.mgTopupMinor);
+    const agOffsetMinor = pick(whole.amounts.agOffsetMinor);
+    const taxRate = taxRateFor(condition);
+    const net = toMajor(netMinor, currency);
+    const taxAmount = taxOf(net, taxRate);
+    const pct = share.sharePpm / 10000;
+    const fee: FeeResult = {
+      ...whole.fee,
+      gross_ex_tax: toMajor(grossMinor, currency),
+      after_acceptance: toMajor(pick(toMinor(whole.fee.after_acceptance, currency)), currency),
+      mg_topup_this_time: toMajor(mgTopupMinor, currency),
+      ag_offset_this_time: toMajor(agOffsetMinor, currency),
+      actual_ex_tax: net,
+      tax_amount: taxAmount,
+      total_inc_tax: net + taxAmount,
+      formula_breakdown: `${whole.fee.formula_breakdown} ／ 取り分 ${pct}%（${share.partyName}）= ${net}`
+    };
+    // 源泉は受取人で決まる（条件の相手先ではなく）。
+    const p = (await client.query(
+      `SELECT kind, withholding, residency, treaty_rate_pct, treaty_docs_received_on
+         FROM parties WHERE id = $1`, [share.partyId])).rows[0] as Record<string, any> | undefined;
+    const withholdingEnabled = resolveWithholdingEnabled({
+      vendorWithholdingEnabled: p?.withholding === true,
+      entityType: p?.kind ? String(p.kind) : share.partyKind,
+      residency: p?.residency ?? null
+    });
+    const payment = computeRoyaltyPayment({
+      subtotalExTax: net, taxRatePct: taxRate, withholdingEnabled,
+      withholdingParty: p ? withholdingPartyOf(p) : null
+    });
+    // 明細の行も受取人の額に割る。行ごとの端数は、確定のときに合計へ寄せる。
+    const events = whole.events.map((e) => ({
+      ...e, amount: e.amount === null || e.amount === undefined ? e.amount : pick(e.amount)
+    }));
+    return {
+      ...whole,
+      fee,
+      payment: { ...payment, withholdingEnabled },
+      amounts: { grossMinor, netMinor, taxMinor: toMinor(taxAmount, currency), agOffsetMinor, mgTopupMinor },
+      events,
+      payee: { partyId: share.partyId, name: share.partyName, sharePpm: share.sharePpm },
+      whole: { grossMinor: whole.amounts.grossMinor, netMinor: whole.amounts.netMinor }
     };
   }
 

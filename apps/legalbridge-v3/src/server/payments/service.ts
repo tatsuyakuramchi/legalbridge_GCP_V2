@@ -347,13 +347,16 @@ export class PaymentService {
       return await inTransaction(this.database, async (client) => {
         const found = await client.query(
           `SELECT s.id AS statement_id, s.condition_id, s.currency, s.net_amount, s.tax_amount,
-                  c.direction, c.tax_category, c.counterparty_id, c.payment_terms,
+                  c.direction, c.tax_category, c.payment_terms,
+                  -- 取り分のある条件（A-068）は受取人へ払う。空なら条件の相手先。
+                  COALESCE(s.payee_party_id, c.counterparty_id) AS counterparty_id,
+                  s.payee_party_id,
                   p.kind AS party_kind, p.withholding,
                   p.residency, p.treaty_rate_pct, p.treaty_docs_received_on,
                   e.id AS event_id, e.occurred_on, sp.pay_on AS schedule_pay_on
              FROM statements s
              JOIN conditions c ON c.id = s.condition_id
-             LEFT JOIN parties p ON p.id = c.counterparty_id
+             LEFT JOIN parties p ON p.id = COALESCE(s.payee_party_id, c.counterparty_id)
              LEFT JOIN LATERAL (
                SELECT id, occurred_on FROM condition_events
                 WHERE condition_id = s.condition_id AND document_id = s.document_id
@@ -402,10 +405,17 @@ export class PaymentService {
         // 限らない（前金と後金で2明細になる）。いちばん新しい1件だけを
         // 割当にしていたので、紙は2行なのに経理提出用は合計の1行になり、
         // 残りの実績は「支払済み」の印が付かないまま二重払いの余地が残っていた。
+        // 取り分のある条件の受取人ごとの計算書（A-068）は、2 人目以降の文書が実績を
+        // 指さない（最初の文書が指す）。明細の行から実績を引けば、どの受取人の
+        // 計算書でも同じ実績に割り当てられる。
         const eventRows = await client.query(
           `SELECT ev.id, ev.condition_id, ev.amount, ev.occurred_on
              FROM condition_events ev
-            WHERE ev.document_id = $1 AND ev.status = 'active'
+            WHERE ev.status = 'active'
+              AND (ev.document_id = $1
+                   OR ev.id IN (SELECT l.event_id FROM statement_lines l
+                                 JOIN statements s ON s.id = l.statement_id
+                                WHERE s.document_id = $1 AND l.event_id IS NOT NULL))
             ORDER BY ev.id`, [documentId]);
         const eventsByCondition = new Map<number, Array<{ id: number; amount: number }>>();
         for (const e of eventRows.rows as Array<Record<string, any>>) {
@@ -445,6 +455,9 @@ export class PaymentService {
           return events.map((e, i) => ({ conditionId, eventId: e.id, amount: shares[i] }));
         });
 
+        // 受取人ごとの計算書（取り分）は、同じ実績に受取人の数だけ支払が立つ。
+        // 二重払いの検査は、その受取人への支払だけで見る。
+        const payeePartyId = rows.every((r) => r.payee_party_id) ? Number(rows[0].payee_party_id) : null;
         const duplicated = await client.query(
           `SELECT ${BLOCKING_PAYMENT_SQL}
              FROM payments p
@@ -453,9 +466,11 @@ export class PaymentService {
                ON a.condition_id = t.condition_id
               AND a.event_id IS NOT DISTINCT FROM NULLIF(t.event_id, 0)
             WHERE p.status <> 'canceled'
+              AND ($3::bigint IS NULL OR p.party_id = $3)
             LIMIT 1`,
           [allocations.map((a) => a.conditionId),
-           allocations.map((a) => a.eventId ?? 0)]);
+           allocations.map((a) => a.eventId ?? 0),
+           payeePartyId]);
         if (duplicated.rows[0]) {
           throw blockedBy(duplicated.rows[0] as unknown as BlockingPayment, "この計算書");
         }

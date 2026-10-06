@@ -902,3 +902,23 @@ test("海外発注書・Acceptance Certificate に源泉の税率の文が入る
     ctx({ condition: condition({ currency: "USD", counterparty: cp }) }), {});
   assert.match(String(ac.withholding_rate_text), /^10% under/);
 });
+
+// ---- 条件書の基本契約名 ----------------------------------------------------
+
+test("条件書の基本契約名は、束縛で決まった値（選んだ基本契約）が前回覚えた手入力に勝つ", async () => {
+  const { LICENSE_TERMS_KEY } = await import("./license-terms.js");
+  const context = ctx({
+    conditions: [], condition: null,
+    masterAgreement: { datedTitle: "2024年4月1日付利用許諾基本契約", no: "AG-2024-0001" }
+  });
+  // 束縛は from: masterAgreement.datedTitle を解決済み。手入力には前回の文書で
+  // 覚えた「ライセンス基本契約書」が残っている。
+  const c = buildTemplateContext(LICENSE_TERMS_KEY, context,
+    { "基本契約名": "ライセンス基本契約書" },
+    { "基本契約名": "2024年4月1日付利用許諾基本契約" });
+  assert.equal(c.masterAgreement, "2024年4月1日付利用許諾基本契約");
+  // 束縛に無い名前（手入力だけの欄）は従来どおり手入力が通る。
+  const d = buildTemplateContext(LICENSE_TERMS_KEY, context,
+    { "対象製品予定名": "ケダモノオペラ（仮）" }, { "基本契約名": "2024年4月1日付利用許諾基本契約" });
+  assert.equal(d.productName, "ケダモノオペラ（仮）");
+});

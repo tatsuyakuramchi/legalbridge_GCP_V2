@@ -2361,6 +2361,63 @@ ALTER TABLE v3.parties ADD COLUMN IF NOT EXISTS royalty_mix_models boolean;
 COMMENT ON COLUMN v3.parties.royalty_mix_models IS
   '許諾料の計算書に取引モデルを混ぜるか。空＝取引モデルごとに分ける（既定）/ true＝混ぜる。A-067';
 
+-- ---------------------------------------------------------------------
+-- A-068 共著の取り分（docs/royalty-shares.md）
+--   作品に対する許諾料率は条件明細 1 本（全体率）が持ち、当社から複数の権利者へ
+--   直接払うときだけ「誰に何 % か」を取り分明細で持つ。代表 1 者が受け取って
+--   自分で分配する契約は、従来どおり条件の相手先 1 者だけ（取り分は持たない）。
+--
+--     condition_shares … 条件 × 権利者 × 取り分（百万分率）。合計 100% はアプリが担保する。
+--     statements.payee_party_id / share_ppm … その計算書が誰の取り分か。
+--       空なら従来どおり条件の相手先（1 本で 100%）。
+--     同じ文書に同じ条件の計算書は受取人ごとに 1 本。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS v3.condition_shares (
+  id           bigserial PRIMARY KEY,
+  condition_id bigint NOT NULL REFERENCES v3.conditions(id) ON DELETE CASCADE,
+  party_id     bigint NOT NULL REFERENCES v3.parties(id),
+  share_ppm    integer NOT NULL CHECK (share_ppm > 0 AND share_ppm <= 1000000),
+  sort_order   int NOT NULL DEFAULT 0,
+  note         text,
+  UNIQUE (condition_id, party_id)
+);
+CREATE INDEX IF NOT EXISTS condition_shares_condition_idx ON v3.condition_shares (condition_id);
+COMMENT ON TABLE v3.condition_shares IS
+  '共著の取り分。条件（全体率）を権利者ごとに何 % に分けて当社から直接払うか。百万分率、合計 100%。A-068';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.condition_shares TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.condition_shares_id_seq TO legalbridge_v3_runtime;
+
+ALTER TABLE v3.statements ADD COLUMN IF NOT EXISTS payee_party_id bigint REFERENCES v3.parties(id);
+ALTER TABLE v3.statements ADD COLUMN IF NOT EXISTS share_ppm integer;
+COMMENT ON COLUMN v3.statements.payee_party_id IS
+  'この計算書の受取人（取り分のある条件のとき）。空なら条件の相手先。A-068';
+COMMENT ON COLUMN v3.statements.share_ppm IS
+  'この計算書が全体のうち何 % の取り分か（百万分率）。空なら 100%。A-068';
+-- 1 枚の文書に、同じ条件の計算書を受取人ごとに 1 本（A-020 の索引を受取人つきに差し替える）。
+DROP INDEX IF EXISTS v3.statements_document_condition_uq;
+CREATE UNIQUE INDEX IF NOT EXISTS statements_document_condition_payee_uq
+  ON v3.statements (document_id, condition_id, COALESCE(payee_party_id, 0));
+CREATE INDEX IF NOT EXISTS statements_payee_idx
+  ON v3.statements (payee_party_id) WHERE payee_party_id IS NOT NULL;
+
+-- ---------------------------------------------------------------------
+-- A-069 電子書籍売上の取込（docs/royalty-shares.md §5）
+--   事業部の月次 Excel（販売月・書店・タイトル・CID・販売価格・DL数）を読んで、
+--   作品の電子出版の IN 条件に実績（usage_type='pub_digital'）を立てる。
+--   作品は CID（書店の配信コード）で当てる。当て方は一度決めたら覚える。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS v3.ebook_work_codes (
+  cid        text PRIMARY KEY,
+  work_id    bigint NOT NULL REFERENCES v3.works(id),
+  title      text,
+  created_by text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ebook_work_codes_work_idx ON v3.ebook_work_codes (work_id);
+COMMENT ON TABLE v3.ebook_work_codes IS
+  '電子書籍の配信コード（CID）→ 作品。売上の取込で当てた結果を覚える。A-069';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.ebook_work_codes TO legalbridge_v3_runtime;
+
 COMMIT;
 
 
@@ -2634,6 +2691,18 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 69, '電子書籍売上の取込（A-069。表 1 であること）',
+         (SELECT count(*) FROM information_schema.tables
+           WHERE table_schema='v3' AND table_name='ebook_work_codes')::text
+  UNION ALL
+  SELECT 68, '共著の取り分（A-068。表 1・列 2・索引 1 で 4 であること）',
+         ((SELECT count(*) FROM information_schema.tables
+            WHERE table_schema='v3' AND table_name='condition_shares')
+          + (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema='v3' AND table_name='statements' AND column_name IN ('payee_party_id', 'share_ppm'))
+          + (SELECT count(*) FROM pg_indexes
+              WHERE schemaname='v3' AND indexname='statements_document_condition_payee_uq'))::text
   UNION ALL
   SELECT 67, '計算書に取引モデルを混ぜるか（A-067。列 1 であること）',
          (SELECT count(*) FROM information_schema.columns

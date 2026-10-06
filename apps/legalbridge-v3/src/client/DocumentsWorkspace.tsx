@@ -65,6 +65,46 @@ interface EventRow {
   conditionId: number; conditionNo: string | null; conditionName: string;
 }
 
+/** 共著の取り分（A-068）。試算が返す、取り分のある条件と受取人ごとの額。 */
+interface StatementShares {
+  conditionId: number; conditionNo: string | null;
+  payee: { partyId: number; name: string; sharePpm: number } | null;
+  shares: Array<{ partyId: number; name: string; sharePpm: number; netMinor: number }>;
+}
+
+/**
+ * 受取人を選ぶ。取り分のある条件の計算書は、受取人ごとに 1 枚ずつ出す
+ * （全体額を取り分で割り、宛名・口座・源泉がその人になる）。
+ */
+function PayeePicker(
+  { shares, value, onChange }: { shares: StatementShares[]; value: number | null; onChange: (id: number | null) => void }
+) {
+  const people = new Map<number, { name: string; pct: string[]; net: number }>();
+  for (const c of shares) {
+    for (const x of c.shares) {
+      const cur = people.get(x.partyId) ?? { name: x.name, pct: [], net: 0 };
+      cur.pct.push(`${x.sharePpm / 10000}%`); cur.net += x.netMinor;
+      people.set(x.partyId, cur);
+    }
+  }
+  return (
+    <div className="field">
+      <span>受取人（共著の取り分）</span>
+      <select value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
+        <option value="">— 受取人を選ぶ —</option>
+        {[...people.entries()].map(([id, p]) => (
+          <option key={id} value={id}>{p.name}（{p.pct.join("・")}） {money(p.net)}</option>
+        ))}
+      </select>
+      <small className="faint">
+        {value
+          ? "この受取人の分だけを 1 枚にします。ほかの受取人は、同じ実績を選んでもう 1 枚出してください"
+          : "取り分のある条件が入っています。受取人を選ぶと、その人の額で試算し直します（合計は全体を超えません）"}
+      </small>
+    </div>
+  );
+}
+
 /** 一覧の中の紐づけ。件数ではなく番号を出して、そのまま辿れるようにする。 */
 function Refs(
   { doc, onOpen }: { doc: DocumentRow; onOpen?: (kind: EntityKind, id: number) => void }
@@ -90,6 +130,9 @@ function Refs(
     </span>
   );
 }
+
+/** 次の文書の既定値として覚えない欄。取引（契約）ごとに決まるもの。 */
+const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
 
 export function DocumentsWorkspace(
   { start, openDocumentId, openNonce, onOpen, onBack }: {
@@ -461,7 +504,13 @@ export function DocumentsWorkspace(
   const isLicenseTerms = specFresh
     && (spec?.lines ?? []).some((l) => l.name === "v3_conds");
   const [stmtPeriod, setStmtPeriod] = useState("");
-  const [stmt, setStmt] = useState<{ lines: StatementLine[]; totals: StatementTotals; stageNotes?: string } | null>(null);
+  const [stmt, setStmt] = useState<{ lines: StatementLine[]; totals: StatementTotals; stageNotes?: string;
+                                     shares?: StatementShares[] } | null>(null);
+  /**
+   * 共著の取り分（A-068）。選んだ条件に取り分があるとき、この計算書の受取人。
+   * 1 枚の紙は 1 人宛てなので、受取人ごとに 1 枚ずつ出す。
+   */
+  const [payeePartyId, setPayeePartyId] = useState<number | null>(null);
   const [stmtError, setStmtError] = useState<string | null>(null);
   // 条件ごとに実績をまとめる。計算は条件ごと（料率も MG・AG も条件ごとに違う）で、
   // 1枚にまとめるのは印字と支払のまとめ方だけ。
@@ -553,9 +602,11 @@ export function DocumentsWorkspace(
       ? { ...inputs, statementMode: "bundle",
           rs_bundle_lines: stmt.lines, rs_bundle_tax: stmt.totals.tax,
           // 前金・後金の説明。決定のときと同じく備考に足して映す。
-          rs_stage_notes: stmt.stageNotes ?? "" }
+          rs_stage_notes: stmt.stageNotes ?? "",
+          // 受取人（共著の取り分）。宛名・口座がこの人で映る。
+          ...(payeePartyId ? { _payeePartyId: payeePartyId } : {}) }
       : inputs
-  ), [isStatement, stmt, inputs]);
+  ), [isStatement, stmt, inputs, payeePartyId]);
   const body = useMemo(() => ({
     templateKey, conditionIds: picked, eventIds: pickedEvents,
     manualInputs: previewInputs, matterId, agreementId, requestId
@@ -636,8 +687,8 @@ export function DocumentsWorkspace(
   useEffect(() => {
     if (!isStatement || !stmtEntries.length) { setStmt(null); setStmtError(null); return; }
     let live = true;
-    api.post<{ lines: StatementLine[]; totals: StatementTotals; stageNotes?: string }>("/statement-documents/preview", {
-      entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
+    api.post<{ lines: StatementLine[]; totals: StatementTotals; stageNotes?: string; shares?: StatementShares[] }>("/statement-documents/preview", {
+      entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null, payeePartyId })),
       supersedesId: reviseCtx?.ids[0] ?? null, supersedesExtraIds: reviseCtx?.ids.slice(1) ?? [],
       // 直した見出し（製品名・対象契約）を試算にも効かせる。ここを渡さないと、
       // 画面で直したのに試算と紙で違う文字が出る。
@@ -646,7 +697,7 @@ export function DocumentsWorkspace(
       .then((r) => { if (live) { setStmt(r); setStmtError(null); } })
       .catch((e: ApiError) => { if (live) { setStmt(null); setStmtError(e.message); } });
     return () => { live = false; };
-  }, [isStatement, stmtKey, stmtPeriod, JSON.stringify(lines.rs_line_labels ?? null), reviseCtx?.ids.join(",")]);
+  }, [isStatement, stmtKey, stmtPeriod, payeePartyId, JSON.stringify(lines.rs_line_labels ?? null), reviseCtx?.ids.join(",")]);
 
   /**
    * 最後に保存した中身。これと違えば「保存していない変更がある」。
@@ -716,7 +767,7 @@ export function DocumentsWorkspace(
             // 選んだ基本契約も渡す。渡さないとプレビューと決定で「契約番号」が食い違う。
             templateKey, matterId, requestId, agreementId,
             manualInputs: inputs,
-            entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null })),
+            entries: stmtEntries.map((e) => ({ ...e, period: stmtPeriod.trim() || null, payeePartyId })),
             // 訂正版：決定の瞬間に元の計算書が退き、実績がこちらへ移る。
             supersedesId: reviseCtx?.ids[0] ?? null, supersedesExtraIds: reviseCtx?.ids.slice(1) ?? [], reason
           });
@@ -746,6 +797,9 @@ export function DocumentsWorkspace(
       const keep: Record<string, string> = {};
       for (const f of spec?.fields ?? []) {
         if (f.source !== "manual") continue;   // 自動の欄の上書きは今回だけ
+        // 基本契約の名前・番号は選んだ契約から出るもの。単体契約（基本契約なし）の
+        // 回に手で入れた名前を覚えると、次の文書で選んだ基本契約と違う名前が出る。
+        if (NO_DEFAULT_FIELDS.has(f.name)) continue;
         const kind = kindFor(f.name, f.label, f.type);
         const value = String(manual[f.name] ?? "").trim();
         if (value && !pickedFields.has(f.name) && kind !== "date" && kind !== "amount") {
@@ -758,7 +812,7 @@ export function DocumentsWorkspace(
       // 項目の一覧は消さない。消すと、続けてもう1枚作るときに空の画面が残る。
       // 日付と金額だけ落として、手で打った文字は次にも使う。
       setManual(keep); setLines({}); setPickedFields(new Set());
-      setDraft(null); setPickedEvents([]); setStmt(null); setStmtPeriod(""); setRevise(null);
+      setDraft(null); setPickedEvents([]); setStmt(null); setStmtPeriod(""); setRevise(null); setPayeePartyId(null);
       await reload();
       // 決定した文書は直せない。作成のフォームを開いたままにすると、決定した
       // ものを直せるように見える（直すと失敗する）。フォームを閉じ、決定した
@@ -1380,6 +1434,10 @@ export function DocumentsWorkspace(
                     <input value={stmtPeriod} onChange={(e) => setStmtPeriod(e.target.value)}
                            placeholder="2026上期（空なら選んだ実績の期間から決めます）" />
                   </label>
+                  {/* 共著の取り分（A-068）。取り分のある条件は受取人ごとに 1 枚。 */}
+                  {(stmt?.shares?.length ?? 0) > 0 && (
+                    <PayeePicker shares={stmt!.shares!} value={payeePartyId} onChange={setPayeePartyId} />
+                  )}
                   {stmtError && <div className="alert">{stmtError}</div>}
                   {stmt
                     ? <StatementBreakdown lines={stmt.lines} totals={stmt.totals} />

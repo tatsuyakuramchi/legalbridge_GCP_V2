@@ -8,6 +8,7 @@ import { OutReports } from "./OutReports.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
 import { ConditionMatters, ConditionScopes } from "./ConditionLinks.js";
+import { ConditionShares } from "./ConditionShares.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { ConditionContracts } from "./ConditionContracts.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
@@ -751,6 +752,11 @@ export function ConditionsWorkspace(
               }} />
 
               <ConditionScopes detail={detail} onDone={async () => {
+                setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+              }} />
+
+              {/* 共著の取り分（A-068）。取得の料率の許諾条件だけ。 */}
+              <ConditionShares detail={detail} canWrite={!readOnly} onDone={async () => {
                 setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
               }} />
 

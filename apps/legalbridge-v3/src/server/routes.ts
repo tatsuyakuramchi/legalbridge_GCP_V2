@@ -93,6 +93,7 @@ import { buildAccountingBundle } from "./exports/accounting-bundle.js";
 import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
+import { EbookSalesImportService, readRows as readEbookSalesRows } from "./imports/ebook-sales.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
@@ -206,6 +207,7 @@ export function createRoutes(database: Transactable) {
   const accounting = new AccountingExportRepository(database);
   const accountingLedger = new AccountingExportLedger(database);
   const imports = new ImportService(database);
+  const ebookSales = new EbookSalesImportService(database, conditionEvents);
   const ops = new OpsRepository(database);
   const snippets = new SnippetService(database);
   const ringi = new RingiService(database);
@@ -1251,6 +1253,48 @@ export function createRoutes(database: Transactable) {
     }));
 
   // CSV の一括取込。必ず先に試算（dryRun）を通す。
+  // ---- 電子書籍売上の取込（A-069。docs/royalty-shares.md §5）----
+  // 1. ファイル（XLSX / CSV）を行に直す。書かない。
+  router.post("/imports/ebook-sales/parse",
+    requireRole("admin", "legal"),
+    express.raw({ type: () => true, limit: "26mb" }),
+    asyncRoute(async (req, res) => {
+      const filename = String(req.query.filename ?? "").trim() || null;
+      res.json(readEbookSalesRows(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), { filename }));
+    }));
+  const ebookRowSchema = z.object({
+    sheet: z.string().max(200), line: z.coerce.number().int(),
+    month: z.string().regex(/^\d{4}-\d{2}$/),
+    storeCompany: z.string().max(200).nullable(), store: z.string().max(200).nullable(),
+    title: z.string().trim().min(1).max(400), authors: z.string().max(400).nullable(),
+    cid: z.string().max(60).nullable(),
+    listPrice: z.coerce.number().int().min(0), storeRatePct: z.coerce.number().nullable(),
+    downloads: z.coerce.number().int().min(0), netAmount: z.coerce.number().nullable(),
+    royaltyInFile: z.coerce.number().nullable()
+  });
+  const ebookRowsSchema = z.object({ rows: z.array(ebookRowSchema).min(1).max(20000) });
+  // 2. 突合（作品・条件・登録済み）。書かない。
+  router.post("/imports/ebook-sales/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const { rows } = ebookRowsSchema.parse(req.body ?? {});
+      res.json(await ebookSales.preview(rows));
+    }));
+  // 3. 登録。突合をもう一度通し、登録できる行だけ実績にする。
+  router.post("/imports/ebook-sales/commit", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = ebookRowsSchema.extend({ onlyKeys: z.array(z.string().max(500)).max(5000).optional() }).parse(req.body ?? {});
+      res.status(201).json(await ebookSales.commit(input.rows, actor(res), { onlyKeys: input.onlyKeys }));
+    }));
+  // CID → 作品 を決める（覚える）。
+  router.put("/imports/ebook-sales/codes", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        cid: z.string().trim().min(1).max(60), workId: z.coerce.number().int().positive(),
+        title: z.string().trim().max(400).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await ebookSales.mapCode(input.cid, input.workId, input.title ?? null, actor(res)));
+    }));
+
   router.get("/imports", asyncRoute(async (_req, res) => {
     res.json({ specs: IMPORT_SPECS });
   }));
@@ -2473,6 +2517,22 @@ export function createRoutes(database: Transactable) {
         actor(res)));
     }));
 
+  // 共著の取り分（A-068。docs/royalty-shares.md）。条件の全体率を受取人ごとに何 % に分けるか。
+  const sharesSchema = z.object({
+    shares: z.array(z.object({
+      partyId: z.coerce.number().int().positive(),
+      /** 百万分率。60% は 600000。 */
+      sharePpm: z.coerce.number().int().min(1).max(1_000_000),
+      note: z.string().trim().max(200).nullable().optional()
+    })).max(20)
+  });
+  router.put("/conditions/:id/shares",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { shares } = sharesSchema.parse(req.body ?? {});
+      res.json(await conditionWrites.replaceShares(Number(req.params.id), shares, actor(res)));
+    }));
+
   // ---- 作品 ----
   router.get("/works", asyncRoute(async (req, res) => {
     res.json({ works: await works.list(String(req.query.q ?? "")) });
@@ -3166,7 +3226,9 @@ export function createRoutes(database: Transactable) {
     eventType: z.enum(["manufacturing", "sales", "sublicense_receipt", "service_period", "adjustment"]).optional(),
     reported: reportedSchema,
     /** 実績の束。選んだ実績の根拠を合算して1回計算し、実績は新しく作らない。 */
-    eventIds: z.array(z.coerce.number().int().positive()).max(500).optional()
+    eventIds: z.array(z.coerce.number().int().positive()).max(500).optional(),
+    /** 共著の取り分（A-068）。条件に取り分があるとき、この計算書の受取人。 */
+    payeePartyId: z.coerce.number().int().positive().nullable().optional()
   });
 
   const draftSchema = z.object({
@@ -3702,8 +3764,14 @@ export function createRoutes(database: Transactable) {
       // （計算書だけが「紙は出るが数字が無い」状態になっていた）。
       const preview = await royalty.preview({
         conditionId, period: input.period, occurredOn: input.occurredOn,
-        eventType: input.eventType, reported: input.reported, eventIds: input.eventIds
+        eventType: input.eventType, reported: input.reported, eventIds: input.eventIds,
+        payeePartyId: input.payeePartyId ?? null
       });
+      // 取り分のある条件は受取人を決めてから出す（紙の宛名と支払先がその人になる）。
+      if (preview.shares && !preview.payee) {
+        throw new DomainError("VALIDATION",
+          `取り分のある条件です。受取人を選んでください（${preview.shares.map((x) => `${x.name} ${x.sharePpm / 10000}%`).join("・")}）`);
+      }
       // 実績の束から出したときは、導いた報告値と期間で本文を作る。
       const computed = royaltyForDocument(preview, preview.reported);
       // 利用形態の付いた実績は、本文も行ごとに出す。製品名（作品名）・方式・
@@ -3711,6 +3779,7 @@ export function createRoutes(database: Transactable) {
       const usageEvents = (preview.events ?? []).filter((e) => e.usageType);
       const manualInputs = {
         ...(input.manualInputs ?? {}),
+        ...(preview.payee ? { _payeePartyId: preview.payee.partyId } : {}),
         ...(usageEvents.length
           ? { statementMode: "multi",
               rs_bundle_lines: applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {}),
@@ -3733,7 +3802,7 @@ export function createRoutes(database: Transactable) {
       const statement = await royalty.finalize({
         conditionId, period: preview.period, occurredOn: preview.occurredOn,
         eventType: input.eventType, reported: preview.reported, eventIds: input.eventIds,
-        documentId: issued.id
+        documentId: issued.id, payeePartyId: preview.payee?.partyId ?? null
       }, actor(res));
       res.status(201).json({ document: issued, ...statement });
     }));
@@ -3779,10 +3848,26 @@ export function createRoutes(database: Transactable) {
       previews.push(await royalty.preview({
         conditionId: entry.conditionId, period: entry.period, occurredOn: entry.occurredOn,
         eventType: entry.eventType, reported: entry.reported, eventIds: entry.eventIds,
+        payeePartyId: entry.payeePartyId ?? null,
         freeDocumentIds
       }));
     }
     return previews;
+  };
+  /**
+   * 束ねた計算書の受取人（共著の取り分。A-068）。1 枚の紙は 1 人宛てなので、
+   * 取り分のある条件が混ざるときは、全部の行が同じ受取人でなければならない。
+   * 取り分の無い条件（相手先 1 者）は受取人を持たない。
+   */
+  const payeeOfBundle = (previews: Array<{ shares: unknown[] | null; payee: { partyId: number } | null }>): number | null => {
+    const payees = new Set(previews.filter((p) => p.shares).map((p) => p.payee?.partyId ?? 0));
+    if (payees.has(0)) {
+      throw new DomainError("VALIDATION", "取り分のある条件が混ざっています。受取人を選んでください");
+    }
+    if (payees.size > 1) {
+      throw new DomainError("VALIDATION", "受取人の違う計算書は 1 枚にまとめられません");
+    }
+    return payees.size ? [...payees][0] : null;
   };
 
   // 試算。保存しない。1枚にまとめたときの内訳と合計を返す。
@@ -3798,6 +3883,11 @@ export function createRoutes(database: Transactable) {
         totals: bundleTotals(previews),
         // 前金・後金の説明（報告の備考）。計算書の備考に出す。
         stageNotes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
+        // 共著の取り分（A-068）。受取人を選ぶ前は全体の額で、取り分ごとの内訳を添える。
+        shares: previews.filter((p) => p.shares).map((p) => ({
+          conditionId: p.condition.id, conditionNo: p.condition.conditionNo,
+          payee: p.payee, shares: p.shares
+        })),
         previews
       });
     }));
@@ -3812,6 +3902,7 @@ export function createRoutes(database: Transactable) {
         throw new DomainError("VALIDATION", "訂正版を出す理由を書いてください");
       }
       const previews = await previewBundle(input.entries, supersedes);
+      const payeePartyId = payeeOfBundle(previews);
       const totals = bundleTotals(previews);
       // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
       const lines = applyLineLabels(await statementLines(previews, input), input.manualInputs ?? {});
@@ -3826,6 +3917,8 @@ export function createRoutes(database: Transactable) {
         // 計算し直さない（rs_bundle_lines を royalty-patch が拾う）。
         manualInputs: {
           ...input.manualInputs,
+          // 受取人（共著の取り分）。宛名・口座・源泉がこの人になる。
+          ...(payeePartyId ? { _payeePartyId: payeePartyId } : {}),
           statementMode: "bundle",
           rs_bundle_lines: lines,
           rs_bundle_tax: totals.tax,
@@ -3853,6 +3946,7 @@ export function createRoutes(database: Transactable) {
           input.entries.map((e) => ({
             conditionId: e.conditionId, period: e.period, occurredOn: e.occurredOn,
             eventType: e.eventType, reported: e.reported, eventIds: e.eventIds,
+            payeePartyId: e.payeePartyId ?? null,
             documentId: issued.id,
             // 訂正版なら、元から移ってきた実績（いまはこの文書を指す）をそのまま結ぶ。
             freeDocumentId: supersedes.length ? issued.id : null

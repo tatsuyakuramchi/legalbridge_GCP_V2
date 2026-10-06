@@ -12,6 +12,7 @@ import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js
 import { conditionNameFor } from "./naming.js";
 import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
          type ConditionUsageType } from "../core/condition-usage.js";
+import { validateShareInput } from "../royalty/shares.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
 export interface PublishingTerms {
@@ -1098,6 +1099,67 @@ export class ConditionWriteService {
         });
         return {
           changed: [{ target: "condition_scopes", rows: written }],
+          resolvesThrough: await this.countReferences(client, id)
+        };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 共著の取り分の置き換え（A-068。docs/royalty-shares.md）。
+   *
+   * 取り分は「条件の全体率を、当社から直接払う権利者ごとに何 % に分けるか」。
+   * 代表 1 者が受け取って自分で分配する契約は、ここでは何も持たない（空にする）。
+   *
+   * 取得（IN）の料率の許諾条件にだけ付けられる。MG・AG のある条件には付けない。
+   * 受取人ごとの計算書で前払保証の消化を分けて数える道がまだ無く、二重に相殺
+   * されるおそれがあるため。付けたいときは MG・AG を外してから。
+   */
+  async replaceShares(
+    id: number, shares: Array<{ partyId: number; sharePpm: number; note?: string | null }>, actor: string
+  ): Promise<WriteResult> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        await this.repository.requireExisting(client, id);
+        const head = (await client.query(
+          "SELECT direction, kind, pricing_model, mg_amount, ag_amount FROM conditions WHERE id = $1", [id]
+        )).rows[0] as Record<string, any> | undefined;
+        if (!head) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
+        const rows = shares.map((s) => ({ partyId: Number(s.partyId), sharePpm: Number(s.sharePpm),
+                                          note: String(s.note ?? "").trim() || null }));
+        validateShareInput(rows);
+        if (rows.length) {
+          if (head.direction !== "in" || head.kind !== "license") {
+            throw new DomainError("VALIDATION", "取り分を付けられるのは、取得（IN）の許諾条件だけです");
+          }
+          if (head.pricing_model !== "revenue_rate") {
+            throw new DomainError("VALIDATION", "取り分を付けられるのは料率の条件だけです（買い切りは定額の条件 1 本で持ちます）");
+          }
+          if (Number(head.mg_amount ?? 0) > 0 || Number(head.ag_amount ?? 0) > 0) {
+            throw new DomainError("VALIDATION", "MG・AG のある条件には取り分を付けられません。先に MG・AG を外してください");
+          }
+          const found = await client.query(
+            "SELECT id FROM parties WHERE id = ANY($1::bigint[])", [rows.map((r) => r.partyId)]);
+          if ((found.rows as Array<{ id: number }>).length !== rows.length) {
+            throw new DomainError("NOT_FOUND", "取り分の権利者に、登録の無い取引先が混ざっています");
+          }
+        }
+        const removed = await client.query("DELETE FROM condition_shares WHERE condition_id = $1", [id]);
+        let written = 0;
+        for (const [index, row] of rows.entries()) {
+          const r = await client.query(
+            `INSERT INTO condition_shares (condition_id, party_id, share_ppm, sort_order, note)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [id, row.partyId, row.sharePpm, index, row.note]);
+          written += r.rowCount ?? 0;
+        }
+        await recordAudit(client, {
+          actor, action: "condition.replace_shares", targetType: "condition", targetId: id,
+          detail: { removed: removed.rowCount ?? 0, written,
+                    shares: rows.map((r) => ({ partyId: r.partyId, sharePpm: r.sharePpm })) }
+        });
+        return {
+          changed: [{ target: "condition_shares", rows: written }],
           resolvesThrough: await this.countReferences(client, id)
         };
       });

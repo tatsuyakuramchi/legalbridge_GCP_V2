@@ -519,11 +519,16 @@ export function buildTemplateContext(
   if (PURCHASE_ORDER_KEYS.has(templateKey)) {
     return { ...common, ...orderBlock(templateKey, context, manual) };
   }
+  // 束縛の結果（bound）が手入力より先。束縛は変数ごとに「データ側を優先するか、
+  // 手入力を優先するか」を決め終えている（基本契約名のように from のある変数は
+  // データ側が勝つ）。ここで手入力を上に重ねると、その判断が覆り、前回の文書で
+  // 覚えた手入力（「ライセンス基本契約書」）が選んだ基本契約を押しのけて紙に出る。
+  // 束縛に無い名前（明細の配列・内部の _ 付き）は手入力のまま通す。
   if (isLicenseTermsTemplate(templateKey)) {
-    return { ...common, ...licenseTermsPatch(context, { ...bound, ...manual }) };
+    return { ...common, ...licenseTermsPatch(context, { ...manual, ...bound }) };
   }
   if (isPubTermsTemplate(templateKey)) {
-    return { ...common, ...pubTermsPatch(context, { ...bound, ...manual }) };
+    return { ...common, ...pubTermsPatch(context, { ...manual, ...bound }) };
   }
   if (isStatementTemplate(templateKey)) {
     const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
