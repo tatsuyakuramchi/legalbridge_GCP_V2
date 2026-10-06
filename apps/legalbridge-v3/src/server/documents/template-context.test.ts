@@ -79,39 +79,47 @@ test("手数料は検収額と合算して一括課税、経費は税込のま�
 
 // ---- 明細 --------------------------------------------------------------
 
-test("納期より早く納品されたら、支払日は納品日から支払条件で出した日（予定の支払日より早いとき）", () => {
+test("支払日は納品日が起点：個人は翌月 20 日、法人は翌月末日（納期や予定の支払日ではない）", () => {
+  const individual = condition({ counterparty: { kind: "individual" } });
+  const corporate = condition({ counterparty: { kind: "corporate" } });
+  // 納期より早い納品（8/15。予定の支払日は 10/20）→ 納品月の翌月。
   const early = deliveryLinesFrom(ctx({
-    conditions: [condition({ paymentTerms: "月末締め翌月末払い" })],
-    condition: condition({ paymentTerms: "月末締め翌月末払い" }),
+    conditions: [individual], condition: individual,
     events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-15", amount: 280000,
                schedule: { payOn: "2026-10-20", dueOn: "2026-09-30" } }]
   })) as Array<Record<string, any>>;
-  assert.equal(early[0].payment_date, "2026-09-30", "8/15 納品 → 翌月末。予定の 10/20 より早い");
-  assert.equal(early[0].paid_date, "2026-09-30");
+  assert.equal(early[0].payment_date, "2026-09-20", "個人：8/15 納品 → 9/20");
+  assert.equal(early[0].paid_date, "2026-09-20");
 
-  // 納期より遅れた納品は予定の支払日のまま。
+  // 納期より遅れた納品（10/5）も納品日から数える。予定の 10/20 には戻さない。
   const late = deliveryLinesFrom(ctx({
-    conditions: [condition({ paymentTerms: "月末締め翌月末払い" })],
-    condition: condition({ paymentTerms: "月末締め翌月末払い" }),
+    conditions: [individual], condition: individual,
     events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-05", amount: 280000,
                schedule: { payOn: "2026-10-20", dueOn: "2026-09-30" } }]
   })) as Array<Record<string, any>>;
-  assert.equal(late[0].payment_date, "2026-10-20");
+  assert.equal(late[0].payment_date, "2026-11-20", "個人：10/5 納品 → 11/20");
 
-  // 予定の回が無ければ納品日から。支払条件も無ければ空。
-  const none = deliveryLinesFrom(ctx({
-    conditions: [condition({ paymentTerms: "月末締め翌月末払い" })],
-    condition: condition({ paymentTerms: "月末締め翌月末払い" }),
-    events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-15", amount: 280000, schedule: null }]
+  // 法人は翌月末日。予定の回が無くても同じ。
+  const corp = deliveryLinesFrom(ctx({
+    conditions: [corporate], condition: corporate,
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-05", amount: 280000, schedule: null }]
   })) as Array<Record<string, any>>;
-  assert.equal(none[0].payment_date, "2026-09-30");
+  assert.equal(corp[0].payment_date, "2026-11-30", "法人：10/5 納品 → 11/30");
+
+  // 納品日が無い行だけ、予定の回の支払日で代える。
+  const none = deliveryLinesFrom(ctx({
+    conditions: [individual], condition: individual,
+    events: [{ id: 9, conditionId: 1, occurredOn: null, amount: 280000,
+               schedule: { payOn: "2026-10-20", dueOn: "2026-09-30" } }]
+  })) as Array<Record<string, any>>;
+  assert.equal(none[0].payment_date, "2026-10-20");
 });
 
 test("検収の明細は実績から組む（人が打ち直さない）", () => {
   const lines = deliveryLinesFrom(ctx()) as Array<Record<string, any>>;
   assert.equal(lines.length, 1);
   assert.equal(lines[0].delivery_date, "2026-08-31");
-  assert.equal(lines[0].payment_date, "2026-09-20", "支払日は予定明細の支払期日");
+  assert.equal(lines[0].payment_date, "2026-09-30", "支払日は納品日（8/31）の翌月末（相手の区分が無ければ法人と同じ）");
   assert.equal(lines[0].amount_ex_tax, 280000);
   assert.equal(lines[0].spec, "（1）専門的助言（2）レビュー");
   assert.equal(lines[0].inspection_status, "now");
@@ -339,10 +347,10 @@ test("検収の明細は、実績にあれば成果物と検収日を実績か�
   assert.equal(lines[0].item_name, "第2回 キャラクターデザイン一式");
   assert.equal(lines[0].inspected_quantity, 1);
   assert.equal(lines[0].inspection_date, "2026-09-02");
-  assert.equal(lines[0].paid_date, "2026-09-20", "支払日は繋がった予定から");
+  assert.equal(lines[0].paid_date, "2026-09-30", "支払日は納品日（8/31）の翌月末。予定の 9/20 ではない");
   assert.equal(lines[1].item_name, "アナログボードゲームの企画・開発");
   assert.equal(lines[1].inspection_date, "2026-09-30", "検収日が無ければ納品日");
-  assert.equal(lines[1].paid_date, null, "予定に繋がっていない実績は支払日が空");
+  assert.equal(lines[1].paid_date, "2026-10-31", "予定に繋がっていなくても納品日（9/30）の翌月末");
 });
 
 /**
@@ -899,7 +907,7 @@ test("海外用の検収書は税を上乗せしない（条件が課税でも�
   assert.equal(c.grandTotalPayable, 280000 + 20000 + 3000);
   assert.equal(c.currency_code, "USD");
   assert.equal(c.withholding_label, "Applicable");
-  assert.equal(c.summaryPaymentDate, "2026-09-20");
+  assert.equal(c.summaryPaymentDate, "2026-09-30", "納品日 8/31 の翌月末");
   assert.equal(c.acceptanceDate, "2026-08-31");
 });
 

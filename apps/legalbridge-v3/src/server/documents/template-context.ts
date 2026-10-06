@@ -25,7 +25,7 @@ import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
-import { payDateFromTerms } from "../conditions/payment-terms.js";
+import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
 import { deliveryKindFor, orderPeriodSummary, withPeriodText } from "./order-period.js";
@@ -197,16 +197,14 @@ function orderNoFor(context: Ctx, conditionId: unknown): string | null {
 /**
  * 明細の行の支払日。
  *
- * 予定の回の支払日（条件の納期から出したもの）が基本だが、納期より早く納品された
- * ものは、納品日から条件の支払条件で出した日のほうが早い。その日で払う（相手は
- * 納品した日を起点に支払を待つ）。納期より遅れた納品は予定の支払日のまま。
- * 予定の回が無ければ、納品日から出した日。
+ * 実績入力・検収書作成で入れた納品日が起点。個人は納品月の翌月 20 日、法人は
+ * 翌月末日（`payDateFromDelivery`）。条件の納期や予定の回の支払日からは出さない：
+ * 納期より早く納品されても遅れても、納品した日から数える。納品日が無い行だけ
+ * 予定の回の支払日で代える。
  */
 function payOnFor(event: Ctx, condition: Ctx): string | null {
-  const scheduled = (event.schedule?.payOn as string | null | undefined) ?? null;
-  const fromDelivery = payDateFromTerms(event.occurredOn ?? null, condition.paymentTerms ?? null);
-  if (fromDelivery && (!scheduled || fromDelivery < scheduled)) return fromDelivery;
-  return scheduled;
+  return payDateFromDelivery(event.occurredOn ?? null, condition.counterparty?.kind ?? null)
+    ?? ((event.schedule?.payOn as string | null | undefined) ?? null);
 }
 
 /** 予定（発注時）の額と実額が違うか。どちらかが無ければ「違わない」。 */

@@ -120,7 +120,7 @@ test("検収書：明細の列名が本文と一致する", () => {
                      "paid_date", "inspected_amount_ex_tax", "amount_ex_tax"]) {
     assert.ok(key in lines[0], `明細に ${key} が無い`);
   }
-  assert.equal(lines[0].paid_date, "2026-09-20");
+  assert.equal(lines[0].paid_date, "2026-09-30", "法人：納品日 8/31 の翌月末");
   assert.equal(lines[0].inspected_amount_ex_tax, 280000);
 });
 

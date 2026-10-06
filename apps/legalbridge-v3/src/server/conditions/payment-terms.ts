@@ -190,3 +190,22 @@ export function payDateFromTerms(
   if (!dates.length) return null;
   return (basisDay && dates.find((d) => d >= basisDay)) ?? dates[dates.length - 1];
 }
+
+/**
+ * 納品日から支払日（当社の決まり。検収書の明細と、検収書から立てる支払）。
+ *
+ *   個人 … 納品日を含む月の翌月 20 日
+ *   法人 … 納品日を含む月の翌月末日（区分が分からなければ法人と同じ）
+ *
+ * 条件の納期や予定の回の支払日ではなく、実績入力・検収書作成で入れた納品日が起点。
+ * 納期より早くても遅れても、納品した日から数える。
+ */
+export function payDateFromDelivery(
+  deliveredOn: string | null | undefined, partyKind: string | null | undefined
+): string | null {
+  const day = String(deliveredOn ?? "").slice(0, 10) || null;
+  const terms: PaymentTerms = String(partyKind ?? "") === "individual"
+    ? { monthsAfter: 1, day: 20 }
+    : { monthsAfter: 1, day: "end" };
+  return payOnFor(day, terms);
+}
