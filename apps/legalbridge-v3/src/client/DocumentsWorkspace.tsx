@@ -131,6 +131,9 @@ function Refs(
   );
 }
 
+/** 次の文書の既定値として覚えない欄。取引（契約）ごとに決まるもの。 */
+const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
+
 export function DocumentsWorkspace(
   { start, openDocumentId, openNonce, onOpen, onBack }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
@@ -794,6 +797,9 @@ export function DocumentsWorkspace(
       const keep: Record<string, string> = {};
       for (const f of spec?.fields ?? []) {
         if (f.source !== "manual") continue;   // 自動の欄の上書きは今回だけ
+        // 基本契約の名前・番号は選んだ契約から出るもの。単体契約（基本契約なし）の
+        // 回に手で入れた名前を覚えると、次の文書で選んだ基本契約と違う名前が出る。
+        if (NO_DEFAULT_FIELDS.has(f.name)) continue;
         const kind = kindFor(f.name, f.label, f.type);
         const value = String(manual[f.name] ?? "").trim();
         if (value && !pickedFields.has(f.name) && kind !== "date" && kind !== "amount") {
