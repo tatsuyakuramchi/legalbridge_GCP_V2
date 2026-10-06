@@ -30,6 +30,8 @@ export interface GridDocument {
   amountExTax: number | null;
   /** その文書に載っている条件の本数。2本以上は1本ぶんと比べられない。 */
   conditionCount: number;
+  /** 取り込んだ文書（外で作って登録したもの。ひな形が無い）。 */
+  imported?: boolean;
   /**
    * 同じ条件の系列に、その段の文書が何枚あるか。
    *
@@ -51,6 +53,11 @@ export interface GridDocument {
 
 export interface GridRow {
   conditionId: number;
+  /**
+   * 条件に控えた外部の発注番号（旧システム・紙で出した発注書）。発注書の文書が
+   * 無くても、これがあれば発注は済んでいる（文書を取り込めば文書に変わる）。
+   */
+  orderRef?: string | null;
   conditionNo: string | null;
   name: string;
   kind: string;
@@ -136,7 +143,7 @@ export function isPending(row: GridRow, stage: Stage): boolean {
   switch (stage) {
     case "condition": return false;
     case "schedule": return row.schedules.total === 0 || row.schedules.done < row.schedules.total;
-    case "order": return row.order === null;
+    case "order": return row.order === null && !row.orderRef;
     case "event": return row.events.count === 0;
     case "settlementDoc": return row.settlementDoc === null;
     case "payment": return row.payment === null;

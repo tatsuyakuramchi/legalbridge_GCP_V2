@@ -25,6 +25,11 @@ const SERIES = `(SELECT x.id FROM conditions x
 
 /** 発注書のひな形。条件の側の文書。 */
 const ORDER_KEYS = "('purchase_order', 'intl_purchase_order')";
+/**
+ * 取り込んだ発注書（外で作って登録したもの。ひな形が無い）の種類。発注書は文書として持つ
+ * （単体契約にしない）ので、取り込んだ発注書も作った発注書と同じく「発注書あり」に数える。
+ */
+const ORDER_IMPORT_KINDS = "('発注書')";
 /** 結果の文書。検収書と計算書。 */
 const RESULT_KEYS = "('inspection_certificate', 'intl_inspection_certificate', 'royalty_statement')";
 
@@ -32,7 +37,7 @@ const RESULT_KEYS = "('inspection_certificate', 'intl_inspection_certificate', '
  * 系列に繋がった文書のうち、その段の代表を1枚。
  * 決定済みを下書きより先に採る（下書きが残っていても、決めたものが現状）。
  */
-const documentLateral = (alias: string, keys: string) => `
+const documentLateral = (alias: string, keys: string, importKinds: string | null = null) => `
   LEFT JOIN LATERAL (
     SELECT d.id, d.document_no, d.status,
            -- 決定したときに紙へ載った税抜の合計。
@@ -63,14 +68,17 @@ const documentLateral = (alias: string, keys: string) => `
            (SELECT count(DISTINCT d2.id)::int
               FROM document_conditions dc2
               JOIN documents d2 ON d2.id = dc2.document_id AND d2.status = 'issued'
-              JOIN document_template_versions tv2 ON tv2.id = d2.template_version_id
-              JOIN document_templates t2 ON t2.id = tv2.template_id
-             WHERE dc2.condition_id IN ${SERIES} AND t2.template_key IN ${keys}) AS sibling_count,
+              LEFT JOIN document_template_versions tv2 ON tv2.id = d2.template_version_id
+              LEFT JOIN document_templates t2 ON t2.id = tv2.template_id
+             WHERE dc2.condition_id IN ${SERIES}
+               AND (t2.template_key IN ${keys}${importKinds
+                 ? ` OR (t2.template_key IS NULL AND d2.manual_inputs ->> 'documentKind' IN ${importKinds})` : ""})) AS sibling_count,
            (SELECT count(DISTINCT COALESCE(x.series_id, x.id))::int
               FROM document_conditions dx JOIN conditions x ON x.id = dx.condition_id
              WHERE dx.document_id = d.id) AS condition_count,
            -- 焼き付いた日付。回ごとに違う発注書はまとめ書きが入るので、
            -- 日付として読めるかは画面の側（drift.ts）で判じる。
+           (d.template_version_id IS NULL) AS imported,
            NULLIF(d.rendered_values ->> 'DELIVERY_DATE', '') AS delivery_on,
            NULLIF(d.rendered_values ->> 'INSPECTION_DATE', '') AS inspection_on,
            NULLIF(d.rendered_values ->> 'PAYMENT_DATE', '') AS payment_on,
@@ -81,10 +89,11 @@ const documentLateral = (alias: string, keys: string) => `
            ${signStateSql("d.id")} AS sign
       FROM document_conditions dc
       JOIN documents d ON d.id = dc.document_id
-      JOIN document_template_versions tv ON tv.id = d.template_version_id
-      JOIN document_templates t ON t.id = tv.template_id
+      LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+      LEFT JOIN document_templates t ON t.id = tv.template_id
      WHERE dc.condition_id IN ${SERIES}
-       AND t.template_key IN ${keys}
+       AND (t.template_key IN ${keys}${importKinds
+         ? ` OR (t.template_key IS NULL AND d.manual_inputs ->> 'documentKind' IN ${importKinds})` : ""})
        AND d.status <> 'void'
      ORDER BY (d.status = 'draft'), d.issued_at DESC NULLS LAST, d.id DESC
      LIMIT 1
@@ -100,6 +109,7 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
     sign: signStateOf(row[`${prefix}_sign`]),
     amountExTax: int(row[`${prefix}_amount_ex_tax`]),
     conditionCount: Number(row[`${prefix}_condition_count`] ?? 1),
+    ...(row[`${prefix}_imported`] === true ? { imported: true } : {}),
     siblingCount: Number(row[`${prefix}_sibling_count`] ?? 1),
     deliveryOn: str(row[`${prefix}_delivery_on`]),
     inspectionOn: str(row[`${prefix}_inspection_on`]),
@@ -130,7 +140,8 @@ export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.c
                 po.condition_count AS order_condition_count,
                 po.sibling_count AS order_sibling_count,
                 po.delivery_on AS order_delivery_on, po.inspection_on AS order_inspection_on,
-                po.payment_on AS order_payment_on,
+                po.payment_on AS order_payment_on, po.imported AS order_imported,
+                c.order_no AS order_ref,
                 rs.id AS result_id, rs.document_no AS result_no, rs.status AS result_status,
                 rs.sent_at AS result_sent_at, rs.sign AS result_sign,
                 rs.amount_ex_tax AS result_amount_ex_tax,
@@ -179,7 +190,7 @@ export const GRID_JOINS = `
                FROM condition_events e
               WHERE e.condition_id IN ${SERIES} AND e.status = 'active'
            ) ev ON true
-           ${documentLateral("po", ORDER_KEYS)}
+           ${documentLateral("po", ORDER_KEYS, ORDER_IMPORT_KINDS)}
            ${documentLateral("rs", RESULT_KEYS)}
            -- 支払。取り消したものは持っていないものとして扱う。
            LEFT JOIN LATERAL (
@@ -195,6 +206,7 @@ export const GRID_JOINS = `
 export const gridRowOf = (row: Record<string, any>): GridRow => ({
   conditionId: Number(row.id),
   conditionNo: str(row.condition_no),
+  orderRef: str(row.order_ref),
   name: String(row.name),
   kind: String(row.kind),
   counterparty: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
@@ -284,10 +296,11 @@ export class MatterGridService {
                    JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
                    JOIN document_conditions dc ON dc.condition_id = c.id
                    JOIN documents d ON d.id = dc.document_id AND d.status <> 'void' AND d.status <> 'draft'
-                   JOIN document_template_versions tv ON tv.id = d.template_version_id
-                   JOIN document_templates t ON t.id = tv.template_id
+                   LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+                   LEFT JOIN document_templates t ON t.id = tv.template_id
                   WHERE ml.matter_id = $1 AND c.counterparty_id = p.id
-                    AND t.template_key IN ('purchase_order', 'intl_purchase_order')) AS orders,
+                    AND (t.template_key IN ('purchase_order', 'intl_purchase_order')
+                         OR (t.template_key IS NULL AND d.manual_inputs ->> 'documentKind' IN ${ORDER_IMPORT_KINDS}))) AS orders,
                 (SELECT count(DISTINCT d.id)::int
                    FROM matter_links ml
                    JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref

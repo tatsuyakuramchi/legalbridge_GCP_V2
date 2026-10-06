@@ -6,6 +6,7 @@ import { SignSwitch, SignTag } from "./SignState.js";
 import { SendMany } from "./SendMany.js";
 import { exportDocumentsZip, type ExportProgress } from "./exportZip.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
+import { OrderLinker } from "./OrderLinker.js";
 import type { GridDocument, GridParty, GridRow } from "../server/matters/grid.js";
 import type { MatterDetail } from "../server/core/model.js";
 
@@ -48,6 +49,8 @@ function cellsOf(
     onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null, templateKey?: string | null) => void;
     onRecordEvent?: (conditionId: number) => void;
     onOpenPayments?: () => void;
+    /** 発注書を紐づける（既存を紐づける・取り込む・新しく作る）。 */
+    onLinkOrder?: (row: GridRow) => void;
   }
 ): { order: Cell; delivery: Cell; settlement: Cell; payment: Cell } {
   const done = row.settlement.done;
@@ -59,18 +62,24 @@ function cellsOf(
   };
   const id = row.conditionId;
 
-  // 発注書。無ければ作る、下書きなら決定する。
+  // 発注書。無ければ紐づける（既存の発注書・取り込み・新しく作る）、下書きなら決定する。
+  // 発注書は文書として持つ。紙・旧システムの発注書は、取り込むか番号を控えてあれば済。
   let order: Cell;
-  if (!row.order) {
+  if (!row.order && row.orderRef) {
+    order = { state: "ok", label: row.orderRef, sub: "番号の控え（紙を取り込むと文書になります）",
+      action: h.onLinkOrder ? { label: "取り込む", run: () => h.onLinkOrder!(row) } : null };
+  } else if (!row.order) {
     order = now({ state: "now", label: "未作成",
-      action: h.onCompose ? { label: "発注書を作る", run: () => h.onCompose!([id], [], matterId, "purchase_order") } : null });
+      action: h.onLinkOrder ? { label: "発注書を紐づける・作る", run: () => h.onLinkOrder!(row) }
+        : h.onCompose ? { label: "発注書を作る", run: () => h.onCompose!([id], [], matterId, "purchase_order") } : null });
   } else if (row.order.phase === "draft") {
     order = now({ state: "now", label: "下書き", sub: row.order.documentNo ?? null,
       action: h.onOpenDocument ? { label: "決定する", run: () => h.onOpenDocument!(row.order!.id) } : null,
       open: h.onOpenDocument ? () => h.onOpenDocument!(row.order!.id) : null });
   } else {
     order = { state: "ok", label: row.order.documentNo ?? `#${row.order.id}`,
-      sub: row.order.conditionCount > 1 ? `同じ発注書（${row.order.conditionCount} 本）` : null,
+      sub: [row.order.imported ? "取込" : "", row.order.conditionCount > 1 ? `同じ発注書（${row.order.conditionCount} 本）` : ""]
+        .filter(Boolean).join("・") || null,
       open: h.onOpenDocument ? () => h.onOpenDocument!(row.order!.id) : null,
       doc: row.order };
   }
@@ -231,6 +240,8 @@ export function MatterBundles(
   const [exporting, setExporting] = useState<ExportProgress | null>(null);
   /** 許諾条件を足している行（受注者帰属なのに許諾条件が無い条件）。 */
   const [licenseFor, setLicenseFor] = useState<GridRow | null>(null);
+  /** 発注書を紐づけている行（押した行。同じ取引先の発注書の無い条件がまとめて並ぶ）。 */
+  const [linkingOrder, setLinkingOrder] = useState<GridRow | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -240,7 +251,8 @@ export function MatterBundles(
   }, [matterId, reloadKey, bump]);
   useEffect(() => { setOpened(null); setFilter("all"); setQ(""); setChecked(new Set()); }, [matterId]);
 
-  const h = { onOpenDocument, onCompose, onRecordEvent, onOpenPayments };
+  const h = { onOpenDocument, onCompose, onRecordEvent, onOpenPayments,
+              onLinkOrder: readOnly ? undefined : (row: GridRow) => setLinkingOrder(row) };
   const sign = {
     editing: signEditing, readOnly,
     open: (id: number) => setSignEditing(id),
@@ -399,6 +411,15 @@ export function MatterBundles(
           <span>{notice}</span>
           <button type="button" className="linky" onClick={() => setNotice(null)}>閉じる</button>
         </div>
+      )}
+      {linkingOrder && linkingOrder.counterparty && (
+        <OrderLinker key={linkingOrder.conditionId}
+          party={linkingOrder.counterparty} matterId={matterId} focusId={linkingOrder.conditionId}
+          rows={(rows ?? []).filter((r) => r.counterparty?.id === linkingOrder.counterparty!.id
+            && (!r.order || r.conditionId === linkingOrder.conditionId) && !r.settlement.done)}
+          onCompose={onCompose}
+          onDone={(msg) => { setLinkingOrder(null); setNotice(msg); setBump((n) => n + 1); }}
+          onCancel={() => setLinkingOrder(null)} />
       )}
       {licenseFor && licenseFor.workId && licenseFor.counterparty && (
         <LicenseSetForm

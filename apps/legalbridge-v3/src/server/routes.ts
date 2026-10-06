@@ -360,6 +360,11 @@ export function createRoutes(database: Transactable) {
       res.json(await agreementMap.demoteToIndividual(Number(req.params.id),
         body.masterId ?? { masterDocumentId: body.masterDocumentId! }, actor(res)));
     }));
+  // 契約として登録された発注書を文書に寄せる（発注書は文書として持つ）。
+  router.post("/agreement-map/agreements/:id/to-order-document", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await agreementMap.orderAgreementToDocument(Number(req.params.id), actor(res)));
+    }));
   // 契約に繋がっていない基本契約書・条件書から契約を立てる（番号・件名は文書のまま）。
   router.post("/agreement-map/documents/:id/agreement", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

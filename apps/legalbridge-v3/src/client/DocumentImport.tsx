@@ -56,8 +56,14 @@ function CopyNo({ no }: { no: string }) {
 }
 
 export function DocumentImport(
-  { conditionId, matterId, agreementId, requestId, onDone, onOpenDocument, onRegistered }: {
+  { conditionId, conditionIds, defaultKind, initialMode, matterId, agreementId, requestId, onDone, onOpenDocument, onRegistered }: {
     conditionId?: number; matterId?: number;
+    /** 複数の条件に繋ぐ（取引先の束から、1枚の発注書を何本かの条件に）。 */
+    conditionIds?: number[];
+    /** 種類の初期値（発注書の紐づけから開いたときは「発注書」）。 */
+    defaultKind?: string;
+    /** 開いた状態で出す。 */
+    initialMode?: "import";
     /** 契約。付けると登録した文書がその契約に繋がる（取引先⇔基本契約の画面から）。 */
     agreementId?: number;
     /** デイリータスクの依頼。付けると登録した文書がその作業に繋がる。 */
@@ -68,7 +74,8 @@ export function DocumentImport(
     onRegistered?: (id: number) => void;
   }
 ) {
-  const [mode, setMode] = useState<"closed" | "import" | "reserve">("closed");
+  const [mode, setMode] = useState<"closed" | "import" | "reserve">(initialMode ?? "closed");
+  const linkIds = conditionIds?.length ? conditionIds : conditionId ? [conditionId] : [];
   const open = mode !== "closed";
   const { configured, kinds } = useImportStatus(open);
   const [busy, setBusy] = useState(false);
@@ -77,7 +84,7 @@ export function DocumentImport(
   const [reserved, setReserved] = useState<{ id: number; documentNo: string } | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [v, setV] = useState({
-    title: "", documentKind: FALLBACK_KINDS[0].kind, receivedOn: today(), note: ""
+    title: "", documentKind: defaultKind ?? FALLBACK_KINDS[0].kind, receivedOn: today(), note: ""
   });
   const picker = useRef<HTMLInputElement>(null);
 
@@ -100,7 +107,7 @@ export function DocumentImport(
         receivedOn: v.receivedOn, filename: file.name
       });
       if (v.note.trim()) params.set("note", v.note.trim());
-      if (conditionId) params.set("conditionIds", String(conditionId));
+      if (linkIds.length) params.set("conditionIds", linkIds.join(","));
       if (matterId) params.set("matterId", String(matterId));
       if (agreementId) params.set("agreementId", String(agreementId));
       if (requestId) params.set("requestId", String(requestId));
@@ -122,7 +129,7 @@ export function DocumentImport(
     try {
       const r = await api.post<{ id: number; documentNo: string }>("/documents/reserve", {
         title: v.title.trim(), documentKind: v.documentKind,
-        conditionIds: conditionId ? [conditionId] : [],
+        conditionIds: linkIds,
         matterId: matterId ?? null, agreementId: agreementId ?? null, requestId: requestId ?? null
       });
       setReserved(r); setDone(null);

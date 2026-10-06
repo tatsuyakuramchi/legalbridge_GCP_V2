@@ -25,7 +25,7 @@ import type { AgreementCsvRow } from "./csv.js";
 
 export type MapIssueCode =
   | "orphan" | "parent_party_mismatch" | "parent_not_master" | "master_with_parent"
-  | "no_domain" | "duplicate_master" | "standalone_with_master";
+  | "no_domain" | "duplicate_master" | "standalone_with_master" | "order_as_agreement";
 
 export interface MapIssue {
   code: MapIssueCode;
@@ -131,6 +131,12 @@ const TERMS_DOCUMENT_SQL = `t.template_key IN ('individual_license_terms_v3', 'i
 const DOCUMENT_ROLE_SQL = `CASE WHEN (${MASTER_DOCUMENT_SQL}) THEN 'master'
                                 WHEN (${TERMS_DOCUMENT_SQL}) THEN 'terms' END`;
 
+/** 契約として登録された発注書か（単体契約・文書だけのうち、番号か件名が発注書のもの）。 */
+export function isOrderAgreement(a: Pick<MapAgreement, "kind" | "agreementNo" | "title">): boolean {
+  if (a.kind !== "standalone" && a.kind !== "document") return false;
+  return /-E?PO-|発注書|purchase_order/i.test(`${a.agreementNo ?? ""} ${a.title ?? ""}`);
+}
+
 const isRootKind = (kind: AgreementKind) => kind === "master" || kind === "standalone";
 const isChildKind = (kind: AgreementKind) => kind === "supplement" || kind === "termination";
 
@@ -216,6 +222,16 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
         issues.push({ code: "duplicate_master", agreementId: m.id,
           message: `${label} の生きた基本契約が ${masters.length} 本あります。画面により ${tag(m)} と ${tag(pick)} のどちらが出るかが変わります（古い方を解除するか、種別・方向を直してください）` });
       }
+    }
+  }
+
+  // 発注書が契約（単体契約・文書だけ）として登録されている。発注書は文書として持つ
+  // （基本契約の下の個別の取引か、基本契約なしなら発注書の約款で取引する）。契約のままだと
+  // 束の発注書の欄に出ず「未作成」に見え、「契約なし」とも食い違う。
+  for (const a of [...roots, ...documents]) {
+    if (isOrderAgreement(a)) {
+      issues.push({ code: "order_as_agreement", agreementId: a.id,
+        message: `${tag(a)} は発注書ですが、契約として登録されています。「発注書（文書）に寄せる」で文書にします` });
     }
   }
 
@@ -744,6 +760,118 @@ export class PartyAgreementMapService {
                     before: { kind: "standalone", domain: str(a.domain) } }
         });
         return { conditionsMoved: conditionIds.length, masterId, masterNo: str(m.agreement_no), masterCreated };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 契約として登録された発注書を、文書に寄せる（発注書は文書として持つ）。
+   *
+   *   1. 発注書の文書を決める：契約に繋いである文書のうち番号が同じもの・発注書のひな形・
+   *      種類が発注書のもの。無ければ契約の番号・件名・ファイルで取り込み文書を作る。
+   *   2. その文書を、契約に載っていた条件明細に紐づける（束の発注書の欄に出る）。
+   *   3. 条件明細は、同じ相手・同じ向きの基本契約があればそこへ、無ければ契約なし
+   *      （発注書の約款で取引）にする。
+   *   4. 契約は消す（参照が残っていて消せなければ「文書だけ」にして契約から外す）。
+   */
+  async orderAgreementToDocument(id: number, actor: string): Promise<{
+    documentId: number; documentNo: string; created: boolean; conditionsLinked: number; masterNo: string | null;
+  }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const ar = await client.query(
+          `SELECT a.id, a.agreement_no, a.title, a.kind, a.direction, a.status, a.source_url,
+                  a.executed_on, a.effective_on, a.created_at, a.counterparty_id, r.resolved_id,
+                  (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count
+             FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+            WHERE a.id = $1 FOR UPDATE OF a`, [id]);
+        const a = ar.rows[0] as any;
+        if (!a) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
+        const kind = (str(a.kind) ?? "master") as AgreementKind;
+        if (kind !== "standalone" && kind !== "document") {
+          throw new DomainError("VALIDATION", "文書に寄せられるのは単体契約・文書だけの契約です（基本契約・個別契約は寄せません）");
+        }
+        if (Number(a.child_count) > 0) {
+          throw new DomainError("VALIDATION", "この契約の下に覚書・解除合意があります。先にそちらの親を付け替えてください");
+        }
+        const no = str(a.agreement_no) ?? `#${id}`;
+
+        // 1. 発注書の文書。
+        const dr = await client.query(
+          `SELECT d.id, d.document_no, d.template_version_id, t.template_key, d.manual_inputs->>'documentKind' AS kind
+             FROM documents d
+             LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+             LEFT JOIN document_templates t ON t.id = tv.template_id
+            WHERE (d.agreement_id = $1 OR d.document_no = $2) AND d.status NOT IN ('void', 'superseded')
+            ORDER BY (d.document_no = $2) DESC,
+                     (t.template_key IN ('purchase_order', 'intl_purchase_order')) DESC NULLS LAST,
+                     (d.manual_inputs->>'documentKind' = '発注書') DESC NULLS LAST, d.id`, [id, no]);
+        const docs = dr.rows as any[];
+        let doc = docs[0] as any | undefined;
+        let created = false;
+        if (!doc) {
+          const ins = await client.query(
+            `INSERT INTO documents (document_no, status, manual_inputs, storage_url, issued_at, issued_by)
+             VALUES ($1, 'issued', $2::jsonb, $3, COALESCE($4::date, $5::date, $6::timestamptz::date)::timestamptz, $7)
+             RETURNING id, document_no`,
+            [no, JSON.stringify({ documentKind: "発注書", title: String(a.title ?? no) }), str(a.source_url),
+             dateStr(a.executed_on), dateStr(a.effective_on), a.created_at ?? null, actor]);
+          doc = ins.rows[0];
+          created = true;
+        } else if (!doc.template_version_id && doc.kind !== "発注書") {
+          // 取り込んだ文書の種類が発注書でなければ、発注書にする（束の発注書の欄が拾う）。
+          await client.query(
+            `UPDATE documents SET manual_inputs = COALESCE(manual_inputs, '{}'::jsonb) || '{"documentKind":"発注書"}'::jsonb
+              WHERE id = $1`, [doc.id]);
+        }
+        const documentId = Number(doc.id);
+
+        // 2. 契約に載っていた条件明細に紐づける。
+        const cr = await client.query(
+          "SELECT id FROM conditions WHERE agreement_id = $1 ORDER BY id", [id]);
+        const conditionIds = (cr.rows as Array<{ id: number }>).map((r) => Number(r.id));
+        const last = await client.query(
+          "SELECT COALESCE(max(line_no), 0) AS n FROM document_conditions WHERE document_id = $1", [documentId]);
+        let lineNo = Number((last.rows[0] as { n: number } | undefined)?.n ?? 0);
+        for (const cid of conditionIds) {
+          lineNo += 1;
+          await client.query(
+            `INSERT INTO document_conditions (document_id, condition_id, line_no) VALUES ($1, $2, $3)
+             ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, cid, lineNo]);
+        }
+
+        // 3. 条件明細の契約。同じ相手・同じ向きの生きた基本契約があればそこへ、無ければ契約なし。
+        const mr = await client.query(
+          `SELECT a.id, a.agreement_no FROM agreements a
+             JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+            WHERE r.resolved_id = $1 AND COALESCE(a.kind, 'master') = 'master' AND a.direction = $2
+              AND a.terminated_on IS NULL AND a.id <> $3
+            ORDER BY (a.status = 'executed') DESC, a.executed_on DESC NULLS LAST, a.id DESC LIMIT 1`,
+          [Number(a.resolved_id), a.direction, id]);
+        const master = mr.rows[0] as any | undefined;
+        await client.query("UPDATE conditions SET agreement_id = $2 WHERE agreement_id = $1",
+          [id, master ? Number(master.id) : null]);
+        // 文書は契約から外す（発注書は契約に繋がない文書）。
+        await client.query("UPDATE documents SET agreement_id = NULL WHERE agreement_id = $1", [id]);
+        await client.query(
+          "DELETE FROM matter_links WHERE target_type = 'agreement' AND target_ref = $1::text", [id]);
+
+        // 4. 契約を消す。どこかに参照が残っていれば、消さずに「文書だけ」にして契約から外す。
+        await client.query("SAVEPOINT order_agreement");
+        try {
+          await client.query("DELETE FROM agreements WHERE id = $1", [id]);
+          await client.query("RELEASE SAVEPOINT order_agreement");
+        } catch {
+          await client.query("ROLLBACK TO SAVEPOINT order_agreement");
+          await client.query("UPDATE agreements SET kind = 'document', updated_at = now() WHERE id = $1", [id]);
+        }
+        await recordAudit(client, {
+          actor, action: "agreement.to_order_document", targetType: "document", targetId: documentId,
+          detail: { agreementId: id, agreementNo: no, documentNo: str(doc.document_no), created, conditionIds,
+                    masterId: master ? Number(master.id) : null }
+        });
+        return { documentId, documentNo: String(doc.document_no ?? no), created, conditionsLinked: conditionIds.length,
+                 masterNo: master ? str(master.agreement_no) : null };
       });
     } catch (error) { throw translate(error); }
   }

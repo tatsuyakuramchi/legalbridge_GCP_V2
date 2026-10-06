@@ -311,3 +311,13 @@ test("文書から契約を立てる：基本契約書・条件書でない文�
   await assert.rejects(() => new PartyAgreementMapService(db({ agreement_id: 3 })).agreementFromDocument(1, "k"), /既に契約/);
   await assert.rejects(() => new PartyAgreementMapService(db({ role: "master", status: "draft" })).agreementFromDocument(1, "k"), /決定済み/);
 });
+
+test("発注書が契約（単体契約・文書だけ）として登録されていれば、文書に寄せるよう知らせる", async () => {
+  const { isOrderAgreement } = await import("./party-map.js");
+  assert.equal(isOrderAgreement({ kind: "standalone", agreementNo: "ARC-PO-2026-0079", title: "x" }), true);
+  assert.equal(isOrderAgreement({ kind: "document", agreementNo: "X-1", title: "【文書作成】TANSAN株式会社_発注書_20260623" }), true);
+  assert.equal(isOrderAgreement({ kind: "master", agreementNo: "ARC-PO-1", title: "発注書" }), false, "基本契約は対象外");
+  assert.equal(isOrderAgreement({ kind: "standalone", agreementNo: "ARC-ILT-2026-0036", title: "個別利用許諾条件書" }), false);
+  const map = buildPartyMap(party, [a({ id: 9, kind: "standalone", agreementNo: "ARC-PO-2026-0079", conditionCount: 2 })]);
+  assert.deepEqual(map.issues.map((i) => i.code), ["order_as_agreement"]);
+});
