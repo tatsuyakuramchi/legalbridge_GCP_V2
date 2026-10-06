@@ -79,6 +79,34 @@ test("手数料は検収額と合算して一括課税、経費は税込のま�
 
 // ---- 明細 --------------------------------------------------------------
 
+test("納期より早く納品されたら、支払日は納品日から支払条件で出した日（予定の支払日より早いとき）", () => {
+  const early = deliveryLinesFrom(ctx({
+    conditions: [condition({ paymentTerms: "月末締め翌月末払い" })],
+    condition: condition({ paymentTerms: "月末締め翌月末払い" }),
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-15", amount: 280000,
+               schedule: { payOn: "2026-10-20", dueOn: "2026-09-30" } }]
+  })) as Array<Record<string, any>>;
+  assert.equal(early[0].payment_date, "2026-09-30", "8/15 納品 → 翌月末。予定の 10/20 より早い");
+  assert.equal(early[0].paid_date, "2026-09-30");
+
+  // 納期より遅れた納品は予定の支払日のまま。
+  const late = deliveryLinesFrom(ctx({
+    conditions: [condition({ paymentTerms: "月末締め翌月末払い" })],
+    condition: condition({ paymentTerms: "月末締め翌月末払い" }),
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-05", amount: 280000,
+               schedule: { payOn: "2026-10-20", dueOn: "2026-09-30" } }]
+  })) as Array<Record<string, any>>;
+  assert.equal(late[0].payment_date, "2026-10-20");
+
+  // 予定の回が無ければ納品日から。支払条件も無ければ空。
+  const none = deliveryLinesFrom(ctx({
+    conditions: [condition({ paymentTerms: "月末締め翌月末払い" })],
+    condition: condition({ paymentTerms: "月末締め翌月末払い" }),
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-15", amount: 280000, schedule: null }]
+  })) as Array<Record<string, any>>;
+  assert.equal(none[0].payment_date, "2026-09-30");
+});
+
 test("検収の明細は実績から組む（人が打ち直さない）", () => {
   const lines = deliveryLinesFrom(ctx()) as Array<Record<string, any>>;
   assert.equal(lines.length, 1);

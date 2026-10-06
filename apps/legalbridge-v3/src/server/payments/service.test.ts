@@ -411,6 +411,18 @@ const inspectionDb = (over: Record<string, unknown> = {}) => new FakeDatabase((t
   return undefined;
 });
 
+test("検収書：納期より早く納品されたら、納品日から支払条件で出した日で払う（予定の支払日より早いとき）", async () => {
+  const early = await new PaymentService(inspectionDb({
+    payment_terms: "月末締め翌月末払い", schedule_pay_on: "2026-10-20", occurred_on: "2026-08-15", inspected_on: "2026-08-20"
+  })).createFromInspection(31, "kuramochi");
+  assert.equal(early.dueOn, "2026-09-30", "8/15 納品 → 翌月末。予定の 10/20 より早い");
+  // 納期より遅れた納品は予定の支払日のまま。
+  const late = await new PaymentService(inspectionDb({
+    payment_terms: "月末締め翌月末払い", schedule_pay_on: "2026-10-20", occurred_on: "2026-10-05", inspected_on: "2026-10-06"
+  })).createFromInspection(31, "kuramochi");
+  assert.equal(late.dueOn, "2026-10-20");
+});
+
 test("検収書：予定の回が無ければ、条件の支払条件から期日を出す", async () => {
   const withTerms = await new PaymentService(inspectionDb({ payment_terms: "検収月の翌月末払い" }))
     .createFromInspection(31, "kuramochi");

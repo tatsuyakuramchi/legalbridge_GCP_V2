@@ -25,6 +25,7 @@ import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
+import { payDateFromTerms } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
 import { deliveryKindFor, orderPeriodSummary, withPeriodText } from "./order-period.js";
@@ -193,6 +194,21 @@ function orderNoFor(context: Ctx, conditionId: unknown): string | null {
   return standalone || null;
 }
 
+/**
+ * 明細の行の支払日。
+ *
+ * 予定の回の支払日（条件の納期から出したもの）が基本だが、納期より早く納品された
+ * ものは、納品日から条件の支払条件で出した日のほうが早い。その日で払う（相手は
+ * 納品した日を起点に支払を待つ）。納期より遅れた納品は予定の支払日のまま。
+ * 予定の回が無ければ、納品日から出した日。
+ */
+function payOnFor(event: Ctx, condition: Ctx): string | null {
+  const scheduled = (event.schedule?.payOn as string | null | undefined) ?? null;
+  const fromDelivery = payDateFromTerms(event.occurredOn ?? null, condition.paymentTerms ?? null);
+  if (fromDelivery && (!scheduled || fromDelivery < scheduled)) return fromDelivery;
+  return scheduled;
+}
+
 /** 予定（発注時）の額と実額が違うか。どちらかが無ければ「違わない」。 */
 function hasAmountChange(ordered: unknown, actual: unknown): boolean {
   const o = num(ordered, Number.NaN); const a = num(actual, Number.NaN);
@@ -282,8 +298,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         term_end: event.serviceTo ?? null,
         delivery_date: event.occurredOn ?? null,
         inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
-        payment_date: event.schedule?.payOn ?? event.schedule?.dueOn ?? null,
-        paid_date: event.schedule?.payOn ?? null,
+        payment_date: payOnFor(event, condition) ?? event.schedule?.dueOn ?? null,
+        paid_date: payOnFor(event, condition),
         amount_ex_tax: event.amount ?? 0,
         inspected_amount_ex_tax: event.amount ?? 0,
         // 予定額。ここと違えば「金額変更」として本文の変更履歴に出る。予定明細が

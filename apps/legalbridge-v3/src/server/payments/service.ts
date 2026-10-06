@@ -629,13 +629,21 @@ export class PaymentService {
           .sort();
         const basis = basisDates[basisDates.length - 1] ?? null;
 
-        // 期日は予定の支払日をそのまま使う。回ごとに違えばいちばん遅い日。
-        // 予定を立てていなければ条件の支払条件から出す（A-040）。60日は
-        // 下請法の上限であって約束の日ではないので、どれも無いときだけ。
+        // 期日は予定の支払日（条件の納期から出したもの）が基本。回ごとに違えば
+        // いちばん遅い日。納期より早く納品されたものは、納品日から条件の支払条件で
+        // 出した日のほうが早いので、その日で払う（検収書の明細の支払日と同じ規則）。
+        // 予定を立てていなければ納品日・検収日から条件の支払条件で出す（A-040）。
+        // 60日は下請法の上限であって約束の日ではないので、どれも無いときだけ。
         const payOns = rows.map((r) => dateStr(r.schedule_pay_on))
           .filter((d): d is string => Boolean(d)).sort();
-        const dueOn = options.dueOn ?? payOns[payOns.length - 1]
-          ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)))
+        const scheduled = payOns[payOns.length - 1] ?? null;
+        const deliveredDates = rows.map((r) => dateStr(r.occurred_on))
+          .filter((d): d is string => Boolean(d)).sort();
+        const terms = rows.map((r) => str(r.payment_terms));
+        const fromDelivery = dueFromPaymentTerms(deliveredDates[deliveredDates.length - 1] ?? null, terms);
+        const early = fromDelivery && (!scheduled || fromDelivery < scheduled) ? fromDelivery : scheduled;
+        const dueOn = options.dueOn ?? early
+          ?? dueFromPaymentTerms(basis, terms)
           ?? dueLimitFrom(basis);
         // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。
         const withholding = withholdingFor(net + tax, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;
