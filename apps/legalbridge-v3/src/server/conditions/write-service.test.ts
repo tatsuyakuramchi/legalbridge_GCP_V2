@@ -424,9 +424,11 @@ const shareRows = (over: { counterparty?: number; mg?: number | null } = {}) => 
   if (text.includes("FROM conditions WHERE id = $1 FOR UPDATE")) {
     return [{ id: 1, condition_no: "CL-1", status: "active", counterparty_id: over.counterparty ?? 21, currency: "JPY", series_id: 1, effective_from: null }];
   }
-  if (text.includes("SELECT direction, kind, pricing_model, mg_amount, ag_amount FROM conditions")) {
-    return [{ direction: "in", kind: "license", pricing_model: "revenue_rate", mg_amount: over.mg ?? null, ag_amount: null }];
+  if (text.includes("SELECT condition_no, direction, kind, pricing_model, mg_amount, ag_amount, work_id FROM conditions")) {
+    return [{ condition_no: "CL-1", direction: "in", kind: "license", pricing_model: "revenue_rate",
+              mg_amount: over.mg ?? null, ag_amount: null, work_id: 7 }];
   }
+  if (text.includes("c.work_id = $2 AND c.id <> $1")) return [{ id: 2, condition_no: "CL-2" }];
   if (text.includes("SELECT id FROM parties WHERE id = ANY")) return [{ id: 21 }, { id: 22 }];
   if (text.includes("AS documents")) return [{ documents: 0, payments: 0, matters: 0, children: 0 }];
   return undefined;
@@ -439,6 +441,13 @@ test("取り分の置き換え：行を入れ直し、分配を誰がするか�
   assert.equal(db.all("INSERT INTO condition_shares").length, 2);
   assert.deepEqual(db.find("UPDATE conditions SET distribution")!.params, [1, "direct"], "空は direct");
   assert.equal(r.changed[0].target, "condition_shares");
+
+  // 同じ作品の紙・電子にも入れる。
+  const db3 = new FakeDatabase(shareRows());
+  const r3 = await new ConditionWriteService(db3).replaceShares(1,
+    [{ partyId: 21, sharePpm: 666667 }, { partyId: 22, sharePpm: 333333 }], "tester", null, { applyToWork: true });
+  assert.equal(db3.all("INSERT INTO condition_shares").length, 4, "2 本 × 2 行");
+  assert.deepEqual(r3.changed.map((c) => c.target), ["condition_shares", "condition_shares:CL-2"]);
 
   // 取り分を外すと distribution も空に戻る。
   const db2 = new FakeDatabase(shareRows());

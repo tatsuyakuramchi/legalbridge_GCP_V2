@@ -2526,13 +2526,16 @@ export function createRoutes(database: Transactable) {
       note: z.string().trim().max(200).nullable().optional()
     })).max(20),
     /** 分配を誰がするか（A-070）。direct=当社が受取人ごとに払う / representative=代表が分配。空は direct。 */
-    distribution: z.enum(["direct", "representative"]).nullable().optional()
+    distribution: z.enum(["direct", "representative"]).nullable().optional(),
+    /** 同じ作品の他の料率の許諾条件（紙・電子）にも同じ按分を入れる。 */
+    applyToWork: z.boolean().optional()
   });
   router.put("/conditions/:id/shares",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { shares, distribution } = sharesSchema.parse(req.body ?? {});
-      res.json(await conditionWrites.replaceShares(Number(req.params.id), shares, actor(res), distribution ?? null));
+      const { shares, distribution, applyToWork } = sharesSchema.parse(req.body ?? {});
+      res.json(await conditionWrites.replaceShares(Number(req.params.id), shares, actor(res), distribution ?? null,
+                                                   { applyToWork: applyToWork === true }));
     }));
 
   // ---- 作品 ----

@@ -1118,60 +1118,89 @@ export class ConditionWriteService {
   async replaceShares(
     id: number, shares: Array<{ partyId: number; sharePpm: number; note?: string | null }>, actor: string,
     /** 分配を誰がするか（A-070）。空は direct。取り分が空なら意味を持たない（null にする）。 */
-    distribution: "direct" | "representative" | null = null
+    distribution: "direct" | "representative" | null = null,
+    /**
+     * 同じ作品の他の料率の許諾条件（紙・電子）にも同じ按分を入れる。
+     * 紙と電子で按分は同じ契約がふつうで、二度打ちすると片方だけ直し忘れる。
+     */
+    options: { applyToWork?: boolean } = {}
   ): Promise<WriteResult> {
     try {
       return await inTransaction(this.database, async (client) => {
-        const existing = await this.repository.requireExisting(client, id);
-        const head = (await client.query(
-          "SELECT direction, kind, pricing_model, mg_amount, ag_amount FROM conditions WHERE id = $1", [id]
-        )).rows[0] as Record<string, any> | undefined;
-        if (!head) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
         const rows = shares.map((s) => ({ partyId: Number(s.partyId), sharePpm: Number(s.sharePpm),
                                           note: String(s.note ?? "").trim() || null }));
         validateShareInput(rows);
         if (rows.length) {
-          if (head.direction !== "in" || head.kind !== "license") {
-            throw new DomainError("VALIDATION", "取り分を付けられるのは、取得（IN）の許諾条件だけです");
-          }
-          if (head.pricing_model !== "revenue_rate") {
-            throw new DomainError("VALIDATION", "取り分を付けられるのは料率の条件だけです（買い切りは定額の条件 1 本で持ちます）");
-          }
-          // 代表が分配する契約は、計算書も支払も相手先 1 件のまま。前払保証の消化も分けないので MG・AG があってよい。
-          if (distribution !== "representative" && (Number(head.mg_amount ?? 0) > 0 || Number(head.ag_amount ?? 0) > 0)) {
-            throw new DomainError("VALIDATION", "MG・AG のある条件には取り分を付けられません。先に MG・AG を外してください");
-          }
-          if (distribution === "representative" && !rows.some((r) => r.partyId === Number(existing.counterparty_id))) {
-            throw new DomainError("VALIDATION", "代表が分配する契約では、条件の相手先（代表）を取り分の中に入れてください");
-          }
           const found = await client.query(
             "SELECT id FROM parties WHERE id = ANY($1::bigint[])", [rows.map((r) => r.partyId)]);
           if ((found.rows as Array<{ id: number }>).length !== rows.length) {
             throw new DomainError("NOT_FOUND", "取り分の権利者に、登録の無い取引先が混ざっています");
           }
         }
-        const removed = await client.query("DELETE FROM condition_shares WHERE condition_id = $1", [id]);
-        const mode = rows.length ? (distribution === "representative" ? "representative" : "direct") : null;
-        await client.query("UPDATE conditions SET distribution = $2, updated_at = now() WHERE id = $1", [id, mode]);
-        let written = 0;
-        for (const [index, row] of rows.entries()) {
-          const r = await client.query(
-            `INSERT INTO condition_shares (condition_id, party_id, share_ppm, sort_order, note)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [id, row.partyId, row.sharePpm, index, row.note]);
-          written += r.rowCount ?? 0;
+        const first = await this.writeSharesOf(client, id, rows, distribution, actor);
+        const changed: WriteResult["changed"] = [{ target: "condition_shares", rows: first.written }];
+        if (options.applyToWork && first.workId) {
+          // 同じ作品の、生きている取得・許諾・料率の条件（改訂の系列は 1 本と数える）。
+          const siblings = (await client.query(
+            `SELECT c.id, c.condition_no FROM conditions c
+              WHERE c.work_id = $2 AND c.id <> $1 AND c.direction = 'in' AND c.kind = 'license'
+                AND c.pricing_model = 'revenue_rate' AND c.status IN ('active', 'scheduled')
+                AND COALESCE(c.series_id, c.id) <> (SELECT COALESCE(x.series_id, x.id) FROM conditions x WHERE x.id = $1)
+              ORDER BY c.id`, [id, first.workId])).rows as Array<{ id: number; condition_no: string | null }>;
+          for (const sib of siblings) {
+            const r = await this.writeSharesOf(client, Number(sib.id), rows, distribution, actor);
+            changed.push({ target: `condition_shares:${sib.condition_no ?? `#${sib.id}`}`, rows: r.written });
+          }
         }
-        await recordAudit(client, {
-          actor, action: "condition.replace_shares", targetType: "condition", targetId: id,
-          detail: { removed: removed.rowCount ?? 0, written, distribution: mode,
-                    shares: rows.map((r) => ({ partyId: r.partyId, sharePpm: r.sharePpm })) }
-        });
-        return {
-          changed: [{ target: "condition_shares", rows: written }],
-          resolvesThrough: await this.countReferences(client, id)
-        };
+        return { changed, resolvesThrough: await this.countReferences(client, id) };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /** 条件 1 本の取り分を入れ直す。検証もここ。 */
+  private async writeSharesOf(
+    client: Queryable, id: number,
+    rows: Array<{ partyId: number; sharePpm: number; note: string | null }>,
+    distribution: "direct" | "representative" | null, actor: string
+  ): Promise<{ written: number; workId: number | null }> {
+    const existing = await this.repository.requireExisting(client, id);
+    const head = (await client.query(
+      "SELECT condition_no, direction, kind, pricing_model, mg_amount, ag_amount, work_id FROM conditions WHERE id = $1", [id]
+    )).rows[0] as Record<string, any> | undefined;
+    if (!head) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
+    const tag = head.condition_no ? `${head.condition_no}：` : "";
+    if (rows.length) {
+      if (head.direction !== "in" || head.kind !== "license") {
+        throw new DomainError("VALIDATION", `${tag}取り分を付けられるのは、取得（IN）の許諾条件だけです`);
+      }
+      if (head.pricing_model !== "revenue_rate") {
+        throw new DomainError("VALIDATION", `${tag}取り分を付けられるのは料率の条件だけです（買い切りは定額の条件 1 本で持ちます）`);
+      }
+      // 代表が分配する契約は、計算書も支払も相手先 1 件のまま。前払保証の消化も分けないので MG・AG があってよい。
+      if (distribution !== "representative" && (Number(head.mg_amount ?? 0) > 0 || Number(head.ag_amount ?? 0) > 0)) {
+        throw new DomainError("VALIDATION", `${tag}MG・AG のある条件には取り分を付けられません。先に MG・AG を外してください`);
+      }
+      if (distribution === "representative" && !rows.some((r) => r.partyId === Number(existing.counterparty_id))) {
+        throw new DomainError("VALIDATION", `${tag}代表が分配する契約では、条件の相手先（代表）を取り分の中に入れてください`);
+      }
+    }
+    const removed = await client.query("DELETE FROM condition_shares WHERE condition_id = $1", [id]);
+    const mode = rows.length ? (distribution === "representative" ? "representative" : "direct") : null;
+    await client.query("UPDATE conditions SET distribution = $2, updated_at = now() WHERE id = $1", [id, mode]);
+    let written = 0;
+    for (const [index, row] of rows.entries()) {
+      const r = await client.query(
+        `INSERT INTO condition_shares (condition_id, party_id, share_ppm, sort_order, note)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [id, row.partyId, row.sharePpm, index, row.note]);
+      written += r.rowCount ?? 0;
+    }
+    await recordAudit(client, {
+      actor, action: "condition.replace_shares", targetType: "condition", targetId: id,
+      detail: { removed: removed.rowCount ?? 0, written, distribution: mode,
+                shares: rows.map((r) => ({ partyId: r.partyId, sharePpm: r.sharePpm })) }
+    });
+    return { written, workId: head.work_id === null || head.work_id === undefined ? null : Number(head.work_id) };
   }
 
   /**

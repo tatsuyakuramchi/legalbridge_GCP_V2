@@ -49,6 +49,9 @@ export function ConditionShares(
   const [editing, setEditing] = useState(false);
   const [mode, setMode] = useState<Mode>(detail.ratePpm ? "rate" : "share");
   const [distribution, setDistribution] = useState<Distribution>(detail.distribution ?? "direct");
+  /** 同じ作品の他の料率条件（紙・電子）にも同じ按分を入れる。紙と電子で按分は同じ契約がふつう。 */
+  const [applyToWork, setApplyToWork] = useState(true);
+  const [applied, setApplied] = useState<string[] | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
@@ -103,10 +106,12 @@ export function ConditionShares(
   async function save(clear = false) {
     setBusy(true); setError(null);
     try {
-      await api.put(`/conditions/${detail.id}/shares`, {
+      const r = await api.put<{ changed: Array<{ target: string; rows: number }> }>(`/conditions/${detail.id}/shares`, {
         shares: clear ? [] : rows.map((r, i) => ({ partyId: r.partyId, sharePpm: ppm[i], note: r.note.trim() || null })),
-        distribution: clear ? null : distribution
+        distribution: clear ? null : distribution,
+        applyToWork: Boolean(detail.work) && applyToWork
       });
+      setApplied(r.changed.filter((c) => c.target.startsWith("condition_shares:")).map((c) => c.target.slice("condition_shares:".length)));
       setEditing(false); onDone();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -131,6 +136,13 @@ export function ConditionShares(
           </button>
         )}
       </div>
+      {!editing && applied && (
+        <div className="panel-bd">
+          <div className="note ok">
+            {applied.length ? `同じ作品の ${applied.join("・")} にも同じ按分を入れました` : "この作品の他の料率条件はありません（この条件だけ）"}
+          </div>
+        </div>
+      )}
       {!editing && shares.length > 0 && (
         <div className="panel-bd">
           <table>
@@ -216,6 +228,12 @@ export function ConditionShares(
               ))}
               {!parties.length && <span className="faint">見つかりません</span>}
             </div>
+          )}
+          {detail.work && (
+            <label className="ledger-check">
+              <input type="checkbox" checked={applyToWork} onChange={(e) => setApplyToWork(e.target.checked)} />
+              この作品の他の料率条件（紙・電子）にも同じ按分を入れる（比率は同じ、料率はそれぞれの全体率で変わる。取り分を外すときも揃える）
+            </label>
           )}
           <div className="row">
             <button className="btn primary btn-sm" disabled={busy || !ok} onClick={() => void save()}>保存</button>
