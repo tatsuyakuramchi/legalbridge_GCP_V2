@@ -1299,7 +1299,7 @@ export function createRoutes(database: Transactable) {
     res.json({ specs: IMPORT_SPECS });
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works", "license_conditions", "agreements"]),
+    kind: z.enum(["parties", "works", "license_conditions", "agreements", "pub_works"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean(),
     // create（新しく作る）か update（既存に当てる）か。既定は create。
