@@ -1268,7 +1268,8 @@ export function createRoutes(database: Transactable) {
     // 報告月（シート名の月）。古い画面から来る行には無いので、無ければ販売月で持つ。
     reportMonth: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional().default(null),
     storeCompany: z.string().max(200).nullable(), store: z.string().max(200).nullable(),
-    title: z.string().trim().min(1).max(400), authors: z.string().max(400).nullable(),
+    title: z.string().trim().min(1).max(400), volume: z.string().max(20).nullable().optional().default(null),
+    authors: z.string().max(400).nullable(),
     cid: z.string().max(60).nullable(),
     listPrice: z.coerce.number().int().min(0), storeRatePct: z.coerce.number().nullable(),
     downloads: z.coerce.number().int().min(0), netAmount: z.coerce.number().nullable(),

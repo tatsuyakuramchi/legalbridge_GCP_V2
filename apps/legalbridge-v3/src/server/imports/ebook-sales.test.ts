@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import { DomainError } from "../core/errors.js";
 import {
-  EbookSalesImportService, monthEnd, monthLabel, monthOf, normalizeTitle, readRows, readWorkbookRows, rowsOfSheet,
+  EbookSalesImportService, monthEnd, monthLabel, monthOf, normalizeTitle, readRows, readWorkbookRows, rowsOfSheet, volumeOf, volumeTitles,
   type EbookSalesRow
 } from "./ebook-sales.js";
 
@@ -77,7 +77,7 @@ test("販売月の読み方と、実績の発生日・期間の名前", () => {
 
 const row = (over: Partial<EbookSalesRow>): EbookSalesRow => ({
   sheet: "2026年1月", line: 2, month: "2026-01", reportMonth: over.month ?? "2026-01", storeCompany: "ドワンゴ", store: "BOOKWALKER（PC）",
-  title: "キズナバレット 1", authors: "からすば晴┴N.G.P.", cid: "BT0001", listPrice: 1900, storeRatePct: 55,
+  title: "キズナバレット 1", volume: "1", authors: "からすば晴┴N.G.P.", cid: "BT0001", listPrice: 1900, storeRatePct: 55,
   downloads: 11, netAmount: 11495, royaltyInFile: 3135, ...over
 });
 
@@ -212,4 +212,26 @@ test("作品に付いている CID を読む・外す", async () => {
   assert.deepEqual(codes.map((c) => c.cid), ["BT0001"]);
   assert.deepEqual(await svc.unmapCode("BT0001", "tester"), { cid: "BT0001", workId: 7 });
   await assert.rejects(() => svc.unmapCode("BT9999", "tester"), (e: unknown) => e instanceof DomainError && e.code === "NOT_FOUND");
+});
+
+test("巻数：作品は作品名 × 巻数で 1 件。CID が無い行は「タイトル 巻数」の作品に当て、無ければシリーズ名の作品に載せない", async () => {
+  assert.equal(volumeOf(3), "3"); assert.equal(volumeOf("第３巻"), "3"); assert.equal(volumeOf(""), null); assert.equal(volumeOf(1), "1");
+  assert.deepEqual(volumeTitles("スピタのコピタの！", "3"), ["スピタのコピタの！ 3", "スピタのコピタの！ 第3巻", "スピタのコピタの！（3）", "スピタのコピタの！ vol.3"]);
+  assert.deepEqual(volumeTitles("スピタのコピタの！", null), []);
+
+  const titles = [{ id: 30, title: "スピタのコピタの！" }, { id: 33, title: "スピタのコピタの！ 3" }];
+  const svc = new EbookSalesImportService(db({ titles, conditions: [{ ...DIGITAL, id: 60, work_id: 33 }] }), writer() as any);
+  const p = await svc.preview([
+    row({ cid: null, title: "スピタのコピタの！", volume: "3" }),   // 「スピタのコピタの！ 3」に当たる
+    row({ cid: null, title: "スピタのコピタの！", volume: "5" }),   // 巻ごとの作品が無い → 当てない
+    row({ cid: null, title: "スピタのコピタの！", volume: "1" })    // 1 巻はタイトルそのものでも可
+  ]);
+  assert.equal(p.groups.length, 3, "巻ごとに別のまとまり");
+  const by = Object.fromEntries(p.groups.map((g) => [g.volume, g]));
+  assert.equal(by["3"].work!.id, 33);
+  assert.equal(by["3"].status, "ok");
+  assert.equal(by["5"].status, "unresolved");
+  assert.match(by["5"].message ?? "", /「スピタのコピタの！ 5」の作品がありません/);
+  assert.deepEqual(by["5"].candidates.map((c: { id: number }) => c.id), [30], "候補にシリーズ名の作品は出す（人が選ぶ）");
+  assert.equal(by["1"].work!.id, 30);
 });

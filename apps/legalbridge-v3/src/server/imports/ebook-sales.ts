@@ -14,7 +14,10 @@ import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xls
  * 作品の電子出版（pub_digital）の IN 条件に実績を立てる。
  *
  *   1. 読む     … XLSX か CSV を行に直す（readRows）。見出しの名前で列を当てる。
- *   2. 当てる   … CID → 作品（ebook_work_codes）。無ければタイトルが一致する作品。
+ *   2. 当てる   … CID → 作品（ebook_work_codes）。無ければ「タイトル 巻数」が一致する作品、
+ *                 巻数が無い（1 巻だけ）ならタイトルが一致する作品。作品は作品名 × 巻数で
+ *                 1 件（原作は 1 つで、巻は別の作品）。巻ごとの作品が無ければ当てない
+ *                 （シリーズ名の作品に黙って載せない）。
  *                 作品 → 有効な電子出版の料率条件。無ければ「印税なし」か「条件なし」。
  *   3. まとめる … 条件 × 報告月 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
  *                 報告月はシート名（「2026年3月」）。シートには前々月の販売月の行や
@@ -39,6 +42,8 @@ export interface EbookSalesRow {
   storeCompany: string | null;
   store: string | null;
   title: string;
+  /** 巻数（「1」「3」）。無ければ null。 */
+  volume: string | null;
   authors: string | null;
   cid: string | null;
   /** 販売価格（税抜の配信価格）。円。 */
@@ -62,6 +67,7 @@ const HEADERS = {
   storeCompany: ["書店会社名"],
   store: ["書店名"],
   title: ["コンテンツ名称", "タイトル名称"],
+  volume: ["巻数", "巻"],
   authors: ["著者名"],
   cid: ["CID"],
   listPrice: ["販売価格"],
@@ -90,6 +96,15 @@ export function monthOf(v: CellValue): string | null {
   const m = s.match(/^(\d{4})[-/年.](\d{1,2})(?:[-/月.]\d{0,2}日?)?/);
   if (!m) return null;
   return `${m[1]}-${String(Number(m[2])).padStart(2, "0")}`;
+}
+
+/** 巻数。数なら整数の文字列に（1.0 → "1"）。空や読めないものは null。 */
+export function volumeOf(v: CellValue): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? String(Math.round(v)) : null;
+  const s = String(v).trim().replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  const m = s.match(/(\d+)/);
+  return m ? String(Number(m[1])) : (s || null);
 }
 
 /** 販売月の末日（実績の発生日）。 */
@@ -142,6 +157,7 @@ export function rowsOfSheet(name: string, cells: CellValue[][]): { rows: EbookSa
       storeCompany: norm(at("storeCompany")) || null,
       store: norm(at("store")) || null,
       title,
+      volume: volumeOf(at("volume")),
       authors: norm(at("authors")) || null,
       cid: norm(at("cid")) || null,
       listPrice: Math.round(listPrice),
@@ -206,6 +222,8 @@ export interface SalesGroup {
   key: string;
   cid: string | null;
   title: string;
+  /** 巻数。作品は作品名 × 巻数で 1 件。 */
+  volume: string | null;
   authors: string | null;
   /** 期間の月（報告月＝シート名。シート名が月でなければ販売月）。 */
   month: string;
@@ -245,6 +263,16 @@ export interface EventWriter {
 
 /** 題名の突合の鍵。空白（全角含む）を落として小文字に。SQL 側（regexp_replace）と同じ規則。 */
 export const normalizeTitle = (t: string) => t.replace(/[\s　]+/g, "").toLowerCase();
+
+/** 巻数つきの作品名の候補（「タイトル 3」「タイトル 第3巻」「タイトル（3）」「タイトル vol.3」）。巻数が無ければ空。 */
+export function volumeTitles(title: string, volume: string | null): string[] {
+  const v = String(volume ?? "").trim();
+  if (!v) return [];
+  return [`${title} ${v}`, `${title} 第${v}巻`, `${title}（${v}）`, `${title} vol.${v}`];
+}
+
+/** 巻数が無いか 1 巻（1 冊だけの本も巻数 1 で来る）。 */
+const isFirstOrNoVolume = (volume: string | null) => !volume || volume === "1";
 
 export class EbookSalesImportService {
   constructor(private readonly database: Transactable, private readonly events: EventWriter) {}
@@ -345,14 +373,14 @@ export class EbookSalesImportService {
   }
 
   private async resolve(client: Queryable, rows: EbookSalesRow[]): Promise<SalesPreview> {
-    // まとめる：CID（無ければタイトル）× 報告月（シート名。無ければ販売月）× 販売価格。
+    // まとめる：CID（無ければタイトル × 巻数）× 報告月（シート名。無ければ販売月）× 販売価格。
     const groups = new Map<string, SalesGroup>();
     for (const r of rows) {
-      const id = r.cid ? `cid:${r.cid}` : `title:${normalizeTitle(r.title)}`;
+      const id = r.cid ? `cid:${r.cid}` : `title:${normalizeTitle(r.title)}|${r.volume ?? ""}`;
       const month = r.reportMonth ?? r.month;
       const key = `${id}|${month}|${r.listPrice}`;
       const g = groups.get(key) ?? {
-        key, cid: r.cid, title: r.title, authors: r.authors, month, salesMonths: [], listPrice: r.listPrice,
+        key, cid: r.cid, title: r.title, volume: r.volume, authors: r.authors, month, salesMonths: [], listPrice: r.listPrice,
         downloads: 0, gross: 0, stores: [], lines: 0, status: "unresolved" as GroupStatus, message: null,
         work: null, condition: null, royalty: null, royaltyInFile: null, candidates: []
       };
@@ -373,12 +401,14 @@ export class EbookSalesImportService {
         WHERE c.cid = ANY($1::text[])`, [cids])).rows as Array<Record<string, any>> : [];
     const byCid = new Map(codeRows.map((r) => [String(r.cid), { id: Number(r.id), title: String(r.title), workCode: str(r.work_code) }]));
 
-    // タイトル → 作品（完全一致。空白と全角半角の違いは無視）。
-    const titles = [...new Set(list.filter((g) => !(g.cid && byCid.has(g.cid))).map((g) => g.title))];
-    const titleRows = titles.length ? (await client.query(
+    // タイトル → 作品（完全一致。空白と全角半角の違いは無視）。作品は作品名 × 巻数で 1 件なので、
+    // 巻数があれば「タイトル 3」「タイトル 第3巻」「タイトル（3）」を先に探す。
+    const unresolvedGroups = list.filter((g) => !(g.cid && byCid.has(g.cid)));
+    const titleKeys = [...new Set(unresolvedGroups.flatMap((g) => [...volumeTitles(g.title, g.volume), g.title].map(normalizeTitle)))];
+    const titleRows = titleKeys.length ? (await client.query(
       `SELECT id, title, work_code FROM works
         WHERE status <> 'archived' AND regexp_replace(lower(title), '[[:space:]　]', '', 'g') = ANY($1::text[])`,
-      [titles.map(normalizeTitle)])).rows as Array<Record<string, any>> : [];
+      [titleKeys])).rows as Array<Record<string, any>> : [];
     const byTitle = new Map<string, Array<{ id: number; title: string; workCode: string | null }>>();
     for (const r of titleRows) {
       const k = normalizeTitle(String(r.title));
@@ -386,11 +416,17 @@ export class EbookSalesImportService {
     }
 
     for (const g of list) {
-      if (g.cid && byCid.has(g.cid)) g.work = { ...byCid.get(g.cid)!, via: "cid" };
-      else {
-        const hits = byTitle.get(normalizeTitle(g.title)) ?? [];
-        if (hits.length === 1) g.work = { ...hits[0], via: "title" };
-        else if (hits.length > 1) { g.message = `同じ題名の作品が ${hits.length} 件あります。CID の当て先を選んでください`; g.candidates = hits; }
+      if (g.cid && byCid.has(g.cid)) { g.work = { ...byCid.get(g.cid)!, via: "cid" }; continue; }
+      const withVolume = volumeTitles(g.title, g.volume).flatMap((t) => byTitle.get(normalizeTitle(t)) ?? []);
+      const plain = byTitle.get(normalizeTitle(g.title)) ?? [];
+      // 巻数つきの作品が見つかればそれ。無ければ、巻数が無いか 1 のときだけタイトルそのもの
+      // （2 巻以上はシリーズ名の作品に黙って載せない。巻ごとの作品を作ってから当てる）。
+      const hits = withVolume.length ? withVolume : (isFirstOrNoVolume(g.volume) ? plain : []);
+      if (hits.length === 1) g.work = { ...hits[0], via: "title" };
+      else if (hits.length > 1) { g.message = `同じ題名の作品が ${hits.length} 件あります。CID の当て先を選んでください`; g.candidates = hits; }
+      else if (plain.length && !isFirstOrNoVolume(g.volume)) {
+        g.message = `「${g.title} ${g.volume}」の作品がありません（「${g.title}」はあります）。巻ごとの作品を作ってから当ててください`;
+        g.candidates = plain;
       }
     }
 
@@ -419,7 +455,12 @@ export class EbookSalesImportService {
     const existingKeys = new Set(existing.map((e) => `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}`));
 
     for (const g of list) {
-      if (!g.work) { g.status = "unresolved"; g.message ??= g.cid ? "この CID の作品がまだ決まっていません" : "同じ題名の作品がありません（CID も無い）"; continue; }
+      if (!g.work) {
+        g.status = "unresolved";
+        g.message ??= g.cid ? "この CID の作品がまだ決まっていません"
+          : `同じ題名の作品がありません（CID も無い）${isFirstOrNoVolume(g.volume) ? "" : `。巻ごとの作品「${g.title} ${g.volume}」が要ります`}`;
+        continue;
+      }
       if (!(g.downloads > 0) || !(g.listPrice > 0)) { g.status = "zero"; g.message = "DL 数か販売価格が 0"; continue; }
       const mine = condRows.filter((c) => Number(c.work_id) === g.work!.id);
       const digital = mine.filter((c) => c.usage_type === "pub_digital" && c.pricing_model === "revenue_rate" && c.status === "active");

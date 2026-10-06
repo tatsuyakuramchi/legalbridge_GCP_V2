@@ -11,10 +11,10 @@ import { useDebounced } from "./ListTools.js";
  * その場で作品を当てる。当てた結果は覚えるので、翌月からは自動で当たる。
  */
 
-interface Row { sheet: string; line: number; month: string; reportMonth: string | null; title: string; cid: string | null; [k: string]: unknown }
+interface Row { sheet: string; line: number; month: string; reportMonth: string | null; title: string; volume: string | null; cid: string | null; [k: string]: unknown }
 type Status = "ok" | "duplicate" | "no_royalty" | "no_condition" | "unresolved" | "zero";
 interface Group {
-  key: string; cid: string | null; title: string; authors: string | null; month: string; salesMonths: string[];
+  key: string; cid: string | null; title: string; volume: string | null; authors: string | null; month: string; salesMonths: string[];
   listPrice: number; downloads: number; gross: number; stores: string[]; lines: number;
   status: Status; message: string | null;
   work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
@@ -131,7 +131,8 @@ export function EbookSalesImport() {
                           <div className="faint" style={{ fontSize: "0.85em" }}>販売月 {g.salesMonths.join("・")}</div>
                         )}
                       </td>
-                      <td>{g.title}<div className="faint" style={{ fontSize: "0.85em" }}>{g.authors ?? ""}</div></td>
+                      <td>{g.title}{g.volume && g.volume !== "1" && <span className="faint">　第{g.volume}巻</span>}
+                        <div className="faint" style={{ fontSize: "0.85em" }}>{g.authors ?? ""}</div></td>
                       <td className="code faint">{g.cid ?? "—"}</td>
                       <td>
                         {g.work ? <>{g.work.title}{g.work.via === "title" && <span className="faint">（題名で当てた）</span>}</> : <span className="faint">—</span>}
@@ -142,7 +143,7 @@ export function EbookSalesImport() {
                           </div>
                         )}
                         {g.status === "unresolved" && !readOnly && g.cid && read && (
-                          <WorkPicker cid={g.cid} title={g.title} candidates={g.candidates}
+                          <WorkPicker cid={g.cid} title={g.volume && g.volume !== "1" ? `${g.title} ${g.volume}` : g.title} candidates={g.candidates}
                                       onMapped={() => void refresh(read.rows)} onError={setError} />
                         )}
                       </td>
