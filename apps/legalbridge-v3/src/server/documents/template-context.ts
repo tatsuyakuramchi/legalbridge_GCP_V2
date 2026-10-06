@@ -576,6 +576,16 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
       Object.assign(line, splitSpec(line.spec ?? line.description ?? ""));
     }
   }
+  // 行の「発注番号」は画面で直せない自動の欄。画面で明細を直した行（手入力）は
+  // 種を作った時点の番号のままなので、いまの文脈で出し直す。見出しの発注番号に
+  // 人が打った番号（parent_po_number）があればそれ、無ければ 選んだ番号 → 条件の控え →
+  // 作った発注書 → 単体契約 の順（orderNoFor）。手で足した行（条件の無い行）は触らない。
+  const typedPoNo = String(manual.parent_po_number ?? manual.PARENT_PO_NUMBER ?? "").trim();
+  for (const line of lines) {
+    const auto = typedPoNo
+      || (line.condition_id !== undefined && line.condition_id !== null ? orderNoFor(context, line.condition_id) : null);
+    if (auto) line.order_no = auto;
+  }
   const visible = lines.filter((l) => String(l.inspection_status ?? "now") !== "skip");
   const paid = visible.filter((l) => String(l.inspection_status ?? "") === "paid");
   const now = visible.filter((l) => String(l.inspection_status ?? "now") === "now");
