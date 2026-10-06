@@ -57,6 +57,8 @@ export interface ConditionSummary {
   effectiveFrom: string | null;
   /** 利用形態（A-027）。自社製造・自社販売／再許諾／自社製造・他社販売／出版（紙）／出版（電子）。 */
   usageType: ConditionUsageType | null;
+  /** 共著の取り分（A-068）の一覧用の見出し「A 60%・B 40%」。無ければ空。 */
+  sharesLabel?: string | null;
   /** 決着。実績・割当・支払済み・完了扱いから導く。一覧で「支払済み」を畳む。 */
   settlement: ConditionSettlement;
 }

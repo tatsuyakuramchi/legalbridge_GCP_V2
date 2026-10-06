@@ -2732,6 +2732,22 @@ export function createRoutes(database: Transactable) {
     }));
 
   // クレジット表記の履歴（A-031）。重版で変わる著作権表示を、適用開始日つきで持つ。
+  // 電子書籍の配信コード（CID）。売上の取込が作品を当てる鍵（A-069）。作品の画面で入れる。
+  router.get("/works/:id/ebook-codes", asyncRoute(async (req, res) => {
+    res.json({ codes: await ebookSales.codesOf(Number(req.params.id)) });
+  }));
+  router.put("/works/:id/ebook-codes", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        cid: z.string().trim().min(1).max(60), title: z.string().trim().max(400).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await ebookSales.mapCode(input.cid, Number(req.params.id), input.title ?? null, actor(res)));
+    }));
+  router.delete("/works/:id/ebook-codes/:cid", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await ebookSales.unmapCode(String(req.params.cid), actor(res)));
+    }));
+
   router.get("/works/:id/credits", asyncRoute(async (req, res) => {
     res.json(await workCredits.list(Number(req.params.id)));
   }));

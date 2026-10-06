@@ -12,6 +12,9 @@ const SUMMARY_COLUMNS = `
   c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity, c.mg_amount, c.ag_amount,
   c.term_start, c.term_end, c.delivery_due, c.status, c.effective_from, c.usage_type,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
+  -- 共著の取り分（A-068）。一覧に「A 60%・B 40%」と出す。
+  (SELECT string_agg(sp.name || ' ' || rtrim(rtrim((s.share_ppm / 10000.0)::numeric::text, '0'), '.') || '%', '・' ORDER BY s.sort_order, s.id)
+     FROM condition_shares s JOIN parties sp ON sp.id = s.party_id WHERE s.condition_id = c.id) AS shares_label,
   c.target_party_id, tp.name AS target_party_name,
   w.id AS work_id, w.work_code, w.title AS work_title,
   -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
@@ -61,6 +64,7 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     effectiveFrom: dateStr(row.effective_from),
     status: row.status,
     usageType: (row.usage_type ?? null) as ConditionSummary["usageType"],
+    sharesLabel: str(row.shares_label),
     settlement: settlementOf(row)
   };
 }
