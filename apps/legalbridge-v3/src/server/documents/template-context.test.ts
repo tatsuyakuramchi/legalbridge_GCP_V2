@@ -937,3 +937,27 @@ test("条件書の基本契約名は、束縛で決まった値（選んだ基�
     { "対象製品予定名": "ケダモノオペラ（仮）" }, { "基本契約名": "2024年4月1日付利用許諾基本契約" });
   assert.equal(d.productName, "ケダモノオペラ（仮）");
 });
+
+test("画面で直した明細の発注番号は、いまの文脈で出し直す（打った番号 → 選んだ番号 → 条件の控え）", () => {
+  const manualRows = [{ item_name: "デザイン制作", condition_id: 1, order_no: null, quantity: 1,
+                        inspected_amount_ex_tax: 400000, inspection_status: "now" }];
+  // 条件に控えた外部の番号。
+  const a = buildTemplateContext("inspection_certificate",
+    ctx({ conditions: [condition({ id: 1, orderNo: "EXT-2025-0001" })], related: [], events: [] }),
+    { delivery_line_items: manualRows });
+  assert.equal((a.delivery_line_items as Array<Record<string, unknown>>)[0].order_no, "EXT-2025-0001");
+  // 文書の画面で選んだ番号。
+  const b = buildTemplateContext("inspection_certificate",
+    ctx({ conditions: [condition({ id: 1, orderNo: "EXT-2025-0001" })], related: [], events: [], parentPoNo: "ARC-PO-2026-0100" } as any),
+    { delivery_line_items: manualRows });
+  assert.equal((b.delivery_line_items as Array<Record<string, unknown>>)[0].order_no, "ARC-PO-2026-0100");
+  // 見出しの発注番号の欄に打った番号は最優先。
+  const c = buildTemplateContext("inspection_certificate",
+    ctx({ conditions: [condition({ id: 1, orderNo: "EXT-2025-0001" })], related: [], events: [] }),
+    { delivery_line_items: manualRows, parent_po_number: "TYPED-1" });
+  assert.equal((c.delivery_line_items as Array<Record<string, unknown>>)[0].order_no, "TYPED-1");
+  // 条件の無い手で足した行は触らない。
+  const d = buildTemplateContext("inspection_certificate", ctx({ related: [], events: [] }),
+    { delivery_line_items: [{ item_name: "追加", order_no: "KEEP", inspected_amount_ex_tax: 1000, inspection_status: "now" }] });
+  assert.equal((d.delivery_line_items as Array<Record<string, unknown>>)[0].order_no, "KEEP");
+});
