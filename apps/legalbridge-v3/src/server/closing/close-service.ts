@@ -375,8 +375,9 @@ export class ClosingCloseService {
       if (row.eventId !== null) continue;
       const fix = overrides[row.scheduleId!];
       try {
+        // 画面の「理由」は差分の記録（検収書の変更履歴の理由）。備考ではない。
         const made = await this.schedules.record(row.conditionId, row.scheduleId!,
-          fix ? { amount: fix.amount ?? null, note: fix.note ?? null } : {}, actor);
+          fix ? { amount: fix.amount ?? null, varianceNote: fix.note ?? null } : {}, actor);
         o.eventId = made.eventId;
       } catch (error) {
         o.error = error instanceof Error ? error.message : String(error);

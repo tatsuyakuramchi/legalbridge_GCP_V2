@@ -1299,7 +1299,7 @@ export function createRoutes(database: Transactable) {
     res.json({ specs: IMPORT_SPECS });
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works", "license_conditions", "agreements"]),
+    kind: z.enum(["parties", "works", "license_conditions", "agreements", "pub_works"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean(),
     // create（新しく作る）か update（既存に当てる）か。既定は create。
@@ -2187,6 +2187,8 @@ export function createRoutes(database: Transactable) {
     eventType: z.enum(["manufacturing", "sales", "sublicense_receipt",
                        "inspection", "delivery", "service_period", "adjustment"]).optional(),
     note: z.string().trim().max(2000).nullable().optional(),
+    /** 予定と違う額にした理由。検収書の変更履歴に出る。 */
+    varianceNote: z.string().trim().max(2000).nullable().optional(),
     quantity: z.coerce.number().nullable().optional(),
     ...inspectionFields
   });

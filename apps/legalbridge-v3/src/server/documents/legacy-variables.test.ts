@@ -218,6 +218,15 @@ test("見出しの発注番号も、V3 の発注書が無ければ条件の控�
                "ARC-PO-2025-0123・ARC-PO-2025-0124");
 });
 
+test("見出しの発注番号：条件に控えた外部の番号は、V3 で作った発注書より先に出る", () => {
+  const context = {
+    related: [{ conditionId: 1, documentNo: "ARC-PO-2026-0031", templateKey: "purchase_order" }],
+    conditions: [{ id: 1, orderNo: "EXT-2025-0001" }]
+  } as any;
+  assert.equal(resolveLegacyVariable("parent_po_number", context), "EXT-2025-0001");
+  assert.equal(resolveLegacyVariable("parent_po_number", { ...context, parentPoNo: "EXT-9" }), "EXT-9", "文書の画面で入れた番号が最優先");
+});
+
 test("見出しの発注番号：発注書も控えも無く、条件が単体契約（取り込んだ発注書）に載っていれば契約番号", () => {
   const context = {
     related: [], conditions: [{ id: 1, orderNo: null }],

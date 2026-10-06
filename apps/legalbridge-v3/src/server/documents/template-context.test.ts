@@ -331,24 +331,39 @@ test("V3 の発注書が無ければ、条件に控えた発注番号を使う",
   assert.equal(lines[0].order_no, "ARC-PO-2025-0123");
 });
 
-test("V3 の発注書があればそちらを使う（控えは使わない）", () => {
+test("条件に控えた外部の発注番号は、V3 で作った発注書より先に出る", () => {
   const lines = deliveryLinesFrom(ctx({
     conditions: [condition({ id: 1, orderNo: "ARC-PO-2025-0123" })],
     condition: condition({ id: 1, orderNo: "ARC-PO-2025-0123" }),
     related: [{ conditionId: 1, templateKey: "purchase_order", documentNo: "ARC-PO-2026-0031" }],
     events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 280000, schedule: null }]
   })) as Array<Record<string, any>>;
-  assert.equal(lines[0].order_no, "ARC-PO-2026-0031");
+  assert.equal(lines[0].order_no, "ARC-PO-2025-0123");
+  // 文書の画面で入れた番号はさらに先。
+  const chosen = deliveryLinesFrom(ctx({
+    conditions: [condition({ id: 1, orderNo: "ARC-PO-2025-0123" })],
+    condition: condition({ id: 1, orderNo: "ARC-PO-2025-0123" }),
+    related: [{ conditionId: 1, templateKey: "purchase_order", documentNo: "ARC-PO-2026-0031" }],
+    parentPoNo: "EXT-0001",
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-08-31", amount: 280000, schedule: null }]
+  } as any)) as Array<Record<string, any>>;
+  assert.equal(chosen[0].order_no, "EXT-0001");
 });
 
-test("発注書の文書も控えも無ければ、条件が載っている単体契約（取り込んだ発注書）の番号、次に選んだ発注書番号", () => {
+test("発注書の文書も控えも無ければ、条件が載っている単体契約（取り込んだ発注書）の番号。選んだ番号があれば全部の行がそれ", () => {
   const ev = (id: number, conditionId: number) => ({ id, conditionId, occurredOn: "2026-09-30", amount: 50000, schedule: null });
   const lines = deliveryLinesFrom(ctx({
+    conditions: [condition({ id: 1, standaloneNo: "ARC-PO-2026-0079" }), condition({ id: 2 })],
+    related: [],
+    events: [ev(9, 1), ev(10, 2)]
+  } as any)) as Array<Record<string, any>>;
+  assert.deepEqual(lines.map((l) => l.order_no), ["ARC-PO-2026-0079", null]);
+  const chosen = deliveryLinesFrom(ctx({
     conditions: [condition({ id: 1, standaloneNo: "ARC-PO-2026-0079" }), condition({ id: 2 })],
     related: [], parentPoNo: "ARC-PO-2026-0100",
     events: [ev(9, 1), ev(10, 2)]
   } as any)) as Array<Record<string, any>>;
-  assert.deepEqual(lines.map((l) => l.order_no), ["ARC-PO-2026-0079", "ARC-PO-2026-0100"]);
+  assert.deepEqual(chosen.map((l) => l.order_no), ["ARC-PO-2026-0100", "ARC-PO-2026-0100"]);
 });
 
 test("控えも発注書も無ければ空のまま", () => {

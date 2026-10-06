@@ -13,6 +13,7 @@ import { FEE_BASIS } from "./fee-basis.js";
 import { PartyAgreementMapService } from "../agreements/party-map.js";
 import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_UPDATE_COLUMNS,
          agreementCsvPatch } from "../agreements/csv.js";
+import { PUB_WORKS_SAMPLE, PubWorksImportService } from "./pub-works.js";
 
 /**
  * CSV の一括取込。
@@ -25,7 +26,7 @@ import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_U
  * 画面から入れた行と取り込んだ行で品質が変わる。
  */
 
-export type ImportKind = "parties" | "works" | "license_conditions" | "agreements";
+export type ImportKind = "parties" | "works" | "license_conditions" | "agreements" | "pub_works";
 
 /**
  * 取り込み方。
@@ -80,6 +81,13 @@ export const IMPORT_SPECS: ImportSpec[] = [
     updateSample: "作品コード,備考\n" +
                   "WRK-2026-0001,初版1000部。奥付の表記は別紙のとおり\n" +
                   "WRK-2026-0002,重版分は別途協議"
+  },
+  {
+    kind: "pub_works", label: "出版作品（作品＋紙・電子の条件＋共著の取り分＋CID を 1 行で）",
+    required: ["作品名", "相手先"],
+    optional: ["作品コード", "カナ", "相手先コード", "紙料率", "電子料率", "独占", "取り分", "分配", "CID",
+               "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"],
+    sample: PUB_WORKS_SAMPLE
   },
   {
     kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
@@ -224,12 +232,14 @@ export class ImportService {
   private readonly works: WorkWriteService;
   private readonly conditions: ConditionWriteService;
   private readonly agreements: PartyAgreementMapService;
+  private readonly pubWorks: PubWorksImportService;
 
   constructor(private readonly database: Transactable) {
     this.agreements = new PartyAgreementMapService(database);
     this.parties = new PartyWriteService(database);
     this.works = new WorkWriteService(database);
     this.conditions = new ConditionWriteService(database);
+    this.pubWorks = new PubWorksImportService(database, { works: this.works, conditions: this.conditions });
   }
 
   async run(input: {
@@ -272,6 +282,10 @@ export class ImportService {
     }
 
     const rows: RowOutcome[] = [];
+    if (input.kind === "pub_works") {
+      // 出版作品の一括登録。作品が無ければ作り、紙・電子の条件と取り分、CID を 1 行で入れる。
+      return this.pubWorks.run(parsed.rows, input.dryRun, input.actor);
+    }
     if (input.kind === "license_conditions" && mode === "create") {
       return this.licenseConditions(parsed.rows, input.dryRun, input.actor);
     }

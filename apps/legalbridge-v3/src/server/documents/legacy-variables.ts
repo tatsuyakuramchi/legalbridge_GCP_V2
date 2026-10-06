@@ -155,11 +155,15 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["HAS_BASE_CONTRACT", "基本契約あり"],
     // 単体契約に載った条件は「基本契約なし」（undefined＝決めない。人が入れられる）。
     get: (c) => (master(c)?.no || master(c)?.title ? true : undefined) },
-  // 検収書の見出しの「発注番号」。同じ条件から出ている発注書を辿る。
+  // 検収書の見出しの「発注番号」。
+  // 人が入れた番号が先：文書の画面で選んだ・打った番号 → 条件に控えた外部の発注番号。
+  // 無ければ同じ条件から出ている発注書（V3 で作ったもの）→ 条件が載っている単体契約（取り込んだ発注書）。
+  // 外部の番号を控えてあるのに、あとから作った発注書の番号が勝つと、相手の発注書と違う番号が紙に出る。
   { names: ["parent_po_number", "PARENT_PO_NUMBER", "発注番号", "元発注番号"],
     get: (c) => (c as { parentPoNo?: string | null }).parentPoNo
+             ?? conditionOrderNos(c)
              ?? relatedNo(c, "purchase_order") ?? relatedNo(c, "intl_purchase_order")
-             ?? conditionOrderNos(c) ?? standaloneOrderNo(c) },
+             ?? standaloneOrderNo(c) },
   { names: ["issueKey", "BACKLOG_KEY", "課題キー"], get: (c) => c.backlogKey },
 
   // ---- 相手先（受注者・許諾者） ----
