@@ -2524,13 +2524,18 @@ export function createRoutes(database: Transactable) {
       /** 百万分率。60% は 600000。 */
       sharePpm: z.coerce.number().int().min(1).max(1_000_000),
       note: z.string().trim().max(200).nullable().optional()
-    })).max(20)
+    })).max(20),
+    /** 分配を誰がするか（A-070）。direct=当社が受取人ごとに払う / representative=代表が分配。空は direct。 */
+    distribution: z.enum(["direct", "representative"]).nullable().optional(),
+    /** 同じ作品の他の料率の許諾条件（紙・電子）にも同じ按分を入れる。 */
+    applyToWork: z.boolean().optional()
   });
   router.put("/conditions/:id/shares",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { shares } = sharesSchema.parse(req.body ?? {});
-      res.json(await conditionWrites.replaceShares(Number(req.params.id), shares, actor(res)));
+      const { shares, distribution, applyToWork } = sharesSchema.parse(req.body ?? {});
+      res.json(await conditionWrites.replaceShares(Number(req.params.id), shares, actor(res), distribution ?? null,
+                                                   { applyToWork: applyToWork === true }));
     }));
 
   // ---- 作品 ----
@@ -2732,6 +2737,22 @@ export function createRoutes(database: Transactable) {
     }));
 
   // クレジット表記の履歴（A-031）。重版で変わる著作権表示を、適用開始日つきで持つ。
+  // 電子書籍の配信コード（CID）。売上の取込が作品を当てる鍵（A-069）。作品の画面で入れる。
+  router.get("/works/:id/ebook-codes", asyncRoute(async (req, res) => {
+    res.json({ codes: await ebookSales.codesOf(Number(req.params.id)) });
+  }));
+  router.put("/works/:id/ebook-codes", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        cid: z.string().trim().min(1).max(60), title: z.string().trim().max(400).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await ebookSales.mapCode(input.cid, Number(req.params.id), input.title ?? null, actor(res)));
+    }));
+  router.delete("/works/:id/ebook-codes/:cid", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await ebookSales.unmapCode(String(req.params.cid), actor(res)));
+    }));
+
   router.get("/works/:id/credits", asyncRoute(async (req, res) => {
     res.json(await workCredits.list(Number(req.params.id)));
   }));

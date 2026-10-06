@@ -76,6 +76,17 @@ export async function loadShares(client: Queryable, conditionId: number): Promis
   }));
 }
 
+/**
+ * 分配を誰がするか（A-070）。representative なら取り分は記録だけで、計算書は相手先 1 枚。
+ * 列が無い（当てていない）データベースでも落ちないよう、行ごと JSON で読む。
+ */
+export async function loadDistribution(client: Queryable, conditionId: number): Promise<"direct" | "representative"> {
+  const r = await client.query(
+    "SELECT to_jsonb(c) ->> 'distribution' AS distribution FROM conditions c WHERE c.id = $1", [conditionId]);
+  const v = (r.rows[0] as { distribution?: string | null } | undefined)?.distribution;
+  return v === "representative" ? "representative" : "direct";
+}
+
 /** 取り分のある条件で受取人を選んでいるか確かめ、その行を返す。 */
 export function pickShare(shares: ConditionShareRow[], payeePartyId: number | null | undefined): ConditionShareRow | null {
   if (!shares.length) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactElement } from "react";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import type { ConditionDetail, ConditionSummary, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
@@ -13,6 +13,7 @@ import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { RoyaltyLedger } from "./RoyaltyLedger.js";
+import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
@@ -175,6 +176,35 @@ export function WorksWorkspace(
   const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
   const reloadCredits = (id: number) =>
     api.get<{ credits: Credit[] }>(`/works/${id}/credits`).then((r) => setCredits(r.credits)).catch(() => setCredits([]));
+  /** 電子書籍の配信コード（CID。A-069）。売上の取込が作品を当てる鍵。 */
+  const [codes, setCodes] = useState<Array<{ cid: string; title: string | null; createdBy: string | null }>>([]);
+  const [codeInput, setCodeInput] = useState("");
+  const reloadCodes = (id: number) =>
+    api.get<{ codes: typeof codes }>(`/works/${id}/ebook-codes`).then((r) => setCodes(r.codes)).catch(() => setCodes([]));
+  async function addCode() {
+    if (!work) return;
+    const cid = codeInput.trim();
+    if (!cid) return;
+    setBusy(true); setError(null);
+    try {
+      await api.put(`/works/${work.id}/ebook-codes`, { cid, title: work.title });
+      setCodeInput(""); await reloadCodes(work.id);
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  }
+  async function removeCode(cid: string) {
+    if (!work) return;
+    setBusy(true); setError(null);
+    try { await api.del(`/works/${work.id}/ebook-codes/${encodeURIComponent(cid)}`); await reloadCodes(work.id); }
+    catch (e) { fail(e); } finally { setBusy(false); }
+  }
+  /** 条件の行の下に開く「取り分（共著）」。条件の詳細（取り分つき）を読んで出す。 */
+  const [sharesFor, setSharesFor] = useState<ConditionDetail | null>(null);
+  async function openShares(id: number) {
+    if (sharesFor?.id === id) { setSharesFor(null); return; }
+    try { setSharesFor(await api.get<ConditionDetail>(`/conditions/${id}`)); } catch (e) { fail(e); }
+  }
+  const canHaveShares = (c: ConditionSummary) =>
+    c.direction === "in" && c.kind === "license" && c.pricingModel === "revenue_rate" && c.status !== "void";
   async function addCredit() {
     if (!work || !creditForm) return;
     setBusy(true); setError(null); setNotice(null);
@@ -236,6 +266,8 @@ export function WorksWorkspace(
         businessLine: w.businessLine ?? "", remarks: w.remarks ?? ""
       });
       void reloadCredits(w.id);
+      void reloadCodes(w.id);
+      setSharesFor(null);
     }).catch(fail);
   }
   useEffect(() => { void reloadWork(); }, [selected, includeVoid]);
@@ -870,6 +902,35 @@ export function WorksWorkspace(
               </div>
             </div>
 
+            {/* 電子書籍の配信コード（CID。A-069）。売上の取込はこれで作品を当てる。
+                版や判型で CID が分かれるので複数持てる。 */}
+            <div className="panel">
+              <div className="panel-hd">
+                <h2>電子書籍 CID</h2>
+                <span className="faint">事業部の売上データの CID（BT…）。売上の取込はこれで作品を当てる。版ごとに分かれるなら全部入れる</span>
+              </div>
+              <div className="panel-bd stack" style={{ gap: 8 }}>
+                {codes.length ? (
+                  <div className="chips">
+                    {codes.map((x) => (
+                      <span key={x.cid} className="tag accent" title={x.title ?? ""}>
+                        <span className="code">{x.cid}</span>
+                        {editable && <button className="linky" style={{ marginLeft: 6 }} disabled={busy} onClick={() => void removeCode(x.cid)}>×</button>}
+                      </span>
+                    ))}
+                  </div>
+                ) : <span className="faint">まだありません。売上の取込で「作品を当てる」をしても、ここに入ります</span>}
+                {editable && (
+                  <div className="row">
+                    <input value={codeInput} placeholder="BT000105758300100101" style={{ width: 280 }}
+                           onChange={(e) => setCodeInput(e.target.value)}
+                           onKeyDown={(e) => { if (e.key === "Enter") void addCode(); }} />
+                    <button className="btn btn-sm" disabled={busy || !codeInput.trim()} onClick={() => void addCode()}>CID を足す</button>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* 原作。作品の側から付け替える。原作の側からは、使っている作品が見える。 */}
             <div className="panel">
               <div className="panel-hd">
@@ -1142,14 +1203,19 @@ export function WorksWorkspace(
                   </tr></thead>
                   <tbody>
                     {conditions.map((c) => (
-                      <tr key={c.id} aria-selected={checked.has(c.id)}>
+                      <Fragment key={c.id}>
+                      <tr aria-selected={checked.has(c.id)}>
                         <td>{editable && c.status !== "void" && <input type="checkbox" checked={checked.has(c.id)} onChange={() => toggle(c.id)} />}</td>
                         <td className="code">{c.conditionNo ?? `#${c.id}`}</td>
                         <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
                         <td>{c.usageType ? conditionUsageLabel(c.usageType)
                               : <span className="faint">{CONDITION_KIND_LABEL[c.kind] ?? c.kind}</span>}</td>
                         <td>{c.name}</td>
-                        <td>{c.counterparty?.name ?? "—"}</td>
+                        <td>{c.counterparty?.name ?? "—"}
+                          {c.sharesLabel && (
+                            <div><span className="tag accent" title="共著の取り分。計算書は受取人ごとに 1 枚">取り分 {c.sharesLabel}</span></div>
+                          )}
+                        </td>
                         <td className="faint" style={{ whiteSpace: "nowrap" }}>{pricingSummary(c)}</td>
                         <td className="code">{c.termStart ?? "—"} → {c.termEnd ?? "—"}</td>
                         <td><StatusTag kind="condition" value={c.status} /></td>
@@ -1164,9 +1230,24 @@ export function WorksWorkspace(
                           {editable && c.status === "void" && (
                             <button className="btn btn-sm" disabled={busy} onClick={() => void removeCondition(c)}>削除</button>
                           )}
+                          {canHaveShares(c) && (
+                            <button className="btn btn-sm" aria-pressed={sharesFor?.id === c.id}
+                                    title="共著の分配。当社から複数の権利者へ直接払うときに、誰に何 % かを入れる"
+                                    onClick={() => void openShares(c.id)}>取り分</button>
+                          )}
                           <button className="btn btn-sm" onClick={() => onOpenCondition(c.id)}>条件明細</button>
                         </td>
                       </tr>
+                      {sharesFor?.id === c.id && (
+                        <tr><td colSpan={10} style={{ padding: 0 }}>
+                          <ConditionShares detail={sharesFor} canWrite={editable} onDone={async () => {
+                            try { setSharesFor(await api.get<ConditionDetail>(`/conditions/${c.id}`)); } catch (e) { fail(e); }
+                            const r = await api.get<{ conditions: ConditionSummary[] }>(`/conditions?workId=${work.id}&void=${includeVoid ? 1 : 0}`).catch(() => null);
+                            if (r) setConditions(r.conditions);
+                          }} />
+                        </td></tr>
+                      )}
+                      </Fragment>
                     ))}
                     {!conditions.length && <tr><td colSpan={10} className="faint">この作品に条件がありません</td></tr>}
                   </tbody>

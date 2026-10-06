@@ -299,6 +299,31 @@ export class EbookSalesImportService {
     } catch (error) { throw translate(error); }
   }
 
+  /** 作品に付いている CID。作品の画面に出す。 */
+  async codesOf(workId: number) {
+    try {
+      const r = await this.database.query(
+        `SELECT cid, title, created_by, created_at FROM ebook_work_codes WHERE work_id = $1 ORDER BY created_at, cid`, [workId]);
+      return (r.rows as Array<Record<string, any>>).map((x) => ({
+        cid: String(x.cid), title: str(x.title), createdBy: str(x.created_by),
+        createdAt: x.created_at ? new Date(String(x.created_at)).toISOString() : null
+      }));
+    } catch (error) { throw translate(error); }
+  }
+
+  /** CID → 作品 を外す。 */
+  async unmapCode(cid: string, actor: string) {
+    try {
+      const r = await this.database.query("DELETE FROM ebook_work_codes WHERE cid = $1 RETURNING work_id", [cid]);
+      const row = r.rows[0] as { work_id: number } | undefined;
+      if (!row) throw new DomainError("NOT_FOUND", `CID ${cid} は登録されていません`);
+      await recordAudit(this.database, {
+        actor, action: "ebook_sales.unmap_code", targetType: "work", targetId: Number(row.work_id), detail: { cid }
+      });
+      return { cid, workId: Number(row.work_id) };
+    } catch (error) { throw translate(error); }
+  }
+
   private async rememberCode(client: Queryable, cid: string, workId: number, title: string | null, actor: string) {
     await client.query(
       `INSERT INTO ebook_work_codes (cid, work_id, title, created_by) VALUES ($1, $2, $3, $4)

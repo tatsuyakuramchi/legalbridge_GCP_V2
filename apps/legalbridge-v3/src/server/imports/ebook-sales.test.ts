@@ -178,3 +178,18 @@ test("CID → 作品 を決めて覚える", async () => {
   assert.ok(fake.find("INSERT INTO ebook_work_codes"));
   await assert.rejects(() => svc.mapCode("  ", 12, null, "tester"), (e: unknown) => e instanceof DomainError);
 });
+
+test("作品に付いている CID を読む・外す", async () => {
+  const fake = new FakeDatabase((text, params) => {
+    if (text.includes("FROM ebook_work_codes WHERE work_id = $1")) {
+      return [{ cid: "BT0001", title: "キズナバレット 1", created_by: "tester", created_at: "2026-10-06T00:00:00Z" }];
+    }
+    if (text.includes("DELETE FROM ebook_work_codes WHERE cid = $1")) return params[0] === "BT0001" ? [{ work_id: 7 }] : [];
+    return undefined;
+  });
+  const svc = new EbookSalesImportService(fake, writer() as any);
+  const codes = await svc.codesOf(7);
+  assert.deepEqual(codes.map((c) => c.cid), ["BT0001"]);
+  assert.deepEqual(await svc.unmapCode("BT0001", "tester"), { cid: "BT0001", workId: 7 });
+  await assert.rejects(() => svc.unmapCode("BT9999", "tester"), (e: unknown) => e instanceof DomainError && e.code === "NOT_FOUND");
+});

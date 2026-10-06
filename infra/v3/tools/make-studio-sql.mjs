@@ -303,6 +303,12 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 70, '共著の分配を誰がするか（A-070。列 1・CHECK 1 で 2 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions' AND column_name='distribution')
+          + (SELECT count(*) FROM pg_constraint
+              WHERE conrelid='v3.conditions'::regclass AND conname='conditions_distribution_chk'))::text
+  UNION ALL
   SELECT 69, '電子書籍売上の取込（A-069。表 1 であること）',
          (SELECT count(*) FROM information_schema.tables
            WHERE table_schema='v3' AND table_name='ebook_work_codes')::text

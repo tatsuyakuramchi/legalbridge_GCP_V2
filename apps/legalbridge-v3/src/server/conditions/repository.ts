@@ -12,6 +12,10 @@ const SUMMARY_COLUMNS = `
   c.rate_ppm, c.flat_amount, c.unit_amount, c.quantity, c.mg_amount, c.ag_amount,
   c.term_start, c.term_end, c.delivery_due, c.status, c.effective_from, c.usage_type,
   p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
+  -- 共著の取り分（A-068）。一覧に「A 60%・B 40%」と出す。
+  (SELECT CASE WHEN c.distribution = 'representative' THEN '代表が分配：' ELSE '' END
+          || string_agg(sp.name || ' ' || rtrim(rtrim((s.share_ppm / 10000.0)::numeric::text, '0'), '.') || '%', '・' ORDER BY s.sort_order, s.id)
+     FROM condition_shares s JOIN parties sp ON sp.id = s.party_id WHERE s.condition_id = c.id) AS shares_label,
   c.target_party_id, tp.name AS target_party_name,
   w.id AS work_id, w.work_code, w.title AS work_title,
   -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
@@ -61,6 +65,7 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     effectiveFrom: dateStr(row.effective_from),
     status: row.status,
     usageType: (row.usage_type ?? null) as ConditionSummary["usageType"],
+    sharesLabel: str(row.shares_label),
     settlement: settlementOf(row)
   };
 }
@@ -132,6 +137,7 @@ export class ConditionRepository {
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
               c.sublicense_consent, c.license_fee_basis, c.auto_renew, c.renew_months, c.renew_stopped_on,
+              c.distribution,
               c.target_party_id, tp.name AS target_party_name,
               c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
               c.spec, c.deliverable_ownership, c.order_no,
@@ -167,6 +173,7 @@ export class ConditionRepository {
       sublicensable: row.sublicensable === null || row.sublicensable === undefined
         ? null : Boolean(row.sublicensable),
       sublicenseConsent: (str(row.sublicense_consent) as "covered" | "required" | null) ?? null,
+      distribution: row.distribution === "representative" ? "representative" : row.distribution === "direct" ? "direct" : null,
       targetParty: row.target_party_id ? { id: Number(row.target_party_id), name: String(row.target_party_name ?? "") } : null,
       licenseFeeBasis: (str(row.license_fee_basis) as LicenseFeeBasis | null) ?? "separate",
       autoRenew: row.auto_renew === null || row.auto_renew === undefined ? null : Boolean(row.auto_renew),
