@@ -13,7 +13,7 @@ import {
   type PaymentStage, type UsageType
 } from "./usage-type.js";
 import { roundRoyalty, taxOf } from "./rounding.js";
-import { allocateShares, loadShares, pickShare, type ConditionShareRow } from "./shares.js";
+import { allocateShares, loadDistribution, loadShares, pickShare, type ConditionShareRow } from "./shares.js";
 
 export interface CalculationInput {
   conditionId: number;
@@ -703,6 +703,13 @@ export class RoyaltyStatementService {
     const shares = await loadShares(client, usedId);
     if (!shares.length) {
       if (input.payeePartyId) pickShare(shares, input.payeePartyId); // 取り分の無い条件に受取人は渡せない
+      return whole;
+    }
+    // 代表が分配する契約（A-070）。取り分は契約の記録で、当社が払うのは相手先 1 件。
+    if (await loadDistribution(client, usedId) === "representative") {
+      if (input.payeePartyId) {
+        throw new DomainError("VALIDATION", "代表（相手先）が分配する条件です。受取人は選べません（計算書は相手先 1 枚）");
+      }
       return whole;
     }
     const ppm = shares.map((x) => x.sharePpm);

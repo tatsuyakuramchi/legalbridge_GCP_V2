@@ -2524,13 +2524,15 @@ export function createRoutes(database: Transactable) {
       /** 百万分率。60% は 600000。 */
       sharePpm: z.coerce.number().int().min(1).max(1_000_000),
       note: z.string().trim().max(200).nullable().optional()
-    })).max(20)
+    })).max(20),
+    /** 分配を誰がするか（A-070）。direct=当社が受取人ごとに払う / representative=代表が分配。空は direct。 */
+    distribution: z.enum(["direct", "representative"]).nullable().optional()
   });
   router.put("/conditions/:id/shares",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { shares } = sharesSchema.parse(req.body ?? {});
-      res.json(await conditionWrites.replaceShares(Number(req.params.id), shares, actor(res)));
+      const { shares, distribution } = sharesSchema.parse(req.body ?? {});
+      res.json(await conditionWrites.replaceShares(Number(req.params.id), shares, actor(res), distribution ?? null));
     }));
 
   // ---- 作品 ----

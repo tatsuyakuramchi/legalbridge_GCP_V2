@@ -2419,6 +2419,26 @@ COMMENT ON TABLE v3.ebook_work_codes IS
   '電子書籍の配信コード（CID）→ 作品。売上の取込で当てた結果を覚える。A-069';
 GRANT SELECT, INSERT, UPDATE, DELETE ON v3.ebook_work_codes TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- A-070 共著の分配を誰がするか（docs/royalty-shares.md §1）
+--   取り分（condition_shares）があるとき、
+--     direct         … 当社が受取人ごとに直接払う（計算書は受取人ごとに 1 枚）
+--     representative … 代表（条件の相手先）が受け取って自分で分配する。取り分は
+--                      契約の記録として持つだけで、計算書と支払は相手先 1 件
+--   空は direct。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS distribution text;
+DO $a070$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_distribution_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_distribution_chk
+      CHECK (distribution IS NULL OR distribution IN ('direct', 'representative'));
+  END IF;
+END $a070$;
+COMMENT ON COLUMN v3.conditions.distribution IS
+  '共著の分配を誰がするか。direct=当社が受取人ごとに払う（既定）/ representative=代表（相手先）が分配。A-070';
+
 COMMIT;
 
 -- 確認
@@ -2747,6 +2767,9 @@ SELECT count(*) AS 表 FROM information_schema.tables
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='conditions' AND column_name='target_party_id';
 
+\echo '--- 共著の分配を誰がするか（A-070。列 1・CHECK 1 で 2 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions' AND column_name='distribution')
+     + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_distribution_chk') AS 列とCHECK;
 \echo '--- 電子書籍売上の取込（A-069。表 1 であること） ---'
 SELECT count(*) AS 表 FROM information_schema.tables WHERE table_schema='v3' AND table_name='ebook_work_codes';
 \echo '--- 共著の取り分（A-068。表 1・列 2・索引 1 で 4 であること） ---'

@@ -69,6 +69,8 @@ export interface ConditionScope { scopeType: ScopeType; label: string; code: str
  * 共著の取り分（A-068。docs/royalty-shares.md）。条件の全体率を、当社から直接払う
  * 権利者ごとに何 % に分けるか。百万分率で、合計 100%。1 者だけ（代表受取）なら持たない。
  */
+export type ShareDistribution = "direct" | "representative";
+
 export interface ConditionShare {
   partyId: number;
   partyName: string;
@@ -127,6 +129,11 @@ export interface ConditionDetail extends ConditionSummary {
   scopes: ConditionScope[];
   /** 共著の取り分。空なら相手先 1 者に 100%。 */
   shares: ConditionShare[];
+  /**
+   * 共著の分配を誰がするか（A-070）。direct=当社が受取人ごとに払う（既定）/
+   * representative=代表（相手先）が受け取って分配する（取り分は記録だけ。計算書は相手先 1 枚）。
+   */
+  distribution: ShareDistribution | null;
   balance: ConditionBalance | null;
   /** この条件を出力した文書。参照方向を反転した結果、条件から辿れる。 */
   documents: Array<{ id: number; documentNo: string | null; status: string;

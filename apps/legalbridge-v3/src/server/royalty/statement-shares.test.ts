@@ -128,3 +128,20 @@ test("実績の束：ほかの受取人の計算書に結ばれた実績は空�
     () => royalty.preview({ conditionId: 5, eventIds: [700], payeePartyId: 22 }),
     (e: unknown) => e instanceof DomainError && /この受取人の計算書はすでにあります/.test(e.message));
 });
+
+test("代表が分配する契約（A-070）：取り分があっても全体のまま、受取人は選べない", async () => {
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("->> 'distribution'")) return [{ distribution: "representative" }];
+    return responder()(text, params);
+  });
+  const royalty = new RoyaltyStatementService(db);
+  const r = await royalty.preview({ conditionId: 5, period: "2026上期", reported: { salesInput: 60300 } });
+  assert.equal(r.amounts.netMinor, 9045, "相手先 1 件の全体額");
+  assert.equal(r.shares, null, "受取人の選択は出さない");
+  await assert.rejects(
+    () => royalty.preview({ conditionId: 5, period: "2026上期", reported: { salesInput: 60300 }, payeePartyId: 21 }),
+    (e: unknown) => e instanceof DomainError && /代表（相手先）が分配/.test(e.message));
+  // 確定も受取人なしで通る（相手先 1 枚）。
+  const done = await royalty.finalize({ conditionId: 5, documentId: 6, period: "2026上期", reported: { salesInput: 60300 } }, "x");
+  assert.equal(done.netMinor, 9045);
+});

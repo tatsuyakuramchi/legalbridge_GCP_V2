@@ -1116,11 +1116,13 @@ export class ConditionWriteService {
    * されるおそれがあるため。付けたいときは MG・AG を外してから。
    */
   async replaceShares(
-    id: number, shares: Array<{ partyId: number; sharePpm: number; note?: string | null }>, actor: string
+    id: number, shares: Array<{ partyId: number; sharePpm: number; note?: string | null }>, actor: string,
+    /** 分配を誰がするか（A-070）。空は direct。取り分が空なら意味を持たない（null にする）。 */
+    distribution: "direct" | "representative" | null = null
   ): Promise<WriteResult> {
     try {
       return await inTransaction(this.database, async (client) => {
-        await this.repository.requireExisting(client, id);
+        const existing = await this.repository.requireExisting(client, id);
         const head = (await client.query(
           "SELECT direction, kind, pricing_model, mg_amount, ag_amount FROM conditions WHERE id = $1", [id]
         )).rows[0] as Record<string, any> | undefined;
@@ -1135,8 +1137,12 @@ export class ConditionWriteService {
           if (head.pricing_model !== "revenue_rate") {
             throw new DomainError("VALIDATION", "取り分を付けられるのは料率の条件だけです（買い切りは定額の条件 1 本で持ちます）");
           }
-          if (Number(head.mg_amount ?? 0) > 0 || Number(head.ag_amount ?? 0) > 0) {
+          // 代表が分配する契約は、計算書も支払も相手先 1 件のまま。前払保証の消化も分けないので MG・AG があってよい。
+          if (distribution !== "representative" && (Number(head.mg_amount ?? 0) > 0 || Number(head.ag_amount ?? 0) > 0)) {
             throw new DomainError("VALIDATION", "MG・AG のある条件には取り分を付けられません。先に MG・AG を外してください");
+          }
+          if (distribution === "representative" && !rows.some((r) => r.partyId === Number(existing.counterparty_id))) {
+            throw new DomainError("VALIDATION", "代表が分配する契約では、条件の相手先（代表）を取り分の中に入れてください");
           }
           const found = await client.query(
             "SELECT id FROM parties WHERE id = ANY($1::bigint[])", [rows.map((r) => r.partyId)]);
@@ -1145,6 +1151,8 @@ export class ConditionWriteService {
           }
         }
         const removed = await client.query("DELETE FROM condition_shares WHERE condition_id = $1", [id]);
+        const mode = rows.length ? (distribution === "representative" ? "representative" : "direct") : null;
+        await client.query("UPDATE conditions SET distribution = $2, updated_at = now() WHERE id = $1", [id, mode]);
         let written = 0;
         for (const [index, row] of rows.entries()) {
           const r = await client.query(
@@ -1155,7 +1163,7 @@ export class ConditionWriteService {
         }
         await recordAudit(client, {
           actor, action: "condition.replace_shares", targetType: "condition", targetId: id,
-          detail: { removed: removed.rowCount ?? 0, written,
+          detail: { removed: removed.rowCount ?? 0, written, distribution: mode,
                     shares: rows.map((r) => ({ partyId: r.partyId, sharePpm: r.sharePpm })) }
         });
         return {

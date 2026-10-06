@@ -19,6 +19,8 @@ import { ListSearch, useDebounced } from "./ListTools.js";
 
 type Row = { partyId: number; name: string; value: string; note: string };
 type Mode = "rate" | "share";
+/** 分配を誰がするか（A-070）。 */
+type Distribution = "direct" | "representative";
 
 const TOTAL = 1_000_000;
 const num = (s: string) => Number(String(s).replace(/[^0-9.]/g, ""));
@@ -46,6 +48,7 @@ export function ConditionShares(
 ) {
   const [editing, setEditing] = useState(false);
   const [mode, setMode] = useState<Mode>(detail.ratePpm ? "rate" : "share");
+  const [distribution, setDistribution] = useState<Distribution>(detail.distribution ?? "direct");
   const [rows, setRows] = useState<Row[]>([]);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
@@ -69,6 +72,7 @@ export function ConditionShares(
   function start() {
     const m: Mode = whole ? "rate" : "share";
     setMode(m);
+    setDistribution(detail.distribution ?? "direct");
     setRows(shares.length
       ? shares.map((s) => ({ partyId: s.partyId, name: s.partyName, value: valueOf(s.sharePpm, m), note: s.note ?? "" }))
       // 空から始めるときは相手先を 1 行目に置く（たいてい代表＝相手先が 1 人目）。
@@ -93,13 +97,15 @@ export function ConditionShares(
   const ppm = toPpm(rows, mode, whole);
   const total = ppm.reduce((a, b) => a + b, 0);
   const rateSum = rows.reduce((a, r) => a + (num(r.value) || 0), 0);
-  const ok = rows.length >= 2 && total === TOTAL;
+  const representativeIn = !detail.counterparty || rows.some((r) => r.partyId === detail.counterparty!.id);
+  const ok = rows.length >= 2 && total === TOTAL && (distribution === "direct" || representativeIn);
 
   async function save(clear = false) {
     setBusy(true); setError(null);
     try {
       await api.put(`/conditions/${detail.id}/shares`, {
-        shares: clear ? [] : rows.map((r, i) => ({ partyId: r.partyId, sharePpm: ppm[i], note: r.note.trim() || null }))
+        shares: clear ? [] : rows.map((r, i) => ({ partyId: r.partyId, sharePpm: ppm[i], note: r.note.trim() || null })),
+        distribution: clear ? null : distribution
       });
       setEditing(false); onDone();
     } catch (e) { setError((e as ApiError).message); }
@@ -113,9 +119,11 @@ export function ConditionShares(
       <div className="panel-hd">
         <h2>取り分（共著）</h2>
         <span className="faint">
-          {shares.length
-            ? "当社から受取人ごとに直接払う。計算書は受取人ごとに 1 枚"
-            : "相手先 1 者が 100%（代表が受け取って分配する契約も、ここは空のまま）"}
+          {!shares.length
+            ? "相手先 1 者が 100%"
+            : detail.distribution === "representative"
+            ? `代表（${detail.counterparty?.name ?? "相手先"}）が受け取って分配する。計算書と支払は相手先 1 件で、取り分は契約の記録`
+            : "当社から受取人ごとに直接払う。計算書は受取人ごとに 1 枚"}
         </span>
         {canWrite && applicable && !editing && (
           <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={start}>
@@ -143,6 +151,20 @@ export function ConditionShares(
       {editing && (
         <div className="panel-bd stack">
           {error && <div className="alert">{error}</div>}
+          <div className="row" style={{ gap: 6 }}>
+            <span className="faint">分配するのは</span>
+            <button className="chip" aria-pressed={distribution === "direct"} onClick={() => setDistribution("direct")}
+                    title="当社が受取人ごとに直接払う。計算書は受取人ごとに 1 枚、支払も受取人ごと">
+              当社（受取人ごとに計算書）
+            </button>
+            <button className="chip" aria-pressed={distribution === "representative"} onClick={() => setDistribution("representative")}
+                    title="代表（条件の相手先）が全額を受け取って自分で分配する。計算書と支払は相手先 1 件。取り分は契約の記録として持つ">
+              代表（{detail.counterparty?.name ?? "相手先"}）が分配
+            </button>
+            {distribution === "representative" && !representativeIn && (
+              <span className="bad">代表（{detail.counterparty?.name}）を取り分の中に入れてください</span>
+            )}
+          </div>
           <div className="row" style={{ gap: 6 }}>
             <span className="faint">入れ方</span>
             <button className="chip" aria-pressed={mode === "rate"} disabled={!whole} onClick={() => switchMode("rate")}
@@ -203,8 +225,10 @@ export function ConditionShares(
             <button className="btn btn-sm" onClick={() => setEditing(false)}>やめる</button>
           </div>
           <p className="faint" style={{ margin: 0 }}>
-            料率で入れても、保存するのは全体率との比（取り分）です。計算書は 売上 × 全体率 を出してから取り分で割ります。
-            四捨五入し、合計が全体を超えたぶんは繰り上げの大きい行から 1 円ずつ引きます。決定済みの計算書は変わりません。
+            {distribution === "representative"
+              ? "代表が分配する契約では、計算書は相手先 1 枚・支払も 1 件のままです。取り分は契約の記録として持ち、紙や支払には使いません。"
+              : "料率で入れても、保存するのは全体率との比（取り分）です。計算書は 売上 × 全体率 を出してから取り分で割ります。" +
+                "四捨五入し、合計が全体を超えたぶんは繰り上げの大きい行から 1 円ずつ引きます。決定済みの計算書は変わりません。"}
           </p>
         </div>
       )}
