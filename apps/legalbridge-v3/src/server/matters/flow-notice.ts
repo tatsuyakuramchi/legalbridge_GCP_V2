@@ -125,7 +125,8 @@ export class FlowNoticeJob {
                            WHERE ir.matter_id = m.id AND ir.state IN ('accepted', 'duplicate')
                              AND ir.requester_slack_id IS NOT NULL), '{}') AS requesters,
                 EXISTS (SELECT 1 FROM matter_links l
-                         WHERE l.matter_id = m.id AND l.target_type = 'slack_thread') AS has_thread
+                         WHERE l.matter_id = m.id AND l.target_type = 'slack_thread'
+                           AND COALESCE(l.snapshot->>'kind', 'direct') <> 'consult') AS has_thread
            FROM matters m
           WHERE m.merged_into_id IS NULL
             AND m.status <> 'canceled'
@@ -134,7 +135,8 @@ export class FlowNoticeJob {
                  OR EXISTS (SELECT 1 FROM intake_requests ir
                              WHERE ir.matter_id = m.id AND ir.requester_slack_id IS NOT NULL)
                  OR EXISTS (SELECT 1 FROM matter_links l
-                             WHERE l.matter_id = m.id AND l.target_type = 'slack_thread'))
+                             WHERE l.matter_id = m.id AND l.target_type = 'slack_thread'
+                           AND COALESCE(l.snapshot->>'kind', 'direct') <> 'consult'))
           ORDER BY m.id
           LIMIT $1`, [options.limit ?? 500]);
       const matters = r.rows as any[];

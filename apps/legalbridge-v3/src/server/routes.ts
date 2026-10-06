@@ -115,6 +115,7 @@ import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
 import { parseCompanyProfile } from "./ops/company-profile-schema.js";
 import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-alert-settings.js";
+import { LEGAL_CONSULT_KEY, parseLegalConsultSettings } from "./ops/legal-consult-settings.js";
 import { MAIL_TEMPLATES_KEY, parseMailTemplates } from "./ops/mail-templates.js";
 import { DeliveryAlertJob, tokyoToday } from "./jobs/delivery-alert.js";
 import { RingiService, type RingiTarget } from "./ringi/service.js";
@@ -215,7 +216,7 @@ export function createRoutes(database: Transactable) {
   // 外部連携は factory で組む。/internal 側と同じものを使う。
   const adapters = buildAdapters();
   const dispatch = buildDispatch(database, adapters);
-  const communications = new MatterCommunicationService(database, dispatch);
+  const communications = new MatterCommunicationService(database, dispatch, { publicBaseUrl: config.publicBaseUrl });
   const sends = new DocumentSendService(database);
   const batches = new DocumentBatchService(database, issues, communications, pdf, pdfs);
   // 検収まで終わっている過去の取引をまとめて入れる（遡及）。名寄せは
@@ -4142,6 +4143,12 @@ export function createRoutes(database: Transactable) {
         if (parsed.errors.length) throw new DomainError("VALIDATION", parsed.errors.join(" ／ "));
         value = parsed.value;
       }
+      // 法務相談窓口のチャンネルも ID の形を確かめる（チャンネル名を入れると届かない）。
+      if (key === LEGAL_CONSULT_KEY) {
+        const parsed = parseLegalConsultSettings(input.value);
+        if (parsed.errors.length) throw new DomainError("VALIDATION", parsed.errors.join(" ／ "));
+        value = parsed.value;
+      }
       // メールの文面も形を確かめる。知らない {差込} はそのまま相手に届いてしまう。
       if (key === MAIL_TEMPLATES_KEY) {
         const parsed = parseMailTemplates(input.value);
@@ -4802,7 +4809,9 @@ export function createRoutes(database: Transactable) {
       const input = z.object({
         channelId: z.string().trim().max(60).nullable().optional(),
         threadRef: z.string().trim().max(60).nullable().optional(),
-        body: z.string().trim().min(1).max(4000)
+        body: z.string().trim().min(1).max(4000),
+        target: z.enum(["direct", "consult"]).optional(),
+        mentions: z.array(z.string().trim().max(30)).max(20).optional()
       }).parse(req.body ?? {});
       res.json(await communications.sendSlack(Number(req.params.id), input, actor(res)));
     }));

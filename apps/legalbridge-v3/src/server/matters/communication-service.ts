@@ -2,6 +2,7 @@ import { inTransaction, int, str, type Queryable, type Transactable } from "../c
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import type { DispatchOutcome, DispatchService } from "../integrations/dispatch-service.js";
+import { LEGAL_CONSULT_KEY, readLegalConsultSettings, withMentions } from "../ops/legal-consult-settings.js";
 
 /**
  * 案件のやり取り。担当者との Slack、メールの送受信、ファイルの受け渡し、メモ。
@@ -109,7 +110,9 @@ export interface SendResult {
 export class MatterCommunicationService {
   constructor(
     private readonly database: Transactable,
-    private readonly dispatch: DispatchService
+    private readonly dispatch: DispatchService,
+    /** 相談窓口のスレッドの根に載せるこのサービスの URL（無ければ載せない）。 */
+    private readonly options: { publicBaseUrl?: string } = {}
   ) {}
 
   async list(matterId: number, limit = 200): Promise<Communication[]> {
@@ -160,14 +163,22 @@ export class MatterCommunicationService {
    */
   async sendSlack(
     matterId: number,
-    input: { channelId?: string | null; threadRef?: string | null; body: string },
+    input: {
+      channelId?: string | null; threadRef?: string | null; body: string;
+      /** direct＝依頼者（既定）／consult＝法務相談窓口のチャンネルのスレッド。 */
+      target?: "direct" | "consult";
+      /** 本文の頭に付けるメンション（U…）。 */
+      mentions?: string[] | null;
+    },
     actor: string
   ): Promise<SendResult> {
-    const body = String(input.body ?? "").trim();
-    if (!body) throw new DomainError("VALIDATION", "送る内容を書いてください");
+    const text = String(input.body ?? "").trim();
+    if (!text) throw new DomainError("VALIDATION", "送る内容を書いてください");
+    const body = withMentions(text, input.mentions);
+    if (input.target === "consult") return this.sendConsult(matterId, body, actor);
     try {
       const matter = await this.matter(this.database, matterId);
-      const thread = await this.slackThread(this.database, matterId);
+      const thread = await this.slackThread(this.database, matterId, "direct");
       const channelId = str(input.channelId) ?? thread?.channelId ?? matter.requester_slack_id
         ?? (await this.slackOfEmail(this.database, str(matter.requester_email)))?.slackId ?? "";
       const threadRef = str(input.threadRef)
@@ -199,6 +210,93 @@ export class MatterCommunicationService {
         return { outcome, communication: id ? await this.find(id, client) : null };
       });
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 法務相談窓口（設定の legal_consult のチャンネル）へ送る。
+   *
+   * 案件ごとに 1 本のスレッド。まだ無ければ、案件番号・件名・相手先を書いた
+   * 親メッセージを先に投稿してスレッドを立て、本文はその下に返信する。
+   * 窓口のチャンネルを設定で変えたら、次の 1 通から新しいチャンネルにスレッドを立てる。
+   * 窓口のスレッドへの返信は、ほかのスレッドと同じく受信（webhook）で案件に入る。
+   */
+  private async sendConsult(matterId: number, body: string, actor: string): Promise<SendResult> {
+    try {
+      const channelId = (await this.consultSettings(this.database)).channelId;
+      if (!channelId) {
+        throw new DomainError("VALIDATION",
+          "法務相談窓口のチャンネルが未設定です。運用 → 設定 の「法務相談窓口（Slack）」でチャンネル ID を入れてください");
+      }
+      const matter = await this.matter(this.database, matterId);
+      let thread = await this.slackThread(this.database, matterId, "consult");
+      if (thread && thread.channelId !== channelId) thread = null;
+
+      if (!thread) {
+        const root = await this.consultRootText(matter);
+        const opened = await this.dispatch.dispatch({
+          channel: "slack", targetType: "matter", targetId: matterId, actor,
+          request: { recipient: channelId, body: root, threadRef: null }
+        });
+        const rootTs = String(opened.externalId ?? "");
+        if (!opened.sent || !rootTs) return { outcome: opened, communication: null };
+        await inTransaction(this.database, async (client) => {
+          await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation, snapshot)
+             VALUES ($1, 'slack_thread', $2, 'correspondence', $3::jsonb)
+             ON CONFLICT (matter_id, target_type, target_ref) DO NOTHING`,
+            [matterId, slackRef(channelId, rootTs),
+             JSON.stringify({ channelId, threadTs: rootTs, startedBy: actor, kind: "consult" })]);
+          await recordCommunication(client, {
+            matterId, channel: "slack", direction: "out", actor, counterpart: channelId, body: root,
+            externalRef: slackRef(channelId, rootTs),
+            evidence: { channelId, ts: rootTs, threadRef: rootTs, kind: "consult", root: true }
+          });
+          await recordAudit(client, {
+            actor, action: "matter.consult_thread", targetType: "matter", targetId: matterId,
+            detail: { channelId, threadTs: rootTs }
+          });
+        });
+        thread = { channelId, threadTs: rootTs };
+      }
+
+      const outcome = await this.dispatch.dispatch({
+        channel: "slack", targetType: "matter", targetId: matterId, actor,
+        request: { recipient: channelId, body, threadRef: thread.threadTs }
+      });
+      if (!outcome.sent) return { outcome, communication: null };
+      const ts = String(outcome.externalId ?? "");
+      return await inTransaction(this.database, async (client) => {
+        const id = await recordCommunication(client, {
+          matterId, channel: "slack", direction: "out", actor, counterpart: channelId, body,
+          externalRef: ts ? slackRef(channelId, ts) : null,
+          evidence: { channelId, ts, threadRef: thread!.threadTs, kind: "consult", receipt: outcome.externalId }
+        });
+        return { outcome, communication: id ? await this.find(id, client) : null };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  private async consultSettings(client: Queryable) {
+    const r = await client.query("SELECT value FROM settings WHERE key = $1", [LEGAL_CONSULT_KEY]);
+    return readLegalConsultSettings((r.rows[0] as any)?.value);
+  }
+
+  /** 窓口のスレッドの親。何の相談かが Slack だけで分かるように。 */
+  private async consultRootText(matter: Record<string, any>): Promise<string> {
+    const party = matter.counterparty_id
+      ? ((await this.database.query("SELECT name FROM parties WHERE id = $1", [matter.counterparty_id])).rows[0] as any)?.name
+      : null;
+    const owner = matter.owner_staff_id
+      ? ((await this.database.query("SELECT name FROM staff WHERE id = $1", [matter.owner_staff_id])).rows[0] as any)?.name
+      : null;
+    const base = String(this.options.publicBaseUrl ?? "").replace(/\/+$/, "");
+    return [
+      `📁 *法務相談* ${str(matter.matter_no) ?? `案件 ${matter.id}`} ${str(matter.title) ?? ""}`.trim(),
+      party ? `*相手先:* ${party}` : null,
+      owner ? `*法務担当:* ${owner}` : null,
+      base ? `*LegalBridge:* ${base}` : null,
+      `_この案件のやり取りはこのスレッドで続けます（${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 16).replace("T", " ")} 立て）_`
+    ].filter(Boolean).join("\n");
   }
 
   /**
@@ -307,7 +405,9 @@ export class MatterCommunicationService {
       ? (await this.database.query(
           "SELECT name, email FROM parties WHERE id = $1", [matter.counterparty_id])).rows[0] as any
       : null;
-    const thread = await this.slackThread(this.database, matterId);
+    const thread = await this.slackThread(this.database, matterId, "direct");
+    const consult = await this.consultSettings(this.database);
+    const consultThread = await this.slackThread(this.database, matterId, "consult");
     return {
       owner: owner ? { name: String(owner.name), email: str(owner.email), department: str(owner.department) } : null,
       requesterEmail: str(matter.requester_email),
@@ -319,7 +419,13 @@ export class MatterCommunicationService {
         requesterSlackId: str(matter.requester_slack_id),
         channelId: thread?.channelId ?? null, threadTs: thread?.threadTs ?? null,
         // 宛先が無いとき、依頼者のメールから社員を引いてその Slack ID へ送る。
-        fromRequesterEmail: str(matter.requester_slack_id) ? null : await this.slackOfEmail(this.database, str(matter.requester_email))
+        fromRequesterEmail: str(matter.requester_slack_id) ? null : await this.slackOfEmail(this.database, str(matter.requester_email)),
+        // 法務相談窓口。チャンネルが未設定なら channelId は null。スレッドは今の窓口のものだけ。
+        consult: {
+          channelId: consult.channelId || null,
+          label: consult.label || null,
+          threadTs: consultThread && consultThread.channelId === consult.channelId ? consultThread.threadTs : null
+        }
       }
     };
   }
@@ -349,10 +455,12 @@ export class MatterCommunicationService {
       return await inTransaction(this.database, async (client) => {
         const before = await this.matter(client, matterId);
         await client.query("UPDATE matters SET requester_slack_id = $2, updated_at = now() WHERE id = $1", [matterId, next]);
-        const thread = await this.slackThread(client, matterId);
+        const thread = await this.slackThread(client, matterId, "direct");
         if (thread && thread.channelId !== next) {
+          // 相談窓口のスレッドは宛先と関係ないので残す。
           await client.query(
-            "DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'slack_thread'", [matterId]);
+            `DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'slack_thread'
+               AND COALESCE(snapshot->>'kind', 'direct') <> 'consult'`, [matterId]);
         }
         await recordAudit(client, {
           actor, action: "matter.slack_recipient", targetType: "matter", targetId: matterId,
@@ -373,10 +481,16 @@ export class MatterCommunicationService {
   }
   private async assertMatter(client: Queryable, id: number) { await this.matter(client, id); }
 
-  private async slackThread(client: Queryable, matterId: number) {
+  /**
+   * 案件の Slack のスレッド。direct＝依頼者とのスレッド、consult＝法務相談窓口の
+   * スレッド（snapshot の kind）。kind の無い古い控えは direct。
+   */
+  private async slackThread(client: Queryable, matterId: number, kind: "direct" | "consult") {
     const r = await client.query(
       `SELECT target_ref, snapshot FROM matter_links
-        WHERE matter_id = $1 AND target_type = 'slack_thread' ORDER BY id LIMIT 1`, [matterId]);
+        WHERE matter_id = $1 AND target_type = 'slack_thread'
+          AND (COALESCE(snapshot->>'kind', 'direct') = 'consult') = $2
+        ORDER BY id ${kind === "consult" ? "DESC" : "ASC"} LIMIT 1`, [matterId, kind === "consult"]);
     const row = r.rows[0] as { target_ref: string; snapshot: any } | undefined;
     if (!row) return null;
     const snap = row.snapshot ?? {};

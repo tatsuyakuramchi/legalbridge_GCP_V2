@@ -6,6 +6,7 @@ import { CsvImport } from "./CsvImport.js";
 import { Leftovers } from "./Leftovers.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
+import { LegalConsultForm } from "./LegalConsultForm.js";
 import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
 import { MailTemplatesForm } from "./MailTemplatesForm.js";
 import { TextSnippets } from "./TextSnippets.js";
@@ -59,7 +60,7 @@ export type OpsTab = "quality" | "deadlines" | "leftovers" | "exports" | "import
   | "audit" | "integrations" | "settings";
 
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
-const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates"]);
+const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates", "legal_consult"]);
 
 export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
   const [tab, setTab] = useState<OpsTab>(initialTab ?? "quality");
@@ -281,6 +282,9 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
           onSaved={() => void reload()} />
         <DeliveryAlertForm
           value={settings.find((s) => s.key === "delivery_alert")?.value}
+          onSaved={() => void reload()} />
+        <LegalConsultForm
+          value={settings.find((s) => s.key === "legal_consult")?.value}
           onSaved={() => void reload()} />
         <MailTemplatesForm
           value={settings.find((s) => s.key === "mail_templates")?.value}

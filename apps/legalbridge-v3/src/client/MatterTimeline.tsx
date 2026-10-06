@@ -27,7 +27,9 @@ interface Recipients {
   contacts: Array<{ name: string | null; email: string; role: string | null; department: string | null }>;
   slack: { requesterSlackId: string | null; channelId: string | null; threadTs: string | null;
            /** 宛先が無いとき、依頼者のメールから引いた社員の Slack ID。 */
-           fromRequesterEmail?: { slackId: string; name: string } | null };
+           fromRequesterEmail?: { slackId: string; name: string } | null;
+           /** 法務相談窓口。channelId が null なら未設定。threadTs があればこの案件のスレッドがある。 */
+           consult?: { channelId: string | null; label: string | null; threadTs: string | null } };
 }
 interface Channels {
   channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
@@ -79,6 +81,10 @@ export function MatterTimeline(
   /** Slack の宛先を変えたら読み直す。 */
   const [recipientsVersion, setRecipientsVersion] = useState(0);
   const [slackEditing, setSlackEditing] = useState(false);
+  /** Slack の送り先。依頼者（DM・スレッド）か、法務相談窓口のチャンネルか。 */
+  const [slackTarget, setSlackTarget] = useState<"direct" | "consult">("direct");
+  /** 本文の頭に付けるメンション。 */
+  const [mentions, setMentions] = useState<SlackPerson[]>([]);
 
   useEffect(() => {
     setError(null);
@@ -127,9 +133,15 @@ export function MatterTimeline(
         await api.post(`/matters/${matterId}/communications/note`, { body });
         setBody("");
       } else if (mode === "slack") {
-        const r = await api.post<SendResult>(`/matters/${matterId}/communications/slack`, { body });
-        setNote(describeOutcome(r, "Slack"));
-        if (r.outcome.sent) setBody("");
+        const r = await api.post<SendResult>(`/matters/${matterId}/communications/slack`, {
+          body, target: slackTarget, mentions: mentions.map((m) => m.slackId)
+        });
+        setNote(describeOutcome(r, slackTarget === "consult" ? "法務相談窓口への Slack" : "Slack"));
+        if (r.outcome.sent) {
+          setBody(""); setMentions([]);
+          // 窓口のスレッドを立てたら、宛先の表示（スレッドに続けます）を読み直す。
+          if (slackTarget === "consult") setRecipientsVersion((v) => v + 1);
+        }
       } else if (mode === "email") {
         const r = await api.post<SendResult>(`/matters/${matterId}/communications/email`, {
           to, cc, subject, body,
@@ -149,6 +161,7 @@ export function MatterTimeline(
   }
 
   const canSubmit = mode === "drive" ? Boolean(driveUrl.trim())
+    : mode === "slack" && slackTarget === "consult" ? Boolean(body.trim() && recipients?.slack.consult?.channelId)
     : mode === "email" ? Boolean(body.trim() && subject.trim() && to.length > 0)
     : Boolean(body.trim());
 
@@ -175,6 +188,32 @@ export function MatterTimeline(
         </div>
 
         {mode === "slack" && recipients && (
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            <span className="faint">送り先：</span>
+            <button className="chip" aria-pressed={slackTarget === "direct"} onClick={() => setSlackTarget("direct")}>
+              依頼者・担当者へ
+            </button>
+            <button className="chip" aria-pressed={slackTarget === "consult"} onClick={() => setSlackTarget("consult")}>
+              法務相談窓口へ{recipients.slack.consult?.label ? `（${recipients.slack.consult.label}）` : ""}
+            </button>
+          </div>
+        )}
+
+        {mode === "slack" && recipients && slackTarget === "consult" && (
+          <div className="faint">
+            {!recipients.slack.consult?.channelId
+              ? <span className="tag warn">法務相談窓口のチャンネルが未設定です。運用 → 設定 の「法務相談窓口（Slack）」でチャンネル ID を入れてください</span>
+              : recipients.slack.consult.threadTs
+                ? <>この案件の窓口スレッド（<span className="code">{recipients.slack.consult.label ?? recipients.slack.consult.channelId}</span>）に続けます</>
+                : <>
+                    <span className="code">{recipients.slack.consult.label ?? recipients.slack.consult.channelId}</span> に
+                    この案件のスレッドを立てて送ります（案件番号・件名・相手先を親にして、本文はその下に返信）。
+                    返信は自動でこの記録に入ります
+                  </>}
+          </div>
+        )}
+
+        {mode === "slack" && recipients && slackTarget === "direct" && (
           <div className="stack" style={{ gap: 4 }}>
             <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
               <span className={recipients.slack.channelId || recipients.slack.requesterSlackId || recipients.slack.fromRequesterEmail ? "faint" : ""}>
@@ -196,6 +235,10 @@ export function MatterTimeline(
                 onError={setError} />
             )}
           </div>
+        )}
+
+        {mode === "slack" && recipients && (
+          <MentionPicker value={mentions} onChange={setMentions} />
         )}
 
         {mode === "email" && recipients && (
@@ -266,7 +309,7 @@ export function MatterTimeline(
                   onChange={(e) => setBody(e.target.value)} />
         <div className="row">
           <button className="btn primary" disabled={busy || !canSubmit} onClick={() => void submit()}>
-            {mode === "note" ? "メモを残す" : mode === "slack" ? "Slack で送る" : mode === "email" ? "メールを送る" : "リンクを残す"}
+            {mode === "note" ? "メモを残す" : mode === "slack" ? (slackTarget === "consult" ? "法務相談窓口へ送る" : "Slack で送る") : mode === "email" ? "メールを送る" : "リンクを残す"}
           </button>
           {mode !== "note" && mode !== "drive" && (
             <span className="faint">送ったものはそのまま下に残ります。送れなかったときは理由が出ます</span>
@@ -370,6 +413,53 @@ function SlackRecipientPicker(
         宛先を変えると、次の1通から新しいスレッドになります（これまでのやり取りは残ります）。
         メンバー ID は Slack のプロフィールの「⋮」→「メンバー ID をコピー」で取れます。
       </small>
+    </div>
+  );
+}
+
+interface SlackPerson { slackId: string; name: string }
+
+/**
+ * メンションする人を選ぶ。社員（Slack ID の登録がある人）を名前・部門で探して足す。
+ * 送ると本文の頭に @名前 が付く（Slack の <@U…>）。
+ */
+function MentionPicker({ value, onChange }: { value: SlackPerson[]; onChange: (v: SlackPerson[]) => void }) {
+  const [staff, setStaff] = useState<Array<{ id: number; name: string; department: string | null; slackUserId?: string | null; status: string }>>([]);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    api.get<{ staff: typeof staff }>("/staff").then((r) => setStaff(r.staff)).catch(() => setStaff([]));
+  }, []);
+  const chosen = new Set(value.map((v) => v.slackId));
+  const hits = q.trim()
+    ? staff.filter((s) => s.slackUserId && s.status !== "retired" && !chosen.has(s.slackUserId)
+        && `${s.name} ${s.department ?? ""}`.includes(q.trim())).slice(0, 8)
+    : [];
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+        <span className="faint">メンション：</span>
+        {value.map((p) => (
+          <span key={p.slackId} className="tag accent">
+            @{p.name}
+            <button className="linky" aria-label={`${p.name} を外す`} style={{ marginLeft: 4 }}
+                    onClick={() => onChange(value.filter((v) => v.slackId !== p.slackId))}>×</button>
+          </span>
+        ))}
+        <input value={q} placeholder="社員の名前・部門で探して @ を付ける" style={{ minWidth: 300 }}
+               onChange={(e) => setQ(e.target.value)} />
+      </div>
+      {hits.length > 0 && (
+        <div className="picker">
+          {hits.map((s) => (
+            <button key={s.id} className="chip" onClick={() => { onChange([...value, { slackId: s.slackUserId!, name: s.name }]); setQ(""); }}>
+              {s.name}<span className="faint">　{s.department ?? ""}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {q.trim() && !hits.length && (
+        <span className="faint">当たる社員がいません（Slack ID は「取引先・担当」の担当者の一覧で登録します）</span>
+      )}
     </div>
   );
 }

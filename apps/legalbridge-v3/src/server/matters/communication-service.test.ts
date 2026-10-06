@@ -111,3 +111,26 @@ test("同じ外部IDは二度書かない（webhook の再送で増えない）"
   assert.equal(id, null);
   assert.match(db.find("INSERT INTO matter_communications")!.text, /ON CONFLICT \(channel, external_ref\)/);
 });
+
+test("法務相談窓口：スレッドが無ければ親（案件番号・件名）を立て、本文はその下に返信する", async () => {
+  const { db, slack, svc } = build({
+    "FROM settings WHERE key": [{ value: { channelId: "C09LEGAL01", label: "#法務相談" } }]
+  });
+  const r = await svc.sendSlack(7, { body: "契約書の確認を", target: "consult", mentions: ["U07IKEDA1"] }, "kuramochi");
+  assert.equal(r.outcome.sent, true);
+  assert.equal(slack.sent.length, 2);
+  assert.equal(slack.sent[0].recipient, "C09LEGAL01");
+  assert.match(slack.sent[0].body ?? "", /法務相談\* MTR-2026-00270 挿絵/);
+  assert.equal(slack.sent[0].threadRef, null);
+  assert.equal(slack.sent[1].recipient, "C09LEGAL01");
+  assert.equal(slack.sent[1].threadRef, "slack-1", "親の ts の下に返信");
+  assert.equal(slack.sent[1].body, "<@U07IKEDA1>\n契約書の確認を");
+  const link = db.find("INSERT INTO matter_links")!;
+  assert.match(String(link.params?.[2]), /"kind":"consult"/);
+});
+
+test("法務相談窓口：チャンネル未設定なら送らずに理由を返す", async () => {
+  const { slack, svc } = build();
+  await assert.rejects(svc.sendSlack(7, { body: "x", target: "consult" }, "kuramochi"), /法務相談窓口のチャンネルが未設定/);
+  assert.equal(slack.sent.length, 0);
+});
