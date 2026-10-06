@@ -16,7 +16,10 @@ import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xls
  *   1. 読む     … XLSX か CSV を行に直す（readRows）。見出しの名前で列を当てる。
  *   2. 当てる   … CID → 作品（ebook_work_codes）。無ければタイトルが一致する作品。
  *                 作品 → 有効な電子出版の料率条件。無ければ「印税なし」か「条件なし」。
- *   3. まとめる … 条件 × 販売月 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
+ *   3. まとめる … 条件 × 報告月 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
+ *                 報告月はシート名（「2026年3月」）。シートには前々月の販売月の行や
+ *                 遅れて報告された古い月の行が載るので、期間はシートの月で持ち、
+ *                 販売月は備考に書く。シート名が月でなければ（CSV など）販売月で持つ。
  *   4. 登録     … 通常の実績の登録（ConditionEventService.add）を呼ぶ。取込だけ別の
  *                 規則で入ると、画面から入れた行と品質が変わる。出版の実績は台帳の
  *                 「報告を追加」と同じ形（利用形態なし・総額＝報告売上）で、料率は
@@ -29,8 +32,10 @@ import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xls
 export interface EbookSalesRow {
   sheet: string;
   line: number;
-  /** YYYY-MM */
+  /** 販売月 YYYY-MM */
   month: string;
+  /** 報告月 YYYY-MM（シート名「2026年3月」から）。シート名が月でなければ null。 */
+  reportMonth: string | null;
   storeCompany: string | null;
   store: string | null;
   title: string;
@@ -133,7 +138,7 @@ export function rowsOfSheet(name: string, cells: CellValue[][]): { rows: EbookSa
     if (!title || !month) { if (r.some((c) => c !== null && c !== "")) footer += 1; continue; }
     if (downloads === null || listPrice === null) { footer += 1; continue; }
     rows.push({
-      sheet: name, line: i + 1, month,
+      sheet: name, line: i + 1, month, reportMonth: monthOf(name),
       storeCompany: norm(at("storeCompany")) || null,
       store: norm(at("store")) || null,
       title,
@@ -202,7 +207,10 @@ export interface SalesGroup {
   cid: string | null;
   title: string;
   authors: string | null;
+  /** 期間の月（報告月＝シート名。シート名が月でなければ販売月）。 */
   month: string;
+  /** まとめた行の販売月。報告月と違えば備考に書く。 */
+  salesMonths: string[];
   listPrice: number;
   downloads: number;
   /** 配信価格 × DL数。 */
@@ -262,10 +270,12 @@ export class EbookSalesImportService {
         try {
           // 台帳の「報告を追加」と同じ形。総額＝実額＝報告売上（配信価格 × DL数）。
           // 料率は計算書を出すときに条件から掛かる（取り分もそこで割る）。
+          const sales = g.salesMonths.filter((m) => m !== g.month);
           const r = await this.events.add(g.condition!.id, {
             eventType: "sales", occurredOn: monthEnd(g.month), period: monthLabel(g.month),
             quantity: g.downloads, grossAmount: g.gross, amount: g.gross,
-            note: `電子書籍売上取込 ${g.month}（${g.stores.slice(0, 3).join("・")}${g.stores.length > 3 ? " ほか" : ""}）`,
+            note: `電子書籍売上取込 ${g.month}（${sales.length ? `販売月 ${sales.join("・")}。` : ""}`
+              + `${g.stores.slice(0, 3).join("・")}${g.stores.length > 3 ? " ほか" : ""}）`,
             unitAmount: g.listPrice, workId: g.work!.id
           }, actor);
           written += 1;
@@ -335,16 +345,18 @@ export class EbookSalesImportService {
   }
 
   private async resolve(client: Queryable, rows: EbookSalesRow[]): Promise<SalesPreview> {
-    // まとめる：CID（無ければタイトル）× 販売月 × 販売価格。
+    // まとめる：CID（無ければタイトル）× 報告月（シート名。無ければ販売月）× 販売価格。
     const groups = new Map<string, SalesGroup>();
     for (const r of rows) {
       const id = r.cid ? `cid:${r.cid}` : `title:${normalizeTitle(r.title)}`;
-      const key = `${id}|${r.month}|${r.listPrice}`;
+      const month = r.reportMonth ?? r.month;
+      const key = `${id}|${month}|${r.listPrice}`;
       const g = groups.get(key) ?? {
-        key, cid: r.cid, title: r.title, authors: r.authors, month: r.month, listPrice: r.listPrice,
+        key, cid: r.cid, title: r.title, authors: r.authors, month, salesMonths: [], listPrice: r.listPrice,
         downloads: 0, gross: 0, stores: [], lines: 0, status: "unresolved" as GroupStatus, message: null,
         work: null, condition: null, royalty: null, royaltyInFile: null, candidates: []
       };
+      if (!g.salesMonths.includes(r.month)) g.salesMonths.push(r.month);
       g.downloads += r.downloads;
       g.gross += r.listPrice * r.downloads;
       g.lines += 1;
@@ -428,7 +440,7 @@ export class EbookSalesImportService {
                       counterparty: str(c.party_name), shares: c.shares ? String(c.shares).split("・") : [] };
       g.royalty = roundRoyalty((g.gross * (int(c.rate_ppm) ?? 0)) / 1_000_000);
       const dupKey = `${Number(c.id)}|${monthLabel(g.month)}|${g.listPrice}`;
-      if (existingKeys.has(dupKey)) { g.status = "duplicate"; g.message = "同じ月・同じ販売価格の実績がもうあります"; continue; }
+      if (existingKeys.has(dupKey)) { g.status = "duplicate"; g.message = "同じ報告月・同じ販売価格の実績がもうあります"; continue; }
       if (!(g.royalty > 0)) { g.status = "zero"; g.message = "料率を掛けると 0 円"; continue; }
       g.status = "ok"; g.message = null;
     }

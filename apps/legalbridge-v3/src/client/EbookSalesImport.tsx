@@ -11,10 +11,10 @@ import { useDebounced } from "./ListTools.js";
  * その場で作品を当てる。当てた結果は覚えるので、翌月からは自動で当たる。
  */
 
-interface Row { sheet: string; line: number; month: string; title: string; cid: string | null; [k: string]: unknown }
+interface Row { sheet: string; line: number; month: string; reportMonth: string | null; title: string; cid: string | null; [k: string]: unknown }
 type Status = "ok" | "duplicate" | "no_royalty" | "no_condition" | "unresolved" | "zero";
 interface Group {
-  key: string; cid: string | null; title: string; authors: string | null; month: string;
+  key: string; cid: string | null; title: string; authors: string | null; month: string; salesMonths: string[];
   listPrice: number; downloads: number; gross: number; stores: string[]; lines: number;
   status: Status; message: string | null;
   work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
@@ -119,14 +119,18 @@ export function EbookSalesImport() {
             <div className="tablewrap">
               <table>
                 <thead>
-                  <tr><th>販売月</th><th>タイトル</th><th>CID</th><th>作品 → 条件</th><th className="num">価格</th>
+                  <tr><th title="シート名の月。期間と計算書の製品名（月＋作品名）になる">報告月</th><th>タイトル</th><th>CID</th><th>作品 → 条件</th><th className="num">価格</th>
                       <th className="num">DL</th><th className="num">報告売上</th><th className="num">印税（見込み）</th>
                       <th className="num" title="事業部の Excel が出していた印税">Excel</th><th>判定</th></tr>
                 </thead>
                 <tbody>
                   {shown.map((g) => (
                     <tr key={g.key}>
-                      <td className="code">{g.month}</td>
+                      <td className="code">{g.month}
+                        {g.salesMonths.some((m) => m !== g.month) && (
+                          <div className="faint" style={{ fontSize: "0.85em" }}>販売月 {g.salesMonths.join("・")}</div>
+                        )}
+                      </td>
                       <td>{g.title}<div className="faint" style={{ fontSize: "0.85em" }}>{g.authors ?? ""}</div></td>
                       <td className="code faint">{g.cid ?? "—"}</td>
                       <td>

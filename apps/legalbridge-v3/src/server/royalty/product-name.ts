@@ -28,6 +28,12 @@ export interface ProductNameSource {
   eventWorkTitle?: string | null;
   /** 実績の言語・地域（A-061）。報告が言語ごとに来るとき、製品名の後ろに添える。 */
   eventScope?: string | null;
+  /**
+   * 出版（紙・電子）の報告は月ごとに来るので、製品名の頭に報告月を付ける
+   * （事業部の Excel のシート名「2026年3月」＋作品名）。イン条件の利用形態と実績の期間。
+   */
+  inUsageType?: string | null;
+  period?: string | null;
 }
 
 /** 実績の言語・地域を1つの表記に（英語・北米）。空なら null。 */
@@ -41,11 +47,19 @@ const text = (v: unknown) => String(v ?? "").trim();
 const titles = (v: Array<string | null> | null | undefined) =>
   [...new Set((v ?? []).map(text).filter(Boolean))];
 
-/** 明細の行の製品名。実績に言語・地域があれば後ろに添える（英語版とフランス語版を分ける）。 */
+/**
+ * 明細の行の製品名。実績に言語・地域があれば後ろに添える（英語版とフランス語版を分ける）。
+ * 出版（pub_print・pub_digital）の条件で期間（「2026年3月分」）があれば、頭に
+ * 「2026年3月 」を付ける（事業部の売上報告のシート名＋作品名）。
+ */
 export function statementProductName(s: ProductNameSource): string {
   const base = baseProductName(s);
   const scope = text(s.eventScope);
-  return base && scope ? `${base}（${scope}）` : base;
+  const named = base && scope ? `${base}（${scope}）` : base;
+  const usage = text(s.inUsageType);
+  const period = text(s.period).replace(/分$/, "");
+  if (named && period && (usage === "pub_print" || usage === "pub_digital")) return `${period} ${named}`;
+  return named;
 }
 
 function baseProductName(s: ProductNameSource): string {

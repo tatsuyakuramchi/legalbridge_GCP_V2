@@ -4,12 +4,12 @@ import { FakeDatabase } from "../core/fake-db.js";
 import { inContractRef, inContractRefText, withInContract } from "./in-contract.js";
 import { usageBundleLines } from "../documents/royalty-patch.js";
 
-test("対象契約：イン側の基本契約・個別契約を締結日付きで並べる。片方だけならそれだけ", () => {
+test("対象契約：イン側の基本契約・個別契約を締結日付きで並べる。契約番号は個別契約の番号（無ければ基本契約）", () => {
   const master = { no: "ARC-LIC-2024-0012", title: "利用許諾基本契約", on: "2024-04-01" };
   const terms = { no: "ARC-ILT-D-2026-0001", title: "個別利用許諾条件書", on: "2025-06-01" };
   assert.deepEqual(inContractRefText(master, terms), {
     title: "2024年4月1日付利用許諾基本契約 / 2025年6月1日付個別利用許諾条件書",
-    number: "ARC-LIC-2024-0012 / ARC-ILT-D-2026-0001"
+    number: "ARC-ILT-D-2026-0001"
   });
   assert.deepEqual(inContractRefText(null, terms),
                    { title: "2025年6月1日付個別利用許諾条件書", number: "ARC-ILT-D-2026-0001" });
@@ -55,7 +55,7 @@ test("補助文書に載った条件：基本契約（親）/ 補助文書", asy
   const db = fake({ a_id: 4, a_no: "ARC-LIC-2024-0012-S01", a_title: "覚書", a_kind: "supplement", a_status: "executed",
                     p_id: 1, p_no: "ARC-LIC-2024-0012", p_title: "利用許諾基本契約", p_kind: "master", p_status: "executed" });
   const ref = await inContractRef(db, 7);
-  assert.equal(ref.number, "ARC-LIC-2024-0012 / ARC-LIC-2024-0012-S01");
+  assert.equal(ref.number, "ARC-LIC-2024-0012-S01", "契約番号は条件に付いた覚書（個別）の番号");
   assert.equal(ref.title, "2025年7月31日付利用許諾基本契約 / 2025年7月31日付覚書");
 });
 

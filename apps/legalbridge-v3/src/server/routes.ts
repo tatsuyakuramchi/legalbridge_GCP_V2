@@ -1265,6 +1265,8 @@ export function createRoutes(database: Transactable) {
   const ebookRowSchema = z.object({
     sheet: z.string().max(200), line: z.coerce.number().int(),
     month: z.string().regex(/^\d{4}-\d{2}$/),
+    // 報告月（シート名の月）。古い画面から来る行には無いので、無ければ販売月で持つ。
+    reportMonth: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional().default(null),
     storeCompany: z.string().max(200).nullable(), store: z.string().max(200).nullable(),
     title: z.string().trim().min(1).max(400), authors: z.string().max(400).nullable(),
     cid: z.string().max(60).nullable(),
@@ -1297,6 +1299,14 @@ export function createRoutes(database: Transactable) {
 
   router.get("/imports", asyncRoute(async (_req, res) => {
     res.json({ specs: IMPORT_SPECS });
+  }));
+  // 登録済みの出版作品（作品＋紙・電子の条件＋取り分＋CID）を取込と同じ列で書き出す。
+  // 直して「登録済みに当てる」で取り込める。
+  router.get("/imports/pub-works/export.csv", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    const csv = await imports.exportPubWorks();
+    res.type("text/csv; charset=utf-8")
+       .set("Content-Disposition", `attachment; filename="${filename("pub_works")}"`)
+       .send(withBom(csv));
   }));
   const importSchema = z.object({
     kind: z.enum(["parties", "works", "license_conditions", "agreements", "pub_works"]),
