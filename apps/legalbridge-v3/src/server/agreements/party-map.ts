@@ -858,7 +858,8 @@ export class PartyAgreementMapService {
    * 出る）。無ければ契約なしのまま（発注書の約款で取引）。単体契約に載っている条件は動かさない。
    * 取り込んだ文書で種類が発注書でなければ、発注書にする（契約にも繋がない）。
    */
-  async linkOrder(documentId: number, conditionIds: number[], actor: string)
+  async linkOrder(documentId: number, conditionIds: number[], actor: string,
+                  options: { masterId?: number | null } = {})
     : Promise<{ linked: number; masterNo: string | null; documentNo: string | null }> {
     const ids = [...new Set(conditionIds.map(Number))].filter((n) => n > 0);
     if (!ids.length) throw new DomainError("VALIDATION", "紐づける条件明細を選んでください");
@@ -891,6 +892,15 @@ export class PartyAgreementMapService {
         if (rows.length !== ids.length) throw new DomainError("NOT_FOUND", "見つからない条件明細があります");
         const parties = new Set(rows.map((r) => Number(r.resolved_id)));
         if (parties.size !== 1) throw new DomainError("VALIDATION", "相手先の違う条件明細を1枚の発注書に紐づけることはできません");
+        // 発注書に別の相手先の条件が既に載っていれば断る（番号で探すと他社の発注書も当たる）。
+        const others = await client.query(
+          `SELECT DISTINCT r.resolved_id FROM document_conditions dc
+             JOIN conditions c ON c.id = dc.condition_id
+             JOIN v_party_resolved r ON r.party_id = c.counterparty_id
+            WHERE dc.document_id = $1`, [documentId]);
+        if ((others.rows as any[]).some((r) => Number(r.resolved_id) !== [...parties][0])) {
+          throw new DomainError("VALIDATION", "この発注書には別の取引先の条件明細が載っています。同じ取引先の発注書を選んでください");
+        }
         const last = await client.query(
           "SELECT COALESCE(max(line_no), 0) AS n FROM document_conditions WHERE document_id = $1", [documentId]);
         let lineNo = Number((last.rows[0] as { n: number } | undefined)?.n ?? 0);
@@ -904,8 +914,33 @@ export class PartyAgreementMapService {
         // 載っている条件も含める（1枚の発注書が基本契約あり・なしに割れないように）。
         let masterNo: string | null = null;
         const onDoc = await client.query(
-          `SELECT c.id, c.direction, c.agreement_id FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+          `SELECT c.id, c.direction, c.agreement_id, COALESCE(a.kind, 'master') AS agreement_kind
+             FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+             LEFT JOIN agreements a ON a.id = c.agreement_id
             WHERE dc.document_id = $1`, [documentId]);
+        // 基本契約を人が選んだとき（null は「基本契約なし」）。この発注書の条件のうち、
+        // 契約に載っていないか基本契約に載っているものをそろえる（単体契約・個別契約は動かさない）。
+        if (options.masterId !== undefined) {
+          const movable = (onDoc.rows as any[])
+            .filter((r) => !r.agreement_id || r.agreement_kind === "master").map((r) => Number(r.id));
+          if (options.masterId !== null) {
+            const mr = await client.query(
+              `SELECT a.id, a.agreement_no, a.direction, COALESCE(a.kind, 'master') AS kind, r.resolved_id
+                 FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id WHERE a.id = $1`,
+              [options.masterId]);
+            const m = mr.rows[0] as any;
+            if (!m || m.kind !== "master") throw new DomainError("VALIDATION", "基本契約を選んでください");
+            if (Number(m.resolved_id) !== [...parties][0]) throw new DomainError("VALIDATION", "基本契約と条件明細の相手先が違います");
+            masterNo = str(m.agreement_no);
+          }
+          await client.query("UPDATE conditions SET agreement_id = $2 WHERE id = ANY($1::bigint[])",
+            [movable, options.masterId]);
+          await recordAudit(client, {
+            actor, action: "document.link_order", targetType: "document", targetId: documentId,
+            detail: { conditionIds: ids, masterId: options.masterId, masterNo, chosen: true }
+          });
+          return { linked: ids.length, masterNo, documentNo: str(d.document_no) };
+        }
         const free = (onDoc.rows as any[]).filter((r) => !r.agreement_id);
         for (const dir of [...new Set(free.map((r) => String(r.direction)))]) {
           const mr = await client.query(

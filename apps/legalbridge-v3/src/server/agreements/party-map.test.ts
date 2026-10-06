@@ -341,3 +341,25 @@ test("発注書を紐づける：取り込んだ文書は発注書にし、契�
   await assert.rejects(() => new PartyAgreementMapService(db({ template_key: "inspection_certificate", template_version_id: 3 })).linkOrder(1, [769], "k"), /発注書でない/);
   await assert.rejects(() => new PartyAgreementMapService(db({}, [5, 6])).linkOrder(513, [769, 770], "k"), /相手先の違う/);
 });
+
+test("発注書を紐づける：基本契約を選べば、その発注書の条件（契約なし・基本契約に載るもの）をそろえる。null は基本契約なし", async () => {
+  const db = (master: Record<string, unknown> | null) => new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF d")) return [{ id: 97, document_no: "ARC-PO-2026-0097", status: "issued",
+      template_version_id: null, template_key: null, kind: "発注書" }];
+    if (t.includes("JOIN v_party_resolved r ON r.party_id = c.counterparty_id")) return [{ id: 175, direction: "in", agreement_id: null, resolved_id: 5 }];
+    if (t.includes("SELECT DISTINCT r.resolved_id")) return [{ resolved_id: 5 }];
+    if (t.includes("LEFT JOIN agreements a ON a.id = c.agreement_id")) return [
+      { id: 175, direction: "in", agreement_id: null, agreement_kind: "master" },
+      { id: 344, direction: "in", agreement_id: 9, agreement_kind: "standalone" }];
+    if (t.includes("WHERE a.id = $1")) return master ? [master] : [];
+    return [];
+  });
+  const d1 = db({ id: 14, agreement_no: "ARC-SVC-2026-0014", direction: "in", kind: "master", resolved_id: 5 });
+  const r = await new PartyAgreementMapService(d1).linkOrder(97, [175], "k", { masterId: 14 });
+  assert.equal(r.masterNo, "ARC-SVC-2026-0014");
+  assert.deepEqual(d1.find("UPDATE conditions SET agreement_id")!.params, [[175], 14], "単体契約に載る条件は動かさない");
+  const d2 = db(null);
+  await new PartyAgreementMapService(d2).linkOrder(97, [175], "k", { masterId: null });
+  assert.deepEqual(d2.find("UPDATE conditions SET agreement_id")!.params, [[175], null]);
+  await assert.rejects(() => new PartyAgreementMapService(db({ id: 3, kind: "standalone", resolved_id: 5 })).linkOrder(97, [175], "k", { masterId: 3 }), /基本契約を選んで/);
+});
