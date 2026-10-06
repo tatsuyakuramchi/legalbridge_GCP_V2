@@ -10,19 +10,42 @@ import { ListSearch, useDebounced } from "./ListTools.js";
  * 直接払う作品だけ、ここで「誰に何 %」を入れる。計算書は受取人ごとに 1 枚になり、
  * 全体額を四捨五入で割る（合計は全体を超えない）。
  *
+ * 入れ方は 2 つ。契約書は「B 10%・C 5%」と料率で書くので、既定は料率で入れる
+ * （全体率との比に直して保存する）。全体率が無い条件や、比で決めた契約は比率で。
+ *
  * 代表 1 者が受け取って自分で分配する契約は、ここには何も入れない（相手先 1 者が
  * 100% を受け取る）。買い切りは定額の条件 1 本で持つので、ここは関係ない。
  */
 
-type Row = { partyId: number; name: string; pct: string; note: string };
+type Row = { partyId: number; name: string; value: string; note: string };
+type Mode = "rate" | "share";
 
-const pctOf = (ppm: number) => String(ppm / 10000);
-const ppmOf = (pct: string) => Math.round(Number(pct.replace(/[^0-9.]/g, "")) * 10000);
+const TOTAL = 1_000_000;
+const num = (s: string) => Number(String(s).replace(/[^0-9.]/g, ""));
+const fmt = (ppm: number) => String(Math.round(ppm / 100) / 100);           // 666667 → "66.67"
+const fmtRate = (ppm: number, wholePpm: number) => String(Math.round(wholePpm * ppm / TOTAL / 100) / 100); // 料率 %
+
+/** 行の入力 → 百万分率。料率で入れたときは全体率との比。合計が 100% になるように端数は最後の行に寄せる。 */
+function toPpm(rows: Row[], mode: Mode, wholePpm: number | null): number[] {
+  const raw = rows.map((r) => {
+    const v = num(r.value);
+    if (!Number.isFinite(v) || v <= 0) return 0;
+    if (mode === "share") return Math.round(v * 10000);
+    return wholePpm ? Math.round((v * 10000 / wholePpm) * TOTAL) : 0;
+  });
+  const sum = raw.reduce((a, b) => a + b, 0);
+  // 料率の比は割り切れない（10/15）。合計が 100% から数 ppm ずれるだけなら最後の行で合わせる。
+  if (mode === "rate" && raw.length && sum > 0 && Math.abs(sum - TOTAL) <= raw.length * 2) {
+    raw[raw.length - 1] += TOTAL - sum;
+  }
+  return raw;
+}
 
 export function ConditionShares(
   { detail, onDone, canWrite }: { detail: ConditionDetail; onDone: () => void; canWrite: boolean }
 ) {
   const [editing, setEditing] = useState(false);
+  const [mode, setMode] = useState<Mode>(detail.ratePpm ? "rate" : "share");
   const [rows, setRows] = useState<Row[]>([]);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
@@ -32,6 +55,7 @@ export function ConditionShares(
 
   const applicable = detail.direction === "in" && detail.kind === "license" && detail.pricingModel === "revenue_rate";
   const shares = detail.shares ?? [];
+  const whole = detail.ratePpm ?? null;
 
   useEffect(() => {
     if (!editing) return;
@@ -40,27 +64,42 @@ export function ConditionShares(
       .then((r) => setParties(r.parties.slice(0, 20))).catch(() => setParties([]));
   }, [editing, search]);
 
+  const valueOf = (ppm: number, m: Mode) => (m === "share" || !whole ? fmt(ppm) : fmtRate(ppm, whole));
+
   function start() {
+    const m: Mode = whole ? "rate" : "share";
+    setMode(m);
     setRows(shares.length
-      ? shares.map((s) => ({ partyId: s.partyId, name: s.partyName, pct: pctOf(s.sharePpm), note: s.note ?? "" }))
+      ? shares.map((s) => ({ partyId: s.partyId, name: s.partyName, value: valueOf(s.sharePpm, m), note: s.note ?? "" }))
       // 空から始めるときは相手先を 1 行目に置く（たいてい代表＝相手先が 1 人目）。
-      : detail.counterparty ? [{ partyId: detail.counterparty.id, name: detail.counterparty.name, pct: "", note: "" }] : []);
+      : detail.counterparty ? [{ partyId: detail.counterparty.id, name: detail.counterparty.name, value: "", note: "" }] : []);
     setEditing(true); setError(null); setKeyword("");
+  }
+
+  /** 入れ方を切り替える。打った値は同じ取り分のまま、もう片方の表し方に直す。 */
+  function switchMode(next: Mode) {
+    if (next === mode) return;
+    const ppm = toPpm(rows, mode, whole);
+    setRows(rows.map((r, i) => ({ ...r, value: ppm[i] > 0 ? valueOf(ppm[i], next) : "" })));
+    setMode(next);
   }
 
   function add(p: { id: number; name: string }) {
     if (rows.some((r) => r.partyId === p.id)) return;
-    setRows([...rows, { partyId: p.id, name: p.name, pct: "", note: "" }]);
+    setRows([...rows, { partyId: p.id, name: p.name, value: "", note: "" }]);
     setKeyword("");
   }
 
-  const total = rows.reduce((a, r) => a + (ppmOf(r.pct) || 0), 0);
+  const ppm = toPpm(rows, mode, whole);
+  const total = ppm.reduce((a, b) => a + b, 0);
+  const rateSum = rows.reduce((a, r) => a + (num(r.value) || 0), 0);
+  const ok = rows.length >= 2 && total === TOTAL;
 
   async function save(clear = false) {
     setBusy(true); setError(null);
     try {
       await api.put(`/conditions/${detail.id}/shares`, {
-        shares: clear ? [] : rows.map((r) => ({ partyId: r.partyId, sharePpm: ppmOf(r.pct), note: r.note.trim() || null }))
+        shares: clear ? [] : rows.map((r, i) => ({ partyId: r.partyId, sharePpm: ppm[i], note: r.note.trim() || null }))
       });
       setEditing(false); onDone();
     } catch (e) { setError((e as ApiError).message); }
@@ -87,15 +126,13 @@ export function ConditionShares(
       {!editing && shares.length > 0 && (
         <div className="panel-bd">
           <table>
-            <thead><tr><th>受取人</th><th className="num">取り分</th><th className="num">当社の支払率</th><th>備考</th></tr></thead>
+            <thead><tr><th>受取人</th><th className="num">料率（全体 {whole === null ? "—" : `${whole / 10000}%`} のうち）</th><th className="num">取り分</th><th>備考</th></tr></thead>
             <tbody>
               {shares.map((s) => (
                 <tr key={s.partyId}>
                   <td>{s.partyName}{s.partyKind === "individual" ? <span className="faint">（個人・源泉）</span> : ""}</td>
-                  <td className="num">{s.sharePpm / 10000}%</td>
-                  <td className="num faint">
-                    {detail.ratePpm === null ? "—" : `${Math.round(detail.ratePpm * s.sharePpm / 1_000_000) / 10000}%`}
-                  </td>
+                  <td className="num">{whole === null ? "—" : `${fmtRate(s.sharePpm, whole)}%`}</td>
+                  <td className="num faint">{fmt(s.sharePpm)}%</td>
                   <td className="faint">{s.note ?? ""}</td>
                 </tr>
               ))}
@@ -106,15 +143,26 @@ export function ConditionShares(
       {editing && (
         <div className="panel-bd stack">
           {error && <div className="alert">{error}</div>}
+          <div className="row" style={{ gap: 6 }}>
+            <span className="faint">入れ方</span>
+            <button className="chip" aria-pressed={mode === "rate"} disabled={!whole} onClick={() => switchMode("rate")}
+                    title="契約書の書き方。B 10%・C 5% のように、全体の料率を分けた率で入れる">
+              料率で（全体 {whole === null ? "—" : `${whole / 10000}%`} を分ける）
+            </button>
+            <button className="chip" aria-pressed={mode === "share"} onClick={() => switchMode("share")}
+                    title="全体額を何対何で分けるか。75% / 25% のように">比率で（合計 100%）</button>
+          </div>
           <table>
-            <thead><tr><th>受取人</th><th className="num">取り分（%）</th><th>備考</th><th></th></tr></thead>
+            <thead><tr><th>受取人</th><th className="num">{mode === "rate" ? "料率（%）" : "取り分（%）"}</th><th>備考</th><th></th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={r.partyId}>
                   <td>{r.name}</td>
                   <td className="num">
-                    <input value={r.pct} style={{ width: 80, textAlign: "right" }} placeholder="60"
-                           onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, pct: e.target.value } : x))} />
+                    <input value={r.value} style={{ width: 80, textAlign: "right" }} placeholder={mode === "rate" ? "10" : "60"}
+                           onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                    {mode === "rate" && ppm[i] > 0 && <small className="faint" style={{ marginLeft: 6 }}>取り分 {fmt(ppm[i])}%</small>}
+                    {mode === "share" && whole !== null && ppm[i] > 0 && <small className="faint" style={{ marginLeft: 6 }}>料率 {fmtRate(ppm[i], whole)}%</small>}
                   </td>
                   <td>
                     <input value={r.note} placeholder="契約書の条項など"
@@ -125,8 +173,14 @@ export function ConditionShares(
               ))}
               <tr>
                 <td className="faint">合計</td>
-                <td className={`num ${total === 1_000_000 ? "" : "bad"}`}>{total / 10000}%</td>
-                <td colSpan={2} className="faint">{total === 1_000_000 ? "" : "100% にしてください"}</td>
+                <td className={`num ${ok ? "" : "bad"}`}>
+                  {mode === "rate" ? `${Math.round(rateSum * 10000) / 10000}%` : `${total / 10000}%`}
+                </td>
+                <td colSpan={2} className="faint">
+                  {ok ? "" : mode === "rate"
+                    ? `全体の料率 ${whole === null ? "—" : `${whole / 10000}%`} と同じにしてください`
+                    : "100% にしてください"}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -142,16 +196,15 @@ export function ConditionShares(
             </div>
           )}
           <div className="row">
-            <button className="btn primary btn-sm" disabled={busy || rows.length < 2 || total !== 1_000_000}
-                    onClick={() => void save()}>保存</button>
+            <button className="btn primary btn-sm" disabled={busy || !ok} onClick={() => void save()}>保存</button>
             {shares.length > 0 && (
               <button className="btn btn-sm" disabled={busy} onClick={() => void save(true)}>取り分を外す（相手先 1 者に戻す）</button>
             )}
             <button className="btn btn-sm" onClick={() => setEditing(false)}>やめる</button>
           </div>
           <p className="faint" style={{ margin: 0 }}>
-            全体額を取り分で割るときは四捨五入し、合計が全体を超えたぶんは繰り上げの大きい行から 1 円ずつ引きます。
-            決定済みの計算書は変わりません。
+            料率で入れても、保存するのは全体率との比（取り分）です。計算書は 売上 × 全体率 を出してから取り分で割ります。
+            四捨五入し、合計が全体を超えたぶんは繰り上げの大きい行から 1 円ずつ引きます。決定済みの計算書は変わりません。
           </p>
         </div>
       )}
