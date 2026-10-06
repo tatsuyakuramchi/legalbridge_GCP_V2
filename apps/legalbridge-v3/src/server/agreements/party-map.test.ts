@@ -232,8 +232,10 @@ test("取引先の一覧：契約に載っていない条件明細を数え、�
   const db = new FakeDatabase((t) => t.includes("WITH matched AS") ? [] : []);
   await new PartyAgreementMapService(db).parties({});
   const q = db.find("WITH matched AS")!;
-  assert.ok(q.text.includes("co.agreement_id IS NULL AND co.status NOT IN ('superseded', 'void')"),
-    "取り消し・差し替え済みは数えない");
+  assert.ok(q.text.includes("co.status NOT IN ('superseded', 'void')"), "取り消し・差し替え済みは数えない");
+  assert.ok(q.text.includes("co.agreement_id IS NULL"), "契約に載っていない条件");
+  assert.ok(q.text.includes("COALESCE(kind, 'master') = 'master'"), "基本契約に直接載っている条件も（基本契約は条件を持たない）");
+  assert.ok(q.text.includes("NOT EXISTS") && q.text.includes("hdc.condition_id = co.id"), "発注書・条件書に載っている条件は数えない");
   assert.ok(q.text.includes("OR COALESCE(lc.loose_conditions, 0) > 0)"), "条件だけの取引先も一覧に出す");
 });
 
@@ -248,7 +250,7 @@ test("取引先のマップに、契約に載っていない条件明細を並�
   });
   const map = (await new PartyAgreementMapService(db).forParty(7))!;
   assert.deepEqual(map.looseConditions, [{ id: 31, conditionNo: "CL-2026-00331", name: "ito｜自社製造・自社販売",
-    kind: "license", direction: "in", status: "active", workTitle: "ito", termStart: "2026-10-01" }]);
+    kind: "license", direction: "in", status: "active", workTitle: "ito", termStart: "2026-10-01", masterNo: null }]);
   const q = db.find("FROM conditions co")!;
   assert.deepEqual(q.params, [7]);
   assert.ok(q.text.includes("r.resolved_id = $1"), "統合元の取引先に付いた条件も拾う");
@@ -320,4 +322,22 @@ test("発注書が契約（単体契約・文書だけ）として登録され�
   assert.equal(isOrderAgreement({ kind: "standalone", agreementNo: "ARC-ILT-2026-0036", title: "個別利用許諾条件書" }), false);
   const map = buildPartyMap(party, [a({ id: 9, kind: "standalone", agreementNo: "ARC-PO-2026-0079", conditionCount: 2 })]);
   assert.deepEqual(map.issues.map((i) => i.code), ["order_as_agreement"]);
+});
+
+test("発注書を紐づける：取り込んだ文書は発注書にし、契約に載っていない条件は基本契約へ。相手先が混ざれば断る", async () => {
+  const db = (over: Record<string, unknown> = {}, parties = [5]) => new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF d")) return [{ id: 513, document_no: "ARC-SVC-2026-0013", status: "issued",
+      template_version_id: null, template_key: null, kind: null, ...over }];
+    if (t.includes("JOIN v_party_resolved r ON r.party_id = c.counterparty_id")) return parties.map((p, i) => ({ id: 769 + i, direction: "in", agreement_id: null, resolved_id: p }));
+    if (t.includes("FROM document_conditions dc JOIN conditions c")) return [{ id: 769, direction: "in", agreement_id: null }];
+    if (t.includes("COALESCE(a.kind, 'master') = 'master'")) return [{ id: 90, agreement_no: "ARC-SVC-2026-0001" }];
+    return [];
+  });
+  const ok = db();
+  assert.deepEqual(await new PartyAgreementMapService(ok).linkOrder(513, [769], "k"),
+    { linked: 1, masterNo: "ARC-SVC-2026-0001", documentNo: "ARC-SVC-2026-0013" });
+  assert.match(ok.find("SET manual_inputs")!.text, /"documentKind":"発注書"/, "取り込んだ文書を発注書にする");
+  assert.deepEqual(ok.find("UPDATE conditions SET agreement_id")!.params, [[769], 90]);
+  await assert.rejects(() => new PartyAgreementMapService(db({ template_key: "inspection_certificate", template_version_id: 3 })).linkOrder(1, [769], "k"), /発注書でない/);
+  await assert.rejects(() => new PartyAgreementMapService(db({}, [5, 6])).linkOrder(513, [769, 770], "k"), /相手先の違う/);
 });

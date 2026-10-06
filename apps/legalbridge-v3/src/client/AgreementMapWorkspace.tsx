@@ -10,7 +10,7 @@ import { DocumentImport } from "./DocumentImport.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
-import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
+import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapOrder, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -32,6 +32,13 @@ const DOMAIN_LABEL: Record<AgreementDomain, string> = { service: "業務委託",
 /** 契約として登録された発注書か（サーバの isOrderAgreement と同じ判定）。 */
 const isOrderAgreement = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title">) =>
   (a.kind === "standalone" || a.kind === "document") && /-E?PO-|発注書|purchase_order/i.test(`${a.agreementNo ?? ""} ${a.title ?? ""}`);
+/**
+ * 「発注書（文書）に寄せる」を出す契約。名前で発注書と分かるもののほか、文書だけの契約と
+ * 業務委託の単体契約（番号・件名だけでは発注書か分からない移行分）にも出す。
+ * ライセンスの単体契約（条件書）は条件を持つ契約なので出さない。
+ */
+const canBeOrder = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title" | "domain">) =>
+  isOrderAgreement(a) || a.kind === "document" || (a.kind === "standalone" && a.domain === "service");
 
 export function AgreementMapWorkspace(
   { initialPartyId, onOpen, onRegisterAgreement }: {
@@ -156,6 +163,25 @@ function PartyMapView(
   }
 ) {
   const [editing, setEditing] = useState<number | null>(null);
+  /** 発注書を紐づける欄（文書か条件を選んだ状態で開く）。 */
+  const [poLink, setPoLink] = useState<{ documentId: number | null; conditionIds: number[] } | null>(null);
+  const orders = map.orders ?? [];
+  const orderView = (o: MapOrder) => (
+    <div key={`o${o.id}`} className="amap-node">
+      <div className="amap-line">
+        <span className="tag ghost">発注書</span>
+        {o.imported && <span className="tag ghost">取込</span>}
+        <button className="linky code" onClick={() => onOpen?.("document", o.id)}>{o.documentNo ?? `#${o.id}`}</button>
+        <span>{o.title ?? ""}</span>
+        {o.issuedOn && <span className="faint">{o.issuedOn}</span>}
+        <span className="faint">
+          {o.conditions.length ? `条件 ${o.conditions.length}：${o.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし"}
+        </span>
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                onClick={() => setPoLink({ documentId: o.id, conditionIds: [] })}>条件を紐づける</button>
+      </div>
+    </div>
+  );
   /** 「個別契約にする／単体契約に戻す」の欄を開いている契約。 */
   const [leveling, setLeveling] = useState<number | null>(null);
   const issuesOf = (id: number) => map.issues.filter((i) => i.agreementId === id);
@@ -200,9 +226,9 @@ function PartyMapView(
         </div>
         <div className="panel-bd">
           <p className="faint" style={{ margin: "0 0 10px" }}>
-            取引の形は2つです。<b>（1）基本契約＋個別契約</b>：基本契約の下に個別契約（条件書など）をぶら下げ、条件明細は基本契約の明細になります。
-            <b>（2）単体契約</b>：その取引だけで完結する契約で、条件明細は単体契約に載ります。
-            条件書を先に結んで後から基本契約を結んだ相手は、単体契約の「個別契約にする」で（1）に揃えます。
+            取引の形は2つです。<b>（1）基本契約＋個別の取引</b>：基本契約は条件明細を持たず、その下の発注書（業務委託）・個別契約の条件書（ライセンス）が条件明細を持ちます。
+            <b>（2）単体契約</b>：その取引だけで完結する契約で、条件明細を直接持ちます。
+            持ち主の決まっていない条件明細は下に並ぶので、発注書に紐づけるか、単体契約・個別契約に載せてください。
           </p>
           <div className="amap">
             <div className="amap-party">{map.party.name}</div>
@@ -210,8 +236,11 @@ function PartyMapView(
               {map.roots.map((r: MapNode) => (
                 <div key={r.id} className={`amap-root${r.primary ? " primary" : ""}`}>
                   {node(r, { primary: r.primary })}
-                  {r.children.length > 0 && (
-                    <div className="amap-children">{r.children.map((c) => node(c))}</div>
+                  {(r.children.length > 0 || orders.some((o) => o.masterId === r.id)) && (
+                    <div className="amap-children">
+                      {r.children.map((c) => node(c))}
+                      {orders.filter((o) => o.masterId === r.id).map(orderView)}
+                    </div>
                   )}
                 </div>
               ))}
@@ -220,7 +249,9 @@ function PartyMapView(
                   基本契約・単体契約はありません。
                   {map.unlinked.some((d) => d.role)
                     ? "下の「契約に繋がっていない文書」で、基本契約書 → 条件書 の順に「この文書から立てる」を押してください。残った条件明細は、その下で契約に載せます。"
-                    : (map.unlinked.length > 0 || map.looseConditions.length > 0) && "「契約を登録」で契約を立てると、下の文書・条件明細を繋げます。"}
+                    : map.looseConditions.length > 0
+                      ? "基本契約を結ばず発注書で取引している相手なら、下の「持ち主の決まっていない条件明細」で発注書を紐づけてください（発注書の約款で取引）。基本契約を結んでいるなら、先に「契約を登録」で基本契約を立てると、紐づけた発注書がその下に入ります。"
+                      : map.unlinked.length > 0 && "「契約を登録」で契約を立てると、下の文書を繋げます。"}
                 </div>
               )}
             </div>
@@ -228,12 +259,31 @@ function PartyMapView(
         </div>
       </div>
 
+      {orders.some((o) => o.masterId === null) && (
+        <div className="panel">
+          <div className="panel-hd">
+            <h2>基本契約なしの発注書</h2>
+            <span className="faint">発注書の約款で取引しているもの。基本契約を結んだら、その下に入ります（条件を紐づけ直すと基本契約に載ります）</span>
+          </div>
+          <div className="panel-bd amap-children" style={{ marginLeft: 0 }}>
+            {orders.filter((o) => o.masterId === null).map(orderView)}
+          </div>
+        </div>
+      )}
+
+      {poLink && (
+        <OrderLinkPanel map={map} documentId={poLink.documentId} conditionIds={poLink.conditionIds}
+          onDone={(msg) => { setPoLink(null); onChanged(msg); }} onCancel={() => setPoLink(null)} onError={onError} />
+      )}
+
       {map.unlinked.length > 0 && (
-        <UnlinkedDocuments docs={map.unlinked} map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+        <UnlinkedDocuments docs={map.unlinked} map={map} onOpen={onOpen} onChanged={onChanged} onError={onError}
+          onAsOrder={(id) => setPoLink({ documentId: id, conditionIds: [] })} />
       )}
 
       {map.looseConditions.length > 0 && (
-        <LooseConditions conds={map.looseConditions} map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+        <LooseConditions conds={map.looseConditions} map={map} onOpen={onOpen} onChanged={onChanged} onError={onError}
+          onLinkOrder={(ids) => setPoLink({ documentId: null, conditionIds: ids })} />
       )}
 
       {map.loose.length > 0 && (
@@ -261,9 +311,11 @@ function PartyMapView(
  * 載っていない紙。選んだ契約に繋ぐ（文書のつながり「契約（合意）」と同じ）。
  */
 function UnlinkedDocuments(
-  { docs, map, onOpen, onChanged, onError }: {
+  { docs, map, onOpen, onChanged, onError, onAsOrder }: {
     docs: UnlinkedDocument[]; map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
     onChanged: (msg: string) => void; onError: (msg: string) => void;
+    /** 発注書として扱う（契約に繋がず、条件に紐づける）。 */
+    onAsOrder: (documentId: number) => void;
   }
 ) {
   const readOnly = useReadOnly();
@@ -338,7 +390,11 @@ function UnlinkedDocuments(
                           {hasMaster ? "個別契約として立てる" : "単体契約として立てる"}
                         </button>
                   )}
-                  {!d.role && <span className="faint">—</span>}
+                  {!d.role && (
+                    <button className="btn btn-sm" style={{ whiteSpace: "nowrap" }} disabled={readOnly}
+                            title="発注書は契約に繋がず、条件明細に紐づけます"
+                            onClick={() => onAsOrder(d.id)}>発注書として扱う</button>
+                  )}
                   {d.role && d.conditionCount > 0 && <div className="faint" style={{ fontSize: 12 }}>条件明細 {d.conditionCount} 本</div>}
                 </td>
                 <td>
@@ -373,9 +429,11 @@ function UnlinkedDocuments(
  * 条件が載ると、計算書の「契約番号」や文書の基本契約がこの契約から出る。
  */
 function LooseConditions(
-  { conds, map, onOpen, onChanged, onError }: {
+  { conds, map, onOpen, onChanged, onError, onLinkOrder }: {
     conds: LooseCondition[]; map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
     onChanged: (msg: string) => void; onError: (msg: string) => void;
+    /** 選んだ条件に発注書を紐づける（（1）基本契約の下の発注書が条件を持つ）。 */
+    onLinkOrder: (conditionIds: number[]) => void;
   }
 ) {
   const readOnly = useReadOnly();
@@ -385,8 +443,9 @@ function LooseConditions(
   const chosen = conds.filter((c) => picked.has(c.id));
   const directions = [...new Set(chosen.map((c) => c.direction))];
   // 載せ先は契約本体（基本契約・単体契約・補助文書）。文書だけ・解除合意には載せない。
+  // 条件を直接持つのは単体契約と個別契約（条件書）。基本契約は条件を持たない（発注書が持つ）。
   const targets = [...map.roots.flatMap((r) => [r as MapAgreement, ...r.children]), ...map.loose]
-    .filter((a) => a.kind !== "document" && a.kind !== "termination" && a.status !== "terminated")
+    .filter((a) => (a.kind === "standalone" || a.kind === "supplement") && a.status !== "terminated")
     .filter((a) => directions.length !== 1 || a.direction === directions[0]);
   const toggle = (id: number) => setPicked((p) => {
     const next = new Set(p); if (next.has(id)) next.delete(id); else next.add(id); return next;
@@ -415,7 +474,7 @@ function LooseConditions(
   return (
     <div className="panel">
       <div className="panel-hd" style={{ flexWrap: "wrap", gap: 6 }}>
-        <h2>契約に載っていない条件明細</h2>
+        <h2>持ち主の決まっていない条件明細</h2>
         <span className="tag warn">{conds.length}</span>
         <span className="faint">選んで契約に載せます。取り消し・差し替え済みの条件は出しません</span>
       </div>
@@ -431,7 +490,7 @@ function LooseConditions(
                   {onOpen ? <button className="linky" onClick={() => onOpen("condition", c.id)}>{c.conditionNo ?? `#${c.id}`}</button>
                           : c.conditionNo ?? `#${c.id}`}
                 </td>
-                <td>{c.name}</td>
+                <td>{c.name}{c.masterNo && <span className="tag warn" style={{ marginLeft: 6 }} title="基本契約は条件を持ちません。発注書に紐づけてください">基本契約 {c.masterNo} に直接</span>}</td>
                 <td className="faint">{c.workTitle ?? "—"}</td>
                 <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
                 <td><StatusTag kind="condition" value={c.status} /></td>
@@ -442,21 +501,24 @@ function LooseConditions(
       </div>
       <div className="panel-bd row" style={{ gap: 8, flexWrap: "wrap" }}>
         <span>選んだ {chosen.length} 本を</span>
+        <button className="btn btn-sm primary" disabled={readOnly || !chosen.length || directions.length > 1}
+                onClick={() => onLinkOrder(chosen.map((c) => c.id))}>（1）発注書を紐づける</button>
+        <span className="faint">または（2）単体契約・個別契約に載せる：</span>
         {directions.length > 1
           ? <span className="tag warn">IN と OUT が混ざっています。向きごとに分けて載せてください</span>
           : targets.length
             ? <select value={target} disabled={readOnly || !chosen.length} style={{ maxWidth: 360 }}
                       onChange={(e) => setTarget(e.target.value)}>
-                <option value="">載せる契約を選んでください</option>
+                <option value="">単体契約・個別契約を選んでください</option>
                 {targets.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.agreementNo ?? `#${a.id}`} {a.title}（{KIND_LABEL[a.kind]}・{a.direction === "in" ? "IN" : "OUT"}）
                   </option>
                 ))}
               </select>
-            : <span className="faint">{chosen.length ? "載せられる契約がありません。先に「契約を登録」" : "条件を選んでください"}</span>}
+            : <span className="faint">{chosen.length ? "載せられる単体契約・個別契約がありません" : "条件を選んでください"}</span>}
         <button className="btn btn-sm primary" disabled={readOnly || busy || !target || !chosen.length || directions.length > 1}
-                onClick={() => void attach()}>契約に載せる</button>
+                onClick={() => void attach()}>載せる</button>
       </div>
     </div>
   );
@@ -481,7 +543,7 @@ function AgreementNode(
   /** 条件明細の欄（載っている条件を見る・載せる・外す）を開いているか。 */
   const [condsOpen, setCondsOpen] = useState(false);
   const levelOpen = leveling;
-  const isOrder = isOrderAgreement(a);
+  const isOrder = canBeOrder(a);
   const [toDocBusy, setToDocBusy] = useState(false);
   async function toOrderDocument() {
     if (!window.confirm(`${a.agreementNo ?? `#${a.id}`} は発注書です。契約から外して発注書（文書）にし、載っている条件明細 ${a.conditionCount} 本に紐づけます。よろしいですか？`)) return;
@@ -514,7 +576,11 @@ function AgreementNode(
           : a.kind !== "document" && <span className="tag ghost warn">締結日なし</span>}
         {a.terminatedOn && <span className="faint">解除 {a.terminatedOn}</span>}
         {a.counterparty.merged && <span className="faint" title="統合前の取引先を指しています（参照は付け替えない決まり）">統合元：{a.counterparty.name}</span>}
-        <span className="faint">条件 {a.conditionCount}・文書 {a.documentCount}</span>
+        <span className="faint">
+          {a.kind === "master"
+            ? `発注書・個別契約が条件を持つ${a.conditionCount ? `（条件 ${a.conditionCount}）` : ""}・文書 ${a.documentCount}`
+            : `条件 ${a.conditionCount}・文書 ${a.documentCount}`}
+        </span>
         {a.kind !== "document" && (
           <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setCondsOpen((v) => !v)}>
             {condsOpen ? "条件を閉じる" : "条件"}
@@ -530,7 +596,7 @@ function AgreementNode(
             {toDocBusy ? "寄せています…" : "発注書（文書）に寄せる"}
           </button>
         )}
-        {(canDemote || canPromote) && !isOrder && (
+        {(canDemote || canPromote) && !isOrderAgreement(a) && (
           <button className="btn btn-sm" disabled={readOnly} onClick={onLevel}>
             {levelOpen ? "閉じる" : canDemote ? "個別契約にする" : "単体契約に戻す"}
           </button>
@@ -767,6 +833,102 @@ function RemapForm(
           番号は振り直しません。文書には「{executedOn ? `${Number(executedOn.slice(0, 4))}年${Number(executedOn.slice(5, 7))}月${Number(executedOn.slice(8, 10))}日付` : ""}{a.title}」と出ます。{isRoot ? "基本契約・単体契約にすると親は外れます。" : ""}
           相手先を別の取引先にすると、この取引先の図から外れます。
         </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 発注書を条件明細に紐づける（取引先⇔基本契約の画面から）。
+ * 発注書が条件を持つ。基本契約があれば、紐づけた条件はその基本契約に載る（サーバが載せる）。
+ *   既存の発注書を選ぶ … この取引先の発注書と、契約に繋がっていない文書（発注書として扱う）
+ *   紙・PDF を取り込む … 取り込んだ文書を発注書として紐づける
+ */
+function OrderLinkPanel(
+  { map, documentId, conditionIds, onDone, onCancel, onError }: {
+    map: PartyMap; documentId: number | null; conditionIds: number[];
+    onDone: (msg: string) => void; onCancel: () => void; onError: (msg: string) => void;
+  }
+) {
+  const orders = map.orders ?? [];
+  const asOrder = map.unlinked.filter((d) => !d.role);
+  const [docId, setDocId] = useState<number | null>(documentId);
+  const [picked, setPicked] = useState<Set<number>>(new Set(conditionIds));
+  const [mode, setMode] = useState<"link" | "import">(orders.length || asOrder.length || documentId ? "link" : "import");
+  const [busy, setBusy] = useState(false);
+  const ids = [...picked];
+  const toggle = (id: number) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  async function link(target: number | null = docId) {
+    if (!target || !ids.length) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ linked: number; masterNo: string | null; documentNo: string | null }>(
+        "/agreement-map/orders/link", { documentId: target, conditionIds: ids });
+      onDone(`${r.documentNo ?? "発注書"} を条件明細 ${r.linked} 本に紐づけました`
+        + (r.masterNo ? `（基本契約 ${r.masterNo} の下の発注書）` : "（基本契約なし＝発注書の約款）"));
+    } catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>発注書を紐づける</h2>
+        <span className="faint">発注書が条件明細を持ちます。基本契約があれば、紐づけた条件明細はその基本契約の下の発注書になります</span>
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onCancel}>閉じる</button>
+      </div>
+      <div className="panel-bd stack" style={{ gap: 10 }}>
+        <div className="stack" style={{ gap: 4 }}>
+          <b>紐づける条件明細</b>
+          {map.looseConditions.length
+            ? map.looseConditions.map((c) => (
+              <label key={c.id} className="row" style={{ gap: 6 }}>
+                <input type="checkbox" checked={picked.has(c.id)} onChange={() => toggle(c.id)} />
+                <span className="code">{c.conditionNo ?? `#${c.id}`}</span><span>{c.name}</span>
+                <span className="faint">{c.workTitle ?? ""}</span>
+              </label>
+            ))
+            : <span className="faint">持ち主の決まっていない条件明細はありません</span>}
+        </div>
+        <div className="row" role="group" style={{ gap: 6 }}>
+          <button type="button" className="chip" aria-pressed={mode === "link"} onClick={() => setMode("link")}>既存の発注書・文書を選ぶ</button>
+          <button type="button" className="chip" aria-pressed={mode === "import"} onClick={() => setMode("import")}>紙・PDF を取り込む</button>
+        </div>
+        {mode === "link" && (
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="picker" style={{ maxHeight: 240, overflowY: "auto" }}>
+              {orders.map((o) => (
+                <label key={`o${o.id}`} className="row" style={{ gap: 6, padding: "2px 0" }}>
+                  <input type="radio" name="po" checked={docId === o.id} onChange={() => setDocId(o.id)} />
+                  <span className="tag ghost">発注書</span><span className="code">{o.documentNo ?? `#${o.id}`}</span>
+                  <span>{o.title ?? ""}</span>
+                  <span className="faint">{o.conditions.length ? `紐づき：${o.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし"}</span>
+                </label>
+              ))}
+              {asOrder.map((d) => (
+                <label key={`u${d.id}`} className="row" style={{ gap: 6, padding: "2px 0" }}>
+                  <input type="radio" name="po" checked={docId === d.id} onChange={() => setDocId(d.id)} />
+                  <span className="tag ghost">文書</span><span className="code">{d.documentNo ?? `#${d.id}`}</span>
+                  <span>{d.title ?? d.label}</span>
+                  <span className="faint">契約に繋がっていない文書（発注書として扱う）</span>
+                </label>
+              ))}
+              {!orders.length && !asOrder.length && <span className="faint">この取引先の発注書はまだありません。紙・PDF を取り込んでください</span>}
+            </div>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn primary btn-sm" disabled={busy || !docId || !ids.length} onClick={() => void link()}>
+                {busy ? "紐づけています…" : `選んだ条件明細 ${ids.length} 本に紐づける`}
+              </button>
+            </div>
+          </div>
+        )}
+        {mode === "import" && (
+          ids.length
+            ? <DocumentImport key={ids.join(",")} conditionIds={ids} defaultKind="発注書" initialMode="import"
+                onDone={() => undefined} onRegistered={(id) => void link(id)} />
+            : <span className="faint">紐づける条件明細を選んでください</span>
+        )}
       </div>
     </div>
   );
