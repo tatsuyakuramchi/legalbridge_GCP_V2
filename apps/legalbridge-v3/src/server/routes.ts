@@ -93,6 +93,7 @@ import { buildAccountingBundle } from "./exports/accounting-bundle.js";
 import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
+import { EbookSalesImportService, readRows as readEbookSalesRows } from "./imports/ebook-sales.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
@@ -206,6 +207,7 @@ export function createRoutes(database: Transactable) {
   const accounting = new AccountingExportRepository(database);
   const accountingLedger = new AccountingExportLedger(database);
   const imports = new ImportService(database);
+  const ebookSales = new EbookSalesImportService(database, conditionEvents);
   const ops = new OpsRepository(database);
   const snippets = new SnippetService(database);
   const ringi = new RingiService(database);
@@ -1251,6 +1253,48 @@ export function createRoutes(database: Transactable) {
     }));
 
   // CSV の一括取込。必ず先に試算（dryRun）を通す。
+  // ---- 電子書籍売上の取込（A-069。docs/royalty-shares.md §5）----
+  // 1. ファイル（XLSX / CSV）を行に直す。書かない。
+  router.post("/imports/ebook-sales/parse",
+    requireRole("admin", "legal"),
+    express.raw({ type: () => true, limit: "26mb" }),
+    asyncRoute(async (req, res) => {
+      const filename = String(req.query.filename ?? "").trim() || null;
+      res.json(readEbookSalesRows(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), { filename }));
+    }));
+  const ebookRowSchema = z.object({
+    sheet: z.string().max(200), line: z.coerce.number().int(),
+    month: z.string().regex(/^\d{4}-\d{2}$/),
+    storeCompany: z.string().max(200).nullable(), store: z.string().max(200).nullable(),
+    title: z.string().trim().min(1).max(400), authors: z.string().max(400).nullable(),
+    cid: z.string().max(60).nullable(),
+    listPrice: z.coerce.number().int().min(0), storeRatePct: z.coerce.number().nullable(),
+    downloads: z.coerce.number().int().min(0), netAmount: z.coerce.number().nullable(),
+    royaltyInFile: z.coerce.number().nullable()
+  });
+  const ebookRowsSchema = z.object({ rows: z.array(ebookRowSchema).min(1).max(20000) });
+  // 2. 突合（作品・条件・登録済み）。書かない。
+  router.post("/imports/ebook-sales/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const { rows } = ebookRowsSchema.parse(req.body ?? {});
+      res.json(await ebookSales.preview(rows));
+    }));
+  // 3. 登録。突合をもう一度通し、登録できる行だけ実績にする。
+  router.post("/imports/ebook-sales/commit", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = ebookRowsSchema.extend({ onlyKeys: z.array(z.string().max(500)).max(5000).optional() }).parse(req.body ?? {});
+      res.status(201).json(await ebookSales.commit(input.rows, actor(res), { onlyKeys: input.onlyKeys }));
+    }));
+  // CID → 作品 を決める（覚える）。
+  router.put("/imports/ebook-sales/codes", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        cid: z.string().trim().min(1).max(60), workId: z.coerce.number().int().positive(),
+        title: z.string().trim().max(400).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await ebookSales.mapCode(input.cid, input.workId, input.title ?? null, actor(res)));
+    }));
+
   router.get("/imports", asyncRoute(async (_req, res) => {
     res.json({ specs: IMPORT_SPECS });
   }));

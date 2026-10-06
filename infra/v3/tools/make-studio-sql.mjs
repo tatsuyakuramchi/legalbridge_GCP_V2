@@ -303,6 +303,10 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 69, '電子書籍売上の取込（A-069。表 1 であること）',
+         (SELECT count(*) FROM information_schema.tables
+           WHERE table_schema='v3' AND table_name='ebook_work_codes')::text
+  UNION ALL
   SELECT 68, '共著の取り分（A-068。表 1・列 2・索引 1 で 4 であること）',
          ((SELECT count(*) FROM information_schema.tables
             WHERE table_schema='v3' AND table_name='condition_shares')

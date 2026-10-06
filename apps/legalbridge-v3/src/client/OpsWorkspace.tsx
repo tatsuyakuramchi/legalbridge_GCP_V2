@@ -3,6 +3,7 @@ import { StatusTag } from "./labels.js";
 import { CsvBar } from "./CsvBar.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
+import { EbookSalesImport } from "./EbookSalesImport.js";
 import { Leftovers } from "./Leftovers.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
@@ -200,7 +201,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
 
       {tab === "leftovers" && <Leftovers />}
 
-      {tab === "imports" && <CsvImport />}
+      {tab === "imports" && (<><EbookSalesImport /><CsvImport /></>)}
 
       {tab === "snippets" && <TextSnippets />}
       {tab === "statement-models" && <StatementModels />}

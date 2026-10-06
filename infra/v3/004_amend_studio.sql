@@ -2400,6 +2400,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS statements_document_condition_payee_uq
 CREATE INDEX IF NOT EXISTS statements_payee_idx
   ON v3.statements (payee_party_id) WHERE payee_party_id IS NOT NULL;
 
+-- ---------------------------------------------------------------------
+-- A-069 電子書籍売上の取込（docs/royalty-shares.md §5）
+--   事業部の月次 Excel（販売月・書店・タイトル・CID・販売価格・DL数）を読んで、
+--   作品の電子出版の IN 条件に実績（usage_type='pub_digital'）を立てる。
+--   作品は CID（書店の配信コード）で当てる。当て方は一度決めたら覚える。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS v3.ebook_work_codes (
+  cid        text PRIMARY KEY,
+  work_id    bigint NOT NULL REFERENCES v3.works(id),
+  title      text,
+  created_by text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ebook_work_codes_work_idx ON v3.ebook_work_codes (work_id);
+COMMENT ON TABLE v3.ebook_work_codes IS
+  '電子書籍の配信コード（CID）→ 作品。売上の取込で当てた結果を覚える。A-069';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.ebook_work_codes TO legalbridge_v3_runtime;
+
 COMMIT;
 
 
@@ -2673,6 +2691,10 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 69, '電子書籍売上の取込（A-069。表 1 であること）',
+         (SELECT count(*) FROM information_schema.tables
+           WHERE table_schema='v3' AND table_name='ebook_work_codes')::text
   UNION ALL
   SELECT 68, '共著の取り分（A-068。表 1・列 2・索引 1 で 4 であること）',
          ((SELECT count(*) FROM information_schema.tables

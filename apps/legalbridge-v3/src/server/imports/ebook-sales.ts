@@ -1,0 +1,416 @@
+import type { Queryable, Transactable } from "../core/db.js";
+import { int, str } from "../core/db.js";
+import { DomainError, translate } from "../core/errors.js";
+import { recordAudit } from "../core/audit.js";
+import { roundRoyalty } from "../royalty/rounding.js";
+import { parseCsv } from "./parse.js";
+import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xlsx.js";
+
+/**
+ * 電子書籍売上の取込（A-069。docs/royalty-shares.md §5）。
+ *
+ * 事業部から月次で来る Excel（シート＝月。販売月・書店会社名・書店名・タイトル・
+ * 著者名・CID・販売価格・料率・支払い単価・DL数・税抜き金額・印税）を読み、
+ * 作品の電子出版（pub_digital）の IN 条件に実績を立てる。
+ *
+ *   1. 読む     … XLSX か CSV を行に直す（readRows）。見出しの名前で列を当てる。
+ *   2. 当てる   … CID → 作品（ebook_work_codes）。無ければタイトルが一致する作品。
+ *                 作品 → 有効な電子出版の料率条件。無ければ「印税なし」か「条件なし」。
+ *   3. まとめる … 条件 × 販売月 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
+ *   4. 登録     … 通常の実績の登録（ConditionEventService.add）を呼ぶ。取込だけ別の
+ *                 規則で入ると、画面から入れた行と品質が変わる。出版の実績は台帳の
+ *                 「報告を追加」と同じ形（利用形態なし・総額＝報告売上）で、料率は
+ *                 計算書を出すときに条件から掛かる。
+ *
+ * 必ず試算（preview）を見てから登録する。登録は同じ突合をもう一度通す（画面の値は信用しない）。
+ * 同じ月を二度入れない：条件 × 期間 × 販売価格 の実績がすでにあれば「登録済み」として飛ばす。
+ */
+
+export interface EbookSalesRow {
+  sheet: string;
+  line: number;
+  /** YYYY-MM */
+  month: string;
+  storeCompany: string | null;
+  store: string | null;
+  title: string;
+  authors: string | null;
+  cid: string | null;
+  /** 販売価格（税抜の配信価格）。円。 */
+  listPrice: number;
+  /** 書店の掛率（%）。参考。 */
+  storeRatePct: number | null;
+  downloads: number;
+  /** 税抜き金額（書店からの入金ベース）。参考。 */
+  netAmount: number | null;
+  /** Excel が出していた印税。突合の参考。 */
+  royaltyInFile: number | null;
+}
+
+export interface ReadResult {
+  rows: EbookSalesRow[];
+  sheets: Array<{ name: string; rows: number; note: string | null }>;
+}
+
+const HEADERS = {
+  month: ["販売月"],
+  storeCompany: ["書店会社名"],
+  store: ["書店名"],
+  title: ["コンテンツ名称", "タイトル名称"],
+  authors: ["著者名"],
+  cid: ["CID"],
+  listPrice: ["販売価格"],
+  storeRatePct: ["料率"],
+  downloads: ["DL数"],
+  netAmount: ["税抜き金額"],
+  royalty: ["印税"]
+} as const;
+
+const norm = (v: CellValue): string => String(v ?? "").replace(/\s+/g, " ").trim();
+const numOf = (v: CellValue): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return v;
+  const n = Number(String(v).replace(/[,¥￥\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+
+/** 販売月。シリアル値・日付文字列・「2026/01」「2026年1月」を YYYY-MM に。 */
+export function monthOf(v: CellValue): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") {
+    const d = serialToDate(v);
+    return d ? d.slice(0, 7) : null;
+  }
+  const s = String(v).trim();
+  const m = s.match(/^(\d{4})[-/年.](\d{1,2})(?:[-/月.]\d{0,2}日?)?/);
+  if (!m) return null;
+  return `${m[1]}-${String(Number(m[2])).padStart(2, "0")}`;
+}
+
+/** 販売月の末日（実績の発生日）。 */
+export function monthEnd(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+}
+
+export function monthLabel(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return `${y}年${m}月分`;
+}
+
+function headerIndex(row: CellValue[]): Record<keyof typeof HEADERS, number> | null {
+  const cells = row.map(norm);
+  const find = (names: readonly string[]) => {
+    for (const n of names) { const i = cells.indexOf(n); if (i >= 0) return i; }
+    return -1;
+  };
+  const idx = Object.fromEntries(
+    (Object.keys(HEADERS) as Array<keyof typeof HEADERS>).map((k) => [k, find(HEADERS[k])])
+  ) as Record<keyof typeof HEADERS, number>;
+  if (idx.month < 0 || idx.downloads < 0 || idx.title < 0 || idx.listPrice < 0) return null;
+  return idx;
+}
+
+/** シートの表（見出し行＋データ行）を行に直す。見出しの無いシートは飛ばす。 */
+export function rowsOfSheet(name: string, cells: CellValue[][]): { rows: EbookSalesRow[]; note: string | null } {
+  let headerAt = -1;
+  let idx: ReturnType<typeof headerIndex> = null;
+  for (let i = 0; i < Math.min(cells.length, 10); i += 1) {
+    idx = headerIndex(cells[i] ?? []);
+    if (idx) { headerAt = i; break; }
+  }
+  if (!idx) return { rows: [], note: "売上の表ではありません（販売月・タイトル・販売価格・DL数 の見出しが無い）" };
+  const rows: EbookSalesRow[] = [];
+  let footer = 0;
+  for (let i = headerAt + 1; i < cells.length; i += 1) {
+    const r = cells[i] ?? [];
+    const at = (k: keyof typeof HEADERS) => (idx![k] >= 0 ? r[idx![k]] ?? null : null);
+    const title = norm(at("title"));
+    const month = monthOf(at("month"));
+    const downloads = numOf(at("downloads"));
+    const listPrice = numOf(at("listPrice"));
+    if (!title || !month) { if (r.some((c) => c !== null && c !== "")) footer += 1; continue; }
+    if (downloads === null || listPrice === null) { footer += 1; continue; }
+    rows.push({
+      sheet: name, line: i + 1, month,
+      storeCompany: norm(at("storeCompany")) || null,
+      store: norm(at("store")) || null,
+      title,
+      authors: norm(at("authors")) || null,
+      cid: norm(at("cid")) || null,
+      listPrice: Math.round(listPrice),
+      storeRatePct: numOf(at("storeRatePct")),
+      downloads: Math.round(downloads),
+      netAmount: numOf(at("netAmount")),
+      royaltyInFile: numOf(at("royalty"))
+    });
+  }
+  return { rows, note: footer ? `${footer} 行は合計・備考として読み飛ばし` : null };
+}
+
+export function readWorkbookRows(workbook: Workbook): ReadResult {
+  const out: ReadResult = { rows: [], sheets: [] };
+  // 年次の集計ファイルは、全体のシートと支払先ごとのシートに同じ行が載る。
+  // シートをまたいで同じ行（月・書店・題名・価格・DL数・金額）は 1 回だけ数える。
+  const seen = new Set<string>();
+  for (const sheet of workbook.sheets) {
+    const r = rowsOfSheet(sheet.name, sheet.rows);
+    let repeated = 0;
+    for (const row of r.rows) {
+      const key = [row.month, row.storeCompany, row.store, row.title, row.cid, row.listPrice, row.downloads, row.netAmount].join("|");
+      if (seen.has(key)) { repeated += 1; continue; }
+      seen.add(key);
+      out.rows.push(row);
+    }
+    const notes = [r.note, repeated ? `${repeated} 行は他のシートと同じ行として読み飛ばし` : null].filter(Boolean);
+    out.sheets.push({ name: sheet.name, rows: r.rows.length - repeated, note: notes.length ? notes.join("・") : null });
+  }
+  if (!out.rows.length) throw new DomainError("VALIDATION", "売上の行がありません（販売月・タイトル・販売価格・DL数 の列があるシートが要ります）");
+  return out;
+}
+
+/** ファイル（XLSX か CSV）を行に直す。 */
+export function readRows(data: Buffer, options: { filename?: string | null } = {}): ReadResult {
+  if (data.length >= 2 && data[0] === 0x50 && data[1] === 0x4b) return readWorkbookRows(readWorkbook(data));
+  let text = data.toString("utf-8");
+  if (text.includes("�")) {
+    try { text = new TextDecoder("shift_jis").decode(data); } catch { /* UTF-8 のまま */ }
+  }
+  const csv = parseCsv(text, { maxRows: 20000 });
+  const cells: CellValue[][] = [csv.headers, ...csv.rows.map((r) => csv.headers.map((h) => r[h] ?? null))];
+  const name = options.filename ?? "CSV";
+  const r = rowsOfSheet(name, cells);
+  if (!r.rows.length) throw new DomainError("VALIDATION", r.note ?? "売上の行がありません");
+  return { rows: r.rows, sheets: [{ name, rows: r.rows.length, note: r.note }] };
+}
+
+// ---------------------------------------------------------------------
+// 突合と登録
+// ---------------------------------------------------------------------
+
+export type GroupStatus =
+  | "ok"            // 登録できる
+  | "duplicate"     // もう登録してある（条件 × 期間 × 販売価格）
+  | "no_royalty"    // 作品はあるが電子出版の料率条件が無い（買い切り・社内制作など）
+  | "no_condition"  // 作品はあるが条件が 1 本も無い（登録漏れの疑い）
+  | "unresolved"    // 作品が分からない（CID もタイトルも当たらない）
+  | "zero";         // DL 0 または価格 0
+
+export interface SalesGroup {
+  key: string;
+  cid: string | null;
+  title: string;
+  authors: string | null;
+  month: string;
+  listPrice: number;
+  downloads: number;
+  /** 配信価格 × DL数。 */
+  gross: number;
+  stores: string[];
+  lines: number;
+  status: GroupStatus;
+  message: string | null;
+  work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
+  condition: { id: number; conditionNo: string | null; ratePpm: number | null;
+               counterparty: string | null; shares: string[] } | null;
+  /** 配信価格 × DL数 × 料率（四捨五入）。登録できる行だけ。 */
+  royalty: number | null;
+  /** Excel が出していた印税の合計。突合の参考。 */
+  royaltyInFile: number | null;
+  /** 候補の作品（タイトルが部分一致）。作品が分からないときの当て先。 */
+  candidates: Array<{ id: number; title: string; workCode: string | null }>;
+}
+
+export interface SalesPreview {
+  groups: SalesGroup[];
+  counts: Record<GroupStatus, number>;
+  months: string[];
+}
+
+export interface EventWriter {
+  add(conditionId: number, input: {
+    eventType: "sales"; occurredOn: string; period: string | null; quantity: number;
+    grossAmount: number; amount: number; note: string | null; unitAmount: number; workId: number;
+  }, actor: string): Promise<{ id: number }>;
+}
+
+/** 題名の突合の鍵。空白（全角含む）を落として小文字に。SQL 側（regexp_replace）と同じ規則。 */
+export const normalizeTitle = (t: string) => t.replace(/[\s　]+/g, "").toLowerCase();
+
+export class EbookSalesImportService {
+  constructor(private readonly database: Transactable, private readonly events: EventWriter) {}
+
+  /** 行をまとめて突合する。書かない。 */
+  async preview(rows: EbookSalesRow[]): Promise<SalesPreview> {
+    try { return await this.resolve(this.database, rows); }
+    catch (error) { throw translate(error); }
+  }
+
+  /** 登録できる行を実績にする。突合はここでもう一度行う。 */
+  async commit(rows: EbookSalesRow[], actor: string, options: { onlyKeys?: string[] } = {}) {
+    try {
+      const preview = await this.resolve(this.database, rows);
+      const picked = new Set(options.onlyKeys ?? []);
+      const results: Array<{ key: string; eventId: number | null; status: GroupStatus | "error"; message: string | null }> = [];
+      let written = 0;
+      for (const g of preview.groups) {
+        if (g.status !== "ok" || (picked.size && !picked.has(g.key))) {
+          results.push({ key: g.key, eventId: null, status: g.status, message: g.message });
+          continue;
+        }
+        try {
+          // 台帳の「報告を追加」と同じ形。総額＝実額＝報告売上（配信価格 × DL数）。
+          // 料率は計算書を出すときに条件から掛かる（取り分もそこで割る）。
+          const r = await this.events.add(g.condition!.id, {
+            eventType: "sales", occurredOn: monthEnd(g.month), period: monthLabel(g.month),
+            quantity: g.downloads, grossAmount: g.gross, amount: g.gross,
+            note: `電子書籍売上取込 ${g.month}（${g.stores.slice(0, 3).join("・")}${g.stores.length > 3 ? " ほか" : ""}）`,
+            unitAmount: g.listPrice, workId: g.work!.id
+          }, actor);
+          written += 1;
+          results.push({ key: g.key, eventId: r.id, status: "ok", message: null });
+          // CID をタイトルで当てたなら、次からは CID で当たるように覚える。
+          if (g.cid && g.work && g.work.via === "title") {
+            await this.rememberCode(this.database, g.cid, g.work.id, g.title, actor);
+          }
+        } catch (error) {
+          const e = error instanceof DomainError ? error.message : String(error);
+          results.push({ key: g.key, eventId: null, status: "error", message: e });
+        }
+      }
+      await recordAudit(this.database, {
+        actor, action: "ebook_sales.import", targetType: "import", targetId: 0,
+        detail: { rows: rows.length, groups: preview.groups.length, written, months: preview.months }
+      });
+      return { written, results, preview };
+    } catch (error) { throw translate(error); }
+  }
+
+  /** CID → 作品 を決める（覚える）。 */
+  async mapCode(cid: string, workId: number, title: string | null, actor: string) {
+    try {
+      const code = String(cid ?? "").trim();
+      if (!code) throw new DomainError("VALIDATION", "CID が空です");
+      const w = await this.database.query("SELECT id, title FROM works WHERE id = $1", [workId]);
+      if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${workId} が見つかりません`);
+      await this.rememberCode(this.database, code, workId, title, actor);
+      return { cid: code, workId, workTitle: String((w.rows[0] as { title: string }).title) };
+    } catch (error) { throw translate(error); }
+  }
+
+  private async rememberCode(client: Queryable, cid: string, workId: number, title: string | null, actor: string) {
+    await client.query(
+      `INSERT INTO ebook_work_codes (cid, work_id, title, created_by) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (cid) DO UPDATE SET work_id = EXCLUDED.work_id, title = EXCLUDED.title, created_by = EXCLUDED.created_by`,
+      [cid, workId, title, actor]);
+    await recordAudit(client, {
+      actor, action: "ebook_sales.map_code", targetType: "work", targetId: workId, detail: { cid, title }
+    });
+  }
+
+  private async resolve(client: Queryable, rows: EbookSalesRow[]): Promise<SalesPreview> {
+    // まとめる：CID（無ければタイトル）× 販売月 × 販売価格。
+    const groups = new Map<string, SalesGroup>();
+    for (const r of rows) {
+      const id = r.cid ? `cid:${r.cid}` : `title:${normalizeTitle(r.title)}`;
+      const key = `${id}|${r.month}|${r.listPrice}`;
+      const g = groups.get(key) ?? {
+        key, cid: r.cid, title: r.title, authors: r.authors, month: r.month, listPrice: r.listPrice,
+        downloads: 0, gross: 0, stores: [], lines: 0, status: "unresolved" as GroupStatus, message: null,
+        work: null, condition: null, royalty: null, royaltyInFile: null, candidates: []
+      };
+      g.downloads += r.downloads;
+      g.gross += r.listPrice * r.downloads;
+      g.lines += 1;
+      if (r.store && !g.stores.includes(r.store)) g.stores.push(r.store);
+      if (r.royaltyInFile !== null) g.royaltyInFile = (g.royaltyInFile ?? 0) + r.royaltyInFile;
+      groups.set(key, g);
+    }
+    const list = [...groups.values()];
+
+    // CID → 作品（覚えたもの）。
+    const cids = [...new Set(list.map((g) => g.cid).filter((c): c is string => Boolean(c)))];
+    const codeRows = cids.length ? (await client.query(
+      `SELECT c.cid, w.id, w.title, w.work_code FROM ebook_work_codes c JOIN works w ON w.id = c.work_id
+        WHERE c.cid = ANY($1::text[])`, [cids])).rows as Array<Record<string, any>> : [];
+    const byCid = new Map(codeRows.map((r) => [String(r.cid), { id: Number(r.id), title: String(r.title), workCode: str(r.work_code) }]));
+
+    // タイトル → 作品（完全一致。空白と全角半角の違いは無視）。
+    const titles = [...new Set(list.filter((g) => !(g.cid && byCid.has(g.cid))).map((g) => g.title))];
+    const titleRows = titles.length ? (await client.query(
+      `SELECT id, title, work_code FROM works
+        WHERE status <> 'archived' AND regexp_replace(lower(title), '[[:space:]　]', '', 'g') = ANY($1::text[])`,
+      [titles.map(normalizeTitle)])).rows as Array<Record<string, any>> : [];
+    const byTitle = new Map<string, Array<{ id: number; title: string; workCode: string | null }>>();
+    for (const r of titleRows) {
+      const k = normalizeTitle(String(r.title));
+      byTitle.set(k, [...(byTitle.get(k) ?? []), { id: Number(r.id), title: String(r.title), workCode: str(r.work_code) }]);
+    }
+
+    for (const g of list) {
+      if (g.cid && byCid.has(g.cid)) g.work = { ...byCid.get(g.cid)!, via: "cid" };
+      else {
+        const hits = byTitle.get(normalizeTitle(g.title)) ?? [];
+        if (hits.length === 1) g.work = { ...hits[0], via: "title" };
+        else if (hits.length > 1) { g.message = `同じ題名の作品が ${hits.length} 件あります。CID の当て先を選んでください`; g.candidates = hits; }
+      }
+    }
+
+    // 作品 → 条件。電子出版（pub_digital）の料率条件が本命。他の IN 条件は「印税なし」の判定に使う。
+    const workIds = [...new Set(list.map((g) => g.work?.id).filter((x): x is number => Boolean(x)))];
+    const condRows = workIds.length ? (await client.query(
+      `SELECT c.id, c.condition_no, c.work_id, c.usage_type, c.pricing_model, c.rate_ppm, c.status, c.effective_from,
+              p.name AS party_name,
+              (SELECT string_agg(sp.name || ' ' || (s.share_ppm / 10000.0)::text || '%', '・' ORDER BY s.sort_order)
+                 FROM condition_shares s JOIN parties sp ON sp.id = s.party_id WHERE s.condition_id = c.id) AS shares
+         FROM conditions c LEFT JOIN parties p ON p.id = c.counterparty_id
+        WHERE c.work_id = ANY($1::bigint[]) AND c.direction = 'in' AND c.kind = 'license'
+          AND c.status IN ('active', 'scheduled')
+        ORDER BY c.work_id, c.effective_from NULLS FIRST, c.id`, [workIds])).rows as Array<Record<string, any>> : [];
+
+    // 登録済みの検査：条件 × 期間 × 販売価格（改訂の全版）。
+    const condIds = [...new Set(condRows.map((c) => Number(c.id)))];
+    const existing = condIds.length ? (await client.query(
+      `SELECT c.id AS condition_id, e.period, e.unit_amount
+         FROM condition_events e
+         JOIN conditions c ON COALESCE(c.series_id, c.id) = (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = e.condition_id)
+        WHERE e.status = 'active' AND e.event_type = 'sales' AND c.id = ANY($1::bigint[])
+          AND e.condition_id IN (SELECT x.id FROM conditions x WHERE COALESCE(x.series_id, x.id) IN
+                                   (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = ANY($1::bigint[])))`,
+      [condIds])).rows as Array<Record<string, any>> : [];
+    const existingKeys = new Set(existing.map((e) => `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}`));
+
+    for (const g of list) {
+      if (!g.work) { g.status = "unresolved"; g.message ??= g.cid ? "この CID の作品がまだ決まっていません" : "同じ題名の作品がありません（CID も無い）"; continue; }
+      if (!(g.downloads > 0) || !(g.listPrice > 0)) { g.status = "zero"; g.message = "DL 数か販売価格が 0"; continue; }
+      const mine = condRows.filter((c) => Number(c.work_id) === g.work!.id);
+      const digital = mine.filter((c) => c.usage_type === "pub_digital" && c.pricing_model === "revenue_rate" && c.status === "active");
+      if (!digital.length) {
+        g.status = mine.length ? "no_royalty" : "no_condition";
+        g.message = mine.length
+          ? "電子出版の料率条件が無い（買い切り・社内制作など）ので印税なし"
+          : "この作品に条件が 1 本もありません（登録漏れなら条件を作ってから）";
+        continue;
+      }
+      if (digital.length > 1) {
+        g.status = "no_condition";
+        g.message = `電子出版の料率条件が ${digital.length} 本あり、どれに載せるか決められません（${digital.map((c) => c.condition_no ?? `#${c.id}`).join("・")}）`;
+        continue;
+      }
+      const c = digital[0];
+      g.condition = { id: Number(c.id), conditionNo: str(c.condition_no), ratePpm: int(c.rate_ppm),
+                      counterparty: str(c.party_name), shares: c.shares ? String(c.shares).split("・") : [] };
+      g.royalty = roundRoyalty((g.gross * (int(c.rate_ppm) ?? 0)) / 1_000_000);
+      const dupKey = `${Number(c.id)}|${monthLabel(g.month)}|${g.listPrice}`;
+      if (existingKeys.has(dupKey)) { g.status = "duplicate"; g.message = "同じ月・同じ販売価格の実績がもうあります"; continue; }
+      if (!(g.royalty > 0)) { g.status = "zero"; g.message = "料率を掛けると 0 円"; continue; }
+      g.status = "ok"; g.message = null;
+    }
+
+    const counts: Record<GroupStatus, number> = { ok: 0, duplicate: 0, no_royalty: 0, no_condition: 0, unresolved: 0, zero: 0 };
+    for (const g of list) counts[g.status] += 1;
+    list.sort((a, b) => a.month.localeCompare(b.month) || a.title.localeCompare(b.title, "ja") || a.listPrice - b.listPrice);
+    return { groups: list, counts, months: [...new Set(list.map((g) => g.month))].sort() };
+  }
+}
