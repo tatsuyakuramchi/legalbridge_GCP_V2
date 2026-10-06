@@ -76,7 +76,7 @@ test("販売月の読み方と、実績の発生日・期間の名前", () => {
 // ---- 突合と登録 ----
 
 const row = (over: Partial<EbookSalesRow>): EbookSalesRow => ({
-  sheet: "2026年1月", line: 2, month: "2026-01", storeCompany: "ドワンゴ", store: "BOOKWALKER（PC）",
+  sheet: "2026年1月", line: 2, month: "2026-01", reportMonth: over.month ?? "2026-01", storeCompany: "ドワンゴ", store: "BOOKWALKER（PC）",
   title: "キズナバレット 1", authors: "からすば晴┴N.G.P.", cid: "BT0001", listPrice: 1900, storeRatePct: 55,
   downloads: 11, netAmount: 11495, royaltyInFile: 3135, ...over
 });
@@ -130,6 +130,26 @@ test("CID で作品に当たり、電子出版の料率条件にまとめて実�
   assert.equal(w.added[0].input.unitAmount, 1900);
   assert.equal(w.added[0].input.quantity, 14);
   assert.equal(w.added[0].input.workId, 7);
+});
+
+test("期間はシート名の月（報告月）。遅れて報告された販売月の行も同じ報告月にまとめ、販売月は備考に書く", async () => {
+  const w = writer();
+  const svc = new EbookSalesImportService(db({ codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL] }), w as any);
+  // シート「2026年3月」に 販売月 2026-01 と 2025-11 の行。
+  const rows = [row({ sheet: "2026年3月", reportMonth: "2026-03", month: "2026-01" }),
+                row({ sheet: "2026年3月", reportMonth: "2026-03", month: "2025-11", store: "Kindle", downloads: 2 })];
+  const p = await svc.preview(rows);
+  assert.equal(p.groups.length, 1, "報告月 × 価格 で 1 件");
+  assert.equal(p.groups[0].month, "2026-03");
+  assert.deepEqual(p.groups[0].salesMonths, ["2026-01", "2025-11"]);
+  assert.deepEqual(p.months, ["2026-03"]);
+  await svc.commit(rows, "tester");
+  assert.equal(w.added[0].input.period, "2026年3月分", "計算書の製品名は「2026年3月 作品名」になる");
+  assert.equal(w.added[0].input.occurredOn, "2026-03-31");
+  assert.match(String(w.added[0].input.note), /販売月 2026-01・2025-11/);
+  // シート名が月でなければ（CSV）販売月で持つ。
+  const csv = await svc.preview([row({ sheet: "売上.csv", reportMonth: null, month: "2026-01" })]);
+  assert.equal(csv.groups[0].month, "2026-01");
 });
 
 test("CID が無ければ題名で当てる。登録したら CID を覚える", async () => {

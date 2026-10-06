@@ -1265,6 +1265,8 @@ export function createRoutes(database: Transactable) {
   const ebookRowSchema = z.object({
     sheet: z.string().max(200), line: z.coerce.number().int(),
     month: z.string().regex(/^\d{4}-\d{2}$/),
+    // 報告月（シート名の月）。古い画面から来る行には無いので、無ければ販売月で持つ。
+    reportMonth: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional().default(null),
     storeCompany: z.string().max(200).nullable(), store: z.string().max(200).nullable(),
     title: z.string().trim().min(1).max(400), authors: z.string().max(400).nullable(),
     cid: z.string().max(60).nullable(),

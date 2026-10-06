@@ -10,7 +10,7 @@ import type { BundleLine } from "../documents/royalty-patch.js";
  * 作者が結んでいない契約なので、名前も番号も出さない。
  *
  *   対象契約  2024年4月1日付利用許諾基本契約 / 2025年7月31日付利用許諾契約書
- *   契約番号  ARC-LIC-2024-0012 / ARC-ILT-2026-0037
+ *   契約番号  ARC-ILT-2026-0037（条件に付いた個別契約の番号。個別契約が無いときだけ基本契約の番号）
  *
  * 基本契約 … 条件が載っている契約が基本契約ならそれ、補助文書なら親の基本契約。
  *            単体契約は基本契約ではない（個別の側に出す）。
@@ -28,7 +28,12 @@ export function inContractRefText(master: Part | null, individual: Part | null):
     master ? agreementDatedTitle(master.title, master.on) : undefined,
     individual ? agreementDatedTitle(individual.title, individual.on) : undefined
   ].filter(Boolean).join(" / ");
-  return { title, number: contractRefText(master?.no, individual?.no) };
+  // 契約番号は条件に付いた個別契約（条件書・単体契約・覚書）の番号。基本契約の番号を
+  // 並べると「ARC-LIC-2024-0012 / ARC-ILT-2026-0037」と長くなり、作者が自分の契約を
+  // 探しにくい。個別契約が無いときだけ基本契約の番号。
+  const individualNo = String(individual?.no ?? "").trim();
+  const number = individualNo || contractRefText(master?.no, null);
+  return { title, number };
 }
 
 export async function inContractRef(

@@ -467,7 +467,7 @@ export class DocumentContextRepository {
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
               oa.agreement_no AS out_agreement_no,
               op.name AS out_party_name, ow.title AS out_work_title,
-              w.title AS in_work_title, w.kind AS in_work_kind,
+              w.title AS in_work_title, w.kind AS in_work_kind, c.usage_type AS in_usage_type,
               ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
               e.work_id AS event_work_id, ew.title AS event_work_title,
               s.contract_form AS schedule_contract_form,
@@ -520,7 +520,8 @@ export class DocumentContextRepository {
           inWorkKind: str(row.in_work_kind),
           childTitles: Array.isArray(row.child_titles) ? row.child_titles : null,
           eventWorkTitle: str(row.event_work_title),
-          eventScope: eventScopeLabel(row.scope_languages, row.scope_regions)
+          eventScope: eventScopeLabel(row.scope_languages, row.scope_regions),
+          inUsageType: str(row.in_usage_type), period: str(row.period)
         }) || null,
         /** 実績の言語・地域（A-061）。 */
         scope: eventScopeLabel(row.scope_languages, row.scope_regions),

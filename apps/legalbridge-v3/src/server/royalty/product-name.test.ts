@@ -19,6 +19,18 @@ test("自社製造・自社販売：原作から作った当社作品が1つな�
     childTitles: ["ito 製品"] }), "ito 製品");
 });
 
+test("出版（紙・電子）の実績は、期間の月＋作品名（事業部のシート名＋作品名）", () => {
+  assert.equal(statementProductName({ usageType: null, inUsageType: "pub_digital", period: "2026年3月分",
+    inWorkTitle: "キズナバレット 1", inWorkKind: "own", eventWorkTitle: "キズナバレット 1" }), "2026年3月 キズナバレット 1");
+  assert.equal(statementProductName({ usageType: null, inUsageType: "pub_print", period: "2026上期",
+    inWorkTitle: "星降る夜のはなし", inWorkKind: "own" }), "2026上期 星降る夜のはなし");
+  // 期間が無ければ作品名だけ。出版以外の条件は付けない。
+  assert.equal(statementProductName({ usageType: null, inUsageType: "pub_digital", period: null,
+    inWorkTitle: "キズナバレット 1", inWorkKind: "own" }), "キズナバレット 1");
+  assert.equal(statementProductName({ usageType: "in_house", inUsageType: "in_house", period: "2026年3月分",
+    inWorkTitle: "ito", inWorkKind: "own" }), "ito");
+});
+
 test("再許諾・他社販売：アウト条件の条件名（製品名＋相手先名を書く運用）", () => {
   assert.equal(statementProductName({ usageType: "sublicense", outConditionName: "ito 英語版（Sublicensee Ltd.）",
     outWorkTitle: "ito", inWorkTitle: "ito 原作" }), "ito 英語版（Sublicensee Ltd.）");
