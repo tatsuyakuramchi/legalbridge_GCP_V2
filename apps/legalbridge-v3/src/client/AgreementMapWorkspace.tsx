@@ -29,6 +29,9 @@ const KIND_LABEL: Record<AgreementKind, string> = {
   master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書", termination: "解除合意", document: "文書だけ"
 };
 const DOMAIN_LABEL: Record<AgreementDomain, string> = { service: "業務委託", license: "ライセンス" };
+/** 契約として登録された発注書か（サーバの isOrderAgreement と同じ判定）。 */
+const isOrderAgreement = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title">) =>
+  (a.kind === "standalone" || a.kind === "document") && /-E?PO-|発注書|purchase_order/i.test(`${a.agreementNo ?? ""} ${a.title ?? ""}`);
 
 export function AgreementMapWorkspace(
   { initialPartyId, onOpen, onRegisterAgreement }: {
@@ -478,6 +481,19 @@ function AgreementNode(
   /** 条件明細の欄（載っている条件を見る・載せる・外す）を開いているか。 */
   const [condsOpen, setCondsOpen] = useState(false);
   const levelOpen = leveling;
+  const isOrder = isOrderAgreement(a);
+  const [toDocBusy, setToDocBusy] = useState(false);
+  async function toOrderDocument() {
+    if (!window.confirm(`${a.agreementNo ?? `#${a.id}`} は発注書です。契約から外して発注書（文書）にし、載っている条件明細 ${a.conditionCount} 本に紐づけます。よろしいですか？`)) return;
+    setToDocBusy(true);
+    try {
+      const r = await api.post<{ documentNo: string; created: boolean; conditionsLinked: number; masterNo: string | null }>(
+        `/agreement-map/agreements/${a.id}/to-order-document`, {});
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を発注書（文書 ${r.documentNo}${r.created ? "・新しく登録" : ""}）にし、条件明細 ${r.conditionsLinked} 本に紐づけました。`
+        + (r.masterNo ? `条件明細は基本契約 ${r.masterNo} に載せました` : "基本契約が無いので、条件明細は発注書の約款で取引する扱い（契約なし）です"));
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setToDocBusy(false); }
+  }
   const canDemote = a.kind === "standalone";
   const canPromote = a.kind === "supplement" && Boolean(a.parentId);
   return (
@@ -508,7 +524,13 @@ function AgreementNode(
                 onClick={() => setDocsOpen((v) => !v)}>
           {docsOpen ? "文書を閉じる" : "文書"}
         </button>
-        {(canDemote || canPromote) && (
+        {isOrder && (
+          <button className="btn btn-sm primary" disabled={readOnly || toDocBusy} onClick={() => void toOrderDocument()}
+                  title="発注書は文書として持ちます。契約から外し、発注書の文書として条件明細に紐づけます">
+            {toDocBusy ? "寄せています…" : "発注書（文書）に寄せる"}
+          </button>
+        )}
+        {(canDemote || canPromote) && !isOrder && (
           <button className="btn btn-sm" disabled={readOnly} onClick={onLevel}>
             {levelOpen ? "閉じる" : canDemote ? "個別契約にする" : "単体契約に戻す"}
           </button>

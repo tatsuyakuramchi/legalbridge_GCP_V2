@@ -350,6 +350,24 @@ export class SettledBatchService {
     return out;
   }
 
+  /** 条件（系列）に繋がっている有効な発注書。作ったもの・取り込んだもの（種類＝発注書）。 */
+  private async orderOf(conditionId: number): Promise<{ id: number; documentNo: string | null } | null> {
+    const r = await this.database.query(
+      `SELECT d.id, d.document_no
+         FROM document_conditions dc
+         JOIN documents d ON d.id = dc.document_id AND d.status = 'issued'
+         LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+         LEFT JOIN document_templates t ON t.id = tv.template_id
+        WHERE dc.condition_id IN (SELECT x.id FROM conditions x
+                                   WHERE COALESCE(x.series_id, x.id) =
+                                         (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = $1))
+          AND (t.template_key IN ('purchase_order', 'intl_purchase_order')
+               OR (t.template_key IS NULL AND d.manual_inputs->>'documentKind' = '発注書'))
+        ORDER BY d.issued_at DESC NULLS LAST, d.id DESC LIMIT 1`, [conditionId]);
+    const row = r.rows[0] as { id: number; document_no: string | null } | undefined;
+    return row ? { id: Number(row.id), documentNo: str(row.document_no) } : null;
+  }
+
   /** 既存の条件がいま持っている紙・実績・支払。畳まずに入れると2重になるものの数。 */
   private async holdingsOf(conditionId: number):
     Promise<{ events: number; documents: number; payments: number; paid: number }> {
@@ -508,19 +526,29 @@ export class SettledBatchService {
     }
 
     // 発注書。決定日は発注日で焼く。
+    // 既存の条件に、もう発注書（作ったもの・取り込んだもの）が繋がっていれば作り直さない。
+    // 作ると同じ取引に発注書が 2 枚でき、番号も 2 つになる（発注書は文書として 1 枚）。
     mark("発注書");
-    const orderManual: Record<string, unknown> = {
-      items: g.rows.map((r) => r.item), _batchId: batchId,
-      ...this.toggles(g),
-      ...(g.specialTerms ? { SPECIAL_TERMS: g.specialTerms } : {})
-    };
-    const orderDraft = await this.issues.createDraft({
-      templateKey: ORDER_TEMPLATE, conditionIds: [conditionId], matterId,
-      manualInputs: orderManual
-    }, actor);
-    const order = await this.issues.issue(orderDraft.id, actor, { issuedOn: g.orderedOn });
-    await this.database.query(
-      "UPDATE documents SET batch_id = $2 WHERE id = $1", [orderDraft.id, batchId]);
+    const existingOrder = g.condition.id ? await this.orderOf(g.condition.id) : null;
+    let orderDraft: { id: number };
+    let order: { documentNo: string | null };
+    if (existingOrder) {
+      orderDraft = { id: existingOrder.id };
+      order = { documentNo: existingOrder.documentNo };
+    } else {
+      const orderManual: Record<string, unknown> = {
+        items: g.rows.map((r) => r.item), _batchId: batchId,
+        ...this.toggles(g),
+        ...(g.specialTerms ? { SPECIAL_TERMS: g.specialTerms } : {})
+      };
+      orderDraft = await this.issues.createDraft({
+        templateKey: ORDER_TEMPLATE, conditionIds: [conditionId], matterId,
+        manualInputs: orderManual
+      }, actor);
+      order = await this.issues.issue(orderDraft.id, actor, { issuedOn: g.orderedOn });
+      await this.database.query(
+        "UPDATE documents SET batch_id = $2 WHERE id = $1", [orderDraft.id, batchId]);
+    }
 
     // 実績。1行が1件。予定の回に繋げないと、検収書の支払日が空で出る。
     mark("実績");

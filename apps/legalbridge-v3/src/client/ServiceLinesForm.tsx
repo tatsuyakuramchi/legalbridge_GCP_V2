@@ -147,10 +147,51 @@ export function ServiceLinesForm(
     && (!hasContractor || licMode === "none" || contractorWithoutWork.length === 0)
     && (payMode !== "periodic" || (periodFrom && periodTo));
 
-  async function submit() {
-    if (!ready || busy) return;
+  /**
+   * 同じ相手・同じ品目（名前と種類、行に作品があれば作品も）の生きた条件が既にある行。
+   * 取引を進めるで入れ直すと、既に登録してある発注の条件と 2 重になる。作る前に見せる。
+   */
+  const [dupes, setDupes] = useState<Array<{ key: number; name: string; existing: Array<{ id: number; conditionNo: string | null; name: string; work: string | null }> }> | null>(null);
+  const norm = (v: string) => v.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
+  async function findDupes(): Promise<NonNullable<typeof dupes>> {
+    if (!partyId) return [];
+    const r = await api.get<{ conditions: Array<{ id: number; conditionNo: string | null; name: string; kind: string; status: string;
+      work: { id: number; title: string } | null }> }>(`/conditions?counterpartyId=${partyId}&direction=in`);
+    const live = r.conditions.filter((c) => ["active", "draft", "scheduled"].includes(c.status));
+    return lines.flatMap((l) => {
+      const name = norm(l.name || (l.kind === "service" ? title : ""));
+      if (!name) return [];
+      const work = rowWork(l);
+      const hit = live.filter((c) => c.kind === l.kind && norm(c.name) === name && (!work || !c.work || String(c.work.id) === work));
+      return hit.length ? [{ key: l.key, name: l.name || title, existing: hit.map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name, work: c.work?.title ?? null })) }] : [];
+    });
+  }
+
+  /** 重複した行は既存の条件を使い（案件に繋ぐ）、残りの行だけ作る。 */
+  async function useExisting() {
+    if (!dupes) return;
     setBusy(true); setError(null);
     try {
+      const matter = int(preset?.matterId ?? "");
+      const used = dupes.map((d) => d.existing[0]);
+      if (matter) for (const c of used) await api.post(`/matters/${matter}/conditions`, { conditionId: c.id }).catch(() => undefined);
+      const rest = lines.filter((l) => !dupes.some((d) => d.key === l.key));
+      setDupes(null);
+      if (rest.some((l) => l.kind === "service")) { setBusy(false); await submit(true, rest); return; }
+      onDone({ conditions: used.map((c) => ({ usageType: "service", id: c.id, conditionNo: c.conditionNo })), licenseConditions: [], scheduled: 0 });
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  async function submit(force = false, only: Line[] | null = null) {
+    if (!ready || busy) return;
+    setBusy(true); setError(null);
+    const lines_ = only ?? lines;
+    try {
+      if (!force) {
+        const found = await findDupes();
+        if (found.length) { setDupes(found); return; }
+      }
       const scopes = [
         ...parseRegions(licRegions).map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
         ...parseLanguages(licLanguages).map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
@@ -161,7 +202,7 @@ export function ServiceLinesForm(
         termStart: text(termStart) ?? null, termEnd: null,
         currency, taxCategory: tax, paymentTerms: text(paymentTerms) ?? null,
         contractForm: text(contractForm) ?? null, deliverableOwnership: ownership || null,
-        rows: lines.map((l) => ({
+        rows: lines_.map((l) => ({
           kind: l.kind, name: text(l.name) ?? null,
           pricingModel: l.kind === "service" ? "unit_rate" : "fixed",
           unitAmount: l.kind === "service" ? Math.round(num(l.unitPrice)) : null,
@@ -385,6 +426,24 @@ export function ServiceLinesForm(
         </div>
 
         {error && <div className="alert">{error}</div>}
+        {dupes && (
+          <div className="alert stack" style={{ gap: 6 }}>
+            <b>同じ相手・同じ品目の条件が既にあります（2 重に作らないため確かめてください）</b>
+            {dupes.map((d) => (
+              <div key={d.key}>
+                「{d.name}」→ {d.existing.map((c) => `${c.conditionNo ?? `#${c.id}`} ${c.name}${c.work ? `（${c.work}）` : ""}`).join("、")}
+              </div>
+            ))}
+            <span className="faint">既に発注した条件なら、新しく作らずに既存の条件を使ってください（発注書も既存のものを紐づけます）。</span>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button className="btn primary btn-sm" disabled={busy} onClick={() => void useExisting()}>
+                {preset?.matterId ? "既存の条件をこの案件に繋ぐ（重複しない行だけ作る）" : "重複している行を外して作る"}
+              </button>
+              <button className="btn btn-sm" disabled={busy} onClick={() => { setDupes(null); void submit(true); }}>別の発注なので全部作る</button>
+              <button className="btn btn-sm" onClick={() => setDupes(null)}>やめる</button>
+            </div>
+          </div>
+        )}
         <div className="row">
           <button className="btn primary" disabled={!ready || busy} onClick={() => void submit()}>
             {busy ? "登録しています…" : `条件明細 ${lines.length} 本を登録する`}
