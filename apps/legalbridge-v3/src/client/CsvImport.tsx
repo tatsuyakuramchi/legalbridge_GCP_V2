@@ -9,6 +9,8 @@ interface Spec {
   updatable?: boolean; updateColumns?: string[]; updateSample?: string; updateHint?: string;
   /** 既存に当てる取り込みしかできない（基本契約）。 */
   updateOnly?: boolean;
+  /** 登録済みを同じ列で書き出す口。 */
+  exportPath?: string; exportLabel?: string;
 }
 type Mode = "create" | "update";
 interface RowOutcome {
@@ -107,6 +109,9 @@ export function CsvImport({ initialKind, lockKind, onApplied }: {
 
         {/* 出す・入れるを分けて出す。見本は「雛形（空）」の段に置く。 */}
         <CsvBar style={{ margin: "10px 0" }}
+          exports={spec?.exportPath
+            ? [{ value: spec.kind, label: spec.exportLabel ?? `登録済みの${spec.label}`, href: `/api/v3${spec.exportPath}` }]
+            : undefined}
           onPick={(text, name) => { setCsv(text); setPicked(name); setReport(null); }}
           picked={picked}
           onClearPick={() => { setCsv(""); setPicked(null); setReport(null); }}

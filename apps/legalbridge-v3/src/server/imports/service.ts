@@ -13,7 +13,7 @@ import { FEE_BASIS } from "./fee-basis.js";
 import { PartyAgreementMapService } from "../agreements/party-map.js";
 import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_UPDATE_COLUMNS,
          agreementCsvPatch } from "../agreements/csv.js";
-import { PUB_WORKS_SAMPLE, PubWorksImportService } from "./pub-works.js";
+import { PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from "./pub-works.js";
 
 /**
  * CSV の一括取込。
@@ -56,6 +56,9 @@ export interface ImportSpec {
   updateHint?: string;
   /** 既存に当てる取り込みしかできない（新しく作るのは画面から）。 */
   updateOnly?: boolean;
+  /** 登録済みを同じ列で書き出す口（API の相対パス）。書き出して直してそのまま取り込める。 */
+  exportPath?: string;
+  exportLabel?: string;
 }
 
 export const IMPORT_SPECS: ImportSpec[] = [
@@ -87,7 +90,17 @@ export const IMPORT_SPECS: ImportSpec[] = [
     required: ["作品名", "相手先"],
     optional: ["作品コード", "カナ", "相手先コード", "紙料率", "電子料率", "独占", "取り分", "分配", "CID",
                "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"],
-    sample: PUB_WORKS_SAMPLE
+    sample: PUB_WORKS_SAMPLE,
+    updatable: true,
+    updateHint: "当てる先は 作品コード（無ければ 作品名）。相手先を書けばその相手先の条件だけ。" +
+                "料率・独占・開始日・終了日・支払条件・備考・地域・言語は紙と電子の条件に、取り分・分配は電子（無ければ紙）の条件から作品全体に、" +
+                "CID・カナ・著作権表示・第三者権利・作品備考・事業区分は作品に当てます。" +
+                "料率が書いてあって条件が無い媒体は、その媒体の条件を新しく作ります。取り分を消すときは「なし」。" +
+                "「登録済みの出版作品」を書き出して直すのが早道です",
+    updateColumns: ["紙料率", "電子料率", "独占", "取り分", "分配", "CID", "開始日", "終了日", "支払条件", "備考", "地域", "言語",
+                    "カナ", "著作権表示", "第三者権利", "作品備考", "事業区分"],
+    updateSample: PUB_WORKS_UPDATE_SAMPLE,
+    exportPath: "/imports/pub-works/export.csv", exportLabel: "登録済みの出版作品（作品 × 相手先で 1 行）"
   },
   {
     kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
@@ -242,6 +255,9 @@ export class ImportService {
     this.pubWorks = new PubWorksImportService(database, { works: this.works, conditions: this.conditions });
   }
 
+  /** 登録済みの出版作品を、出版作品の取込と同じ列で書き出す。 */
+  exportPubWorks(): Promise<string> { return this.pubWorks.exportCsv(); }
+
   async run(input: {
     kind: ImportKind; csv: string; dryRun: boolean; actor: string; mode?: ImportMode;
   }): Promise<ImportReport> {
@@ -284,7 +300,7 @@ export class ImportService {
     const rows: RowOutcome[] = [];
     if (input.kind === "pub_works") {
       // 出版作品の一括登録。作品が無ければ作り、紙・電子の条件と取り分、CID を 1 行で入れる。
-      return this.pubWorks.run(parsed.rows, input.dryRun, input.actor);
+      return this.pubWorks.run(parsed.rows, input.dryRun, input.actor, mode);
     }
     if (input.kind === "license_conditions" && mode === "create") {
       return this.licenseConditions(parsed.rows, input.dryRun, input.actor);
