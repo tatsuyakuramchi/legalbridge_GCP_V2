@@ -4059,7 +4059,8 @@ export function createRoutes(database: Transactable) {
     status: z.enum(["active", "retired"]).optional(),
     // 英語表記（A-049）。海外版の書類だけが使う。
     nameEn: z.string().trim().max(120).nullable().optional(),
-    departmentEn: z.string().trim().max(120).nullable().optional()
+    departmentEn: z.string().trim().max(120).nullable().optional(),
+    slackUserId: z.string().trim().max(30).nullable().optional()
   });
   router.patch("/staff/:id",
     requireRole("admin", "legal"), requireWritable,
@@ -4773,6 +4774,14 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = z.object({ body: z.string().trim().min(1).max(8000) }).parse(req.body ?? {});
       res.status(201).json(await communications.note(Number(req.params.id), input, actor(res)));
+    }));
+
+  // 案件の Slack の宛先（人の U… かチャンネルの C…）。空で外す。
+  router.put("/matters/:id/slack-recipient",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { slackId } = z.object({ slackId: z.string().trim().max(30).nullable() }).parse(req.body ?? {});
+      res.json(await communications.setSlackRecipient(Number(req.params.id), slackId || null, actor(res)));
     }));
 
   router.post("/matters/:id/communications/slack",

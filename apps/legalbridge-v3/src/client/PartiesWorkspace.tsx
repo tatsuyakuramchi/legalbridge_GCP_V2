@@ -32,6 +32,8 @@ interface Staff {
   email: string | null; department: string | null; phone: string | null; status: string;
   /** 英語表記（A-049）。海外版の発注書の From に出る。 */
   nameEn?: string | null; departmentEn?: string | null;
+  /** Slack のメンバー ID。案件から Slack で送るときの宛先。 */
+  slackUserId?: string | null;
 }
 
 const ROLE_LABEL: Record<string, string> = { primary: "主担当", signer: "署名者", billing: "請求先" };
@@ -190,7 +192,7 @@ export function PartiesWorkspace(
           <div className="tablewrap">
             <table>
               <thead><tr>
-                <th>コード</th><th>氏名</th><th>部門</th><th>メール</th><th>電話</th>
+                <th>コード</th><th>氏名</th><th>部門</th><th>メール</th><th>電話</th><th>Slack ID</th>
                 <th>英語表記（氏名／部門）</th>
                 <th>状態</th><th></th>
               </tr></thead>
@@ -198,7 +200,7 @@ export function PartiesWorkspace(
                 {staff.map((s) => (
                   <StaffRow key={s.id} row={s} onSaved={reload} />
                 ))}
-                {!staff.length && <tr><td colSpan={8} className="faint">担当者がいません</td></tr>}
+                {!staff.length && <tr><td colSpan={9} className="faint">担当者がいません</td></tr>}
               </tbody>
             </table>
           </div>
@@ -367,7 +369,8 @@ function StaffRow({ row, onSaved }: { row: Staff; onSaved: () => void }) {
       await api.patch(`/staff/${row.id}`, {
         name: draft.name, email: draft.email, department: draft.department,
         phone: draft.phone, status: draft.status,
-        nameEn: draft.nameEn ?? null, departmentEn: draft.departmentEn ?? null
+        nameEn: draft.nameEn ?? null, departmentEn: draft.departmentEn ?? null,
+        slackUserId: draft.slackUserId ?? null
       });
       setEditing(false);
       onSaved();
@@ -386,6 +389,7 @@ function StaffRow({ row, onSaved }: { row: Staff; onSaved: () => void }) {
           {row.email ?? <span className="tag out">未登録</span>}
         </td>
         <td className="faint">{row.phone ?? "—"}</td>
+        <td className="faint code">{row.slackUserId ?? "—"}</td>
         {/* 海外版の発注書の From に出る。空なら日本語のまま出る。 */}
         <td className="faint">{[row.nameEn, row.departmentEn].filter(Boolean).join(" ／ ") || "—"}</td>
         <td><StatusTag kind="staff" value={row.status} /></td>
@@ -394,7 +398,7 @@ function StaffRow({ row, onSaved }: { row: Staff; onSaved: () => void }) {
     );
   }
 
-  const cell = (key: "name" | "email" | "department" | "phone" | "nameEn" | "departmentEn", placeholder?: string) => (
+  const cell = (key: "name" | "email" | "department" | "phone" | "nameEn" | "departmentEn" | "slackUserId", placeholder?: string) => (
     <td>
       <input value={draft[key] ?? ""} placeholder={placeholder} disabled={busy}
              onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} />
@@ -408,6 +412,7 @@ function StaffRow({ row, onSaved }: { row: Staff; onSaved: () => void }) {
       {cell("department", "ボードゲーム事業部")}
       {cell("email", "asai@example.co.jp")}
       {cell("phone", "03-0000-0000")}
+      {cell("slackUserId", "U0123ABCD")}
       <td className="stack" style={{ gap: 4 }}>
         <input value={draft.nameEn ?? ""} placeholder="Taro Yamada（氏名・英語）" disabled={busy}
                onChange={(e) => setDraft({ ...draft, nameEn: e.target.value })} />

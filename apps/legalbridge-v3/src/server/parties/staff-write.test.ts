@@ -67,3 +67,11 @@ test("英語表記（氏名・部署）を入れられる。空文字は消す",
   assert.equal(r.nameEn, "Takashi Asai");
   assert.equal(r.departmentEn, null);
 });
+
+test("Slack のメンバー ID を入れられる（大文字にそろえる）。形の違うものは断る", async () => {
+  const d = db([{ ...ROW, slack_user_id: "U07IKEDA1" }]);
+  const r = await new PartyWriteService(d).updateStaff(3, { slackUserId: " u07ikeda1 " }, "k");
+  assert.equal(r.slackUserId, "U07IKEDA1");
+  assert.deepEqual(d.find("UPDATE staff")!.params, [3, "U07IKEDA1"]);
+  await assert.rejects(() => new PartyWriteService(db()).updateStaff(3, { slackUserId: "ikeda" }, "k"), /メンバー ID/);
+});
