@@ -55,6 +55,9 @@ const dateOrRange = (name: string, label: string): Column[] => [
 const royaltyOnly: ShowWhen = { field: "calc_method", anyOf: ["ROYALTY"] };
 const subscriptionOnly: ShowWhen = { field: "calc_method", anyOf: ["SUBSCRIPTION"] };
 const notSubscription: ShowWhen = { field: "calc_method", anyOf: ["", "FIXED", "ROYALTY"] };
+/** 品目の納品の形。役務提供なら納期の代わりに提供期間の欄を出す。 */
+const serviceOnly: ShowWhen = { field: "delivery_kind", anyOf: ["SERVICE"] };
+const notService: ShowWhen = { field: "delivery_kind", anyOf: ["", "DELIVERABLE"] };
 
 /** 発注書の品目。発注書の本文が calc_method で単価・納期・支払日の出し方を切り替える。 */
 export const ITEM_COLUMNS: Column[] = [
@@ -73,7 +76,14 @@ export const ITEM_COLUMNS: Column[] = [
               { value: "ROYALTY", label: "業績連動（利用許諾料・インセンティブ報酬）" },
               { value: "SUBSCRIPTION", label: "定期支払" }],
     helpText: "未選択は固定額として出る" },
-  { name: "delivery_date", label: "納期", type: "date", showWhen: notSubscription },
+  { name: "delivery_kind", label: "納品の形", type: "select", showWhen: notSubscription,
+    options: [{ value: "DELIVERABLE", label: "成果物納品（納期を書く）" },
+              { value: "SERVICE", label: "役務提供（提供期間を書く）" }],
+    helpText: "役務提供にすると、納期ではなく提供期間（開始〜終了）を書く。未選択は納期" },
+  { name: "delivery_date", label: "納期", type: "date", showWhen: [notSubscription, notService] },
+  { name: "term_start", label: "役務提供期間（開始）", type: "date", showWhen: [notSubscription, serviceOnly] },
+  { name: "term_end", label: "役務提供期間（終了）", type: "date", showWhen: [notSubscription, serviceOnly],
+    helpText: "1日だけの作業なら開始と同じ日。空欄なら「開始日〜」と出る" },
   { name: "payment_date", label: "支払日", type: "date", showWhen: notSubscription },
   { name: "reward_label", label: "確定報酬の名称", showWhen: royaltyOnly,
     helpText: "金額（税抜）が0なら「報酬は利用許諾料に含む」と出る。未入力時は「執筆料」" },
@@ -112,7 +122,7 @@ const INTL_LABELS: Record<string, string> = {
   item_name: "品目・業務名（Item / Deliverable）", spec: "仕様・成果物（Specification）",
   quantity: "数量（Qty）", unit_price: "単価（Unit Price）", amount_ex_tax: "金額（Amount）",
   payment_terms: "契約種別（Contract type）", deliverable_ownership: "成果物の帰属先（Ownership）",
-  calc_method: "支払方法（Payment）", delivery_date: "納期（Delivery）", payment_date: "支払日（Payment date）",
+  calc_method: "支払方法（Payment）", delivery_kind: "納品の形（Delivery / Service）", delivery_date: "納期（Delivery）", payment_date: "支払日（Payment date）",
   reward_label: "確定報酬の名称（Fee label）", calc_type: "計算式（Formula）", fixed_kind: "固定値の支払（Fixed fee）",
   subscription_cycle: "サブスクの周期（Cycle）", rate_pct: "料率（Rate %）", base_price_label: "基準価格（Base price）",
   formula_text: "計算式の補足（Formula note）", guarantee_type: "最低保証（Guarantee）", mg_amount: "MG",
@@ -121,6 +131,8 @@ const INTL_LABELS: Record<string, string> = {
 };
 const INTL_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
   deliverable_ownership: [{ value: "発注者", label: "Purchaser (assignment)" }, { value: "受注者", label: "Contractor (licensed)" }],
+  delivery_kind: [{ value: "DELIVERABLE", label: "Deliverable（納期 Delivery）" },
+                  { value: "SERVICE", label: "Service（提供期間 Service period）" }],
   calc_method: [{ value: "FIXED", label: "Fixed fee" }, { value: "ROYALTY", label: "Performance-based (license / incentive fee)" },
                 { value: "SUBSCRIPTION", label: "Recurring" }],
   calc_type: [{ value: "BASE_QTY_RATE", label: "Base price × units × rate" }, { value: "BASE_RATE", label: "Base price × rate" },
@@ -146,7 +158,9 @@ export const INTL_ITEM_COLUMNS: Column[] = ITEM_COLUMNS.flatMap((c) => {
     ...c,
     label: INTL_LABELS[c.name] ?? c.label,
     ...(INTL_OPTIONS[c.name] ? { options: INTL_OPTIONS[c.name] } : {}),
-    ...(INTL_HELP[c.name] ? { helpText: INTL_HELP[c.name] } : {}),
+    // 定期支払の欄にだけ効く説明（役務提供の欄には付けない）。
+    ...(INTL_HELP[c.name] && !(Array.isArray(c.showWhen) && c.showWhen.includes(serviceOnly))
+      ? { helpText: INTL_HELP[c.name] } : {}),
     ...(c.name === "payment_terms" ? { suggestions: CONTRACT_FORMS_EN } : {})
   };
   // サブスクの支払日を英文でそのまま印字する欄（海外版だけ）。
