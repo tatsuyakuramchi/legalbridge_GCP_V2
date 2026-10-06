@@ -15,6 +15,7 @@ interface Row { sheet: string; line: number; month: string; reportMonth: string 
 type Status = "ok" | "duplicate" | "no_royalty" | "no_condition" | "unresolved" | "zero";
 interface Group {
   key: string; cid: string | null; title: string; volume: string | null; authors: string | null; month: string; salesMonths: string[];
+  store: string | null;
   listPrice: number; downloads: number; gross: number; stores: string[]; lines: number;
   status: Status; message: string | null;
   work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
@@ -119,7 +120,7 @@ export function EbookSalesImport() {
             <div className="tablewrap">
               <table>
                 <thead>
-                  <tr><th title="シート名の月。期間と計算書の製品名（月＋作品名）になる">報告月</th><th>タイトル</th><th>CID</th><th>作品 → 条件</th><th className="num">価格</th>
+                  <tr><th title="シート名の月。期間と計算書の製品名（月＋作品名）になる">報告月</th><th>タイトル</th><th>書店</th><th>CID</th><th>作品 → 条件</th><th className="num">価格</th>
                       <th className="num">DL</th><th className="num">報告売上</th><th className="num">印税（見込み）</th>
                       <th className="num" title="事業部の Excel が出していた印税">Excel</th><th>判定</th></tr>
                 </thead>
@@ -133,6 +134,7 @@ export function EbookSalesImport() {
                       </td>
                       <td>{g.title}{g.volume && g.volume !== "1" && <span className="faint">　第{g.volume}巻</span>}
                         <div className="faint" style={{ fontSize: "0.85em" }}>{g.authors ?? ""}</div></td>
+                      <td className="faint">{g.store ?? "—"}</td>
                       <td className="code faint">{g.cid ?? "—"}</td>
                       <td>
                         {g.work ? <>{g.work.title}{g.work.via === "title" && <span className="faint">（題名で当てた）</span>}</> : <span className="faint">—</span>}

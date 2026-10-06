@@ -74,6 +74,11 @@ export type RevenueTerms = {
   type: "revenue";
   base_amount: number; // 報告金額（基準売上/被許諾者受領額）
   rate_pct: number; // 料率 %
+  /**
+   * 総額を実績ごとに出して足したもの（出版の印税。実績ごとに切り捨て）。
+   * 入っていれば 報告金額 × 料率 を掛け直さず、これを総額にする。
+   */
+  gross_override?: number | null;
 };
 
 export type FeeTerms =
@@ -173,6 +178,11 @@ function calcGross(terms: FeeTerms, adj: Adjustments): {
       // 売上報告型 = 報告金額 × 料率（数量なし）。
       const base = Number(terms.base_amount) || 0;
       const rate = Number(terms.rate_pct) || 0;
+      if (terms.gross_override !== null && terms.gross_override !== undefined) {
+        // 実績ごとに切り捨てて足した総額（出版の印税）。合計で掛け直すと 1 円ずれる。
+        const gross = Number(terms.gross_override) || 0;
+        return { gross, breakdown: `${base} × ${rate}%（実績ごとに切り捨て）= ${gross}` };
+      }
       const gross = roundRoyalty(base * (rate / 100));
       const breakdown = `${base} × ${rate}% = ${gross}`;
       return { gross, breakdown };

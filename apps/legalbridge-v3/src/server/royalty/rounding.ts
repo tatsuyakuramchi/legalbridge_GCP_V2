@@ -8,6 +8,9 @@
  * 決まり（2026-09 変更）:
  *
  *   利用許諾料  四捨五入  roundRoyalty
+ *   出版の印税  実績ごとに切り捨て  floorRoyalty（2026-10。事業部の Excel が
+ *               行＝報告月 × 書店 × タイトル ごとに ROUNDDOWN しているので、
+ *               取込の実績もその行ごとに立て、行ごとに切り捨てて足す）
  *   消費税      切り捨て  floorTax
  *
  * それ以前は「消費税・その他の中間計算とも ceil で統一」だった。ceil は
@@ -24,6 +27,9 @@
  * 許諾料は正の額しか出ないので、これで四捨五入になる。
  */
 export const roundRoyalty = (value: number): number => Math.round(value);
+
+/** 出版（紙・電子）の印税。実績 1 件ごとに 売上 × 料率 を切り捨てる（事業部の Excel と同じ）。 */
+export const floorRoyalty = (value: number): number => Math.floor(value);
 
 /** 消費税額。切り捨て。 */
 export const floorTax = (value: number): number => Math.floor(value);

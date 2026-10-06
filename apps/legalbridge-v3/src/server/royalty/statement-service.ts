@@ -12,7 +12,10 @@ import {
   basisNoteOf, basisOf, methodLabelOf, usageTypeSpec,
   type PaymentStage, type UsageType
 } from "./usage-type.js";
-import { roundRoyalty, taxOf } from "./rounding.js";
+import { floorRoyalty, roundRoyalty, taxOf } from "./rounding.js";
+
+/** 出版（紙・電子）の条件か。印税は実績ごとに切り捨てる（rounding.ts）。 */
+const isPublishingUsage = (usage: string | null | undefined) => usage === "pub_print" || usage === "pub_digital";
 import { allocateShares, loadDistribution, loadShares, pickShare, type ConditionShareRow } from "./shares.js";
 
 export interface CalculationInput {
@@ -260,6 +263,10 @@ export class RoyaltyStatementService {
     // 利用形態の無い実績（この仕組みより前に入れたもの）は、これまでどおり
     // 条件の計算方式で決める。
     const model = condition.pricingModel;
+    // 出版（紙・電子）の料率条件は、実績（事業部の Excel の行＝報告月 × 書店 × タイトル）
+    // ごとに 売上 × 料率 を切り捨てて足す。合計に料率を掛けて 1 回丸めると Excel と 1 円ずれる。
+    const perEvent = model === "revenue_rate" && isPublishingUsage(condition.usageType);
+    const conditionRatePct = ppmToPct(condition.ratePpm);
     const basisOf = (e: Record<string, any>): number => {
       const type = String(e.event_type);
       if (model === "revenue_rate") {
@@ -293,11 +300,23 @@ export class RoyaltyStatementService {
       sampleQuantity: e.sample_quantity === null ? null : Number(e.sample_quantity),
       salesInput: model === "revenue_rate" ? basis[i] : null,
       share: total > 0 ? basis[i] / total : 0,
-      note: e.note ? String(e.note) : null
+      note: e.note ? String(e.note) : null,
+      unitAmount: int(e.unit_amount),
+      // 製品名（出版なら「2026年3月 作品名」）。明細の行と紙の行に出す。
+      productName: statementProductName({
+        usageType: null, outConditionName: str(e.out_condition_name), outWorkTitle: str(e.out_work_title),
+        inWorkTitle: str(e.in_work_title), inWorkKind: str(e.in_work_kind),
+        childTitles: Array.isArray(e.child_titles) ? e.child_titles : null,
+        eventWorkTitle: str(e.event_work_title),
+        eventScope: eventScopeLabel(e.scope_languages, e.scope_regions),
+        inUsageType: str(e.in_usage_type), period: str(e.period)
+      }) || null,
+      ...(perEvent ? { ratePct: conditionRatePct, amount: floorRoyalty((basis[i] * conditionRatePct) / 100) } : {})
     }));
 
     const reported: ReportedResult = model === "revenue_rate"
-      ? { salesInput: total }
+      ? { salesInput: total,
+          ...(perEvent ? { grossOverrideMinor: events.reduce((a, e) => a + (e.amount ?? 0), 0) } : {}) }
       : { quantity: total,
           sampleQuantity: events.reduce((a, e) => a + (e.sampleQuantity ?? 0), 0) || null };
     // 期間は揃っていればそれ、揃っていなければ最古〜最新。発生日は最新。
@@ -525,7 +544,9 @@ export class RoyaltyStatementService {
       // 利用形態の付いた実績は、行ごとに料率まで掛けて額が出ている。按分しない
       // （按分すると「この行の料率は何%か」が紙と合わなくなる）。MG・AG が
       // 効いたぶんだけ合計がずれるので、そのぶんを最終行に寄せる。
-      const byUsage = events.some((e) => e.usageType);
+      // 出版の実績（行ごとに切り捨て）も同じく行の額をそのまま使う。
+      const byUsage = events.some((e) => e.usageType)
+        || (events.length > 0 && events.every((e) => e.amount !== null && e.amount !== undefined));
       const lineAmounts = byUsage
         ? settleToTotal(events.map((e) => e.amount ?? 0), net)
         : apportion(net, events.map((e) => e.share));
@@ -785,7 +806,7 @@ export class RoyaltyStatementService {
   private async loadCondition(client: Queryable, id: number, options: { historical?: boolean } = {}) {
     const r = await client.query(
       `SELECT c.id, c.condition_no, c.name, c.kind, c.direction, c.currency, c.pricing_model,
-              c.counterparty_id,
+              c.counterparty_id, c.usage_type,
               c.rate_ppm, c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
               c.tax_category, c.status,
               a.title AS agreement_title, a.agreement_no,
@@ -823,6 +844,8 @@ export class RoyaltyStatementService {
       kind: String(row.kind ?? ""),
       counterpartyId: row.counterparty_id === null ? null : Number(row.counterparty_id),
       direction: String(row.direction ?? "out"),
+      /** 利用形態（出版の紙・電子など）。端数の決まりが変わる。 */
+      usageType: row.usage_type ? String(row.usage_type) : null,
       agreementTitle: row.agreement_title ? String(row.agreement_title) : null,
       agreementNo: row.agreement_no ? String(row.agreement_no) : null
     };

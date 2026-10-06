@@ -2,7 +2,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
-import { roundRoyalty } from "../royalty/rounding.js";
+import { floorRoyalty } from "../royalty/rounding.js";
 import { parseCsv } from "./parse.js";
 import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xlsx.js";
 
@@ -19,7 +19,9 @@ import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xls
  *                 1 件（原作は 1 つで、巻は別の作品）。巻ごとの作品が無ければ当てない
  *                 （シリーズ名の作品に黙って載せない）。
  *                 作品 → 有効な電子出版の料率条件。無ければ「印税なし」か「条件なし」。
- *   3. まとめる … 条件 × 報告月 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
+ *   3. まとめる … 条件 × 報告月 × 書店 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
+ *                 事業部の Excel の行と同じ単位。印税は行ごとに切り捨て（rounding.ts の
+ *                 floorRoyalty）で、計算書もその実績ごとに切り捨てて足す（Excel と 1 円まで合う）。
  *                 報告月はシート名（「2026年3月」）。シートには前々月の販売月の行や
  *                 遅れて報告された古い月の行が載るので、期間はシートの月で持ち、
  *                 販売月は備考に書く。シート名が月でなければ（CSV など）販売月で持つ。
@@ -229,6 +231,8 @@ export interface SalesGroup {
   month: string;
   /** まとめた行の販売月。報告月と違えば備考に書く。 */
   salesMonths: string[];
+  /** 書店（Excel の行の単位）。 */
+  store: string | null;
   listPrice: number;
   downloads: number;
   /** 配信価格 × DL数。 */
@@ -271,6 +275,12 @@ export function volumeTitles(title: string, volume: string | null): string[] {
   return [`${title} ${v}`, `${title} 第${v}巻`, `${title}（${v}）`, `${title} vol.${v}`];
 }
 
+/** 取込の備考「電子書籍売上取込 2026-03｜BOOKWALKER（PC）｜…」から書店名。古い形（書店なし）は null。 */
+export function storeOfNote(note: string | null | undefined): string | null {
+  const m = String(note ?? "").match(/^電子書籍売上取込 \S+｜([^｜]*)/);
+  return m ? m[1].trim() : null;
+}
+
 /** 巻数が無いか 1 巻（1 冊だけの本も巻数 1 で来る）。 */
 const isFirstOrNoVolume = (volume: string | null) => !volume || volume === "1";
 
@@ -302,8 +312,9 @@ export class EbookSalesImportService {
           const r = await this.events.add(g.condition!.id, {
             eventType: "sales", occurredOn: monthEnd(g.month), period: monthLabel(g.month),
             quantity: g.downloads, grossAmount: g.gross, amount: g.gross,
-            note: `電子書籍売上取込 ${g.month}（${sales.length ? `販売月 ${sales.join("・")}。` : ""}`
-              + `${g.stores.slice(0, 3).join("・")}${g.stores.length > 3 ? " ほか" : ""}）`,
+            // 「電子書籍売上取込 報告月｜書店｜販売月 …」。書店は登録済みの検査（同じ行を二度入れない）と
+            // 計算書の行の但し書きが読む。
+            note: `電子書籍売上取込 ${g.month}｜${g.store ?? ""}${sales.length ? `｜販売月 ${sales.join("・")}` : ""}`,
             unitAmount: g.listPrice, workId: g.work!.id
           }, actor);
           written += 1;
@@ -373,14 +384,17 @@ export class EbookSalesImportService {
   }
 
   private async resolve(client: Queryable, rows: EbookSalesRow[]): Promise<SalesPreview> {
-    // まとめる：CID（無ければタイトル × 巻数）× 報告月（シート名。無ければ販売月）× 販売価格。
+    // まとめる：CID（無ければタイトル × 巻数）× 報告月（シート名。無ければ販売月）× 書店 × 販売価格。
+    // Excel の行と同じ単位（印税は行ごとに切り捨てなので、書店をまたいで足すと 1 円ずれる）。
     const groups = new Map<string, SalesGroup>();
     for (const r of rows) {
       const id = r.cid ? `cid:${r.cid}` : `title:${normalizeTitle(r.title)}|${r.volume ?? ""}`;
       const month = r.reportMonth ?? r.month;
-      const key = `${id}|${month}|${r.listPrice}`;
+      const store = r.store ?? r.storeCompany ?? null;
+      const key = `${id}|${month}|${store ?? ""}|${r.listPrice}`;
       const g = groups.get(key) ?? {
-        key, cid: r.cid, title: r.title, volume: r.volume, authors: r.authors, month, salesMonths: [], listPrice: r.listPrice,
+        key, cid: r.cid, title: r.title, volume: r.volume, authors: r.authors, month, salesMonths: [], store,
+        listPrice: r.listPrice,
         downloads: 0, gross: 0, stores: [], lines: 0, status: "unresolved" as GroupStatus, message: null,
         work: null, condition: null, royalty: null, royaltyInFile: null, candidates: []
       };
@@ -442,17 +456,19 @@ export class EbookSalesImportService {
           AND c.status IN ('active', 'scheduled')
         ORDER BY c.work_id, c.effective_from NULLS FIRST, c.id`, [workIds])).rows as Array<Record<string, any>> : [];
 
-    // 登録済みの検査：条件 × 期間 × 販売価格（改訂の全版）。
+    // 登録済みの検査：条件 × 期間 × 書店 × 販売価格（改訂の全版）。書店は備考から読む。
+    // 書店の無い古い備考（書店をまたいで 1 件にしていた頃）は、どの書店とも同じ扱い。
     const condIds = [...new Set(condRows.map((c) => Number(c.id)))];
     const existing = condIds.length ? (await client.query(
-      `SELECT c.id AS condition_id, e.period, e.unit_amount
+      `SELECT c.id AS condition_id, e.period, e.unit_amount, e.note
          FROM condition_events e
          JOIN conditions c ON COALESCE(c.series_id, c.id) = (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = e.condition_id)
         WHERE e.status = 'active' AND e.event_type = 'sales' AND c.id = ANY($1::bigint[])
           AND e.condition_id IN (SELECT x.id FROM conditions x WHERE COALESCE(x.series_id, x.id) IN
                                    (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = ANY($1::bigint[])))`,
       [condIds])).rows as Array<Record<string, any>> : [];
-    const existingKeys = new Set(existing.map((e) => `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}`));
+    const existingKeys = new Set(existing.map((e) =>
+      `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}|${storeOfNote(str(e.note)) ?? "*"}`));
 
     for (const g of list) {
       if (!g.work) {
@@ -479,16 +495,20 @@ export class EbookSalesImportService {
       const c = digital[0];
       g.condition = { id: Number(c.id), conditionNo: str(c.condition_no), ratePpm: int(c.rate_ppm),
                       counterparty: str(c.party_name), shares: c.shares ? String(c.shares).split("・") : [] };
-      g.royalty = roundRoyalty((g.gross * (int(c.rate_ppm) ?? 0)) / 1_000_000);
-      const dupKey = `${Number(c.id)}|${monthLabel(g.month)}|${g.listPrice}`;
-      if (existingKeys.has(dupKey)) { g.status = "duplicate"; g.message = "同じ報告月・同じ販売価格の実績がもうあります"; continue; }
+      // 行ごとに切り捨て（Excel の ROUNDDOWN と同じ）。
+      g.royalty = floorRoyalty((g.gross * (int(c.rate_ppm) ?? 0)) / 1_000_000);
+      const dupBase = `${Number(c.id)}|${monthLabel(g.month)}|${g.listPrice}`;
+      if (existingKeys.has(`${dupBase}|${g.store ?? ""}`) || existingKeys.has(`${dupBase}|*`)) {
+        g.status = "duplicate"; g.message = "同じ報告月・同じ書店・同じ販売価格の実績がもうあります"; continue;
+      }
       if (!(g.royalty > 0)) { g.status = "zero"; g.message = "料率を掛けると 0 円"; continue; }
       g.status = "ok"; g.message = null;
     }
 
     const counts: Record<GroupStatus, number> = { ok: 0, duplicate: 0, no_royalty: 0, no_condition: 0, unresolved: 0, zero: 0 };
     for (const g of list) counts[g.status] += 1;
-    list.sort((a, b) => a.month.localeCompare(b.month) || a.title.localeCompare(b.title, "ja") || a.listPrice - b.listPrice);
+    list.sort((a, b) => a.month.localeCompare(b.month) || a.title.localeCompare(b.title, "ja")
+      || (a.store ?? "").localeCompare(b.store ?? "", "ja") || a.listPrice - b.listPrice);
     return { groups: list, counts, months: [...new Set(list.map((g) => g.month))].sort() };
   }
 }
