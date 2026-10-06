@@ -46,6 +46,8 @@ export interface LedgerCondition {
   schedules: number;
   /** 対象の許諾先（A-063）。この許諾先だけに効く料率。空なら一律（その作品の許諾先すべて）。 */
   targetPartyId?: number | null; targetPartyName?: string | null;
+  /** 共著の取り分（A-068）。空なら相手先 1 者に 100%。計算書は受取人ごとに 1 枚。 */
+  shares?: Array<{ partyId: number; name: string; sharePpm: number }>;
 }
 
 export interface LedgerEvent {
@@ -550,8 +552,15 @@ export class RoyaltyLedgerService {
                                 partyId: int(o.counterparty_id) }))
         : [];
 
+      // 共著の取り分（A-068）。回の画面で受取人を選ばせるために条件に添える。
+      const shareRows = ids.length ? (await q.query(
+        `SELECT s.condition_id, s.party_id, p.name, s.share_ppm
+           FROM condition_shares s JOIN parties p ON p.id = s.party_id
+          WHERE s.condition_id = ANY($1::bigint[]) ORDER BY s.sort_order, s.id`, [ids])).rows as any[] : [];
       const conditions: LedgerCondition[] = rows.map((c) => ({
         id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name),
+        shares: shareRows.filter((x) => Number(x.condition_id) === Number(c.id))
+          .map((x) => ({ partyId: Number(x.party_id), name: String(x.name), sharePpm: Number(x.share_ppm) })),
         usageType: str(c.usage_type), usageLabel: c.usage_type ? conditionUsageLabel(c.usage_type) : "利用形態なし",
         workId: int(c.work_id), workTitle: str(c.work_title),
         agreementId: int(c.agreement_id), agreementNo: str(c.agreement_no),

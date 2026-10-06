@@ -63,6 +63,20 @@ export interface ConditionSummary {
 
 export interface ConditionScope { scopeType: ScopeType; label: string; code: string | null }
 
+/**
+ * 共著の取り分（A-068。docs/royalty-shares.md）。条件の全体率を、当社から直接払う
+ * 権利者ごとに何 % に分けるか。百万分率で、合計 100%。1 者だけ（代表受取）なら持たない。
+ */
+export interface ConditionShare {
+  partyId: number;
+  partyName: string;
+  partyKind: "corporate" | "individual" | null;
+  /** 百万分率。600000 = 60%。 */
+  sharePpm: number;
+  sortOrder: number;
+  note: string | null;
+}
+
 export interface ConditionDetail extends ConditionSummary {
   agreementId: number | null;
   agreementTitle: string | null;
@@ -109,6 +123,8 @@ export interface ConditionDetail extends ConditionSummary {
    */
   orderNo: string | null;
   scopes: ConditionScope[];
+  /** 共著の取り分。空なら相手先 1 者に 100%。 */
+  shares: ConditionShare[];
   balance: ConditionBalance | null;
   /** この条件を出力した文書。参照方向を反転した結果、条件から辿れる。 */
   documents: Array<{ id: number; documentNo: string | null; status: string;

@@ -2,8 +2,9 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import type {
-  ConditionDetail, ConditionRevision, ConditionScope, ConditionSummary, Direction, LicenseFeeBasis, ScopeType
+  ConditionDetail, ConditionRevision, ConditionScope, ConditionShare, ConditionSummary, Direction, LicenseFeeBasis, ScopeType
 } from "../core/model.js";
+import { loadShares } from "../royalty/shares.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./settlement.js";
 
 const SUMMARY_COLUMNS = `
@@ -145,12 +146,13 @@ export class ConditionRepository {
     const row = detail.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
 
-    const [scopes, balance, documents, events, matters] = await Promise.all([
+    const [scopes, balance, documents, events, matters, shares] = await Promise.all([
       this.scopes(id),
       this.balance(id),
       this.documents(id),
       this.events(id),
-      this.matters(id)
+      this.matters(id),
+      this.shares(id)
     ]);
 
     return {
@@ -179,7 +181,7 @@ export class ConditionRepository {
       orderNo: str(row.order_no),
       deliverableOwnership: row.deliverable_ownership === "orderer" || row.deliverable_ownership === "contractor"
         ? row.deliverable_ownership : null,
-      scopes, balance, documents, events, matters
+      scopes, shares, balance, documents, events, matters
     };
   }
 
@@ -198,6 +200,16 @@ export class ConditionRepository {
     return r.rows.map((m: Record<string, any>) => ({
       id: Number(m.id), matterNo: str(m.matter_no), title: String(m.title),
       kind: String(m.kind), status: String(m.status)
+    }));
+  }
+
+  /** 共著の取り分（A-068）。改訂の系列で 1 組。 */
+  private async shares(id: number): Promise<ConditionShare[]> {
+    const rows = await loadShares(this.database, id);
+    return rows.map((s) => ({
+      partyId: s.partyId, partyName: s.partyName,
+      partyKind: s.partyKind === "corporate" || s.partyKind === "individual" ? s.partyKind : null,
+      sharePpm: s.sharePpm, sortOrder: s.sortOrder, note: s.note
     }));
   }
 

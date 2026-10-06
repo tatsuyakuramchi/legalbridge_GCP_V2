@@ -23,6 +23,11 @@ export interface DocumentContextInput {
    * 案件にも作業にも繋がっていない文書や、担当が替わった文書の訂正版の救済。
    */
   ownerStaffId?: number | null;
+  /**
+   * 共著の取り分（A-068）。計算書の受取人（manual_inputs._payeePartyId）。
+   * 条件の相手先ではなくこの人を宛名・口座・源泉の相手にする。
+   */
+  payeePartyId?: number | null;
   documentNumber?: string | null;
   issuedOn?: string | null;
   /** 実績。検収書・納品書はここの日付と金額が要る。 */
@@ -83,6 +88,15 @@ export class DocumentContextRepository {
       const conditions = await this.conditions(client, input.conditionIds, input.issuedOn ?? dateStr(new Date()));
       if (input.conditionIds.length && !conditions.length) {
         throw new DomainError("NOT_FOUND", "指定された条件が見つかりません");
+      }
+      // 受取人の計算書（共著の取り分。A-068）。相手先の欄を全部その人に差し替える。
+      if (input.payeePartyId) {
+        const payee = await this.partyOnly(client, input.payeePartyId);
+        if (!payee) throw new DomainError("NOT_FOUND", `受取人 ${input.payeePartyId} が見つかりません`);
+        for (const c of conditions) {
+          c.counterpartyId = input.payeePartyId;
+          c.counterparty = payee.counterparty;
+        }
       }
       const agreementId = input.agreementId ?? conditions[0]?.agreementId ?? null;
       // 案件は文書に指定されていなくても、条件から辿れば分かる。

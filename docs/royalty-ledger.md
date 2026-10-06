@@ -163,6 +163,7 @@
 - A-060：`intake_request_links.target_type` に `schedule`・`event` を足す。
 - A-061：`condition_events.scope_languages`・`scope_regions`（text[]）。
 - A-062：`royalty_expected_lines(id, condition_id, out_condition_id, scope_languages, scope_regions, from_on, note, created_by, created_at)`。
+- A-068：`condition_shares(id, condition_id, party_id, share_ppm, sort_order, note)`・`statements.payee_party_id`・`statements.share_ppm`。共著の取り分（docs/royalty-shares.md）。取り分のある条件の計算書は受取人ごとに 1 枚。
 
 ## 8. このあと
 

@@ -253,6 +253,11 @@ export function RoyaltyLedger(
                 <span key={c.id} className="ledger-term-chip">
                   <span className="faint">{c.usageLabel}</span> <b>{c.pricingModel === "unit_rate" ? yen(c.unitAmount, c.currency) : pct(c.ratePpm)}</b>
                   {c.targetPartyName && <span className="tag pin" style={{ marginLeft: 4 }}>{c.targetPartyName} 専用</span>}
+                  {c.shares && c.shares.length > 0 && (
+                    <span className="tag accent" style={{ marginLeft: 4 }} title="共著の取り分。計算書は受取人ごとに 1 枚">
+                      取り分 {c.shares.map((x) => `${x.name} ${x.sharePpm / 10000}%`).join("・")}
+                    </span>
+                  )}
                   <span className="faint"> · {c.timing === "event" ? "イベント式" : `締め ${c.schedules} 回`}</span>
                 </span>
               ))}
@@ -458,6 +463,11 @@ function Terms(
                 : <span className="faint">一律（この作品の許諾先すべて）</span>
             )}
             {(c.agAmount || c.mgAmount) ? <span className="faint">{c.agAmount ? `AG ${yen(c.agAmount, c.currency)}` : ""} {c.mgAmount ? `MG ${yen(c.mgAmount, c.currency)}` : ""}</span> : null}
+            {c.shares && c.shares.length > 0 && (
+              <span className="tag accent" title="共著の取り分。全体率をこの比で受取人に割り、計算書は受取人ごとに 1 枚">
+                取り分：{c.shares.map((x) => `${x.name} ${x.sharePpm / 10000}%`).join("・")}
+              </span>
+            )}
             <label className="row" style={{ gap: 4 }}>
               <span className="faint">出し方</span>
               <select value={c.timingExplicit ? c.timing : ""} disabled={!canWrite}
