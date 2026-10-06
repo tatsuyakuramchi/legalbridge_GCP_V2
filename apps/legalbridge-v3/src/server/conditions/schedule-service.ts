@@ -359,6 +359,8 @@ export class ConditionScheduleService {
     conditionId: number, scheduleId: number,
     input: { occurredOn?: string | null; amount?: number | null;
              eventType?: string | null; note?: string | null;
+             /** 予定と違う額にした理由。検収書の変更履歴の「理由」に出る（A-030 の差分の記録）。 */
+             varianceNote?: string | null;
              quantity?: number | null; deliverable?: string | null;
              inspectedOn?: string | null;
              inspectorDept?: string | null; inspectorName?: string | null;
@@ -400,20 +402,28 @@ export class ConditionScheduleService {
         const serviceFrom = input.serviceFrom || dateStr(line.service_from);
         const serviceTo = input.serviceTo || dateStr(line.service_to);
 
+        // 予定の額を「記録時の確認額」として写す（A-030）。予定と違う額で記録した
+        // 回は、検収書が この額 → 実額 を変更履歴に出し、理由を添える。
+        const planned = Number(line.planned_amount ?? 0);
+        const expectedAmount = planned > 0 ? Math.round(planned) : null;
+        const varianceNote = str(input.varianceNote)
+          ?? (expectedAmount !== null && expectedAmount !== amount ? str(input.note) : null);
         const inserted = await client.query(
           `INSERT INTO condition_events
              (condition_id, schedule_id, event_type, occurred_on, period,
               gross_amount, deductions, amount, note, created_by,
               quantity, deliverable, inspected_on, inspector_dept, inspector_name,
-              contract_form, service_from, service_to)
+              contract_form, service_from, service_to,
+              expected_amount, variance_note)
            VALUES ($1, $2, $3, COALESCE($4::date, current_date), $5, $6, 0, $6, $7, $8,
-                   $9, $10, $11::date, $12, $13, $14, $15::date, $16::date)
+                   $9, $10, $11::date, $12, $13, $14, $15::date, $16::date, $17, $18)
            RETURNING id`,
           [conditionId, scheduleId, eventType, occurredOn, period, amount,
            str(input.note), actor,
            input.quantity ?? null, str(input.deliverable), str(input.inspectedOn),
            str(input.inspectorDept), str(input.inspectorName),
-           contractForm, serviceFrom, serviceTo]);
+           contractForm, serviceFrom, serviceTo,
+           expectedAmount, varianceNote]);
         const eventId = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

@@ -322,6 +322,11 @@ export function LineItemsEditor(
     const next = current.map((r, j) => {
       if (j !== i) return r;
       const row: Row = { ...r, [col.name]: value === "" ? null : col.type === "number" ? num(value) : value };
+      // 検収書：予定額と検収金額が違えば「金額変更の理由」の欄を出す（本文の変更履歴と同じ条件）。
+      if (name === "delivery_line_items" && (col.name === "ordered_amount_ex_tax" || col.name === "inspected_amount_ex_tax")) {
+        const o = num(row.ordered_amount_ex_tax); const a = num(row.inspected_amount_ex_tax);
+        row.hasChange = o !== null && a !== null && o !== a;
+      }
       // 数量×単価 → 金額。金額を手で直したときは触らない。
       if ((col.name === "quantity" || col.name === "unit_price") && name === "items") {
         const q = num(row.quantity); const u = num(row.unit_price);

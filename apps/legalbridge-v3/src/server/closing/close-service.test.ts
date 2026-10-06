@@ -189,7 +189,8 @@ test("相手先ごとに締めると、実績を条件ごとに記録し、1枚�
   let next = 500;
   const schedules = {
     record: async (conditionId: number, scheduleId: number, input: Record<string, unknown>) => {
-      calls.push(`record ${conditionId}/${scheduleId} ${input.amount ?? "予定"} ${input.note ?? ""}`.trim());
+      // 画面の「理由」は差分の記録（variance_note）として渡る。
+      calls.push(`record ${conditionId}/${scheduleId} ${input.amount ?? "予定"} ${input.varianceNote ?? ""}`.trim());
       return { eventId: next++, scheduleId };
     }
   };

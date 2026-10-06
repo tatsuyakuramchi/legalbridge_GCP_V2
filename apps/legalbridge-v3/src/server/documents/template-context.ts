@@ -174,22 +174,29 @@ export function splitSpec(text: unknown): { spec_head: string; spec_body: string
  * 条件をまたぐ検収書では行ごとに違う番号になる。
  */
 function orderNoFor(context: Ctx, conditionId: unknown): string | null {
+  // 人が入れた番号が先。文書の画面で選んだ・打った番号（見出しの発注番号と同じもの）。
+  const chosen = String((context as { parentPoNo?: unknown }).parentPoNo ?? "").trim();
+  if (chosen) return chosen;
+  // 次に、条件に控えた外部の発注番号。相手の発注書の番号をここに控える。
+  // 移行した条件は発注書が V1・V2 側にあるので、ここが埋まっていないと空欄になる。
+  const condition = (context.conditions ?? []).find((c: Ctx) => c.id === conditionId);
+  const external = String(condition?.orderNo ?? "").trim();
+  if (external) return external;
+  // 同じ条件から出ている発注書（V3 で作ったもの）。
   const related = (context.related ?? []) as Ctx[];
   const mine = related.filter((d) => Number(d.conditionId) === Number(conditionId)
     && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order"));
   const nos = [...new Set(mine.map((d) => String(d.documentNo ?? "")).filter(Boolean))];
   if (nos.length) return nos.join("・");
-  // V3 で出した発注書が無いときは、条件に控えた外部の番号を使う。
-  // 移行した条件は発注書が V1・V2 側にあるので、ここが埋まっていないと空欄になる。
-  const condition = (context.conditions ?? []).find((c: Ctx) => c.id === conditionId);
-  const fallback = String(condition?.orderNo ?? "").trim();
-  if (fallback) return fallback;
   // 取り込んだ発注書は単体契約として登録されていることがある。その契約番号。
   const standalone = String(condition?.standaloneNo ?? "").trim();
-  if (standalone) return standalone;
-  // 最後は、文書の画面で選んだ発注書番号（見出しの発注番号と同じもの）。
-  const chosen = String((context as { parentPoNo?: unknown }).parentPoNo ?? "").trim();
-  return chosen || null;
+  return standalone || null;
+}
+
+/** 予定（発注時）の額と実額が違うか。どちらかが無ければ「違わない」。 */
+function hasAmountChange(ordered: unknown, actual: unknown): boolean {
+  const o = num(ordered, Number.NaN); const a = num(actual, Number.NaN);
+  return Number.isFinite(o) && Number.isFinite(a) && o !== a;
 }
 
 /** 相手先が「1件の条件」に決まるときだけ、条件から明細を組める。 */
@@ -284,6 +291,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         ordered_amount_ex_tax: event.plannedAmount ?? event.expectedAmount ?? null,
         // 差分の記録。変更履歴の「理由」になる。
         changeNote: event.varianceNote ?? "",
+        // 予定と額が違う行。画面の明細で「金額変更の理由」の欄を出す目印（本文は inspectionBlock が出し直す）。
+        hasChange: hasAmountChange(event.plannedAmount ?? event.expectedAmount ?? null, event.amount ?? 0),
         tax_category: condition.taxCategory ?? "taxable",
         inspection_status: "now",
         calc_method: calcMethodOf(condition),

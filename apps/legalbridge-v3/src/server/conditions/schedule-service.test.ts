@@ -330,3 +330,19 @@ test("締め日は、役務提供期間の終わりが空欄のときだけ埋�
     dueOn: null, payOn: null, serviceTo: "2026-04-30"
   }), null, "定期でなければ期間から締め日は作らない");
 });
+
+test("予定と違う額で記録すると、予定額を確認額に写し、理由を差分の記録に入れる（検収書の変更履歴に出る）", async () => {
+  const database = recDb();
+  await new ConditionScheduleService(database).record(1, 9, { amount: 250000, varianceNote: "5点中4点の納品" }, "tester");
+  const insert = database.find("INSERT INTO condition_events")!;
+  assert.equal(insert.params[16], 280000, "expected_amount は予定額");
+  assert.equal(insert.params[17], "5点中4点の納品", "variance_note");
+  // 理由を備考にしか書いていない古い呼び方でも、額が違えば理由として扱う。
+  const db2 = recDb();
+  await new ConditionScheduleService(db2).record(1, 9, { amount: 250000, note: "減額" }, "tester");
+  assert.equal(db2.find("INSERT INTO condition_events")!.params[17], "減額");
+  // 予定どおりなら理由は無し。
+  const db3 = recDb();
+  await new ConditionScheduleService(db3).record(1, 9, { note: "備考だけ" }, "tester");
+  assert.equal(db3.find("INSERT INTO condition_events")!.params[17], null);
+});

@@ -2187,6 +2187,8 @@ export function createRoutes(database: Transactable) {
     eventType: z.enum(["manufacturing", "sales", "sublicense_receipt",
                        "inspection", "delivery", "service_period", "adjustment"]).optional(),
     note: z.string().trim().max(2000).nullable().optional(),
+    /** 予定と違う額にした理由。検収書の変更履歴に出る。 */
+    varianceNote: z.string().trim().max(2000).nullable().optional(),
     quantity: z.coerce.number().nullable().optional(),
     ...inspectionFields
   });
