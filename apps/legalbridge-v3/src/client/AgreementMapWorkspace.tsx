@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
@@ -220,6 +220,8 @@ function PartyMapView(
           {onRegisterAgreement && (
             <button className="btn btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => onRegisterAgreement(map.party.id, map.party.name)}>契約を登録</button>
           )}
+          <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }}
+                  onClick={() => setPoLink({ documentId: null, conditionIds: [] })}>検索して紐づける（基本契約 → 発注書 → 条件）</button>
           <span className="faint" style={{ marginLeft: "auto" }}>
             既定＝他の画面がこの取引先の基本契約として拾う1本（種別 × 方向ごと。基本契約だけで、単体契約は既定にしません）
           </span>
@@ -839,11 +841,21 @@ function RemapForm(
 }
 
 /**
- * 発注書を条件明細に紐づける（取引先⇔基本契約の画面から）。
- * 発注書が条件を持つ。基本契約があれば、紐づけた条件はその基本契約に載る（サーバが載せる）。
- *   既存の発注書を選ぶ … この取引先の発注書と、契約に繋がっていない文書（発注書として扱う）
- *   紙・PDF を取り込む … 取り込んだ文書を発注書として紐づける
+ * 検索して紐づける：① 基本契約を決める → ② 発注書を決める → ③ 条件を決める。
+ *
+ * 取引の形は（1）基本契約の下の発注書が条件明細を持つ。それぞれ番号・件名で探して決める。
+ *   ① 基本契約 … この取引先の基本契約から（「基本契約なし＝発注書の約款」も選べる）
+ *   ② 発注書   … 番号・件名で全部の文書から探す（別の取引先の発注書は相手先名を出して知らせる）
+ *                 紙・PDF を取り込んでもよい
+ *   ③ 条件     … この取引先の条件明細から番号・名前・作品で探して選ぶ（複数）
+ * 決定すると、発注書を条件に紐づけ、その発注書の条件を①の基本契約にそろえる。
  */
+interface DocHit { id: number; documentNo: string | null; status: string; templateKey: string | null; templateLabel: string | null;
+  title: string | null; imported: boolean; counterparty: string | null; issuedAt: string | null;
+  conditions: Array<{ id: number; conditionNo: string | null }> }
+interface CondHit { id: number; conditionNo: string | null; name: string; status: string; direction: string;
+  work: { title: string } | null; agreement: { agreementNo: string | null; title: string } | null }
+
 function OrderLinkPanel(
   { map, documentId, conditionIds, onDone, onCancel, onError }: {
     map: PartyMap; documentId: number | null; conditionIds: number[];
@@ -851,84 +863,160 @@ function OrderLinkPanel(
   }
 ) {
   const orders = map.orders ?? [];
-  const asOrder = map.unlinked.filter((d) => !d.role);
-  const [docId, setDocId] = useState<number | null>(documentId);
+  const masters = map.roots.filter((r) => r.kind === "master");
+  const primary = masters.find((m) => m.primary) ?? masters[0] ?? null;
+  // ① 基本契約。"" は基本契約なし。
+  const [masterQ, setMasterQ] = useState("");
+  const [masterId, setMasterId] = useState<string>(primary ? String(primary.id) : "");
+  // ② 発注書
+  const [docQ, setDocQ] = useState("");
+  const docSearch = useDebounced(docQ);
+  const [docHits, setDocHits] = useState<DocHit[] | null>(null);
+  const [doc, setDoc] = useState<{ id: number; label: string } | null>(() => {
+    if (!documentId) return null;
+    const o = orders.find((x) => x.id === documentId);
+    const u = map.unlinked.find((x) => x.id === documentId);
+    return { id: documentId, label: `${o?.documentNo ?? u?.documentNo ?? `#${documentId}`} ${o?.title ?? u?.title ?? ""}` };
+  });
+  const [importing, setImporting] = useState(false);
+  // ③ 条件
+  const [condQ, setCondQ] = useState("");
+  const [conds, setConds] = useState<CondHit[]>([]);
   const [picked, setPicked] = useState<Set<number>>(new Set(conditionIds));
-  const [mode, setMode] = useState<"link" | "import">(orders.length || asOrder.length || documentId ? "link" : "import");
   const [busy, setBusy] = useState(false);
+  // 開いたら見える所まで寄せる（見出しの釦から開くと、欄は図の下に出る）。
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => { box.current?.scrollIntoView?.({ block: "start", behavior: "smooth" }); }, []);
+
+  useEffect(() => {
+    api.get<{ conditions: CondHit[] }>(`/conditions?counterpartyId=${map.party.id}&limit=500`)
+      .then((r) => setConds(r.conditions.filter((c) => c.status !== "void" && c.status !== "superseded")))
+      .catch(() => setConds([]));
+  }, [map.party.id]);
+  useEffect(() => {
+    if (!docSearch.trim()) { setDocHits(null); return; }
+    let live = true;
+    api.get<{ documents: DocHit[] }>(`/documents?q=${encodeURIComponent(docSearch.trim())}`)
+      .then((r) => { if (live) setDocHits(r.documents.filter((d) => d.status !== "void" && d.status !== "superseded"
+        && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order" || d.imported))); })
+      .catch(() => { if (live) setDocHits([]); });
+    return () => { live = false; };
+  }, [docSearch]);
+
+  // 条件がいまどこに載っているか（発注書・契約）。
+  const holderOf = (c: CondHit) => {
+    const o = orders.find((x) => x.conditions.some((y) => y.id === c.id));
+    return o ? `発注書 ${o.documentNo ?? `#${o.id}`}` : c.agreement ? `${c.agreement.agreementNo ?? c.agreement.title}` : "持ち主なし";
+  };
+  const looseIds = new Set(map.looseConditions.map((c) => c.id));
+  const condShown = conds
+    .filter((c) => !condQ.trim() || `${c.conditionNo ?? ""} ${c.name} ${c.work?.title ?? ""}`.toLowerCase().includes(condQ.trim().toLowerCase())
+      || picked.has(c.id))
+    .sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id)) || Number(looseIds.has(b.id)) - Number(looseIds.has(a.id)))
+    .slice(0, 60);
   const ids = [...picked];
   const toggle = (id: number) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const mastersShown = masters.filter((m) => !masterQ.trim() || `${m.agreementNo ?? ""} ${m.title}`.includes(masterQ.trim()));
+  const masterLabel = masterId ? (() => { const m = masters.find((x) => String(x.id) === masterId); return `${m?.agreementNo ?? ""} ${m?.title ?? ""}`; })() : "基本契約なし（発注書の約款）";
+  const docList: Array<{ id: number; no: string | null; title: string | null; tag: string; party: string | null; note: string }> = docHits
+    ? docHits.map((d) => ({ id: d.id, no: d.documentNo, title: d.title, tag: d.imported ? "取込" : "発注書", party: d.counterparty,
+        note: d.conditions.length ? `紐づき：${d.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし" }))
+    : [...orders.map((o) => ({ id: o.id, no: o.documentNo, title: o.title, tag: o.imported ? "取込" : "発注書", party: map.party.name,
+          note: o.conditions.length ? `紐づき：${o.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし" })),
+       ...map.unlinked.filter((u) => !u.role).map((u) => ({ id: u.id, no: u.documentNo, title: u.title ?? u.label, tag: "文書", party: map.party.name,
+          note: "契約に繋がっていない文書（発注書として扱う）" }))];
 
-  async function link(target: number | null = docId) {
+  async function link(target: number | null = doc?.id ?? null) {
     if (!target || !ids.length) return;
     setBusy(true);
     try {
       const r = await api.post<{ linked: number; masterNo: string | null; documentNo: string | null }>(
-        "/agreement-map/orders/link", { documentId: target, conditionIds: ids });
+        "/agreement-map/orders/link", { documentId: target, conditionIds: ids, masterId: masterId ? Number(masterId) : null });
       onDone(`${r.documentNo ?? "発注書"} を条件明細 ${r.linked} 本に紐づけました`
         + (r.masterNo ? `（基本契約 ${r.masterNo} の下の発注書）` : "（基本契約なし＝発注書の約款）"));
     } catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
 
+  const step = (no: string, title: string, chosen: string | null) => (
+    <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
+      <b>{no} {title}</b>
+      {chosen ? <span className="tag ok">{chosen}</span> : <span className="tag warn">未決定</span>}
+    </div>
+  );
+
   return (
-    <div className="panel">
+    <div ref={box} className="panel">
       <div className="panel-hd">
-        <h2>発注書を紐づける</h2>
-        <span className="faint">発注書が条件明細を持ちます。基本契約があれば、紐づけた条件明細はその基本契約の下の発注書になります</span>
+        <h2>検索して紐づける</h2>
+        <span className="faint">① 基本契約 → ② 発注書 → ③ 条件明細 の順に、番号・件名で探して決めます。発注書が条件明細を持ち、基本契約の下に入ります</span>
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onCancel}>閉じる</button>
       </div>
-      <div className="panel-bd stack" style={{ gap: 10 }}>
-        <div className="stack" style={{ gap: 4 }}>
-          <b>紐づける条件明細</b>
-          {map.looseConditions.length
-            ? map.looseConditions.map((c) => (
-              <label key={c.id} className="row" style={{ gap: 6 }}>
+      <div className="panel-bd stack" style={{ gap: 14 }}>
+        <div className="stack" style={{ gap: 6 }}>
+          {step("①", "基本契約", masterLabel.trim())}
+          {masters.length > 3 && <input value={masterQ} placeholder="基本契約の番号・件名で探す" onChange={(e) => setMasterQ(e.target.value)} />}
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            {mastersShown.map((m) => (
+              <button key={m.id} type="button" className="chip" aria-pressed={masterId === String(m.id)} onClick={() => setMasterId(String(m.id))}>
+                {m.agreementNo ?? `#${m.id}`} {m.title}{m.executedOn ? `（${m.executedOn}）` : "（締結日なし）"}
+              </button>
+            ))}
+            <button type="button" className="chip" aria-pressed={masterId === ""} onClick={() => setMasterId("")}>基本契約なし（発注書の約款）</button>
+          </div>
+          {!masters.length && <span className="faint">この取引先に基本契約がありません。結んでいるなら、先に「契約を登録」で立ててください</span>}
+        </div>
+
+        <div className="stack" style={{ gap: 6 }}>
+          {step("②", "発注書", doc ? doc.label : null)}
+          <div className="row" style={{ gap: 6 }}>
+            <input value={docQ} placeholder="発注書番号・件名で探す（例：ARC-PO-2026-0097）" style={{ flex: 1 }} onChange={(e) => setDocQ(e.target.value)} />
+            <button type="button" className="btn btn-sm" onClick={() => setImporting((v) => !v)}>{importing ? "取り込みをやめる" : "紙・PDF を取り込む"}</button>
+          </div>
+          {importing ? (
+            ids.length
+              ? <DocumentImport key={ids.join(",")} conditionIds={ids} defaultKind="発注書" initialMode="import"
+                  onDone={() => undefined} onRegistered={(id) => void link(id)} />
+              : <span className="faint">取り込む前に ③ で条件明細を選んでください（取り込むと、そのまま紐づけます）</span>
+          ) : (
+            <div className="picker" style={{ maxHeight: 220, overflowY: "auto" }}>
+              {docList.map((d) => (
+                <label key={d.id} className="row" style={{ gap: 6, padding: "2px 0", cursor: "pointer" }}>
+                  <input type="radio" name="po" checked={doc?.id === d.id} onChange={() => setDoc({ id: d.id, label: `${d.no ?? `#${d.id}`} ${d.title ?? ""}` })} />
+                  <span className="tag ghost">{d.tag}</span><span className="code">{d.no ?? `#${d.id}`}</span><span>{d.title ?? ""}</span>
+                  {d.party && d.party !== map.party.name && <span className="tag warn">相手先：{d.party}</span>}
+                  <span className="faint">{d.note}</span>
+                </label>
+              ))}
+              {!docList.length && <span className="faint">{docHits ? "当たる発注書がありません" : "この取引先の発注書はまだありません。番号で探すか、紙・PDF を取り込んでください"}</span>}
+            </div>
+          )}
+        </div>
+
+        <div className="stack" style={{ gap: 6 }}>
+          {step("③", "条件明細", ids.length ? `${ids.length} 本` : null)}
+          <input value={condQ} placeholder="条件番号・条件名・作品で探す" onChange={(e) => setCondQ(e.target.value)} />
+          <div className="picker" style={{ maxHeight: 260, overflowY: "auto" }}>
+            {condShown.map((c) => (
+              <label key={c.id} className="row" style={{ gap: 6, padding: "2px 0" }}>
                 <input type="checkbox" checked={picked.has(c.id)} onChange={() => toggle(c.id)} />
                 <span className="code">{c.conditionNo ?? `#${c.id}`}</span><span>{c.name}</span>
-                <span className="faint">{c.workTitle ?? ""}</span>
+                <span className="faint">{c.work?.title ?? ""}</span>
+                <span className={`tag ${looseIds.has(c.id) ? "warn" : "ghost"}`}>{holderOf(c)}</span>
               </label>
-            ))
-            : <span className="faint">持ち主の決まっていない条件明細はありません</span>}
-        </div>
-        <div className="row" role="group" style={{ gap: 6 }}>
-          <button type="button" className="chip" aria-pressed={mode === "link"} onClick={() => setMode("link")}>既存の発注書・文書を選ぶ</button>
-          <button type="button" className="chip" aria-pressed={mode === "import"} onClick={() => setMode("import")}>紙・PDF を取り込む</button>
-        </div>
-        {mode === "link" && (
-          <div className="stack" style={{ gap: 6 }}>
-            <div className="picker" style={{ maxHeight: 240, overflowY: "auto" }}>
-              {orders.map((o) => (
-                <label key={`o${o.id}`} className="row" style={{ gap: 6, padding: "2px 0" }}>
-                  <input type="radio" name="po" checked={docId === o.id} onChange={() => setDocId(o.id)} />
-                  <span className="tag ghost">発注書</span><span className="code">{o.documentNo ?? `#${o.id}`}</span>
-                  <span>{o.title ?? ""}</span>
-                  <span className="faint">{o.conditions.length ? `紐づき：${o.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし"}</span>
-                </label>
-              ))}
-              {asOrder.map((d) => (
-                <label key={`u${d.id}`} className="row" style={{ gap: 6, padding: "2px 0" }}>
-                  <input type="radio" name="po" checked={docId === d.id} onChange={() => setDocId(d.id)} />
-                  <span className="tag ghost">文書</span><span className="code">{d.documentNo ?? `#${d.id}`}</span>
-                  <span>{d.title ?? d.label}</span>
-                  <span className="faint">契約に繋がっていない文書（発注書として扱う）</span>
-                </label>
-              ))}
-              {!orders.length && !asOrder.length && <span className="faint">この取引先の発注書はまだありません。紙・PDF を取り込んでください</span>}
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              <button className="btn primary btn-sm" disabled={busy || !docId || !ids.length} onClick={() => void link()}>
-                {busy ? "紐づけています…" : `選んだ条件明細 ${ids.length} 本に紐づける`}
-              </button>
-            </div>
+            ))}
+            {!condShown.length && <span className="faint">当たる条件明細がありません</span>}
           </div>
-        )}
-        {mode === "import" && (
-          ids.length
-            ? <DocumentImport key={ids.join(",")} conditionIds={ids} defaultKind="発注書" initialMode="import"
-                onDone={() => undefined} onRegistered={(id) => void link(id)} />
-            : <span className="faint">紐づける条件明細を選んでください</span>
-        )}
+        </div>
+
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <button className="btn primary" disabled={busy || !doc || !ids.length} onClick={() => void link()}>
+            {busy ? "紐づけています…" : "決定して紐づける"}
+          </button>
+          <span className="faint">
+            {masterLabel.trim()} ／ {doc ? doc.label : "発注書 未決定"} ／ 条件明細 {ids.length} 本
+          </span>
+        </div>
       </div>
     </div>
   );
