@@ -220,7 +220,7 @@
         　／　{{#if period_text}}{{period_label}}：{{period_text}}{{else}}{{#if (eq calc_method "SUBSCRIPTION")}}役務提供期間{{else}}納期{{/if}}：{{#if (eq calc_method "SUBSCRIPTION")}}{{#if term_start}}{{formatDateCompact term_start}}{{else}}—{{/if}} 〜 {{#if term_end}}{{formatDateCompact term_end}}{{else}}継続中{{/if}}{{else}}{{formatDate delivery_date}}{{/if}}{{/if}}
         　／　支払日：{{#if (eq calc_method "SUBSCRIPTION")}}{{or (billingDayLabel billing_day cycle billing_timing) "支払日未設定"}}{{else}}{{#if (eq calc_method "ROYALTY")}}{{#unless (gt (or amount_ex_tax amount) 0)}}{{#if (eq deliverable_ownership "受注者")}}利用許諾料計算書の通り{{else}}インセンティブ報酬の算定による{{/if}}{{else}}{{formatDate payment_date}}{{/unless}}{{else}}{{formatDate payment_date}}{{/if}}{{/if}}
         {{#if (or spec detailText)}}
-        <ul>
+        <ul style="list-style:none;padding-left:0;margin:4px 0 0;">
           {{#if spec}}<li style="white-space:pre-line;">{{spec}}</li>{{/if}}
           {{#if detailText}}<li>{{detailText}}</li>{{/if}}
         </ul>
