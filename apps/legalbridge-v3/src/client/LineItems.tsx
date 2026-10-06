@@ -254,6 +254,7 @@ export const PUB_TITLE_COLUMNS: Column[] = [
   { name: "edition", label: "対象出版物名", helpText: "作品名と同じなら空でよい" },
   { name: "copyright", label: "著作権表示", helpText: "奥付に入れる表示。© 2026 著作者名 など" },
   { name: "third_party", label: "共同著作・第三者権利", helpText: "無ければ空。紙には「なし」と出る" },
+  { name: "co_authors", label: "共同著作の取り分", helpText: "条件明細の取り分の写し（受取人宛てなら、その人の取り分も紙に出る）。条件から出た行はここでは直せない（直すなら条件の取り分）" },
   { name: "note", label: "備考", type: "textarea",
     helpText: "初版部数・著作権表示の位置など、この作品だけの取り決め。条件明細の備考から写してある" }
 ];

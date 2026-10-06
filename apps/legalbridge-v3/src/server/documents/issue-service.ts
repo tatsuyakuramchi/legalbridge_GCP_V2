@@ -501,9 +501,12 @@ export class DocumentIssueService {
 
         // 条件書（個別利用許諾条件書・出版条件書）は相手と結ぶ契約そのもの。
         // 決定した瞬間に合意の器を立てる（基本契約があれば補助文書、無ければ単体契約）。
+        // 受取人（共著の取り分）宛ての条件書は、合意の相手が受取人で、親は文書で選んだ受取人の基本契約。
+        const payeeId = int((row.manual_inputs as Record<string, unknown> | null)?._payeePartyId);
         const auto = await ensureAgreementForTerms(client, {
           documentId, documentNo, templateKey: template.templateKey, templateLabel: template.label,
-          conditionIds, agreementId: int(row.agreement_id), issuedOn
+          conditionIds, agreementId: payeeId ? null : int(row.agreement_id), issuedOn,
+          payeePartyId: payeeId, parentAgreementId: payeeId ? int(row.agreement_id) : null
         }, actor);
 
         await recordAudit(client, {

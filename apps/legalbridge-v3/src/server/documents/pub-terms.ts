@@ -218,6 +218,35 @@ export function rowBlockerOf(condition: Data): string | null {
 /** 今日（YYYY-MM-DD）。更新の回数を数える既定の基準日。 */
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+/** 百万分率を %（小数 4 桁まで、末尾の 0 なし）に。 */
+const ppmPct = (ppm: number) => String(Number((ppm / 10000).toFixed(4)));
+
+/** 共同著作の取り分の文（「作家B 66.67%・作家C 33.33%」。代表が分配なら頭に付す）。取り分が無ければ空。 */
+export function sharesText(condition: Data | null | undefined): string {
+  const shares = list(condition?.shares);
+  if (!shares.length) return "";
+  const body = shares.map((s) => `${text(s.name)} ${ppmPct(number(s.sharePpm) ?? 0)}%`).join("・");
+  return `${text(condition?.distribution) === "representative" ? "代表が分配：" : ""}${body}`;
+}
+
+/**
+ * 受取人（甲）の取り分の文。全体率と併記する（「甲の取り分 75%（紙 7.5%・電子 11.25%）」）。
+ * 全体の料率は一覧の欄に出たままで、ここは甲に帰属する率。受取人でなければ空。
+ */
+export function payeeShareText(payee: Data | null | undefined, print: Data | undefined, digital: Data | undefined): string {
+  const partyId = number(payee?.partyId);
+  if (partyId == null) return "";
+  const head = digital ?? print;
+  const share = list(head?.shares).find((s) => number(s.partyId) === partyId);
+  if (!share) return "";
+  const ppm = number(share.sharePpm) ?? 0;
+  const media = [
+    print && number(print.ratePct) != null ? `紙 ${ppmPct(Math.round((number(print.ratePct)! * ppm) / 100))}%` : "",
+    digital && number(digital.ratePct) != null ? `電子 ${ppmPct(Math.round((number(digital.ratePct)! * ppm) / 100))}%` : ""
+  ].filter(Boolean).join("・");
+  return `甲の取り分 ${ppmPct(ppm)}%${media ? `（${media}）` : ""}`;
+}
+
 export function pubTitleSeeds(context: Data): Data[] {
   const groups = new Map<string, Data[]>();
   for (const condition of list(context.conditions)) {
@@ -248,6 +277,8 @@ export function pubTitleSeeds(context: Data): Data[] {
       // 作品に持たせた著作権表示・第三者権利（A-027）。無ければ行で人が入れる。
       copyright: text(head.work?.copyrightNotice),
       third_party: text(head.work?.thirdPartyRights),
+      // 共同著作の取り分（A-068）。条件明細の写し。条件から出た行は紙に出すとき引き直す。
+      co_authors: sharesText(digital ?? print ?? head),
       note: notes,
       print_rate: print ? percentText(print.ratePct) : "—",
       print_exclusivity: print ? exclusivityText(print) || "—" : "—",
@@ -425,6 +456,10 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     const transConsent = (transPrint || transDigital)
       ? ([transPrint, transDigital].filter(Boolean).some((c) => consentLabel(c!.sublicenseConsent) === "要") ? "要" : "不要")
       : text(row.trans_consent);
+    // 共同著作の取り分。条件から出た行は条件の取り分（受取人宛てならその人の取り分も）。
+    const sharesHead = digital ?? print ?? termHead;
+    const coAuthors = fromLedger ? sharesText(sharesHead) : text(row.co_authors);
+    const payeeShare = fromLedger ? payeeShareText(context.payee, print, digital) : "";
     return {
       no: index + 1,
       title: text(row.title) || text(row.item_name),
@@ -432,6 +467,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       copyright: text(row.copyright),
       thirdParty: text(row.third_party) || "なし",
       note: text(row.note),
+      coAuthors, payeeShare, hasShares: Boolean(coAuthors),
       printRate: fromLedger ? (print ? percentText(print.ratePct) : "—") : (text(row.print_rate) || "—"),
       printExclusivity: fromLedger ? (print ? exclusivityText(print) || "—" : "—")
         : (text(row.print_exclusivity) || "—"),
@@ -451,8 +487,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       // 許諾期間と更新（A-039）。条件から引き直す（行を直していてもそちらが正）。
       term: termLabel,
       hasTerm: Boolean(termLabel),
-      // 作品の下に続ける行（許諾期間・翻訳版・備考）を出すか。
-      hasNoteRow: Boolean(termLabel) || Boolean(transText) || text(row.note) !== "",
+      // 作品の下に続ける行（許諾期間・翻訳版・共同著作・備考）を出すか。
+      hasNoteRow: Boolean(termLabel) || Boolean(transText) || Boolean(coAuthors) || text(row.note) !== "",
       translationLabel, translationDerivative
     };
   });
@@ -473,6 +509,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       || text(contextMasterAgreement(context)?.datedTitle ?? contextMasterAgreement(context)?.title)
       || "出版等利用許諾基本契約書",
     showSignature: pick("署名欄") !== "表示しない",
+    /** 受取人（共著者の一人）宛ての条件書（A-068）。本文に取り分の一文が入る。 */
+    payeeTerms: number(context.payee?.partyId) != null,
+    payeeName: text(context.payee?.name),
 
     licensorName: pick("許諾者名称") || text(counterparty.name),
     licensorAddress: pick("許諾者住所") || text(counterparty.address),

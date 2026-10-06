@@ -5,6 +5,9 @@ import { taxRatePercentFor } from "./legacy-totals.js";
 import { agreementDatedTitle, masterAgreementOf } from "./legacy-variables.js";
 import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName, eventScopeLabel } from "../royalty/product-name.js";
 
+/** 条件の取り分（共著。A-068）。条件書の「共同著作」欄と、受取人宛ての条件書の取り分に出す。 */
+export interface ContextShare { partyId: number; name: string; partyCode: string | null; sharePpm: number }
+
 /**
  * テンプレート変数の供給元になる文脈を、条件・合意・当事者・作品から組み立てる。
  * ここが V2 の form_data に相当する位置だが、値は全部ドメインから来る。
@@ -89,16 +92,28 @@ export class DocumentContextRepository {
       if (input.conditionIds.length && !conditions.length) {
         throw new DomainError("NOT_FOUND", "指定された条件が見つかりません");
       }
-      // 受取人の計算書（共著の取り分。A-068）。相手先の欄を全部その人に差し替える。
+      // 受取人の計算書・条件書（共著の取り分。A-068）。相手先の欄を全部その人に差し替える。
+      // 受取人は載せた条件すべての取り分に入っていること（入っていない人に紙を出さない）。
+      let payee: { partyId: number; name: string } | null = null;
       if (input.payeePartyId) {
-        const payee = await this.partyOnly(client, input.payeePartyId);
-        if (!payee) throw new DomainError("NOT_FOUND", `受取人 ${input.payeePartyId} が見つかりません`);
+        const found = await this.partyOnly(client, input.payeePartyId);
+        if (!found) throw new DomainError("NOT_FOUND", `受取人 ${input.payeePartyId} が見つかりません`);
         for (const c of conditions) {
+          const label = c.conditionNo ?? `#${c.id}`;
+          if (!c.shares.length) {
+            throw new DomainError("VALIDATION", `条件 ${label} には取り分がありません。受取人は条件の相手先です`);
+          }
+          if (!c.shares.some((s) => s.partyId === input.payeePartyId)) {
+            throw new DomainError("VALIDATION", `受取人は条件 ${label} の取り分にありません`);
+          }
           c.counterpartyId = input.payeePartyId;
-          c.counterparty = payee.counterparty;
+          c.counterparty = found.counterparty;
         }
+        payee = { partyId: input.payeePartyId, name: found.counterparty.name };
       }
-      const agreementId = input.agreementId ?? conditions[0]?.agreementId ?? null;
+      // 受取人宛ての文書は、条件の相手先（代表）の契約を継がない。基本契約は人が受取人の
+      // ものを選ぶ（選ばなければ基本契約なし）。
+      const agreementId = input.agreementId ?? (input.payeePartyId ? null : conditions[0]?.agreementId ?? null);
       // 案件は文書に指定されていなくても、条件から辿れば分かる。
       // 辿らないと担当者（検収者）と件名が空のままになり、案件を指定して
       // 作ったときだけ埋まる、という不揃いな画面になっていた。
@@ -135,6 +150,7 @@ export class DocumentContextRepository {
               agreementId: agreement?.id ?? null, counterpartyId: partyIdFallback, workId: matter?.workId ?? null, workPartId: null,
               work: { title: null, code: null, part: null, kind: null, copyrightNotice: null, thirdPartyRights: null, sourceTitle: null, partType: null },
               scopes: { region: [] as string[], language: [] as string[], media: [] as string[] },
+              shares: [] as ContextShare[], distribution: "direct" as "direct" | "representative",
               index: 1, total: 1,
               /** 契約・案件から引いた相手先だけの仮の条件。条件の表には無い。 */
               partyOnly: true
@@ -212,6 +228,8 @@ export class DocumentContextRepository {
         conditions,
         /** 単一条件のテンプレートはこちらを使う。 */
         condition: conditions[0] ?? null,
+        /** 受取人（共著の取り分）。計算書・条件書をその人宛てに出すとき。 */
+        payee,
         events,
         /** 予定明細。発注書・支払通知書の明細はここから組む。 */
         schedules,
@@ -611,6 +629,8 @@ export class DocumentContextRepository {
         ORDER BY array_position($1::bigint[], c.id)`,
       [ids, asOf]
     );
+    const sharesById = await this.sharesOf(client, ids);
+    const distributionById = await this.distributionOf(client, ids);
     return result.rows.map((row: Record<string, any>) => {
       const currency = String(row.currency ?? "JPY");
       return {
@@ -618,6 +638,10 @@ export class DocumentContextRepository {
         conditionNo: str(row.condition_no),
         name: String(row.name ?? ""),
         direction: String(row.direction),
+        /** 共著の取り分（A-068）。改訂の系列でいちばん新しい版に付いた組。 */
+        shares: sharesById.get(Number(row.id)) ?? ([] as ContextShare[]),
+        /** 分配を誰がするか（A-070）。 */
+        distribution: distributionById.get(Number(row.id)) ?? ("direct" as "direct" | "representative"),
         kind: String(row.kind),
         currency,
         pricingModel: String(row.pricing_model),
@@ -691,6 +715,46 @@ export class DocumentContextRepository {
         scopes: { region: [] as string[], language: [] as string[], media: [] as string[] }
       };
     }).map((condition, index, all) => ({ ...condition, index: index + 1, total: all.length }));
+  }
+
+  /** 条件の取り分。改訂の系列で 1 組（いちばん新しい版に付いたもの）。royalty/shares.ts の loadShares と同じ決まりをまとめて引く。 */
+  private async sharesOf(client: Queryable, ids: number[]): Promise<Map<number, ContextShare[]>> {
+    const out = new Map<number, ContextShare[]>();
+    if (!ids.length) return out;
+    const r = await client.query(
+      `WITH wanted AS (
+         SELECT y.id, COALESCE(y.series_id, y.id) AS series FROM conditions y WHERE y.id = ANY($1::bigint[])
+       ), latest AS (
+         SELECT w.id AS wanted_id, max(s.condition_id) AS condition_id
+           FROM wanted w
+           JOIN conditions x ON COALESCE(x.series_id, x.id) = w.series
+           JOIN condition_shares s ON s.condition_id = x.id
+          GROUP BY w.id
+       )
+       SELECT l.wanted_id, s.party_id, p.name, to_jsonb(p) ->> 'party_code' AS party_code, s.share_ppm
+         FROM latest l
+         JOIN condition_shares s ON s.condition_id = l.condition_id
+         JOIN parties p ON p.id = s.party_id
+        ORDER BY l.wanted_id, s.sort_order, s.id`, [ids]);
+    for (const row of r.rows as Array<Record<string, any>>) {
+      const id = Number(row.wanted_id);
+      out.set(id, [...(out.get(id) ?? []), {
+        partyId: Number(row.party_id), name: String(row.name ?? ""), partyCode: str(row.party_code), sharePpm: Number(row.share_ppm)
+      }]);
+    }
+    return out;
+  }
+
+  /** 分配を誰がするか（A-070）。列が無いデータベースでも落ちないよう JSON で読む。 */
+  private async distributionOf(client: Queryable, ids: number[]): Promise<Map<number, "direct" | "representative">> {
+    const out = new Map<number, "direct" | "representative">();
+    if (!ids.length) return out;
+    const r = await client.query(
+      "SELECT c.id, to_jsonb(c) ->> 'distribution' AS distribution FROM conditions c WHERE c.id = ANY($1::bigint[])", [ids]);
+    for (const row of r.rows as Array<Record<string, any>>) {
+      out.set(Number(row.id), row.distribution === "representative" ? "representative" : "direct");
+    }
+    return out;
   }
 
   private async agreement(client: Queryable, id: number) {

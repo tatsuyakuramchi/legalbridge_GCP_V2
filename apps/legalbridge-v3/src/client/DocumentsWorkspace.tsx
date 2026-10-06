@@ -105,6 +105,43 @@ function PayeePicker(
   );
 }
 
+/** 条件の取り分（共著）。条件書の「受取人」を選ぶ材料。 */
+interface TermsShares { id: number; shares: Array<{ partyId: number; partyName: string; sharePpm: number }>; distribution: "direct" | "representative" }
+
+/**
+ * 条件書の受取人を選ぶ。共著の取り分のある作品の条件書は、相手先（代表）宛てのほかに
+ * 共著者ごとにも出せる（甲＝その人。全体の料率とその人の取り分を併記）。
+ */
+function TermsPayeePicker(
+  { conditions, value, onChange }: { conditions: TermsShares[]; value: number | null; onChange: (id: number | null) => void }
+) {
+  const people = new Map<number, { name: string; count: number }>();
+  for (const c of conditions) {
+    for (const s of c.shares) {
+      const cur = people.get(s.partyId) ?? { name: s.partyName, count: 0 };
+      cur.count += 1; people.set(s.partyId, cur);
+    }
+  }
+  if (!people.size) return null;
+  const all = conditions.filter((c) => c.shares.length).length;
+  return (
+    <div className="field">
+      <span>受取人（共著の取り分）</span>
+      <select value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
+        <option value="">— 相手先（代表）宛て —</option>
+        {[...people.entries()].map(([id, p]) => (
+          <option key={id} value={id}>{p.name}{p.count < all ? `（${p.count}/${all} 本の取り分に入っている）` : ""}</option>
+        ))}
+      </select>
+      <small className="faint">
+        {value
+          ? "甲がこの人になり、一覧の料率（全体）とこの人の取り分を併記します。基本契約はこの人のものを選んでください（選ばなければ単体契約として起こします）"
+          : "取り分のある条件が入っています。共著者ごとに出すなら受取人を選んでください（選んだ条件すべての取り分に入っている人だけ通ります）"}
+      </small>
+    </div>
+  );
+}
+
 /** 一覧の中の紐づけ。件数ではなく番号を出して、そのまま辿れるようにする。 */
 function Refs(
   { doc, onOpen }: { doc: DocumentRow; onOpen?: (kind: EntityKind, id: number) => void }
@@ -511,6 +548,21 @@ export function DocumentsWorkspace(
    * 1 枚の紙は 1 人宛てなので、受取人ごとに 1 枚ずつ出す。
    */
   const [payeePartyId, setPayeePartyId] = useState<number | null>(null);
+  /** 出版条件書：選んだ条件の取り分（受取人を選ぶ材料）。 */
+  const isPubTerms = /^pub_license_terms/.test(templateKey);
+  const [termsShares, setTermsShares] = useState<TermsShares[]>([]);
+  useEffect(() => {
+    if (!isPubTerms || !picked.length) { setTermsShares([]); return; }
+    let live = true;
+    api.get<{ conditions: TermsShares[] }>(`/conditions/shares?ids=${[...picked].sort((a, b) => a - b).join(",")}`)
+      .then((r) => { if (live) setTermsShares(r.conditions); })
+      .catch(() => { if (live) setTermsShares([]); });
+    return () => { live = false; };
+  }, [isPubTerms, [...picked].sort((a, b) => a - b).join(",")]);
+  /** 手入力に受取人を添える（条件書。計算書は試算の側で添える）。 */
+  const inputsWithPayee = useMemo(
+    () => (isPubTerms && payeePartyId ? { ...inputs, _payeePartyId: payeePartyId } : inputs),
+    [isPubTerms, payeePartyId, inputs]);
   const [stmtError, setStmtError] = useState<string | null>(null);
   // 条件ごとに実績をまとめる。計算は条件ごと（料率も MG・AG も条件ごとに違う）で、
   // 1枚にまとめるのは印字と支払のまとめ方だけ。
@@ -568,6 +620,8 @@ export function DocumentsWorkspace(
    * 混ざっているときは絞らない（どちらの契約かを決められない）。
    */
   const partyId = (() => {
+    // 受取人宛ての条件書は、契約・文書の引き先も受取人。
+    if (isPubTerms && payeePartyId) return payeePartyId;
     const ids = [...new Set(picked
       .map((id) => conditions.find((c) => c.id === id)?.counterparty?.id)
       .filter((v): v is number => typeof v === "number"))];
@@ -605,8 +659,8 @@ export function DocumentsWorkspace(
           rs_stage_notes: stmt.stageNotes ?? "",
           // 受取人（共著の取り分）。宛名・口座がこの人で映る。
           ...(payeePartyId ? { _payeePartyId: payeePartyId } : {}) }
-      : inputs
-  ), [isStatement, stmt, inputs, payeePartyId]);
+      : inputsWithPayee
+  ), [isStatement, stmt, inputsWithPayee, payeePartyId]);
   const body = useMemo(() => ({
     templateKey, conditionIds: picked, eventIds: pickedEvents,
     manualInputs: previewInputs, matterId, agreementId, requestId
@@ -719,7 +773,7 @@ export function DocumentsWorkspace(
     setError(null); setIssued(null); setStored(null); setBusy(true); setPreviewedAt(null);
     setWorking({ action: "save", what: "下書きを保存しています" });
     try {
-      const manualInputs = { ...inputs, _eventIds: pickedEvents };
+      const manualInputs = { ...inputsWithPayee, _eventIds: pickedEvents };
       let id: number;
       if (draft) {
         await api.patch(`/documents/${draft.id}/draft`, { manualInputs, conditionIds: picked, agreementId });
@@ -780,7 +834,7 @@ export function DocumentsWorkspace(
         // 開いている下書きを直してから発行する。発行は下書きに保存された
         // 手入力しか見ないので、先に書き戻す。
         await api.patch(`/documents/${draft.id}/draft`,
-          { manualInputs: { ...inputs, _eventIds: pickedEvents }, conditionIds: picked, agreementId });
+          { manualInputs: { ...inputsWithPayee, _eventIds: pickedEvents }, conditionIds: picked, agreementId });
         const r = await api.post<{ id: number; documentNo: string }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
         done = { id: r.id, documentNo: r.documentNo };
@@ -1285,7 +1339,9 @@ export function DocumentsWorkspace(
                     <span className="stack" style={{ gap: 2 }}>
                       <select value={agreementId ?? ""} onChange={(e) => setAgreementId(e.target.value ? Number(e.target.value) : null)}>
                         <option value="">
-                          {conditionAgreement
+                          {isPubTerms && payeePartyId
+                            ? "受取人の基本契約を選ばない（受取人との単体契約として起こす）"
+                            : conditionAgreement
                             ? `条件の契約に従う（${conditionAgreement.title}${conditionAgreement.agreementNo ? ` ${conditionAgreement.agreementNo}` : ""}。単体契約なら基本契約なしで出す）`
                             : "条件に契約が付いていない（基本契約なしで出す）"}
                         </option>
@@ -1346,6 +1402,10 @@ export function DocumentsWorkspace(
                       <small className="faint">選んだ条件につながっている発注書（取り込んで単体契約として登録したものを含む）と、この取引先の決定済みの発注書から選べます。相手の発注書の番号なら直接打てます（打った番号が最優先。次に条件に控えた外部の番号、その次に作った発注書）。検収書の「発注番号」に「基本契約番号 / 発注書番号」で出ます（基本契約が無ければ発注書番号だけ）</small>
                     </span>
                   </label>
+                )}
+                {picked.length > 0 && isPubTerms && termsShares.some((c) => c.shares.length) && (
+                  <TermsPayeePicker conditions={termsShares} value={payeePartyId}
+                    onChange={(id) => { setPayeePartyId(id); setAgreementId(null); }} />
                 )}
                 {/* 計算書の「契約番号」は 基本契約 / 個別契約 の番号を並べる。個別契約はここで選ぶ。 */}
                 {picked.length > 0 && partyId && isStatement && (
