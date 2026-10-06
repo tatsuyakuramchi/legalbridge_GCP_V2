@@ -72,7 +72,7 @@
     <td>{{#if contract_form_summary}}{{contract_form_summary}}{{else}}See details{{/if}}</td>
   </tr>
   <tr>
-    <th>Delivery <span style="font-size:8pt;color:#888;font-weight:400;">(or service period)</span></th>
+    <th>{{#if delivery_heading}}{{delivery_heading}}{{else}}Delivery <span style="font-size:8pt;color:#888;font-weight:400;">(or service period)</span>{{/if}}</th>
     <td>{{#if delivery_summary}}{{delivery_summary}}{{else}}{{#if DELIVERY_DATE}}{{formatDateEn DELIVERY_DATE}}{{else}}See details{{/if}}{{/if}}</td>
   </tr>
   <tr>
@@ -218,7 +218,7 @@
       <td colspan="4">
         {{#if payment_terms}}Contract type: {{payment_terms}}　／　{{/if}}Ownership: {{#if (eq deliverable_ownership "受注者")}}Contractor (licensed to the Purchaser){{else}}Purchaser (assignment){{/if}}
         　／　Payment: {{#if (eq calc_method "SUBSCRIPTION")}}recurring{{else}}{{#if (eq calc_method "ROYALTY")}}{{#if (eq deliverable_ownership "受注者")}}license fee{{else}}incentive fee{{/if}}{{else}}fixed fee{{/if}}{{/if}}
-        　／　{{#if (eq calc_method "SUBSCRIPTION")}}Service period{{else}}Delivery{{/if}}: {{#if (eq calc_method "SUBSCRIPTION")}}{{#if term_start}}{{formatDateCompact term_start}}{{else}}—{{/if}} – {{#if term_end}}{{formatDateCompact term_end}}{{else}}ongoing{{/if}}{{else}}{{formatDateEn delivery_date}}{{/if}}
+        　／　{{#if period_text}}{{period_label}}: {{period_text}}{{else}}{{#if (eq calc_method "SUBSCRIPTION")}}Service period{{else}}Delivery{{/if}}: {{#if (eq calc_method "SUBSCRIPTION")}}{{#if term_start}}{{formatDateCompact term_start}}{{else}}—{{/if}} – {{#if term_end}}{{formatDateCompact term_end}}{{else}}ongoing{{/if}}{{else}}{{formatDateEn delivery_date}}{{/if}}{{/if}}
         　／　Payment date: {{#if (eq calc_method "SUBSCRIPTION")}}{{or (billingDayLabelEn billing_day cycle billing_timing) "not set"}}{{else}}{{#if (eq calc_method "ROYALTY")}}{{#unless (gt (or amount_ex_tax amount) 0)}}{{#if (eq deliverable_ownership "受注者")}}per royalty statement{{else}}per incentive fee calculation{{/if}}{{else}}{{formatDateEn payment_date}}{{/unless}}{{else}}{{formatDateEn payment_date}}{{/if}}{{/if}}
         {{#if (or spec detailText)}}
         <ul>

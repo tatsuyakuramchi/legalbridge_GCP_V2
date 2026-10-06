@@ -27,6 +27,7 @@ import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
+import { deliveryKindFor, orderPeriodSummary, withPeriodText } from "./order-period.js";
 import { contextMasterAgreement, resolveLegacyVariable } from "./legacy-variables.js";
 import { contractRefText } from "../conditions/contracts.js";
 import { toInternationalPhone } from "../core/phone.js";
@@ -351,6 +352,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
         quantity: 1,
         unit_price: s.plannedAmount ?? 0,
         payment_terms: contractFormFor(s.contractForm, condition.contractForm),
+        // 役務提供か成果物納品か。契約形式から既定を入れ、画面で選び直せる。
+        delivery_kind: deliveryKindFor(contractFormFor(s.contractForm, condition.contractForm)),
         // 定期払いの回は、受け持つ役務提供期間を持つ。本文がそのまま差す。
         term_start: s.serviceFrom ?? null,
         term_end: s.serviceTo ?? null,
@@ -382,6 +385,7 @@ export function orderLinesFrom(context: Ctx): Row[] {
       unit: c.unitLabel ?? null,
       unit_price: c.unitAmount ?? c.flatAmount ?? 0,
       payment_terms: contractFormFor(c.contractForm),
+      delivery_kind: deliveryKindFor(c.contractForm),
       term_start: c.termStart ?? null,
       term_end: c.termEnd ?? null,
       delivery_date: c.deliveryDue ?? c.termEnd ?? null,
@@ -894,9 +898,12 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
   const intl = templateKey === "intl_purchase_order";
   // 海外版は行の契約種別（請負 など）も英語で刷る。英語で書いてあればそのまま。
   const rawItems = rows(manual.items).length ? rows(manual.items) : orderLinesFrom(context);
-  const items = intl
+  const lang: "ja" | "en" = intl ? "en" : "ja";
+  // 役務提供の行には提供期間の文（period_text）を足す。本文の明細がそれを差す。
+  const items = withPeriodText(intl
     ? rawItems.map((r) => (r.payment_terms ? { ...r, payment_terms: contractFormEn(r.payment_terms) } : r))
-    : rawItems;
+    : rawItems, lang);
+  const period = orderPeriodSummary(items, lang);
   const otherFees = rows(manual.other_fees);
   const expenses = rows(manual.expenses);
   const totals = purchaseOrderTotals({ items, other_fees: otherFees });
@@ -910,7 +917,6 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
   // 件数・契約種別・帰属先・支払条件はここで 1 行にまとめる。
   const ownerships = [...new Set(items.map((r) => String(r.deliverable_ownership ?? "").trim()).filter(Boolean))];
   const hasContractorOwned = ownerships.includes("受注者") || ownerships.includes("contractor");
-  const lang: "ja" | "en" = intl ? "en" : "ja";
   const licenseTerms = licenseTermRows(context, lang);
   const paymentTermsSummary = distinctJoin(((context.conditions ?? []) as Ctx[])
     .filter((c) => !isSettlementKind(c.kind)).map((c) => c.paymentTerms));
@@ -934,7 +940,10 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
       : ownershipLabelOf(ownerships[0]) ?? ownerships[0] ?? "",
     has_contractor_owned: hasContractorOwned,
     payment_terms_summary: paymentTermsSummary,
-    delivery_summary: summarizeDates(deliveryDate, lang),
+    // 役務提供の行があれば提供期間で書く（「October 20 – 25, 2026」）。無ければ納期のまとめ。
+    delivery_summary: period?.summary ?? summarizeDates(deliveryDate, lang),
+    // 1 ページ目の見出し。空なら本文の既定（納期（または役務提供期間））。
+    delivery_heading: period?.heading ?? "",
     payment_summary: summarizeDates(paymentDate, lang),
     // 海外版だけが使う値。通貨コード（JPY 246,000 と書く）と源泉徴収の英語、
     // 自社の英語表記（設定の 会社名（英語）など。空なら日本語のまま）。
