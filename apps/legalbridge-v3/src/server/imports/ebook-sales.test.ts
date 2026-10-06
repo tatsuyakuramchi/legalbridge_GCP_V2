@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import { DomainError } from "../core/errors.js";
 import {
-  EbookSalesImportService, monthEnd, monthLabel, monthOf, normalizeTitle, readRows, readWorkbookRows, rowsOfSheet,
+  EbookSalesImportService, monthEnd, monthLabel, monthOf, normalizeTitle, readRows, readWorkbookRows, rowsOfSheet, volumeOf, volumeTitles,
   type EbookSalesRow
 } from "./ebook-sales.js";
 
@@ -77,7 +77,7 @@ test("販売月の読み方と、実績の発生日・期間の名前", () => {
 
 const row = (over: Partial<EbookSalesRow>): EbookSalesRow => ({
   sheet: "2026年1月", line: 2, month: "2026-01", reportMonth: over.month ?? "2026-01", storeCompany: "ドワンゴ", store: "BOOKWALKER（PC）",
-  title: "キズナバレット 1", authors: "からすば晴┴N.G.P.", cid: "BT0001", listPrice: 1900, storeRatePct: 55,
+  title: "キズナバレット 1", volume: "1", authors: "からすば晴┴N.G.P.", cid: "BT0001", listPrice: 1900, storeRatePct: 55,
   downloads: 11, netAmount: 11495, royaltyInFile: 3135, ...over
 });
 
@@ -85,7 +85,7 @@ interface Options {
   codes?: Array<{ cid: string; id: number; title: string }>;
   titles?: Array<{ id: number; title: string }>;
   conditions?: Array<Record<string, unknown>>;
-  existing?: Array<{ condition_id: number; period: string; unit_amount: number }>;
+  existing?: Array<{ condition_id: number; period: string; unit_amount: number; note?: string | null }>;
 }
 const db = (o: Options = {}) => new FakeDatabase((text, params) => {
   if (text.includes("FROM ebook_work_codes c JOIN works w")) {
@@ -105,31 +105,43 @@ const writer = () => {
   return { added, add: async (conditionId: number, input: Record<string, unknown>) => { added.push({ conditionId, input }); return { id: 900 + added.length }; } };
 };
 
-test("CID で作品に当たり、電子出版の料率条件にまとめて実績を立てる（配信価格 × DL数 × 料率）", async () => {
+test("CID で作品に当たり、電子出版の料率条件に Excel の行（報告月 × 書店 × 価格）ごとに実績を立てる", async () => {
   const w = writer();
   const svc = new EbookSalesImportService(db({ codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL] }), w as any);
-  const rows = [row({}), row({ store: "Kindle", downloads: 3, royaltyInFile: 855 }), row({ month: "2026-02", downloads: 2, royaltyInFile: 570 })];
+  const rows = [row({}), row({ store: "Kindle", downloads: 3, royaltyInFile: 855 }), row({ month: "2026-02", downloads: 2, royaltyInFile: 570 }),
+                row({ downloads: 4, royaltyInFile: 1140 })];   // 同じ書店・同じ月・同じ価格 → 1 件に足す
   const p = await svc.preview(rows);
-  assert.equal(p.groups.length, 2, "条件 × 月 × 価格 で 1 件");
-  assert.equal(p.groups[0].downloads, 14);
-  assert.equal(p.groups[0].gross, 26600);
-  assert.equal(p.groups[0].royalty, 3990, "26,600 × 15% = 3,990（Excel の行ごとの切り捨ても 3,990）");
-  assert.equal(p.groups[0].status, "ok");
-  assert.equal(p.groups[0].work!.via, "cid");
-  assert.deepEqual(p.counts.ok, 2);
+  assert.equal(p.groups.length, 3, "条件 × 報告月 × 書店 × 価格 で 1 件");
+  const bw = p.groups.find((g) => g.month === "2026-01" && g.store === "BOOKWALKER（PC）")!;
+  assert.equal(bw.downloads, 15);
+  assert.equal(bw.gross, 28500);
+  assert.equal(bw.royalty, 4275, "28,500 × 15% = 4,275");
+  assert.equal(bw.status, "ok");
+  assert.equal(bw.work!.via, "cid");
+  const kindle = p.groups.find((g) => g.month === "2026-01" && g.store === "Kindle")!;
+  assert.equal(kindle.gross, 5700);
+  assert.deepEqual(p.counts.ok, 3);
   assert.deepEqual(p.months, ["2026-01", "2026-02"]);
 
   const done = await svc.commit(rows, "tester");
-  assert.equal(done.written, 2);
-  assert.equal(w.added[0].conditionId, 50);
-  assert.equal(w.added[0].input.usageType, undefined, "出版の実績は利用形態なし（台帳の報告と同じ）");
-  assert.equal(w.added[0].input.grossAmount, 26600, "総額＝報告売上");
-  assert.equal(w.added[0].input.amount, 26600);
-  assert.equal(w.added[0].input.occurredOn, "2026-01-31");
-  assert.equal(w.added[0].input.period, "2026年1月分");
-  assert.equal(w.added[0].input.unitAmount, 1900);
-  assert.equal(w.added[0].input.quantity, 14);
-  assert.equal(w.added[0].input.workId, 7);
+  assert.equal(done.written, 3);
+  const first = w.added.find((a) => a.input.quantity === 15)!;
+  assert.equal(first.conditionId, 50);
+  assert.equal(first.input.usageType, undefined, "出版の実績は利用形態なし（台帳の報告と同じ）");
+  assert.equal(first.input.grossAmount, 28500, "総額＝報告売上");
+  assert.equal(first.input.amount, 28500);
+  assert.equal(first.input.occurredOn, "2026-01-31");
+  assert.equal(first.input.period, "2026年1月分");
+  assert.equal(first.input.unitAmount, 1900);
+  assert.equal(first.input.workId, 7);
+  assert.equal(first.input.note, "電子書籍売上取込 2026-01｜BOOKWALKER（PC）");
+});
+
+test("印税の見込みは Excel と同じ行ごとの切り捨て（1,818 × 1 × 15% = 272.7 → 272）", async () => {
+  const svc = new EbookSalesImportService(db({ codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL] }), writer() as any);
+  const p = await svc.preview([row({ store: "Apple Books", listPrice: 1818, downloads: 1, royaltyInFile: 272 })]);
+  assert.equal(p.groups[0].royalty, 272);
+  assert.equal(p.groups[0].royaltyInFile, 272);
 });
 
 test("期間はシート名の月（報告月）。遅れて報告された販売月の行も同じ報告月にまとめ、販売月は備考に書く", async () => {
@@ -139,14 +151,15 @@ test("期間はシート名の月（報告月）。遅れて報告された販�
   const rows = [row({ sheet: "2026年3月", reportMonth: "2026-03", month: "2026-01" }),
                 row({ sheet: "2026年3月", reportMonth: "2026-03", month: "2025-11", store: "Kindle", downloads: 2 })];
   const p = await svc.preview(rows);
-  assert.equal(p.groups.length, 1, "報告月 × 価格 で 1 件");
-  assert.equal(p.groups[0].month, "2026-03");
-  assert.deepEqual(p.groups[0].salesMonths, ["2026-01", "2025-11"]);
+  assert.equal(p.groups.length, 2, "報告月 × 書店 × 価格 で 1 件（書店が違うので 2 件）");
+  assert.deepEqual(p.groups.map((g) => g.month), ["2026-03", "2026-03"]);
+  assert.deepEqual(p.groups.map((g) => g.salesMonths), [["2026-01"], ["2025-11"]]);
   assert.deepEqual(p.months, ["2026-03"]);
   await svc.commit(rows, "tester");
   assert.equal(w.added[0].input.period, "2026年3月分", "計算書の製品名は「2026年3月 作品名」になる");
   assert.equal(w.added[0].input.occurredOn, "2026-03-31");
-  assert.match(String(w.added[0].input.note), /販売月 2026-01・2025-11/);
+  assert.equal(w.added[0].input.note, "電子書籍売上取込 2026-03｜BOOKWALKER（PC）｜販売月 2026-01");
+  assert.equal(w.added[1].input.note, "電子書籍売上取込 2026-03｜Kindle｜販売月 2025-11");
   // シート名が月でなければ（CSV）販売月で持つ。
   const csv = await svc.preview([row({ sheet: "売上.csv", reportMonth: null, month: "2026-01" })]);
   assert.equal(csv.groups[0].month, "2026-01");
@@ -170,24 +183,29 @@ test("作品が分からない・条件が無い・印税なし・登録済み�
   const svc = new EbookSalesImportService(db({
     codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }, { cid: "BT0002", id: 8, title: "買い切り" }, { cid: "BT0003", id: 9, title: "条件なし" }],
     conditions: [DIGITAL, fixed],
-    existing: [{ condition_id: 50, period: "2026年1月分", unit_amount: 1900 }]
+    existing: [{ condition_id: 50, period: "2026年1月分", unit_amount: 1900, note: "電子書籍売上取込 2026-01｜BOOKWALKER（PC）" },
+               { condition_id: 50, period: "2026年4月分", unit_amount: 1900, note: "電子書籍売上取込 2026-04（BOOKWALKER（PC））" }]
   }), writer() as any);
   const p = await svc.preview([
-    row({}),                                        // 登録済み
+    row({}),                                        // 登録済み（同じ書店）
+    row({ store: "Kindle" }),                       // ok（書店が違う）
+    row({ month: "2026-04", store: "Kindle" }),     // 登録済み（書店の無い古い備考は、どの書店とも同じ扱い）
     row({ month: "2026-02" }),                      // ok
     row({ cid: "BT0002", title: "買い切り" }),       // 印税なし
     row({ cid: "BT0003", title: "条件なし" }),       // 条件なし
     row({ cid: "BT0009", title: "知らない作品" }),   // 作品が分からない
     row({ month: "2026-03", downloads: 0 })         // 0
   ]);
-  const by = Object.fromEntries(p.groups.map((g) => [`${g.cid}|${g.month}`, g.status]));
-  assert.equal(by["BT0001|2026-01"], "duplicate");
-  assert.equal(by["BT0001|2026-02"], "ok");
-  assert.equal(by["BT0002|2026-01"], "no_royalty");
-  assert.equal(by["BT0003|2026-01"], "no_condition");
-  assert.equal(by["BT0009|2026-01"], "unresolved");
-  assert.equal(by["BT0001|2026-03"], "zero");
-  assert.equal(p.counts.ok, 1);
+  const by = Object.fromEntries(p.groups.map((g) => [`${g.cid}|${g.month}|${g.store}`, g.status]));
+  assert.equal(by["BT0001|2026-01|BOOKWALKER（PC）"], "duplicate");
+  assert.equal(by["BT0001|2026-01|Kindle"], "ok");
+  assert.equal(by["BT0001|2026-04|Kindle"], "duplicate");
+  assert.equal(by["BT0001|2026-02|BOOKWALKER（PC）"], "ok");
+  assert.equal(by["BT0002|2026-01|BOOKWALKER（PC）"], "no_royalty");
+  assert.equal(by["BT0003|2026-01|BOOKWALKER（PC）"], "no_condition");
+  assert.equal(by["BT0009|2026-01|BOOKWALKER（PC）"], "unresolved");
+  assert.equal(by["BT0001|2026-03|BOOKWALKER（PC）"], "zero");
+  assert.equal(p.counts.ok, 2);
 });
 
 test("CID → 作品 を決めて覚える", async () => {
@@ -212,4 +230,26 @@ test("作品に付いている CID を読む・外す", async () => {
   assert.deepEqual(codes.map((c) => c.cid), ["BT0001"]);
   assert.deepEqual(await svc.unmapCode("BT0001", "tester"), { cid: "BT0001", workId: 7 });
   await assert.rejects(() => svc.unmapCode("BT9999", "tester"), (e: unknown) => e instanceof DomainError && e.code === "NOT_FOUND");
+});
+
+test("巻数：作品は作品名 × 巻数で 1 件。CID が無い行は「タイトル 巻数」の作品に当て、無ければシリーズ名の作品に載せない", async () => {
+  assert.equal(volumeOf(3), "3"); assert.equal(volumeOf("第３巻"), "3"); assert.equal(volumeOf(""), null); assert.equal(volumeOf(1), "1");
+  assert.deepEqual(volumeTitles("スピタのコピタの！", "3"), ["スピタのコピタの！ 3", "スピタのコピタの！ 第3巻", "スピタのコピタの！（3）", "スピタのコピタの！ vol.3"]);
+  assert.deepEqual(volumeTitles("スピタのコピタの！", null), []);
+
+  const titles = [{ id: 30, title: "スピタのコピタの！" }, { id: 33, title: "スピタのコピタの！ 3" }];
+  const svc = new EbookSalesImportService(db({ titles, conditions: [{ ...DIGITAL, id: 60, work_id: 33 }] }), writer() as any);
+  const p = await svc.preview([
+    row({ cid: null, title: "スピタのコピタの！", volume: "3" }),   // 「スピタのコピタの！ 3」に当たる
+    row({ cid: null, title: "スピタのコピタの！", volume: "5" }),   // 巻ごとの作品が無い → 当てない
+    row({ cid: null, title: "スピタのコピタの！", volume: "1" })    // 1 巻はタイトルそのものでも可
+  ]);
+  assert.equal(p.groups.length, 3, "巻ごとに別のまとまり");
+  const by = Object.fromEntries(p.groups.map((g) => [g.volume, g]));
+  assert.equal(by["3"].work!.id, 33);
+  assert.equal(by["3"].status, "ok");
+  assert.equal(by["5"].status, "unresolved");
+  assert.match(by["5"].message ?? "", /「スピタのコピタの！ 5」の作品がありません/);
+  assert.deepEqual(by["5"].candidates.map((c: { id: number }) => c.id), [30], "候補にシリーズ名の作品は出す（人が選ぶ）");
+  assert.equal(by["1"].work!.id, 30);
 });

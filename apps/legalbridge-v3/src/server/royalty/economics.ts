@@ -46,6 +46,11 @@ export interface ReportedResult {
    * 条件の料率をもう一度掛けると二重になるため。
    */
   ratePctOverride?: number | null;
+  /**
+   * 総額の上書き（最小通貨単位）。出版の印税のように実績ごとに切り捨てて足した
+   * 総額を渡すときに入れる。報告売上（salesInput）はそのまま紙の「報告売上」に出る。
+   */
+  grossOverrideMinor?: number | null;
   /** 数量ベース：製造数・販売数と、うち無償分。 */
   quantity?: number | null;
   sampleQuantity?: number | null;
@@ -101,8 +106,11 @@ export function buildFeeTerms(condition: ConditionEconomics, reported: ReportedR
       // 結果、計算書が黙って 0 円で出る（紙は出るが数字が無い）。
       const intake = String(reported.intakeCurrency ?? currency).toUpperCase();
       const raw = toMajor(reported.salesInput ?? 0, intake);
+      // 実績ごとに切り捨てて足した総額（出版の印税）。無ければ鍵ごと付けない。
+      const override = reported.grossOverrideMinor === null || reported.grossOverrideMinor === undefined
+        ? {} : { gross_override: toMajor(reported.grossOverrideMinor, currency) };
       if (intake === String(currency).toUpperCase()) {
-        return { type: "revenue", base_amount: Math.round(raw), rate_pct: rate };
+        return { type: "revenue", base_amount: Math.round(raw), rate_pct: rate, ...override };
       }
       // 換算が要るのにレートが無いなら止める。0 を掛けて 0 円の計算書を出すより、
       // レートを入れてくださいと言うほうがよい（金額は直せないまま相手に届く）。
@@ -112,7 +120,7 @@ export function buildFeeTerms(condition: ConditionEconomics, reported: ReportedR
           `報告は ${intake} ですが、この条件は ${currency} 建てです。` +
           "為替レートを入れてください（入れないと計算書が0円で出ます）");
       }
-      return { type: "revenue", base_amount: Math.round(raw * fx), rate_pct: rate };
+      return { type: "revenue", base_amount: Math.round(raw * fx), rate_pct: rate, ...override };
     }
 
     case "subscription": {

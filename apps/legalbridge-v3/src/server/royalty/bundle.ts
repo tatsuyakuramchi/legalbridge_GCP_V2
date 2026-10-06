@@ -74,7 +74,38 @@ export function basisNoteOf(preview: CalculationPreview): string {
 export function bundleLinesFor(preview: CalculationPreview): BundleLine[] {
   const usage = preview.events.filter((e) => e.usageType);
   if (usage.length) return usageBundleLines(usage);
+  // 出版の実績（行ごとに切り捨て）は、実績 1 件が 1 行（報告月 × 書店 × 作品）。
+  if (preview.events.length && preview.events.every((e) => e.amount !== null && e.amount !== undefined)) {
+    return eventBundleLines(preview);
+  }
   return [bundleLineFrom(preview)];
+}
+
+/** 実績ごとに額の出ている計算（出版の印税）を、実績 1 件 1 行にする。 */
+export function eventBundleLines(preview: CalculationPreview): BundleLine[] {
+  const c = preview.condition;
+  const currency = c.currency;
+  return preview.events.map((e) => ({
+    conditionId: c.id,
+    eventId: e.eventId,
+    contractTitle: c.agreementTitle ?? "",
+    contractNumber: c.agreementNo ?? c.conditionNo ?? "",
+    conditionName: e.productName ?? c.name,
+    methodLabel: methodLabelOf(preview),
+    salesJpy: toMajor(e.basis, currency),
+    ratePct: e.ratePct ?? c.ratePct,
+    paymentJpy: toMajor(e.amount ?? 0, currency),
+    basisNote: [e.period ? `対象期間 ${e.period}` : "", storeOfNote(e.note)].filter(Boolean).join("・"),
+    occurredOn: e.occurredOn ?? null,
+    quantity: Number(e.quantity ?? 0) > 0
+      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null
+  }));
+}
+
+/** 取込の備考「電子書籍売上取込 2026-03｜BOOKWALKER（PC）｜…」から書店名。 */
+function storeOfNote(note: string | null | undefined): string {
+  const m = String(note ?? "").match(/^電子書籍売上取込 \S+｜([^｜]*)/);
+  return m ? m[1].trim() : "";
 }
 
 export function bundleLineFrom(preview: CalculationPreview): BundleLine {
