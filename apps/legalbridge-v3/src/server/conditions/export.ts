@@ -9,16 +9,28 @@ const LICENSE_FEE_BASIS_CSV: Record<string, string> = {
 };
 
 /**
- * 利用許諾条件の書き出し（CSV）。
+ * 条件の書き出し（CSV）。
  *
- * 一括修正（CSV の「登録済みに当てる」）は、条件番号か 作品＋取引モデル で
- * 当てる。どちらにしても、今なにが入っているかを手元に出せないと直しようが
- * ない。170 本を画面で1本ずつ開いて写すのは現実的ではない。
+ * 一括修正（CSV の「登録済みに当てる」）は、今なにが入っているかを手元に
+ * 出せないと直しようがない。170 本を画面で1本ずつ開いて写すのは現実的ではない。
  *
  * 見出しは取込の CSV と同じにする。書き出して、直して、そのまま取り込める
- * （往復できる）ようにするため。取込が当てる先を決めるのは 条件番号 →
- * 作品＋取引モデル の順なので、条件番号を先頭に置く。
+ * （往復できる）ようにするため。
+ *
+ * 種類で列を分ける。許諾（kind = license）は 作品・取引モデル・料率・独占・
+ * 地域… を持ち、業務委託など（委託料・製品・実費・手数料）は 金額・単価×数量・
+ * 納期・仕様・契約形式・税区分 を持つ。1つの表に混ぜると、どちらの行も半分が
+ * 空欄になって「何が入っているのか」が読めない（ブエノデザイン宛ての委託料が
+ * 許諾の列で出て、作品も料率も空、という形になった）。
  */
+
+/**
+ * 書き出す種類の群。
+ *   license … 利用許諾条件（取込 license_conditions と往復）
+ *   service … 業務委託などの条件（取込 service_conditions と往復）。
+ *             許諾以外の種類（委託料・製品・実費・手数料）をまとめて出す。
+ */
+export type ConditionExportGroup = "license" | "service";
 
 /** 取込（license_conditions）と同じ見出し。並びも合わせる。 */
 export const CONDITION_EXPORT_HEADERS = [
@@ -28,7 +40,40 @@ export const CONDITION_EXPORT_HEADERS = [
   "支払条件", "地域", "言語", "備考", "状態"
 ] as const;
 
+/**
+ * 業務委託などの条件の見出し。取込（service_conditions）と同じ。
+ * 当てる先は条件番号だけ（作品＋取引モデルのような自然な鍵が無い）。
+ * 種類・計算方式・通貨・相手先・契約は読むだけで、取込では当てない
+ * （種類と計算方式は「直接編集」のときだけ替えられる。条件の画面で）。
+ * 金額・単価は画面と同じく最小通貨単位（JPY なら円）。
+ */
+export const SERVICE_CONDITION_EXPORT_HEADERS = [
+  "条件番号", "種類", "相手先コード", "相手先", "契約番号", "条件名",
+  "計算方式", "金額", "単価", "数量", "単位", "通貨",
+  "開始日", "終了日", "納期", "支払条件", "契約形式", "税区分", "成果物の帰属", "発注番号",
+  "仕様・成果物", "備考", "状態"
+] as const;
+
+/** 条件の種類の CSV 表記。画面（client/labels.tsx の CONDITION_KIND_LABEL）と同じ言い方。 */
+export const CONDITION_KIND_CSV: Record<string, string> = {
+  license: "許諾料", product: "製品", service: "委託料", expense: "実費", fee: "手数料"
+};
+/** 計算方式の CSV 表記。画面の PRICING_MODEL_LABEL と同じ。 */
+export const PRICING_MODEL_CSV: Record<string, string> = {
+  fixed: "定額", unit_rate: "単価×数量", revenue_rate: "料率", subscription: "定期課金", none: "計算しない"
+};
+/** 税区分の CSV 表記。取込はこの語（と英語の値）で受ける。 */
+export const TAX_CATEGORY_CSV: Record<string, string> = {
+  taxable: "課税", reduced: "軽減", exempt: "非課税", included: "税込"
+};
+/** 成果物の帰属の CSV 表記。 */
+export const DELIVERABLE_OWNERSHIP_CSV: Record<string, string> = {
+  orderer: "発注者", contractor: "受注者"
+};
+
 export interface ConditionExportQuery {
+  /** どの種類の群を、その群の列で出すか。省略は license。 */
+  group?: ConditionExportGroup;
   keyword?: string;
   direction?: "in" | "out";
   kind?: string;
@@ -61,6 +106,9 @@ export class ConditionExportService {
     // 旧版を混ぜると、書き出したものをそのまま取り込んだときに「旧版です」で
     // 止まる行ができる。「無効化済みも」を付けたときだけ全部出す（状態の列で分かる）。
     const where: string[] = query.includeVoid ? ["true"] : ["c.status NOT IN ('void', 'superseded')"];
+    // 種類の群で列が違うので、群の外の行は出さない（出すと半分空の行になる）。
+    const group: ConditionExportGroup = query.group ?? "license";
+    where.push(group === "license" ? "c.kind = 'license'" : "c.kind <> 'license'");
     const params: unknown[] = [];
     const add = (clause: string, value: unknown) => {
       params.push(value); where.push(clause.replace("$?", `$${params.length}`));
@@ -85,9 +133,11 @@ export class ConditionExportService {
 
     try {
       const r = await this.database.query(
-        `SELECT c.condition_no, c.usage_type, c.rate_ppm, c.exclusivity, c.mg_amount, c.ag_amount,
+        `SELECT c.condition_no, c.kind, c.name, c.usage_type, c.rate_ppm, c.exclusivity, c.mg_amount, c.ag_amount,
                 c.sublicense_consent, c.license_fee_basis, c.term_start, c.term_end,
                 c.auto_renew, c.renew_months, c.renew_stopped_on, c.currency, c.payment_terms, c.notes, c.status,
+                c.pricing_model, c.flat_amount, c.unit_amount, c.quantity, c.unit_label, c.delivery_due,
+                c.contract_form, c.tax_category, c.deliverable_ownership, c.order_no, c.spec,
                 w.work_code, w.title AS work_title,
                 p.party_code, p.name AS party_name,
                 ag.agreement_no,
@@ -101,10 +151,40 @@ export class ConditionExportService {
            LEFT JOIN works   w ON w.id = c.work_id
            LEFT JOIN agreements ag ON ag.id = c.agreement_id
           WHERE ${where.join(" AND ")}
-          -- 直す人が読む順。作品ごとに紙・電子が並ぶ。
-          ORDER BY w.title NULLS LAST, c.usage_type NULLS LAST, c.condition_no
+          -- 直す人が読む順。許諾は作品ごとに紙・電子が並ぶ。業務委託などは相手先ごと。
+          ORDER BY ${group === "license" ? "w.title NULLS LAST, c.usage_type NULLS LAST" : "p.name NULLS LAST"}, c.condition_no
           LIMIT $${params.length}`,
         params);
+
+      if (group === "service") {
+        const rows = (r.rows as Array<Record<string, any>>).map((x) => [
+          str(x.condition_no) ?? "",
+          CONDITION_KIND_CSV[String(x.kind ?? "")] ?? String(x.kind ?? ""),
+          str(x.party_code) ?? "",
+          str(x.party_name) ?? "",
+          str(x.agreement_no) ?? "",
+          str(x.name) ?? "",
+          PRICING_MODEL_CSV[String(x.pricing_model ?? "")] ?? String(x.pricing_model ?? ""),
+          // 金額・単価は最小通貨単位のまま（画面の入力欄と同じ。MG・AG と同じ扱い）。
+          int(x.flat_amount) ?? "",
+          int(x.unit_amount) ?? "",
+          int(x.quantity) ?? "",
+          str(x.unit_label) ?? "",
+          str(x.currency) ?? "",
+          dateStr(x.term_start) ?? "",
+          dateStr(x.term_end) ?? "",
+          dateStr(x.delivery_due) ?? "",
+          str(x.payment_terms) ?? "",
+          str(x.contract_form) ?? "",
+          TAX_CATEGORY_CSV[String(x.tax_category ?? "")] ?? String(x.tax_category ?? ""),
+          DELIVERABLE_OWNERSHIP_CSV[String(x.deliverable_ownership ?? "")] ?? "",
+          str(x.order_no) ?? "",
+          str(x.spec) ?? "",
+          str(x.notes) ?? "",
+          String(x.status ?? "")
+        ]);
+        return toCsv(SERVICE_CONDITION_EXPORT_HEADERS, rows);
+      }
 
       const rows = (r.rows as Array<Record<string, any>>).map((x) => [
         str(x.condition_no) ?? "",

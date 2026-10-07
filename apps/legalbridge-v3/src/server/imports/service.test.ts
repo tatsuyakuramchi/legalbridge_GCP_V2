@@ -386,3 +386,92 @@ test("条件の更新：自動更新と止めた日を直せる", async () => {
   assert.match(q.text, /renew_stopped_on = \$\d/);
   assert.ok(q.params.includes(6), "6か月");
 });
+
+/**
+ * 業務委託などの条件（service_conditions）の一括修正。許諾とは列が違う
+ * （金額・納期・仕様・税区分）。当てる先は条件番号だけ。
+ */
+const serviceDb = (hit: Record<string, unknown> =
+  { id: 51, condition_no: "CL-2026-00751", name: "表紙イラスト制作", status: "active", kind: "service", currency: "JPY" }) =>
+  new FakeDatabase((text, params) => {
+    if (text.includes("WHERE lower(btrim(condition_no))")) {
+      return String(params?.[0]) === String(hit.condition_no) ? [hit] : [];
+    }
+    if (text.includes("FROM conditions") && text.includes("FOR UPDATE")) return [hit];
+    if (text.includes("UPDATE conditions SET")) return [{ id: hit.id }];
+    if (text.includes("SELECT current_date")) return [{ today: "2026-10-07" }];
+    if (text.includes("FROM condition_events WHERE condition_id")) return [{ n: 0 }];
+    if (text.includes("FROM document_conditions WHERE condition_id")) {
+      return [{ documents: 0, payments: 0, matters: 0, children: 0 }];
+    }
+    return undefined;
+  });
+
+test("業務委託の更新：条件番号で当て、金額・納期・税区分・仕様を直す。空欄は触らない", async () => {
+  const db = serviceDb();
+  const r = await new ImportService(db).run({
+    kind: "service_conditions", dryRun: false, actor: "k",
+    csv: "条件番号,種類,金額,単価,納期,税区分,仕様・成果物,備考\nCL-2026-00751,委託料,\"¥95,000\",,2026-12-15,非課税,表紙イラスト 2点," });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  assert.equal(r.mode, "update", "既存に当てるしかできない種類は update になる");
+  const q = db.find("UPDATE conditions SET")!;
+  assert.match(q.text, /flat_amount = \$/);
+  assert.match(q.text, /delivery_due = \$/);
+  assert.match(q.text, /tax_category = \$/);
+  assert.match(q.text, /spec = \$/);
+  assert.ok(q.params.includes(95000), "桁区切りと ¥ は読み飛ばす");
+  assert.ok(q.params.includes("2026-12-15"));
+  assert.ok(q.params.includes("exempt"), "税区分は語から値へ");
+  assert.doesNotMatch(q.text, /unit_amount|notes/, "空欄の単価・備考は触らない");
+  assert.doesNotMatch(q.text, /\bkind\b/, "種類は参考の列。当てない");
+});
+
+test("業務委託の更新：試算では書かない。参考の列しか無い行は「変更なし」", async () => {
+  const db = serviceDb();
+  const r = await new ImportService(db).run({
+    kind: "service_conditions", dryRun: true, actor: "k",
+    csv: "条件番号,金額\nCL-2026-00751,120000" });
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  assert.equal(db.find("UPDATE conditions SET"), undefined);
+
+  const skip = await new ImportService(serviceDb()).run({
+    kind: "service_conditions", dryRun: true, actor: "k",
+    csv: "条件番号,種類,計算方式\nCL-2026-00751,製品,定額" });
+  assert.equal(skip.skipped, 1, JSON.stringify(skip.rows));
+  assert.match(skip.rows[0].message ?? "", /種類・計算方式は参考の列/);
+});
+
+test("業務委託の更新：金額は整数。税区分は決まった語。無い番号は止める", async () => {
+  const bad = await new ImportService(serviceDb()).run({
+    kind: "service_conditions", dryRun: true, actor: "k",
+    csv: "条件番号,金額\nCL-2026-00751,12.5" });
+  assert.equal(bad.error, 1);
+  assert.match(bad.rows[0].message ?? "", /整数/);
+
+  const tax = await new ImportService(serviceDb()).run({
+    kind: "service_conditions", dryRun: true, actor: "k",
+    csv: "条件番号,税区分\nCL-2026-00751,免税" });
+  assert.match(tax.rows[0].message ?? "", /税区分は/);
+
+  const missing = await new ImportService(serviceDb()).run({
+    kind: "service_conditions", dryRun: true, actor: "k",
+    csv: "条件番号,金額\nCL-9999,1" });
+  assert.match(missing.rows[0].message ?? "", /見つかりません/);
+
+  await assert.rejects(() => new ImportService(serviceDb()).run({
+    kind: "service_conditions", dryRun: true, actor: "k", csv: "金額\n1" }), /条件番号/);
+});
+
+test("種類違いは止める：許諾の条件を業務委託で、委託料の条件を許諾で取り込まない", async () => {
+  const license = await new ImportService(serviceDb(
+    { id: 31, condition_no: "CL-1", name: "ito｜紙出版", status: "active", kind: "license", currency: "JPY" }
+  )).run({ kind: "service_conditions", dryRun: true, actor: "k", csv: "条件番号,金額\nCL-1,100" });
+  assert.equal(license.error, 1);
+  assert.match(license.rows[0].message ?? "", /許諾料の条件です/);
+
+  const service = await new ImportService(condDb(
+    [{ id: 51, condition_no: "CL-1", name: "表紙イラスト制作", status: "active", kind: "service" }]
+  )).run({ kind: "license_conditions", dryRun: true, actor: "k", mode: "update", csv: "条件番号,料率\nCL-1,10" });
+  assert.equal(service.error, 1);
+  assert.match(service.rows[0].message ?? "", /委託料の条件です/);
+});

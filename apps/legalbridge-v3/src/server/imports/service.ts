@@ -10,6 +10,8 @@ import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
 import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
 import { FEE_BASIS } from "./fee-basis.js";
+import { CONDITION_KIND_CSV, DELIVERABLE_OWNERSHIP_CSV, PRICING_MODEL_CSV, SERVICE_CONDITION_EXPORT_HEADERS,
+         TAX_CATEGORY_CSV } from "../conditions/export.js";
 import { PartyAgreementMapService } from "../agreements/party-map.js";
 import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_UPDATE_COLUMNS,
          agreementCsvPatch } from "../agreements/csv.js";
@@ -26,7 +28,7 @@ import { PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from
  * 画面から入れた行と取り込んだ行で品質が変わる。
  */
 
-export type ImportKind = "parties" | "works" | "license_conditions" | "agreements" | "pub_works";
+export type ImportKind = "parties" | "works" | "license_conditions" | "service_conditions" | "agreements" | "pub_works";
 
 /**
  * 取り込み方。
@@ -37,6 +39,12 @@ export type ImportKind = "parties" | "works" | "license_conditions" | "agreement
  * 同名は「取り込むと2件になります」で弾かれ、作品コードが同じなら止まるため。
  */
 export type ImportMode = "create" | "update";
+
+/** 業務委託などの条件（service_conditions）の update で当てられる列。 */
+export const SERVICE_CONDITION_UPDATE_COLUMNS = [
+  "条件名", "金額", "単価", "数量", "単位", "開始日", "終了日", "納期", "支払条件", "契約形式", "税区分",
+  "成果物の帰属", "発注番号", "仕様・成果物", "備考"
+];
 
 export interface ImportSpec {
   kind: ImportKind;
@@ -123,7 +131,25 @@ export const IMPORT_SPECS: ImportSpec[] = [
                     "自動更新", "更新の単位", "更新停止日", "支払条件", "地域", "言語", "備考"],
     updateSample: "条件番号,料率,開始日,終了日\n" +
                   "CL-2026-00451,11,2026-10-01,2031-09-30\n" +
-                  "CL-2026-00452,15,,"
+                  "CL-2026-00452,15,,",
+    exportPath: "/conditions/export?group=license", exportLabel: "登録済みの利用許諾条件"
+  },
+  {
+    // 業務委託などの条件（委託料・製品・実費・手数料）。許諾とは持っている項目が
+    // 違う（作品・取引モデル・料率ではなく 金額・単価×数量・納期・仕様）ので列を分ける。
+    // 新しく作るのは画面から（案件・契約・予定明細と一緒に組むもの）。ここは直すだけ。
+    kind: "service_conditions", label: "業務委託などの条件（委託料・製品・実費・手数料の一括修正）",
+    required: [], optional: [...SERVICE_CONDITION_EXPORT_HEADERS],
+    sample: "",
+    updatable: true, updateOnly: true,
+    updateHint: "当てる先は 条件番号。「条件」の画面から「業務委託など」を書き出して直すのが早道です。" +
+                "金額・単価は最小通貨単位（JPY なら円）。税区分は 課税・軽減・非課税・税込、成果物の帰属は 発注者・受注者。" +
+                "種類・計算方式・相手先・契約・通貨は参考の列で、取り込んでも変わりません（条件の画面で）",
+    updateColumns: SERVICE_CONDITION_UPDATE_COLUMNS,
+    updateSample: "条件番号,金額,納期,支払条件,仕様・成果物\n" +
+                  "CL-2026-00751,120000,2026-11-30,月末締め翌月末払い,表紙イラスト 1点\n" +
+                  "CL-2026-00752,95000,,,",
+    exportPath: "/conditions/export?group=service", exportLabel: "登録済みの業務委託などの条件"
   },
   {
     kind: "agreements", label: "基本契約（契約の一括修正）",
@@ -277,6 +303,11 @@ export class ImportService {
           throw new DomainError("VALIDATION",
             "更新には「契約ID」か「契約番号」の見出しが要ります。どの契約を直すかが決まりません");
         }
+      } else if (input.kind === "service_conditions") {
+        if (!parsed.headers.includes("条件番号")) {
+          throw new DomainError("VALIDATION",
+            "更新には「条件番号」の見出しが要ります。どの条件を直すかが決まりません");
+        }
       } else if (input.kind === "license_conditions") {
         const byNo = parsed.headers.includes("条件番号");
         const byWork = (parsed.headers.includes("作品名") || parsed.headers.includes("作品コード"))
@@ -315,6 +346,8 @@ export class ImportService {
           ? await this.agreementUpdate(row, input.dryRun, input.actor)
           : input.kind === "license_conditions"
           ? await this.conditionUpdate(row, input.dryRun, input.actor)
+          : input.kind === "service_conditions"
+          ? await this.serviceConditionUpdate(row, input.dryRun, input.actor)
           : input.kind === "parties"
             ? await this.party(row, input.dryRun, input.actor)
             : mode === "update"
@@ -813,12 +846,12 @@ export class ImportService {
     Promise<Omit<RowOutcome, "line">> {
     const text = (header: string) => String(row[header] ?? "").trim() || null;
     const conditionNo = text("条件番号");
-    let hits: Array<{ id: number; condition_no: string | null; name: string; status: string }>;
+    let hits: Array<{ id: number; condition_no: string | null; name: string; status: string; kind?: string | null }>;
     let label: string;
 
     if (conditionNo) {
       const r = await this.database.query(
-        `SELECT id, condition_no, name, status FROM conditions
+        `SELECT id, condition_no, name, status, kind FROM conditions
           WHERE lower(btrim(condition_no)) = lower(btrim($1)) LIMIT 2`, [conditionNo]);
       hits = r.rows as typeof hits;
       label = conditionNo;
@@ -839,7 +872,7 @@ export class ImportService {
       label = `${String(work.title)} ／ ${String(row["取引モデル"] ?? "").trim()}`;
       const sublicensee = text("再許諾先") ?? "";
       const r = await this.database.query(
-        `SELECT c.id, c.condition_no, c.name, c.status FROM conditions c
+        `SELECT c.id, c.condition_no, c.name, c.status, c.kind FROM conditions c
           WHERE c.work_id = $1 AND c.usage_type = $2
             AND c.status IN ('active', 'scheduled')
             AND ($3 = '' OR c.name ILIKE '%' || $3 || '%')
@@ -860,6 +893,12 @@ export class ImportService {
     }
     if (condition.status === "superseded") {
       throw new DomainError("CONFLICT", `${who} は旧版です。最新版を指定してください`);
+    }
+    // 許諾の列（料率・独占・地域…）を委託料の条件に当てても意味が無い。
+    // 書き出しが種類で分かれているので、取込も同じ群だけを受ける。
+    if (condition.kind && condition.kind !== "license") {
+      throw new DomainError("VALIDATION",
+        `${who} は${CONDITION_KIND_CSV[condition.kind] ?? condition.kind}の条件です。「業務委託などの条件」で取り込んでください`);
     }
 
     const patch: EconomicsPatch = {};
@@ -962,6 +1001,118 @@ export class ImportService {
       await this.conditions.updateEconomics(Number(condition.id), patch, actor, null);
     }
     if (scopes) await this.conditions.replaceScopes(Number(condition.id), scopes, actor);
+    return { status: "ok", label, id: Number(condition.id), code: condition.condition_no,
+             message: `${who} の ${what} を更新しました` };
+  }
+
+  /**
+   * 業務委託などの条件（委託料・製品・実費・手数料）に、CSV に書いてある列だけを当てる。
+   *
+   * 当てる先は条件番号だけ。許諾のような「作品＋取引モデル」の自然な鍵が無い
+   * （同じ相手先に同じ名前の委託料が月ごとに何本も立つ）。
+   *
+   * 空欄の列は触らない。種類・計算方式・相手先・契約・通貨は替えない（種類と
+   * 計算方式は「直接編集」でだけ替えられるもの。条件の画面で）。金額・単価は
+   * 画面の入力欄と同じく最小通貨単位で受ける。
+   */
+  private async serviceConditionUpdate(row: Record<string, string>, dryRun: boolean, actor: string):
+    Promise<Omit<RowOutcome, "line">> {
+    const text = (header: string) => String(row[header] ?? "").trim() || null;
+    const conditionNo = text("条件番号");
+    if (!conditionNo) throw new DomainError("VALIDATION", "条件番号が空です");
+    const r = await this.database.query(
+      `SELECT id, condition_no, name, status, kind, currency FROM conditions
+        WHERE lower(btrim(condition_no)) = lower(btrim($1)) LIMIT 2`, [conditionNo]);
+    const hits = r.rows as Array<{ id: number; condition_no: string | null; name: string; status: string;
+                                   kind?: string | null; currency?: string | null }>;
+    if (!hits.length) throw new DomainError("NOT_FOUND", `条件番号 ${conditionNo} が見つかりません`);
+    if (hits.length > 1) {
+      throw new DomainError("VALIDATION", `条件番号 ${conditionNo} に当たる条件が複数あります`);
+    }
+    const condition = hits[0];
+    const label = conditionNo;
+    const who = `${condition.condition_no ?? `#${condition.id}`} ${condition.name}`;
+    if (condition.status === "void") {
+      throw new DomainError("CONFLICT", `${who} は無効化されています。直せません`);
+    }
+    if (condition.status === "superseded") {
+      throw new DomainError("CONFLICT", `${who} は旧版です。最新版を指定してください`);
+    }
+    if (condition.kind === "license") {
+      throw new DomainError("VALIDATION",
+        `${who} は許諾料の条件です。「利用許諾条件」の「登録済みに当てる」で取り込んでください`);
+    }
+
+    const patch: EconomicsPatch = {};
+    const changed: string[] = [];
+    const put = <K extends keyof EconomicsPatch>(header: string, key: K, value: EconomicsPatch[K]) => {
+      patch[key] = value; changed.push(header);
+    };
+    /** 金額の列。最小通貨単位の整数（JPY なら円）。桁区切りや ¥ は読み飛ばす。 */
+    const amount = (header: string, key: "flatAmount" | "unitAmount" | "quantity") => {
+      const raw = text(header);
+      if (!raw) return;
+      const n = csvAmount(raw);
+      if (n === undefined || !Number.isInteger(n) || n < 0) {
+        throw new DomainError("VALIDATION",
+          `${header}は 0 以上の整数で入れてください（最小通貨単位。"${raw}"）`);
+      }
+      put(header, key, n);
+    };
+    const choice = <T extends string>(header: string, table: Record<string, string>, key: keyof EconomicsPatch,
+                                      extra: Record<string, T> = {}) => {
+      const raw = text(header);
+      if (!raw) return;
+      const byLabel = Object.entries(table).find(([value, l]) => l === raw || value === raw.toLowerCase());
+      const value = (byLabel?.[0] ?? extra[raw]) as T | undefined;
+      if (!value) {
+        throw new DomainError("VALIDATION",
+          `${header}は ${Object.values(table).map((l) => `「${l}」`).join("")} のいずれかです（"${raw}"）`);
+      }
+      put(header, key, value as never);
+    };
+
+    const name = text("条件名");
+    if (name) put("条件名", "name", name);
+    amount("金額", "flatAmount");
+    amount("単価", "unitAmount");
+    amount("数量", "quantity");
+    const unitLabel = text("単位");
+    if (unitLabel) put("単位", "unitLabel", unitLabel);
+    if (text("開始日")) put("開始日", "termStart", csvDate(row["開始日"]));
+    if (text("終了日")) put("終了日", "termEnd", csvDate(row["終了日"]));
+    if (text("納期")) put("納期", "deliveryDue", csvDate(row["納期"]));
+    const paymentTerms = text("支払条件");
+    if (paymentTerms) put("支払条件", "paymentTerms", paymentTerms);
+    const contractForm = text("契約形式");
+    if (contractForm) put("契約形式", "contractForm", contractForm);
+    // 税区分。画面の語（「課税 10%」「非課税・不課税」）でも通す。
+    choice("税区分", TAX_CATEGORY_CSV, "taxCategory",
+      { "課税 10%": "taxable", "軽減 8%": "reduced", "非課税・不課税": "exempt", 不課税: "exempt",
+        "税込（海外・内税）": "included", 内税: "included" });
+    choice("成果物の帰属", DELIVERABLE_OWNERSHIP_CSV, "deliverableOwnership");
+    const orderNo = text("発注番号");
+    if (orderNo) put("発注番号", "orderNo", orderNo);
+    const spec = text("仕様・成果物");
+    if (spec) put("仕様・成果物", "spec", spec);
+    const notes = text("備考");
+    if (notes) put("備考", "notes", notes);
+
+    // 参考の列に、いまの値と違うものが書いてあっても黙って捨てる（当てられない）。
+    // 書いた人が「替わるはず」と思っていると困るので、通る行の文言に添える。
+    const ignored = (["種類", "計算方式", "通貨"] as const).filter((h) => text(h));
+
+    if (!changed.length) {
+      return { status: "skip", label, id: Number(condition.id), code: condition.condition_no,
+               message: `${who}：当てる項目がありません（空欄の列は触りません${ignored.length ? `。${ignored.join("・")}は参考の列で当てません` : ""}）` };
+    }
+    const what = changed.join("・");
+    if (dryRun) {
+      return { status: "ok", label, id: Number(condition.id), code: condition.condition_no,
+               message: `${who} の ${what} を更新します` };
+    }
+    // 効き始める日は指定しない（その場で直す。実績が付いていれば改訂になる）。
+    await this.conditions.updateEconomics(Number(condition.id), patch, actor, null);
     return { status: "ok", label, id: Number(condition.id), code: condition.condition_no,
              message: `${who} の ${what} を更新しました` };
   }
