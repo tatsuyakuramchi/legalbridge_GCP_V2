@@ -20,6 +20,7 @@ interface Group {
   status: Status; message: string | null;
   work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
   condition: { id: number; conditionNo: string | null; ratePpm: number | null; counterparty: string | null; shares: string[] } | null;
+  round: { id: number; label: string | null } | null;
   royalty: number | null; royaltyInFile: number | null;
   candidates: Array<{ id: number; title: string; workCode: string | null }>;
 }
@@ -99,6 +100,7 @@ export function EbookSalesImport() {
           {busy && <span className="faint">{busy}…</span>}
         </div>
         {error && <div className="alert">{error}</div>}
+        <AnnualClosesPanel />
         {read && (
           <div className="faint">
             読んだシート：{read.sheets.map((s) => `${s.name}（${s.rows} 行${s.note ? `・${s.note}` : ""}）`).join("、")}
@@ -142,6 +144,9 @@ export function EbookSalesImport() {
                           <div className="faint" style={{ fontSize: "0.85em" }}>
                             {g.condition.conditionNo ?? `#${g.condition.id}`} · {g.condition.counterparty ?? ""} · {g.condition.ratePpm === null ? "" : `${g.condition.ratePpm / 10000}%`}
                             {g.condition.shares.length > 0 && <> · 取り分 {g.condition.shares.join("・")}</>}
+                            {g.round
+                              ? <> · 回 {g.round.label ?? `#${g.round.id}`}</>
+                              : <> · <span className="warn" title="年 1 回の締めを立てると、支払文書処理でまとめて締められます">回なし</span></>}
                           </div>
                         )}
                         {g.status === "unresolved" && !readOnly && g.cid && read && (
@@ -230,6 +235,113 @@ function WorkPicker(
         {!works.length && <span className="faint">見つかりません</span>}
       </div>
       <button className="btn btn-sm" onClick={() => setOpen(false)}>やめる</button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 年 1 回の締めを一括で立てる
+// ---------------------------------------------------------------------------
+
+interface AnnualTarget {
+  conditionId: number; conditionNo: string | null; name: string; workTitle: string | null; partyName: string | null;
+  paymentTerms: string | null; existing: number;
+  adding: Array<{ seq: number; label: string | null; dueOn: string | null; payOn: string | null; serviceFrom?: string | null; serviceTo?: string | null }>;
+  skipped: string | null;
+}
+interface AnnualPreview { targets: AnnualTarget[]; adding: number; skipped: number; written?: number }
+
+/** 集計期間の開始の既定：直近の 7/1。 */
+const defaultFrom = () => {
+  const now = new Date();
+  const y = now.getMonth() + 1 >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${y}-07-01`;
+};
+
+/**
+ * 電子出版（紙も選べる）の条件に、年 1 回の締め（7/1〜翌 6/30、支払は条件の支払条件）を
+ * まとめて立てる。取込の実績はこの回に付き、支払文書処理の「まとめて締める」で計算書になる。
+ */
+function AnnualClosesPanel() {
+  const readOnly = useReadOnly();
+  const [open, setOpen] = useState(false);
+  const [usage, setUsage] = useState<"pub_digital" | "pub_print">("pub_digital");
+  const [from, setFrom] = useState(defaultFrom());
+  const [count, setCount] = useState("1");
+  const [preview, setPreview] = useState<AnnualPreview | null>(null);
+  const [done, setDone] = useState<AnnualPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const body = () => ({ usageType: usage, from, count: Number(count) || 1 });
+
+  async function tryIt() {
+    setBusy(true); setError(null); setDone(null);
+    try { setPreview(await api.post<AnnualPreview>("/royalty-ledger/closes/bulk/preview", body())); }
+    catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setPreview(null); }
+    finally { setBusy(false); }
+  }
+  async function run() {
+    if (!preview || !preview.adding) return;
+    if (!window.confirm(`${preview.adding} 本の条件に回を立てます。よいですか？`)) return;
+    setBusy(true); setError(null);
+    try { const r = await api.post<AnnualPreview>("/royalty-ledger/closes/bulk", body()); setDone(r); setPreview(null); }
+    catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="subpanel">
+      <div className="row" style={{ alignItems: "center", gap: 8 }}>
+        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "年 1 回の締めをまとめて立てる"}</button>
+        <span className="faint">取込の実績を付ける回。立てておくと、支払文書処理の「まとめて締める」で計算書を一括で作れます</span>
+      </div>
+      {open && (
+        <div className="stack" style={{ marginTop: 8 }}>
+          <div className="row" style={{ flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
+            <label className="field"><span>媒体</span>
+              <select value={usage} onChange={(e) => { setUsage(e.target.value as "pub_digital" | "pub_print"); setPreview(null); }}>
+                <option value="pub_digital">電子出版</option>
+                <option value="pub_print">紙出版</option>
+              </select>
+            </label>
+            <label className="field"><span>集計期間の開始</span>
+              <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPreview(null); }} />
+            </label>
+            <label className="field"><span>年数</span>
+              <input type="number" min={1} max={5} value={count} onChange={(e) => { setCount(e.target.value); setPreview(null); }} style={{ width: 70 }} />
+            </label>
+            <button className="btn btn-sm" disabled={busy} onClick={() => void tryIt()}>試算</button>
+            {preview && !readOnly && (
+              <button className="btn btn-sm primary" disabled={busy || !preview.adding} onClick={() => void run()}>
+                {preview.adding} 本に立てる
+              </button>
+            )}
+          </div>
+          <div className="faint">締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません</div>
+          {error && <div className="alert">{error}</div>}
+          {done && <div className="notice">{done.written ?? 0} 本の条件に回を立てました（飛ばした条件 {done.skipped}）</div>}
+          {preview && (
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>作品</th><th>条件</th><th>相手先</th><th>いまの回</th><th>立てる回</th><th>支払期日</th></tr></thead>
+                <tbody>
+                  {preview.targets.map((t) => (
+                    <tr key={t.conditionId} className={t.adding.length ? "" : "faint"}>
+                      <td>{t.workTitle ?? "—"}</td>
+                      <td className="code">{t.conditionNo ?? `#${t.conditionId}`}<div className="faint" style={{ fontSize: "0.85em" }}>{t.name}</div></td>
+                      <td>{t.partyName ?? "—"}</td>
+                      <td className="num">{t.existing}</td>
+                      <td>{t.adding.length ? t.adding.map((l) => `${l.label}（締め ${l.dueOn}）`).join("、") : (t.skipped ?? "—")}</td>
+                      <td>{t.adding.length ? t.adding.map((l) => l.payOn ?? "空").join("、") : ""}</td>
+                    </tr>
+                  ))}
+                  {!preview.targets.length && <tr><td colSpan={6} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

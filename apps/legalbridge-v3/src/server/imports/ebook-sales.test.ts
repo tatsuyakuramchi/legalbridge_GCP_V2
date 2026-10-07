@@ -86,6 +86,7 @@ interface Options {
   titles?: Array<{ id: number; title: string }>;
   conditions?: Array<Record<string, unknown>>;
   existing?: Array<{ condition_id: number; period: string; unit_amount: number; note?: string | null }>;
+  schedules?: Array<Record<string, unknown>>;
 }
 const db = (o: Options = {}) => new FakeDatabase((text, params) => {
   if (text.includes("FROM ebook_work_codes c JOIN works w")) {
@@ -94,6 +95,7 @@ const db = (o: Options = {}) => new FakeDatabase((text, params) => {
   if (text.includes("regexp_replace(lower(title)")) return (o.titles ?? []).map((t) => ({ ...t, work_code: null }));
   if (text.includes("FROM conditions c LEFT JOIN parties p")) return o.conditions ?? [];
   if (text.includes("e.event_type = 'sales' AND c.id = ANY")) return o.existing ?? [];
+  if (text.includes("FROM condition_schedules WHERE condition_id = ANY")) return o.schedules ?? [];
   if (text.includes("SELECT id, title FROM works WHERE id = $1")) return [{ id: params[0], title: "作品" }];
   return undefined;
 });
@@ -252,4 +254,25 @@ test("巻数：作品は作品名 × 巻数で 1 件。CID が無い行は「タ
   assert.match(by["5"].message ?? "", /「スピタのコピタの！ 5」の作品がありません/);
   assert.deepEqual(by["5"].candidates.map((c: { id: number }) => c.id), [30], "候補にシリーズ名の作品は出す（人が選ぶ）");
   assert.equal(by["1"].work!.id, 30);
+});
+
+test("回（年 1 回の締め）があれば、報告月の末日を集計期間に含む回に実績を付ける。無ければ浮いた実績", async () => {
+  const w = writer();
+  const svc = new EbookSalesImportService(db({
+    codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL],
+    schedules: [{ id: 90, condition_id: 50, label: "2025年7月〜2026年6月", due_on: "2026-06-30", service_from: "2025-07-01", service_to: "2026-06-30" },
+                { id: 91, condition_id: 50, label: "2026年7月〜2027年6月", due_on: "2027-06-30", service_from: "2026-07-01", service_to: "2027-06-30" }]
+  }), w as any);
+  const rows = [row({ sheet: "2026年3月", reportMonth: "2026-03", month: "2026-01" }),
+                row({ sheet: "2026年8月", reportMonth: "2026-08", month: "2026-06", store: "Kindle" })];
+  const p = await svc.preview(rows);
+  assert.deepEqual(p.groups.map((g) => g.round?.label), ["2025年7月〜2026年6月", "2026年7月〜2027年6月"]);
+  await svc.commit(rows, "tester");
+  assert.deepEqual(w.added.map((a) => a.input.scheduleId), [90, 91]);
+  assert.equal(w.added[0].input.period, "2026年3月分", "期間は報告月のまま（回の名前で上書きしない）");
+
+  const none = await new EbookSalesImportService(db({ codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL] }), writer() as any)
+    .preview([row({})]);
+  assert.equal(none.groups[0].round, null);
+  assert.equal(none.groups[0].status, "ok", "回が無くても登録はできる（浮いた実績）");
 });
