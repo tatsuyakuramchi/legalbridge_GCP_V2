@@ -176,10 +176,25 @@ export const INTL_FEE_COLUMNS: Column[] = [
   { name: "amount", label: "金額（Amount, excl. tax）", type: "number" },
   { name: "remarks", label: "備考（Remarks）", type: "textarea" }
 ];
+/**
+ * 経費の清算区分。決定のとき経費の条件の税区分に写る（立替清算＝非課税、報酬に含める＝税込・内税）。
+ * 経理提出では 立替清算 → 立替金の列、報酬に含める → 支払内容（２）以降の組（税込のまま、小計に入る）。
+ * 空（前の版の行）は立替清算として扱う。
+ */
+export const EXPENSE_SETTLEMENT_OPTIONS = [
+  { value: "reimbursement", label: "立替清算（相手が払った実費を返す。経理提出は立替金の列）" },
+  { value: "compensation", label: "報酬に含める（交通費等を報酬として払う。経理提出は支払内容の組）" }
+];
+const EXPENSE_SETTLEMENT_COLUMN: Column = {
+  name: "expense_type", label: "清算区分", type: "select", options: EXPENSE_SETTLEMENT_OPTIONS,
+  helpText: "空は立替清算。決定後に変えるなら、できた経費の条件の税区分を直す（非課税＝立替清算、税込＝報酬に含める）"
+};
+
 export const INTL_EXPENSE_COLUMNS: Column[] = [
   { name: "expense_name", label: "経費名（Description）" },
   { name: "spent_date", label: "利用日（Date）", type: "date" },
   { name: "amount_inc_tax", label: "金額（Amount, at actual cost）", type: "number" },
+  { ...EXPENSE_SETTLEMENT_COLUMN, label: "清算区分（Settlement）" },
   { name: "remarks", label: "備考（Remarks）", type: "textarea" }
 ];
 
@@ -200,6 +215,7 @@ export const EXPENSE_COLUMNS: Column[] = [
   { name: "expense_name", label: "経費名" },
   { name: "spent_date", label: "利用日", type: "date" },
   { name: "amount_inc_tax", label: "金額（税込）", type: "number" },
+  EXPENSE_SETTLEMENT_COLUMN,
   { name: "remarks", label: "備考", type: "textarea" }
 ];
 

@@ -65,7 +65,7 @@ test("決定で、条件の無い手数料・経費の行から条件を作り�
   // [kind, name, counterparty, agreement, flat_amount, tax_category, notes]
   assert.deepEqual(inserts.map((q) => [q.params[3], q.params[4], q.params[5], q.params[1], q.params[18], q.params[21], q.params[24]]),
     [["fee", "送料", 9, 33, 3000, "taxable", "着払い分"],
-     ["expense", "交通費", 9, 33, 12000, "exempt", "利用日 2026-09-01／往復／税込の実費"]]);
+     ["expense", "交通費", 9, 33, 12000, "exempt", "利用日 2026-09-01／往復／税込の実費（立替清算）"]]);
   assert.deepEqual(inserts.map((q) => [q.params[11], q.params[12]]),
     [["2026-09-01", "2027-03-31"], ["2026-09-01", "2027-03-31"]], "期間は先頭の条件（委託料）から写す");
 
@@ -115,6 +115,23 @@ test("文書に条件が1本も無ければ相手先が決まらないので作�
   assert.equal(out.manual, manual, "手入力は触らない");
 });
 
+test("経費の清算区分：報酬に含める行は税込（内税）の条件になり、立替清算（既定）は非課税", async () => {
+  const db = build({ manual: {
+    expenses: [
+      { expense_name: "出張交通費", amount_inc_tax: 8000, expense_type: "compensation", spent_date: "2026-09-02" },
+      { expense_name: "立替の宿泊費", amount_inc_tax: 9000, expense_type: "reimbursement" },
+      { expense_name: "区分なし（前の版の行）", amount_inc_tax: 1000 }
+    ]
+  } });
+  await new DocumentIssueService(db).issue(1, "k");
+  const inserts = db.all("INSERT INTO conditions");
+  assert.deepEqual(inserts.map((q) => [q.params[4], q.params[21], q.params[24]]), [
+    ["出張交通費", "included", "利用日 2026-09-02／税込（報酬に含める）"],
+    ["立替の宿泊費", "exempt", "税込の実費（立替清算）"],
+    ["区分なし（前の版の行）", "exempt", "税込の実費（立替清算）"]
+  ]);
+});
+
 test("繋がっている fee / expense の条件は、その他手数料・経費の行の種になる", () => {
   const conditions = [
     { id: 5, kind: "service", name: "翻訳", flatAmount: 100000 },
@@ -123,7 +140,11 @@ test("繋がっている fee / expense の条件は、その他手数料・経�
   ];
   assert.deepEqual(feeLinesFrom(conditions), [{ condition_id: 201, fee_name: "送料", amount: 3000, remarks: "着払い分" }]);
   assert.deepEqual(expenseLinesFrom(conditions),
-    [{ condition_id: 202, expense_name: "交通費", amount_inc_tax: 12000, spent_date: null, remarks: "" }]);
+    [{ condition_id: 202, expense_name: "交通費", amount_inc_tax: 12000, spent_date: null, remarks: "",
+       expense_type: "reimbursement" }]);
+  // 税込（内税）の経費の条件は「報酬に含める」として行に戻る。
+  assert.equal(expenseLinesFrom([{ id: 203, kind: "expense", name: "出張交通費", flatAmount: 8000, taxCategory: "included" }])[0]!.expense_type,
+    "compensation");
   assert.equal(isSettlementKind("fee"), true);
   assert.equal(isSettlementKind("service"), false);
 });

@@ -3,6 +3,9 @@ import type { Transactable } from "../core/db.js";
 import { dateStr, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import {
+  expenseSettlementOf, settlementOfTaxCategory, type ExpenseSettlement
+} from "../documents/settlement-conditions.js";
+import {
   buildAccountingRow, groupAccounting,
   type AccountingGroup, type AccountingSource, type AllocationLine, type DocumentLine
 } from "./accounting.js";
@@ -172,7 +175,7 @@ const DOCUMENT_BY_AUDIT_SQL = `
    ORDER BY a.target_id, a.id DESC`;
 
 const LINES_SQL = `
-  SELECT al.payment_id, al.amount, c.condition_no, c.name, c.tax_category, c.kind,
+  SELECT al.payment_id, al.amount, c.id AS condition_id, c.condition_no, c.name, c.tax_category, c.kind,
          c.currency, c.unit_amount,
          e.quantity, e.occurred_on
     FROM payment_allocations al
@@ -192,8 +195,18 @@ const LINES_SQL = `
  * 読めていなかったので、前金・後金で2行出ている計算書から支払を立てても、
  * 経理提出用は合計の1行だけになっていた。紙と経理で行数が違うと、経理は
  * 何に対する支払か照合できない。
+ *
+ * 経費（expenses）は清算区分で振り分ける。立替清算は立替金の列で数えるので載せない。
+ * 報酬に含める経費は支払内容の組にする（税込のまま。税率 0）。区分は行に付いた条件の
+ * 税区分（settlementOf）を先に見る。決定した後に条件の税区分を直せば、焼き付けた行を
+ * 直さなくても帳票が変わる（過去の分を直す道）。条件が無い行は行の清算区分、無ければ立替。
+ *
+ * 各行に消費税率を付ける（書類の税率。海外用は 0）。V1 形式は組の金額を税込で出すため。
  */
-export function documentLinesFrom(rendered: unknown): DocumentLine[] {
+export function documentLinesFrom(
+  rendered: unknown,
+  options: { settlementOf?: (conditionId: number) => ExpenseSettlement | null } = {}
+): DocumentLine[] {
   const values = (rendered ?? {}) as Record<string, unknown>;
   const rowsOf = (v: unknown) =>
     Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object") : [];
@@ -203,6 +216,9 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
     return Number.isFinite(parsed) ? parsed : null;
   };
   const text = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
+  // 書類の税率。未入力は 10%。明示の 0（海外用・非課税）はそのまま。
+  const typedRate = n(values.taxRate ?? values.tax_rate);
+  const taxRatePct = typedRate === null ? 10 : Math.max(0, typedRate);
 
   const lines: DocumentLine[] = [];
   for (const row of rowsOf(values.delivery_line_items)) {
@@ -219,7 +235,8 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
       unitPrice: n(row.unit_price) ?? (subscription && amount > 0 ? amount : null),
       quantity: subscription && amount > 0 && (quantity === null || quantity <= 0) ? 1 : quantity,
       amount,
-      deliveryDate: text(row.delivery_date).slice(0, 10) || null
+      deliveryDate: text(row.delivery_date).slice(0, 10) || null,
+      taxRatePct
     });
   }
   // 計算書の明細。小計の括り（入金企業 × 言語の製品）1 つを 1 行にする。
@@ -257,7 +274,8 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
         unitPrice: null,
         quantity: billable ?? (amount > 0 ? 1 : null),
         amount,
-        deliveryDate: delivered.at(-1) ?? null
+        deliveryDate: delivered.at(-1) ?? null,
+        taxRatePct
       };
       counted.set(line, billable);
       lines.push(line);
@@ -266,12 +284,29 @@ export function documentLinesFrom(rendered: unknown): DocumentLine[] {
 
   for (const fee of rowsOf(values.other_fees)) {
     // 非課税の手数料は立替金の側で数える。ここに載せると二重になる。
-    if ((text(fee.tax_category) || "taxable") === "exempt") continue;
+    const category = text(fee.tax_category) || "taxable";
+    if (category === "exempt") continue;
     lines.push({
       content: text(fee.fee_name ?? fee.item_name ?? fee.name) || "その他手数料",
       unitPrice: null, quantity: null,
       amount: n(fee.amount_ex_tax ?? fee.amount) ?? 0,
-      deliveryDate: null
+      deliveryDate: null,
+      taxRatePct: category === "reduced" ? 8 : category === "included" ? 0 : taxRatePct
+    });
+  }
+  // 経費。立替清算は立替金の列（載せない）。報酬に含める経費は支払内容の組（税込のまま）。
+  for (const expense of rowsOf(values.expenses)) {
+    const amount = n(expense.amount_inc_tax ?? expense.amount) ?? 0;
+    if (amount <= 0) continue;
+    const conditionId = n(expense.condition_id);
+    const settlement = (conditionId ? options.settlementOf?.(conditionId) : null) ?? expenseSettlementOf(expense);
+    if (settlement === "reimbursement") continue;
+    lines.push({
+      content: text(expense.expense_name ?? expense.item_name ?? expense.name) || "経費",
+      unitPrice: null, quantity: null,
+      amount,
+      deliveryDate: text(expense.spent_date).slice(0, 10) || null,
+      taxRatePct: 0
     });
   }
   return lines;
@@ -321,6 +356,16 @@ export class AccountingExportRepository {
         ? await this.database.query(LINES_SQL, [ids])
         : { rows: [] as any[] };
 
+      // 経費の条件の清算区分（税区分から）。書類の経費の行を立替金か支払内容かに振り分ける。
+      const categoryByCondition = new Map<number, string>();
+      for (const l of lines.rows as any[]) {
+        if (l.condition_id !== null && l.condition_id !== undefined) {
+          categoryByCondition.set(Number(l.condition_id), String(l.tax_category ?? ""));
+        }
+      }
+      const settlementOf = (conditionId: number) =>
+        settlementOfTaxCategory(categoryByCondition.get(conditionId));
+
       // 書類の明細を先に取る。あれば支払内容はこちらを使う。
       const docLines = new Map<number, DocumentLine[]>();
       const docOf = new Map<number, NonNullable<AccountingSource["document"]>>();
@@ -332,7 +377,7 @@ export class AccountingExportRepository {
         docOf.set(paymentId, {
           id: Number(d.document_id), number: str(d.document_no), templateKey: str(d.template_key)
         });
-        const lines = documentLinesFrom(d.rendered_values);
+        const lines = documentLinesFrom(d.rendered_values, { settlementOf });
         if (lines.length) docLines.set(paymentId, lines);
         const title = documentTitleFrom(d.rendered_values, str(d.template_key));
         if (title) docTitle.set(paymentId, title);

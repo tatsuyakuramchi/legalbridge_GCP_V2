@@ -50,12 +50,63 @@ test("小計は税込。小計 − 源泉税 ＝ 税引後、税引後 ＋ 立�
   assert.equal(at("差引振込額"), at("税引後") + at("立替金"));
 });
 
-test("空のスロットは空欄（0 を入れない）、金額は数値のまま", () => {
+test("組の金額・単価は税込（消費税の列が無いので小計と同じ税込で揃える）。空のスロットは空欄（0 を入れない）", () => {
   const cells = v1AccountingCells(buildAccountingRow(source()));
-  const i = V1_ACCOUNTING_HEADERS.indexOf("金額（１）");
-  assert.equal(cells[i], 300000);
+  const at = (h: string) => cells[V1_ACCOUNTING_HEADERS.indexOf(h)];
+  assert.equal(at("金額（１）"), 330000, "300,000 ＋ 消費税 30,000");
+  assert.equal(at("単価（１）"), null, "数量も単価も無い割当は単価を出さない");
+  const priced = v1AccountingCells(buildAccountingRow(source({
+    lines: [{ ...source().lines[0]!, quantity: 1, unitAmount: 300000 }] })));
+  assert.equal(priced[V1_ACCOUNTING_HEADERS.indexOf("単価（１）")], 330000, "単価も税込（単価 × 数量 ＝ 金額 を保つ）");
+  assert.equal(at("小計"), 330000);
+  assert.equal(at("金額（１）"), at("小計"), "組の合計 ＝ 小計（税込）");
   assert.equal(cells[V1_ACCOUNTING_HEADERS.indexOf("支払内容（２）")], null);
   assert.equal(cells[V1_ACCOUNTING_HEADERS.indexOf("金額（２）")], null);
+});
+
+test("経費の清算区分：立替清算は立替金の列、報酬に含めるなら支払内容（２）に税込で載る", () => {
+  const expense = { conditionNo: "CND-2026-00002", name: "出張交通費", quantity: null, unitAmount: null,
+                    occurredOn: "2026-09-20" };
+  // 立替清算（非課税）：立替金に入り、組には出ない。差引振込額 ＝ 税引後 ＋ 立替金。
+  const reimbursed = v1AccountingCells(buildAccountingRow(source({
+    amount: 312000, withholdingAmount: 33693,
+    lines: [...source().lines, { ...expense, taxCategory: "exempt", amount: 12000 }],
+    document: null
+  })));
+  const r = (h: string) => reimbursed[V1_ACCOUNTING_HEADERS.indexOf(h)];
+  assert.equal(r("支払内容（２）"), null);
+  assert.equal(r("立替金"), 12000);
+  assert.equal(r("小計"), 330000);
+  assert.equal(r("差引振込額"), 330000 - 33693 + 12000);
+
+  // 報酬に含める（税込・内税）：支払内容（２）に税込のまま載り、小計に入る。立替金は 0。
+  const included = v1AccountingCells(buildAccountingRow(source({
+    amount: 312000, withholdingAmount: 34918,
+    lines: [...source().lines, { ...expense, taxCategory: "included", amount: 12000 }],
+    document: null
+  })));
+  const c = (h: string) => included[V1_ACCOUNTING_HEADERS.indexOf(h)];
+  assert.equal(c("支払内容（２）"), "CND-2026-00002 出張交通費");
+  assert.equal(c("金額（２）"), 12000);
+  assert.equal(c("納品日(２)"), "2026-09-20");
+  assert.equal(c("立替金"), 0);
+  assert.equal(c("小計"), 342000);
+  assert.equal((c("金額（１）") as number) + (c("金額（２）") as number), c("小計"), "組の合計 ＝ 小計（税込）");
+});
+
+test("組の税込の端数は最後の課税の組で吸収し、組の合計 ＝ 小計（税込）を保つ", () => {
+  // 3 行 × 税抜 333 円。行ごとの消費税は 33 円（切り捨て）で合計 99 円だが、支払の消費税は 100 円。
+  const row = buildAccountingRow(source({
+    amount: 999, taxAmount: 100, withholdingAmount: 0,
+    party: { ...source().party, kind: "corporate", withholding: false },
+    lines: ["A", "B", "C"].map((name, i) => ({ conditionNo: `CND-${i + 1}`, name, taxCategory: "taxable" as const,
+                                                amount: 333, quantity: null, unitAmount: null, occurredOn: null }))
+  }));
+  assert.deepEqual(row.slots.slice(0, 3).map((s) => s.amountIncTax), [366, 366, 367]);
+  assert.deepEqual(row.slots.slice(0, 3).map((s) => s.amount), [333, 333, 333], "税抜はそのまま");
+  const cells = v1AccountingCells(row);
+  const at = (h: string) => cells[V1_ACCOUNTING_HEADERS.indexOf(h)] as number;
+  assert.equal(at("金額（１）") + at("金額（２）") + at("金額（３）"), at("小計"));
 });
 
 test("種別：計算書のひな形なら利用許諾料計算書、書類が無ければ条件の種類で決める", () => {

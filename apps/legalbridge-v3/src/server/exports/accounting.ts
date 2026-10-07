@@ -1,4 +1,4 @@
-import { resolveWithholdingEnabled, withholdingFor } from "../royalty/tax.js";
+import { consumptionTax, resolveWithholdingEnabled, withholdingFor } from "../royalty/tax.js";
 import type { XlsColumn } from "./xls.js";
 
 /**
@@ -23,9 +23,16 @@ export const ACCOUNTING_SLOT_COUNT = 8;
 
 export interface AccountingSlot {
   content: string;
+  /** 税抜。消費税の列がある表（確認用）に出す。 */
   unitPrice: number | "";
   quantity: number | "";
   amount: number | "";
+  /**
+   * 税込。経理へ渡す実物（V1 形式）には消費税の列が無く小計が税込なので、組の金額も
+   * 税込で出す。税抜のままだと 金額（１）＋…＋金額（８）≠ 小計 になり、経理が照合できない。
+   */
+  unitPriceIncTax: number | "";
+  amountIncTax: number | "";
   deliveryDate: string;
 }
 
@@ -84,8 +91,11 @@ export interface DocumentLine {
   content: string;
   unitPrice: number | null;
   quantity: number | null;
+  /** 税抜（税込で持つ行は税込のまま。その行は taxRatePct を 0 にする）。 */
   amount: number;
   deliveryDate: string | null;
+  /** 消費税率（%）。税込の行（報酬に含める経費・海外）は 0。無ければ 10。 */
+  taxRatePct?: number | null;
 }
 
 export interface AccountingRow {
@@ -155,7 +165,15 @@ export function categoryOf(
 }
 
 const emptySlot = (): AccountingSlot =>
-  ({ content: "", unitPrice: "", quantity: "", amount: "", deliveryDate: "" });
+  ({ content: "", unitPrice: "", quantity: "", amount: "", unitPriceIncTax: "", amountIncTax: "", deliveryDate: "" });
+
+/** 税区分 → 消費税率（%）。税込（海外・内税）と非課税は 0。 */
+export const TAX_RATE_OF: Record<AllocationLine["taxCategory"], number> =
+  { taxable: 10, reduced: 8, exempt: 0, included: 0 };
+
+/** 税込。消費税は支払を立てるときと同じ丸め（consumptionTax）。 */
+const incTaxOf = (amount: number, taxRatePct: number): number =>
+  amount + (taxRatePct > 0 ? consumptionTax(amount, taxRatePct) : 0);
 
 /**
  * 単価。持っていなければ 金額 ÷ 数量 で出す。
@@ -208,8 +226,9 @@ export function fitSlots(slots: AccountingSlot[]): AccountingSlot[] {
     const last = fitted[ACCOUNTING_SLOT_COUNT - 1];
     fitted[ACCOUNTING_SLOT_COUNT - 1] = {
       content: [last.content, ...rest.map((s) => s.content)].filter(Boolean).join("／"),
-      unitPrice: "", quantity: "",
+      unitPrice: "", quantity: "", unitPriceIncTax: "",
       amount: [last, ...rest].reduce((sum, s) => sum + (Number(s.amount) || 0), 0),
+      amountIncTax: [last, ...rest].reduce((sum, s) => sum + (Number(s.amountIncTax) || 0), 0),
       deliveryDate: last.deliveryDate
     };
   }
@@ -231,6 +250,50 @@ export function expectedWithholding(
     vendorWithholdingEnabled: party.withholding, entityType: party.kind, residency: party.residency ?? null
   });
   return withholdingFor(subtotal + consumptionTax, enabled, party, payOn).amount;
+}
+
+/** 支払内容の組の種。税込にする前。 */
+interface SlotSeed {
+  content: string;
+  unitPrice: number | null;
+  quantity: number | null;
+  /** 税抜（taxRatePct が 0 の行は税込のまま）。 */
+  amount: number;
+  taxRatePct: number;
+  deliveryDate: string;
+}
+
+/**
+ * 組に税込の金額・単価を付ける。
+ *
+ * 行ごとに丸めた消費税の合計は、支払の消費税と 1 円ずれることがある（支払は実績ごと、
+ * 書類は小計で丸める）。組が小計（税抜）を丸ごと説明できているときだけ、最後の課税の
+ * 組で差を吸収して 金額（１）＋…＋金額（８）＝ 小計（税込） を保つ。説明できていない
+ * （割当が合わない・明細が一部）ときは触らない。合わない数を無理に合わせると中身が違う。
+ */
+export function slotsWithTax(seeds: SlotSeed[], subtotal: number, tax: number): AccountingSlot[] {
+  const incTax = seeds.map((s) => incTaxOf(s.amount, s.taxRatePct));
+  const exTotal = seeds.reduce((sum, s) => sum + s.amount, 0);
+  if (seeds.length && exTotal === subtotal) {
+    const diff = subtotal + tax - incTax.reduce((sum, v) => sum + v, 0);
+    if (diff !== 0) {
+      let i = seeds.length - 1;
+      while (i > 0 && seeds[i]!.taxRatePct === 0) i -= 1;
+      incTax[i] = incTax[i]! + diff;
+    }
+  }
+  return seeds.map((s, i) => ({
+    content: s.content,
+    unitPrice: unitPriceFor(s.unitPrice, s.amount, s.quantity),
+    quantity: s.quantity ?? "",
+    amount: s.amount,
+    // 税込の単価は 税込金額 ÷ 数量。数量が無ければ持っている単価に税を乗せる。
+    unitPriceIncTax: s.quantity !== null
+      ? unitPriceOf(incTax[i], s.quantity)
+      : s.unitPrice === null ? "" : incTaxOf(s.unitPrice, s.taxRatePct),
+    amountIncTax: incTax[i]!,
+    deliveryDate: s.deliveryDate
+  }));
 }
 
 export function buildAccountingRow(source: AccountingSource): AccountingRow {
@@ -267,21 +330,24 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
   // 支払内容は書類の明細をそのまま出す（V1・V2 と同じ）。経理は「何に対する
   // 支払か」で照合するので、条件の名前では足りない。書類が無い支払だけ、
   // 割当から組む。
-  const pages = pageSlots(source.documentLines?.length
+  //
+  // 立替金（非課税の割当＝立替清算の経費）は支払内容に載せない。立替金の列で数える。
+  // 報酬に含める経費（税込・内税）は支払内容の組になる（書類の明細は documentLinesFrom が
+  // 条件の税区分で振り分けてある）。
+  const seeds: SlotSeed[] = source.documentLines?.length
     ? source.documentLines.map((l) => ({
         content: l.content || "（内容未設定）",
-        unitPrice: unitPriceFor(l.unitPrice, l.amount, l.quantity),
-        quantity: l.quantity ?? "",
-        amount: l.amount,
+        unitPrice: l.unitPrice, quantity: l.quantity, amount: l.amount,
+        taxRatePct: l.taxRatePct ?? 10,
         deliveryDate: l.deliveryDate ?? ""
       }))
-    : source.lines.map((l) => ({
+    : source.lines.filter((l) => l.taxCategory !== "exempt").map((l) => ({
         content: [l.conditionNo, l.name].filter(Boolean).join(" ") || "（内容未設定）",
-        unitPrice: unitPriceFor(l.unitAmount, l.amount, l.quantity),
-        quantity: l.quantity ?? "",
-        amount: l.amount,
+        unitPrice: l.unitAmount, quantity: l.quantity, amount: l.amount,
+        taxRatePct: TAX_RATE_OF[l.taxCategory],
         deliveryDate: l.occurredOn ?? ""
-      })));
+      }));
+  const pages = pageSlots(slotsWithTax(seeds, subtotal, consumptionTax));
   const slots = pages[0]!;
   const moreSlots = pages.slice(1);
 
@@ -498,15 +564,17 @@ export const V1_ACCOUNTING_HEADERS: string[] = [
   "立替金", "小計", "源泉税", "税引後", "差引振込額", "インボイス登録"
 ];
 
-/** 1 行分のセル。空の欄は空のまま（0 を入れない）、金額は数値のまま。 */
+/** 1 行分のセル。空の欄は空のまま（0 を入れない）、金額は数値のまま。組の金額・単価は税込。 */
 export function v1AccountingCells(row: AccountingRow): Array<string | number | null> {
   const cell = (v: string | number | ""): string | number | null => (v === "" ? null : v);
   // 続きの行（9 組目以降）は金額の欄を空にする。同じ支払を二重に数えないため。
   const amount = (v: number): number | null => (row.continuation ? null : v);
   return [
     row.title, row.paymentDate, row.department, row.vendorCode, row.vendorName, row.vendorNameKana,
+    // 組の単価・金額は税込。消費税の列が無く小計が税込なので、組も税込で揃える
+    // （金額（１）＋…＋金額（８）＋立替金 ＝ 小計 ＋ 立替金 ＝ 差引振込額 ＋ 源泉税）。
     ...row.slots.flatMap((s) => [
-      cell(s.content), cell(s.unitPrice), cell(s.quantity), cell(s.amount), cell(s.deliveryDate)
+      cell(s.content), cell(s.unitPriceIncTax), cell(s.quantity), cell(s.amountIncTax), cell(s.deliveryDate)
     ]),
     amount(row.reimbursement),
     // 小計は税込（消費税の列が無いので、ここに含める）。

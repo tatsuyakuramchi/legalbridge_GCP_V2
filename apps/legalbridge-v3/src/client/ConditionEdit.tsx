@@ -503,9 +503,12 @@ export function ConditionEdit(
             <select value={v.taxCategory} onChange={(e) => set("taxCategory", e.target.value)}>
               <option value="taxable">課税</option>
               <option value="reduced">軽減</option>
-              <option value="exempt">非課税</option>
-              <option value="included">税込（海外・内税）</option>
+              <option value="exempt">{v.kind === "expense" ? "非課税（立替清算：経理提出は立替金）" : "非課税"}</option>
+              <option value="included">{v.kind === "expense" ? "税込（報酬に含める：経理提出は支払内容の組）" : "税込（海外・内税）"}</option>
             </select>
+            {v.kind === "expense" && (
+              <small className="faint">実費の清算の仕方はここで決まる。決定した検収書の経費も、この税区分で経理提出の列が変わる</small>
+            )}
           </label>
           <label className="field">
             <span>契約形式</span>

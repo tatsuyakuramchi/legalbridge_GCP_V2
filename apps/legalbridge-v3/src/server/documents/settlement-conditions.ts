@@ -39,6 +39,33 @@ const firstAmount = (row: Row, ...keys: string[]): number | null => {
 const rowsOf = (v: unknown): Row[] =>
   Array.isArray(v) ? v.filter((x): x is Row => Boolean(x) && typeof x === "object") : [];
 
+/**
+ * 経費の清算の仕方。
+ *   reimbursement … 立替清算。相手が払った実費を返す。経理提出では「立替金」の列。
+ *   compensation  … 報酬に含める。交通費等を報酬の一部として払う。経理提出では
+ *                   支払内容（２）以降の組に載り、小計（税込）に入る。
+ * 条件の税区分に写す：立替清算は非課税（消費税を重ねない・小計に入れない）、
+ * 報酬に含めるは税込（内税。金額は税込のまま、小計に入って源泉の対象）。
+ */
+export type ExpenseSettlement = "reimbursement" | "compensation";
+export const EXPENSE_SETTLEMENT_FIELD = "expense_type";
+
+/** 行の清算区分。無ければ立替清算（切り替えを足す前の経費はすべて立替だった）。 */
+export function expenseSettlementOf(row: Row): ExpenseSettlement {
+  return text(row[EXPENSE_SETTLEMENT_FIELD]) === "compensation" ? "compensation" : "reimbursement";
+}
+
+/** 条件の税区分 → 清算区分。非課税だけが立替清算。税区分が分からなければ null。 */
+export function settlementOfTaxCategory(taxCategory: unknown): ExpenseSettlement | null {
+  const t = text(taxCategory);
+  if (!t) return null;
+  return t === "exempt" ? "reimbursement" : "compensation";
+}
+
+/** 清算区分 → 経費の条件の税区分。 */
+export const taxCategoryForExpense = (settlement: ExpenseSettlement): "exempt" | "included" =>
+  (settlement === "compensation" ? "included" : "exempt");
+
 export interface SettlementSource {
   documentId: number;
   templateKey: string;
@@ -89,6 +116,7 @@ export async function materializeSettlementRows(
 
   for (const p of pending) {
     const name = p.name || (p.kind === "fee" ? "その他手数料" : "経費");
+    const settlement = p.kind === "expense" ? expenseSettlementOf(p.row) : null;
     const made = await writes.createWithin(client, {
       matterId: source.matterId,
       name,
@@ -99,12 +127,15 @@ export async function materializeSettlementRows(
       currency: str(primary.currency) ?? "JPY",
       pricingModel: "fixed",
       flatAmount: p.amount ?? 0,
-      // 手数料は税抜で受け、経費は税込の実費なので消費税を重ねない。
+      // 手数料は税抜で受け、経費は税込で受けるので消費税を重ねない。経費の税区分は
+      // 清算区分で決める（立替清算＝非課税、報酬に含める＝税込・内税）。
       // 海外の取引（元の条件が税込・内税）の手数料は、元の条件と同じく税込にする。
-      taxCategory: p.kind === "expense" ? "exempt" : primary.tax_category === "included" ? "included" : "taxable",
+      taxCategory: settlement ? taxCategoryForExpense(settlement)
+        : primary.tax_category === "included" ? "included" : "taxable",
       termStart: dateStr(primary.term_start), termEnd: dateStr(primary.term_end),
-      notes: p.kind === "expense"
-        ? [text(p.row.spent_date) ? `利用日 ${text(p.row.spent_date)}` : "", text(p.row.remarks), "税込の実費"]
+      notes: settlement
+        ? [text(p.row.spent_date) ? `利用日 ${text(p.row.spent_date)}` : "", text(p.row.remarks),
+           settlement === "compensation" ? "税込（報酬に含める）" : "税込の実費（立替清算）"]
             .filter(Boolean).join("／")
         : text(p.row.remarks) || null
     }, actor);
@@ -131,11 +162,12 @@ export function feeLinesFrom(conditions: Array<Record<string, any>>): Row[] {
   }));
 }
 
-/** 繋がっている経費の条件 → 経費の行の種（金額は税込の実費）。 */
+/** 繋がっている経費の条件 → 経費の行の種（金額は税込）。清算区分は条件の税区分から。 */
 export function expenseLinesFrom(conditions: Array<Record<string, any>>): Row[] {
   return conditions.filter((c) => c.kind === "expense").map((c) => ({
     condition_id: c.id, expense_name: c.name ?? "", amount_inc_tax: c.flatAmount ?? 0,
-    spent_date: null, remarks: ""
+    spent_date: null, remarks: "",
+    [EXPENSE_SETTLEMENT_FIELD]: settlementOfTaxCategory(c.taxCategory) ?? "reimbursement"
   }));
 }
 

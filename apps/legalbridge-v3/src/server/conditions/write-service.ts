@@ -671,8 +671,10 @@ export class ConditionWriteService {
         unitAmount: row.unitAmount ?? null,
         quantity: row.quantity ?? null,
         unitLabel: row.unitLabel ?? null,
-        // 経費は税込の実費で受けるので消費税を重ねない。
-        taxCategory: row.kind === "expense" ? "exempt" : (row.taxCategory ?? input.taxCategory ?? "taxable"),
+        // 経費は税込で受けるので消費税を重ねない。清算の仕方で税区分が分かれる：
+        // 立替清算（既定）は非課税＝経理提出の立替金、報酬に含めるなら税込（内税）＝支払内容の組。
+        taxCategory: row.kind === "expense" ? (row.taxCategory === "included" ? "included" : "exempt")
+          : (row.taxCategory ?? input.taxCategory ?? "taxable"),
         paymentTerms: input.paymentTerms ?? null,
         contractForm: row.kind === "service" ? (row.contractForm ?? input.contractForm ?? null) : null,
         spec: row.spec ?? null,

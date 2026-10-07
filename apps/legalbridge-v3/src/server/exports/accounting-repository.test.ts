@@ -92,7 +92,8 @@ test("計算書の支払内容は小計の括り（入金企業・言語）1つ�
   ] };
   const lines = documentLinesFrom(values);
   assert.equal(lines.length, 2);
-  assert.deepEqual(lines[0], { content: "Hachette・フランス語", unitPrice: null, quantity: 1, amount: 300, deliveryDate: "2026-09-30" });
+  assert.deepEqual(lines[0], { content: "Hachette・フランス語", unitPrice: null, quantity: 1, amount: 300,
+                               deliveryDate: "2026-09-30", taxRatePct: 10 });
   assert.equal(lines[1]!.content, "Planeta・スペイン語");
   assert.equal(statementGroupLabel({ contractTitle: "", contractNumber: "C-1" }, [{ productName: "" }]), "C-1");
 });

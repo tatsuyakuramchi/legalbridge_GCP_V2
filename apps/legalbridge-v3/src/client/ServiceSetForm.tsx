@@ -63,6 +63,11 @@ export function ServiceSetForm(
       hint: (v) => `交通費・宿泊費などの立替。空なら作らない。${minorUnitHint(v.currency || "JPY")}` },
     { name: "expenseName", label: "実費：名前", placeholder: "取材交通費",
       visibleWhen: (v) => String(v.expenseAmount ?? "").trim() !== "", hint: "空なら「◯◯ 実費」" },
+    { name: "expenseSettlement", label: "実費：清算の仕方", type: "select",
+      visibleWhen: (v) => String(v.expenseAmount ?? "").trim() !== "",
+      options: [{ value: "reimbursement", label: "立替清算（実費を返す。経理提出は立替金）" },
+                { value: "compensation", label: "報酬に含める（経理提出は支払内容の組）" }],
+      hint: "空なら立替清算。立替清算は非課税、報酬に含めるは税込（内税）の条件になる" },
     { name: "feeAmount", label: "手数料：金額（税抜）", type: "money",
       hint: (v) => `送料・振込手数料など。空なら作らない。${minorUnitHint(v.currency || "JPY")}` },
     { name: "feeName", label: "手数料：名前", placeholder: "送料",
@@ -120,8 +125,11 @@ export function ServiceSetForm(
           spec: text(v.spec) ?? null, notes: text(v.notes) ?? null
         }];
         if (text(v.expenseAmount)) {
+          const compensation = v.expenseSettlement === "compensation";
           rows.push({ kind: "expense", name: text(v.expenseName) ?? null, pricingModel: "fixed",
-                      flatAmount: num(v.expenseAmount) ?? 0, notes: "税込の実費（上限）" });
+                      flatAmount: num(v.expenseAmount) ?? 0,
+                      taxCategory: compensation ? "included" : "exempt",
+                      notes: compensation ? "税込（報酬に含める・上限）" : "税込の実費（立替清算・上限）" });
         }
         if (text(v.feeAmount)) {
           rows.push({ kind: "fee", name: text(v.feeName) ?? null, pricingModel: "fixed",

@@ -43,7 +43,7 @@ test("スロットは常に8つ", () => {
 test("9件目以降は8件目に束ねる。落とすと合計が合わなくなる", () => {
   const many = Array.from({ length: 10 }, (_, i) => ({
     content: `明細${i + 1}`, unitPrice: "" as const, quantity: "" as const,
-    amount: 100, deliveryDate: "2026-09-30"
+    amount: 100, unitPriceIncTax: "" as const, amountIncTax: 110, deliveryDate: "2026-09-30"
   }));
   const fitted = fitSlots(many);
   assert.equal(fitted.length, 8);
@@ -269,11 +269,65 @@ test("書類の明細は「今回の分」だけを支払内容にする", () =>
       { fee_name: "立替の交通費", amount_ex_tax: 1200, tax_category: "exempt" }
     ]
   });
-  assert.deepEqual(lines.map((l) => l.content), ["第2回 挿絵", "振込手数料"]);
+  assert.deepEqual(lines.map((l) => l.content), ["第2回 挿絵", "振込手数料"], "非課税の手数料は立替金（載せない）");
   assert.equal(lines[0].quantity, 1);
   assert.equal(lines[0].unitPrice, 280000);
   assert.equal(lines[0].deliveryDate, "2026-05-31", "日付は10文字に切る");
   assert.equal(lines[1].amount, 550, "課税の手数料は支払内容に載る");
+});
+
+test("書類の経費：立替清算は載せず（立替金）、報酬に含める経費は税込のまま支払内容に載る", () => {
+  const rendered = {
+    taxRate: 10,
+    delivery_line_items: [{ item_name: "イラスト制作", inspected_amount_ex_tax: 300000, inspected_quantity: 1,
+                            unit_price: 300000, delivery_date: "2026-09-30" }],
+    expenses: [
+      { condition_id: 11, expense_name: "取材交通費", amount_inc_tax: 12000, spent_date: "2026-09-20" },
+      { condition_id: 12, expense_name: "出張交通費", amount_inc_tax: 8000, spent_date: "2026-09-21",
+        expense_type: "compensation" },
+      { expense_name: "条件の無い行（区分なし）", amount_inc_tax: 500 },
+      { expense_name: "条件の無い行（報酬に含める）", amount_inc_tax: 700, expense_type: "compensation" },
+      { expense_name: "金額なし", amount_inc_tax: "", expense_type: "compensation" }
+    ]
+  };
+  // 行の区分だけで見る（条件の税区分が分からないとき）。
+  const byRow = documentLinesFrom(rendered);
+  assert.deepEqual(byRow.map((l) => [l.content, l.amount, l.taxRatePct, l.deliveryDate]), [
+    ["イラスト制作", 300000, 10, "2026-09-30"],
+    ["出張交通費", 8000, 0, "2026-09-21"],
+    ["条件の無い行（報酬に含める）", 700, 0, null]
+  ]);
+  // 条件の税区分が行の区分に勝つ。決定した後に条件を直せば、焼き付けた行を直さなくても帳票が変わる。
+  const byCondition = documentLinesFrom(rendered, {
+    settlementOf: (id) => (id === 11 ? "compensation" : id === 12 ? "reimbursement" : null)
+  });
+  assert.deepEqual(byCondition.map((l) => l.content),
+    ["イラスト制作", "取材交通費", "条件の無い行（報酬に含める）"]);
+});
+
+test("書類の明細に税率を付ける：書類の税率（海外用は 0）、軽減の手数料は 8", () => {
+  const lines = documentLinesFrom({
+    taxRate: 0,
+    delivery_line_items: [{ item_name: "Translation", amount_ex_tax: 1000 }],
+    other_fees: [{ fee_name: "Shipping", amount: 100, tax_category: "reduced" }]
+  });
+  assert.deepEqual(lines.map((l) => l.taxRatePct), [0, 8]);
+  assert.equal(documentLinesFrom({ delivery_line_items: [{ item_name: "翻訳", amount_ex_tax: 1 }] })[0].taxRatePct, 10,
+    "税率が無ければ 10");
+});
+
+test("書類の明細からの組も税込を持つ（V1 形式はこちらを出す）。立替清算の割当は組に入らない", () => {
+  const row = buildAccountingRow(source({
+    amount: 312000, taxAmount: 30000,
+    lines: [line(), line({ conditionNo: "CND-2", name: "取材交通費 実費", taxCategory: "exempt", amount: 12000 })],
+    documentLines: [{ content: "イラスト制作", unitPrice: 300000, quantity: 1, amount: 300000,
+                      deliveryDate: "2026-09-30", taxRatePct: 10 }]
+  }));
+  assert.equal(row.slots[0].amount, 300000);
+  assert.equal(row.slots[0].amountIncTax, 330000);
+  assert.equal(row.slots[0].unitPriceIncTax, 330000);
+  assert.equal(row.slots[1].content, "", "立替清算の交通費は組に出ない");
+  assert.equal(row.reimbursement, 12000);
 });
 
 test("印の無い行はそのまま今回の分として扱う", () => {
