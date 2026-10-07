@@ -83,7 +83,17 @@ export interface LicenseSetRow {
   sublicenseConsent?: "covered" | "required" | null;
   /** 許諾料の扱い（A-048）。included / free のときは率が無くてもよい。 */
   licenseFeeBasis?: LicenseFeeBasis | null;
+  /** この行だけの支払条件。空ならセット共通の支払条件。 */
+  paymentTerms?: string | null;
 }
+
+/**
+ * 出版の支払条件の既定（紙・電子で違う）。条件を作るときに支払条件が空ならこれが入る。
+ * 紙は刷部数が決まるたびに、電子は年 1 回の集計で払う契約がふつう。
+ */
+export const PUB_PRINT_PAYMENT_TERMS = "都度払い（刊行日を含む月の翌月末日払い）";
+export const PUB_DIGITAL_PAYMENT_TERMS = "毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。";
+
 export interface LicenseSetInput {
   matterId?: number | null;
   /**
@@ -537,7 +547,7 @@ export class ConditionWriteService {
       mgAmount: row.mgAmount ?? null,
       agAmount: row.agAmount ?? null,
       taxCategory: input.taxCategory ?? "taxable",
-      paymentTerms: input.paymentTerms ?? null,
+      paymentTerms: row.paymentTerms ?? input.paymentTerms ?? null,
       sublicensable: input.sublicensable ?? null,
       statementTiming: input.statementTiming ?? null,
       notes: input.notes ?? null,
@@ -603,8 +613,16 @@ export class ConditionWriteService {
       throw new DomainError("VALIDATION", "紙・電子・翻訳版・再許諾のどれかの料率を入れてください");
     }
     const rows: LicenseSetRow[] = [];
-    if (input.print) rows.push({ usageType: "pub_print", ratePct: input.print.ratePct, exclusivity: input.print.exclusivity ?? null });
-    if (input.digital) rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null });
+    // 支払条件が空なら媒体ごとの既定（紙は刷部数確定の都度、電子は年 1 回の集計）。
+    const terms = String(input.paymentTerms ?? "").trim();
+    if (input.print) {
+      rows.push({ usageType: "pub_print", ratePct: input.print.ratePct, exclusivity: input.print.exclusivity ?? null,
+                  paymentTerms: terms || PUB_PRINT_PAYMENT_TERMS });
+    }
+    if (input.digital) {
+      rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
+                  paymentTerms: terms || PUB_DIGITAL_PAYMENT_TERMS });
+    }
     if (input.sublicense) {
       rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,
                   sublicensee: input.sublicense.sublicensee ?? null, purpose: input.sublicense.purpose ?? null,

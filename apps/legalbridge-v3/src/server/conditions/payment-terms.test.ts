@@ -102,3 +102,15 @@ test("英語：end of the month following は翌月末、分割は読まない",
 test("英語の規則は日本語の言い回しを邪魔しない", () => {
   assert.deepEqual(parsePaymentTerms("月末締め翌月末払い"), { monthsAfter: 1, day: "end" });
 });
+
+test("年 1 回の支払（「10月末日までに支払う」）：起点日以後に来る最初のその月の末日。期間の日付は読まない", () => {
+  const terms = parsePaymentTerms("毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。");
+  assert.deepEqual(terms, { monthsAfter: 0, day: "end", annualMonth: 10 });
+  assert.equal(payOnFor("2026-09-30", terms), "2026-10-31", "9月の計算書 → 今年の 10 月末");
+  assert.equal(payOnFor("2026-10-15", terms), "2026-10-31", "10月中なら今年の 10 月末");
+  assert.equal(payOnFor("2026-11-15", terms), "2027-10-31", "10月を過ぎていれば翌年");
+  assert.deepEqual(parsePaymentTerms("10月20日払い"), { monthsAfter: 0, day: 20, annualMonth: 10 });
+  assert.equal(payOnFor("2026-03-01", parsePaymentTerms("10月20日払い")), "2026-10-20");
+  // 紙の既定「都度払い（刊行日を含む月の翌月末日払い）」は翌月末。
+  assert.equal(payOnFor("2026-08-17", parsePaymentTerms("都度払い（刊行日を含む月の翌月末日払い）")), "2026-09-30");
+});

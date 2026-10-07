@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ConditionWriteService, periodicLines } from "./write-service.js";
+import { ConditionWriteService, PUB_DIGITAL_PAYMENT_TERMS, PUB_PRINT_PAYMENT_TERMS, periodicLines } from "./write-service.js";
 import { DomainError } from "../core/errors.js";
 
 const baseRows = (
@@ -469,4 +469,30 @@ test("代表が分配する契約：相手先が取り分に無ければ断る�
     () => new ConditionWriteService(new FakeDatabase(shareRows({ mg: 100000 }))).replaceShares(1,
       [{ partyId: 21, sharePpm: 500000 }, { partyId: 22, sharePpm: 500000 }], "tester"),
     (e: unknown) => e instanceof DomainError && /MG・AG/.test(e.message));
+});
+
+test("出版セット：支払条件が空なら媒体ごとの既定（紙は刷部数確定の都度、電子は年 1 回の集計）。書いてあればそれ", async () => {
+  const mk = () => new FakeDatabase((t) => {
+    if (t.includes("SELECT title FROM works")) return [{ title: "作品A" }];
+    if (t.includes("FROM parties WHERE id = $1")) return [{ id: 3, name: "権利元" }];
+    if (t.includes("FROM works WHERE id")) return [{ id: 5, title: "作品A" }];
+    if (t.includes("current_value")) return [{ current_value: 1 }];
+    if (t.includes("INSERT INTO conditions")) return [{ id: 1, condition_no: "CL-1" }];
+    return [];
+  });
+  const empty = mk();
+  await new ConditionWriteService(empty).createPublishingSet({
+    counterpartyId: 3, workId: 5, print: { ratePct: 10, exclusivity: null }, digital: { ratePct: 15, exclusivity: null }
+  }, "a");
+  const [print, digital] = empty.all("INSERT INTO conditions").map((q) => q.params);
+  assert.equal(print[22], PUB_PRINT_PAYMENT_TERMS);
+  assert.equal(digital[22], PUB_DIGITAL_PAYMENT_TERMS);
+  assert.equal(PUB_PRINT_PAYMENT_TERMS, "都度払い（刊行日を含む月の翌月末日払い）");
+  assert.equal(PUB_DIGITAL_PAYMENT_TERMS, "毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。");
+
+  const given = mk();
+  await new ConditionWriteService(given).createPublishingSet({
+    counterpartyId: 3, workId: 5, paymentTerms: "月末締め翌月末払い", print: { ratePct: 10, exclusivity: null }, digital: { ratePct: 15, exclusivity: null }
+  }, "a");
+  assert.deepEqual(given.all("INSERT INTO conditions").map((q) => q.params[22]), ["月末締め翌月末払い", "月末締め翌月末払い"]);
 });

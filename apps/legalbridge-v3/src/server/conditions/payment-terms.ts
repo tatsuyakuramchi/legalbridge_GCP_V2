@@ -20,6 +20,11 @@ export interface PaymentTerms {
    * 入っていれば月の規則（monthsAfter / day）は使わず、起点日 + 日数で出す。
    */
   daysAfter?: number;
+  /**
+   * 年 1 回の支払月（「10月末日までに支払う」の 10）。起点日以後に来る最初のその月の day に払う。
+   * 電子書籍の印税（年 1 回の集計）に使う。
+   */
+  annualMonth?: number;
 }
 
 /**
@@ -106,7 +111,21 @@ export function parsePaymentTerms(text: string | null | undefined): PaymentTerms
       if (end > bestEnd) { bestEnd = end; monthsAfter = n; }
     }
   }
-  if (monthsAfter === null) return null;
+  if (monthsAfter === null) {
+    // 年 1 回（「10月末日までに支払う」「10月20日払い」）。支払の語の直前の「N月D日／N月末日」だけ読む。
+    // 「7月1日〜翌年6月30日を集計期間とし」の期間の日付は支払の語が続かないので読まない。
+    const annual = s.match(/(\d{1,2})\s*月\s*(末\s*日?|(\d{1,2})\s*日)\s*(?:まで|迄)?\s*に?\s*(?:支払|払)/);
+    if (annual) {
+      const month = Number(annual[1]);
+      if (month < 1 || month > 12) return null;
+      if (annual[3]) {
+        const d = Number(annual[3]);
+        return d >= 1 && d <= 31 ? { monthsAfter: 0, day: d, annualMonth: month } : null;
+      }
+      return { monthsAfter: 0, day: "end", annualMonth: month };
+    }
+    return null;
+  }
 
   // 支払日は「払いに近いほう」の月より後ろに書いてある。前を見ると、
   // 「月末締め翌々月20日払い」の "月末締め" を支払日と読んで末日にしてしまう。
@@ -143,7 +162,10 @@ export function payOnFor(dueOn: string | null, terms: PaymentTerms | null): stri
   }
 
   const year = base.getUTCFullYear();
-  const month = base.getUTCMonth() + terms.monthsAfter;
+  // 年 1 回：起点日以後に来る最初のその月（起点の月がその月を過ぎていれば翌年）。
+  const month = terms.annualMonth
+    ? (terms.annualMonth - 1) + (base.getUTCMonth() + 1 > terms.annualMonth ? 12 : 0)
+    : base.getUTCMonth() + terms.monthsAfter;
   const target = new Date(Date.UTC(year, month, 1));
   const y = target.getUTCFullYear();
   const m = target.getUTCMonth();
