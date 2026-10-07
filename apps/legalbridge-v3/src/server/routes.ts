@@ -762,7 +762,10 @@ export function createRoutes(database: Transactable) {
    *    として扱われて 404 になる。
    */
   router.get("/conditions/export", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    // 種類の群（license＝利用許諾 / service＝業務委託など）。列が違うので別々に出す。
+    const group = String(req.query.group ?? "license") === "service" ? "service" : "license";
     const csv = await conditionExport.run({
+      group,
       keyword: String(req.query.q ?? ""),
       direction: req.query.direction as "in" | "out" | undefined,
       kind: req.query.kind ? String(req.query.kind) : undefined,
@@ -773,7 +776,7 @@ export function createRoutes(database: Transactable) {
     });
     const day = new Date().toISOString().slice(0, 10);
     res.type("text/csv; charset=utf-8")
-       .set("Content-Disposition", `attachment; filename="conditions-${day}.csv"`)
+       .set("Content-Disposition", `attachment; filename="conditions-${group}-${day}.csv"`)
        // Excel が UTF-8 と分かるように BOM を付ける（無いと日本語が化ける）。
        .send(`\ufeff${csv}`);
   }));
@@ -1321,7 +1324,7 @@ export function createRoutes(database: Transactable) {
        .send(withBom(csv));
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works", "license_conditions", "agreements", "pub_works"]),
+    kind: z.enum(["parties", "works", "license_conditions", "service_conditions", "agreements", "pub_works"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean(),
     // create（新しく作る）か update（既存に当てる）か。既定は create。

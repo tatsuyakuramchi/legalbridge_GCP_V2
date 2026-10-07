@@ -271,11 +271,21 @@ export function ConditionsWorkspace(
       <div className="row" style={{ marginBottom: 10 }}>
         {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("one")}>条件を登録</button>}
         {/* 一括修正（CSV の「登録済みに当てる」）は、今なにが入っているかを
-            手元に出せないと直しようがない。絞り込んだぶんをそのまま書き出す。 */}
+            手元に出せないと直しようがない。絞り込んだぶんをそのまま書き出す。
+            許諾（作品・取引モデル・料率）と業務委託など（金額・納期・仕様）は
+            持っている項目が違うので、種類別に別の表で出す。 */}
         {!creating && (
-          <a className="btn btn-sm ghost" href={`/api/v3/conditions/export${exportQuery}`}
-             title="いま絞り込んでいる条件を CSV で書き出す。見出しは取込と同じなので、直してそのまま取り込める">
-            ↓ 書き出す（絞り込んだぶん）
+          <a className="btn btn-sm ghost"
+             href={`/api/v3/conditions/export${exportQuery}${exportQuery ? "&" : "?"}group=license`}
+             title="いま絞り込んでいる利用許諾条件（許諾料）を CSV で書き出す。見出しは取込「利用許諾条件」と同じなので、直してそのまま取り込める">
+            ↓ 書き出す（許諾）
+          </a>
+        )}
+        {!creating && (
+          <a className="btn btn-sm ghost"
+             href={`/api/v3/conditions/export${exportQuery}${exportQuery ? "&" : "?"}group=service`}
+             title="いま絞り込んでいる業務委託などの条件（委託料・製品・実費・手数料）を CSV で書き出す。見出しは取込「業務委託などの条件」と同じなので、直してそのまま取り込める">
+            ↓ 書き出す（業務委託など）
           </a>
         )}
         {!creating && (
