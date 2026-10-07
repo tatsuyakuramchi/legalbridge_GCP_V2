@@ -15,6 +15,7 @@
  */
 
 import { accountTypeLabel, bankInfoLine } from "./template-context.js";
+import { baseDocumentNumber } from "./numbering.js";
 
 type Ctx = Record<string, any>;
 
@@ -432,7 +433,8 @@ const standaloneOrderNo = (c: Ctx): string | undefined => {
 const relatedNo = (c: Ctx, templateKey: string): string | undefined => {
   const nos = [...new Set(((c.related ?? []) as Array<Record<string, any>>)
     .filter((d) => d.templateKey === templateKey && d.documentNo)
-    .map((d) => String(d.documentNo)))];
+    // 訂正版の枝番（-R2）は社内の番号。相手に出す紙には本体の番号で引く。
+    .map((d) => baseDocumentNumber(String(d.documentNo))))];
   return nos.length ? nos.join("・") : undefined;
 };
 

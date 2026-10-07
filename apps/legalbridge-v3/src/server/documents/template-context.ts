@@ -23,6 +23,7 @@ import { PUB_TITLES_FIELD, isPubTermsTemplate, pubTermsPatch, pubTermsSuggestion
          pubTermsWarnings, pubTitleSeeds } from "./pub-terms.js";
 import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
+import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
@@ -187,7 +188,8 @@ function orderNoFor(context: Ctx, conditionId: unknown): string | null {
   const related = (context.related ?? []) as Ctx[];
   const mine = related.filter((d) => Number(d.conditionId) === Number(conditionId)
     && (d.templateKey === "purchase_order" || d.templateKey === "intl_purchase_order"));
-  const nos = [...new Set(mine.map((d) => String(d.documentNo ?? "")).filter(Boolean))];
+  // 訂正版の枝番（-R2）は社内の番号。紙には本体の番号で出す。
+  const nos = [...new Set(mine.map((d) => baseDocumentNumber(String(d.documentNo ?? ""))).filter(Boolean))];
   if (nos.length) return nos.join("・");
   // 取り込んだ発注書は単体契約として登録されていることがある。その契約番号。
   const standalone = String(condition?.standaloneNo ?? "").trim();

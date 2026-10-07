@@ -113,6 +113,12 @@ V1 の別ページ ArchivePage を新設せず、V2 で既にアーカイブを�
 ## 10-1b：文書再発行（reissue）✅ 実装済
 
 既存確定文書を基に新版 `<base>-R<n>` を採番して発行し、旧版を supersede する guarded-write。
+
+> **番号の扱い（2026-10）**：訂正版は `document_sequences` の連番を進めず、退かせる元の番号の本体に
+> 枝番を付ける（`ARC-PO-2026-0031` → `ARC-PO-2026-0031-R2`。`numbering.nextRevisionNumber`。無効にした
+> 訂正版の枝番は再利用しない）。`-R<n>` は社内の番号で、紙・メール・検収書の発注番号には本体の番号を出す
+> （`printedDocumentNumber`。`DocumentSummary.printedNo`）。相手に差し替えだと分かるよう「（改訂 n）」の印を
+> 添えるかは訂正版ごとに文書の画面で選び、`manual_inputs._showRevision`（"1"／"0"、既定は出す）に残る。
 **重要**：V2 の残高は `condition_events.voided_at IS NULL` のみで判定し文書 lifecycle では絞らない
 （`conditions/repository.ts` で確認）。そのため旧版の実績を残すと二重計上になるため、再発行時に
 旧版の有効実績を同一トランザクションで取消する（void 10-2 と同じ列 UPDATE を再利用）。

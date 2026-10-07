@@ -243,6 +243,13 @@ export function DocumentsWorkspace(
    * 「実績 #… はすでに別の文書に結ばれています」で止まる。
    */
   const [revise, setRevise] = useState<{ ids: number[]; reason: string | null } | null>(null);
+  /**
+   * 訂正版の改訂の印「（改訂 n）」を紙とメールに出すか。訂正版は社内の番号に枝番（-R2）が
+   * 付くが、紙には元と同じ本体の番号を印字する。印を出さないと相手の手元で新旧が
+   * 見分けられないので既定は出す。相手に差し替えを意識させたくないときだけ外す。
+   * manual_inputs._showRevision（"1"／"0"）として文書に残る。
+   */
+  const [showRevision, setShowRevision] = useState(true);
   const reviseCtx = start?.supersedesId
     ? { ids: [start.supersedesId, ...(start.supersedesExtraIds ?? [])], reason: start.reason ?? null }
     : revise;
@@ -525,8 +532,10 @@ export function DocumentsWorkspace(
   }, []);
   const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}),
                                   ...(parentPoNo ? { _parentPoNo: parentPoNo } : {}),
-                                  ...(termsNo ? { _termsNo: termsNo } : {}) }),
-                         [manual, lines, ownerStaffId, parentPoNo, termsNo]);
+                                  ...(termsNo ? { _termsNo: termsNo } : {}),
+                                  // 訂正版だけ。新規の文書に印は無い。
+                                  ...(reviseCtx ? { _showRevision: showRevision ? "1" : "0" } : {}) }),
+                         [manual, lines, ownerStaffId, parentPoNo, termsNo, reviseCtx, showRevision]);
 
   // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
   const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
@@ -669,8 +678,10 @@ export function DocumentsWorkspace(
   ), [isStatement, stmt, inputsWithPayee, payeePartyId]);
   const body = useMemo(() => ({
     templateKey, conditionIds: picked, eventIds: pickedEvents,
-    manualInputs: previewInputs, matterId, agreementId, requestId
-  }), [templateKey, picked, pickedEvents, previewInputs, matterId, agreementId, requestId]);
+    manualInputs: previewInputs, matterId, agreementId, requestId,
+    // 訂正版なら、プレビューの番号も紙に出る形（本体＋改訂の印）で出す。
+    supersedesId: reviseCtx?.ids[0] ?? null
+  }), [templateKey, picked, pickedEvents, previewInputs, matterId, agreementId, requestId, reviseCtx]);
 
   // 打つたびに問い合わせない。少し待ってからプレビューを取り直す。
   const manualJson = useDebounced(JSON.stringify(previewInputs), 600);
@@ -1021,8 +1032,9 @@ export function DocumentsWorkspace(
       setOwnerStaffId(Number(d.manualInputs?._ownerStaffId) > 0 ? Number(d.manualInputs._ownerStaffId) : "");
       setParentPoNo(String(d.manualInputs?._parentPoNo ?? ""));
       setTermsNo(String(d.manualInputs?._termsNo ?? ""));
+      setShowRevision(String(d.manualInputs?._showRevision ?? "1") !== "0");
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
-        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo") continue;
+        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo" || k === "_showRevision") continue;
         if (Array.isArray(v)) arrays[k] = v as Row[];
         else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
@@ -1101,9 +1113,24 @@ export function DocumentsWorkspace(
         )}
         <h1>文書</h1>
         {reviseCtx && (
-          <div className="note warn">
-            <b>訂正版</b>　元の文書 {reviseCtx.ids.map((id) => `#${id}`).join("・")} を退かせて出し直します（理由：{reviseCtx.reason ?? "—"}）。
-            決定するまで元の版は有効なままです。元の版が結んでいる実績はこの訂正版に移ります。
+          <div className="note warn stack" style={{ gap: 6 }}>
+            <div>
+              <b>訂正版</b>　元の文書 {reviseCtx.ids.map((id) => `#${id}`).join("・")} を退かせて出し直します（理由：{reviseCtx.reason ?? "—"}）。
+              決定するまで元の版は有効なままです。元の版が結んでいる実績はこの訂正版に移ります。
+            </div>
+            {/* 番号は元のまま（社内では枝番 -R2 で区別）。相手に改訂の印を見せるかはここで選ぶ。 */}
+            <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <span>文書番号は元と同じ番号を印字します（社内の番号には枝番 -R2 が付きます）。</span>
+              <label className="row" style={{ gap: 6, alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={showRevision} onChange={(e) => setShowRevision(e.target.checked)} />
+                改訂の印「（改訂 n）」を紙とメールに出して、相手に差し替えだと分かるようにする
+              </label>
+            </div>
+            <span className="faint">
+              {showRevision
+                ? "番号の後ろに「（改訂 n）」が付きます。相手の手元で新旧の紙を見分けられます"
+                : "番号だけを印字します。相手の手元では元の紙と同じ番号になるので、差し替えの連絡を添えてください"}
+            </span>
           </div>
         )}
         {requestId && (
@@ -1862,7 +1889,7 @@ export function carryOverInputs(manual: Record<string, unknown>): {
   ownerStaffId: number | null; parentPoNo: string; termsNo: string;
 } {
   const computed = new Set(["statementMode", "rs_bundle_lines", "rs_bundle_tax", "rs_stage_notes",
-                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo"]);
+                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo", "_showRevision"]);
   const values: Record<string, string> = {};
   const arrays: Record<string, Row[]> = {};
   for (const [k, v] of Object.entries(manual)) {

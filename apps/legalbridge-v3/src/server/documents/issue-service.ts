@@ -17,7 +17,8 @@ import {
 const INTL_TAX_INCLUDED_TEMPLATES = new Set(["intl_purchase_order", INTL_INSPECTION_KEY]);
 import { resolveAllLegacyVariables } from "./legacy-variables.js";
 import { buildCandidates, type Candidate } from "./candidates.js";
-import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
+import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix,
+         nextRevisionNumber, printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { materializeSettlementRows } from "./settlement-conditions.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
 
@@ -147,7 +148,7 @@ export class DocumentIssueService {
             WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
           [input.documentId])).rows[0] as any)?.request_id);
       }
-      const context = await this.buildContext(this.database, input, PREVIEW_NUMBER, null, ownerStaffId,
+      const context = await this.buildContext(this.database, input, await this.previewNumber(input, manual), null, ownerStaffId,
                                               chosenRefs(manual));
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
       // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
@@ -432,7 +433,17 @@ export class DocumentIssueService {
         // 採番の年は決定日の年。遡及で去年の紙を入れるときに今年の連番を
         // 食うと、番号の年と紙の年が合わなくなる。
         const year = issuedOn ? Number(issuedOn.slice(0, 4)) : currentYearInTokyo();
-        const documentNo = formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
+        // 訂正版は連番を進めない。退かせる元の番号に枝番を付ける（ARC-PO-2026-0031-R2）。
+        // 連番を取ると相手に出した番号が版ごとに変わり、検収書・支払・契約の引き当てが追いにくい。
+        const supersedesNo = int(row.supersedes_id)
+          ? str(((await client.query("SELECT document_no FROM documents WHERE id = $1",
+                                     [row.supersedes_id])).rows[0] as { document_no?: string } | undefined)?.document_no)
+          : null;
+        const documentNo = supersedesNo
+          ? await nextRevisionNumber(client, supersedesNo)
+          : formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
+        // 紙に印字する番号は本体（枝番なし）。改訂の印「（改訂 n）」は訂正版ごとの選択で添える。
+        const printedNo = printedDocumentNumber(documentNo, showRevisionOf(row.manual_inputs));
 
         // 案件の無い文書（デイリータスク）は、繋がっている依頼から担当者を引く。
         const requestId = row.matter_id ? null
@@ -448,7 +459,7 @@ export class DocumentIssueService {
           agreementId: row.agreement_id,
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
-        }, documentNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId),
+        }, printedNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId),
            chosenRefs(settled.manual));
         const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
@@ -512,6 +523,7 @@ export class DocumentIssueService {
         await recordAudit(client, {
           actor, action: "document.issue", targetType: "document", targetId: documentId,
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
+                    ...(printedNo !== documentNo ? { printedNo } : {}),
                     ...(auto ? { agreement: auto } : {}),
                     ...(versionId !== Number(row.template_version_id)
                       ? { templateVersionWas: Number(row.template_version_id), templateVersion: versionId } : {}),
@@ -957,6 +969,18 @@ export class DocumentIssueService {
       html: renderDocumentHtml(template.htmlSource, document.renderedValues, partials),
       documentNo: document.documentNo
     };
+  }
+
+  /**
+   * プレビューに出す番号。訂正版なら、決定で付く番号の紙に出る形（本体＋改訂の印）を先に見せる。
+   * 新規は決定時に採番するので、その旨を置く。
+   */
+  private async previewNumber(input: Omit<DraftInput, "manualInputs">, manual: Record<string, unknown>): Promise<string> {
+    if (!input.supersedesId) return PREVIEW_NUMBER;
+    const prev = str(((await this.database.query("SELECT document_no FROM documents WHERE id = $1",
+                                                 [input.supersedesId])).rows[0] as { document_no?: string } | undefined)?.document_no);
+    if (!prev) return PREVIEW_NUMBER;
+    return printedDocumentNumber(await nextRevisionNumber(this.database, prev), showRevisionOf(manual));
   }
 
   private async buildContext(
