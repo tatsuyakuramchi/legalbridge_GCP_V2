@@ -1,0 +1,73 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { FakeDatabase } from "../core/fake-db.js";
+import { MissingContractsService } from "./missing-contracts.js";
+
+/**
+ * 契約書の無い相手先（出版）。
+ *   作家A（個人、基本契約なし）：作品X 紙・電子（条件書なし）、作品Y 紙（条件書あり）
+ *   作家B（法人、基本契約 #40 あり）：作品Z 電子（条件書なし）
+ *   作家C：全部に条件書あり → 出ない
+ */
+const ROWS = [
+  { id: 1, condition_no: "CL-1", usage_type: "pub_print", counterparty_id: 11, work_id: 100, work_title: "作品X", party_name: "作家A", party_kind: "individual", email: "a@example.test", master: null, has_terms: false },
+  { id: 2, condition_no: "CL-2", usage_type: "pub_digital", counterparty_id: 11, work_id: 100, work_title: "作品X", party_name: "作家A", party_kind: "individual", email: "a@example.test", master: null, has_terms: false },
+  { id: 3, condition_no: "CL-3", usage_type: "pub_print", counterparty_id: 11, work_id: 101, work_title: "作品Y", party_name: "作家A", party_kind: "individual", email: "a@example.test", master: null, has_terms: true },
+  { id: 4, condition_no: "CL-4", usage_type: "pub_digital", counterparty_id: 12, work_id: 102, work_title: "作品Z", party_name: "作家B", party_kind: "corporate", email: null, master: { id: 40, no: "ARC-PUBM-2026-0040", title: "出版等利用許諾基本契約" }, has_terms: false },
+  { id: 5, condition_no: "CL-5", usage_type: "pub_digital", counterparty_id: 13, work_id: 103, work_title: "作品W", party_name: "作家C", party_kind: "individual", email: "c@example.test", master: null, has_terms: true }
+];
+const db = () => new FakeDatabase((text) => {
+  if (text.includes("AS has_terms")) return ROWS;
+  if (text.includes("FROM conditions WHERE id = ANY")) return [{ id: 1, condition_no: "CL-1", direction: "in", counterparty_id: 11, agreement_id: null },
+                                                                { id: 2, condition_no: "CL-2", direction: "in", counterparty_id: 11, agreement_id: null }];
+  if (text.includes("UPDATE conditions SET agreement_id")) return [{ id: 1 }, { id: 2 }];
+  return undefined;
+});
+const deps = (missingFor: Record<string, string[]> = {}) => {
+  const calls: Array<{ what: string; args: unknown }> = [];
+  let docId = 500;
+  return {
+    calls,
+    db: db(),
+    preview: async (x: { templateKey: string }) => { calls.push({ what: "preview", args: x }); return { missing: (missingFor[x.templateKey] ?? []).map((n) => ({ name: n, label: n })), templateLabel: x.templateKey }; },
+    createDraft: async (x: unknown) => { calls.push({ what: "draft", args: x }); docId += 1; return { id: docId }; },
+    issue: async (id: number) => { calls.push({ what: "issue", args: id }); return { documentNo: `DOC-${id}` }; },
+    createAgreement: async (x: unknown) => { calls.push({ what: "agreement", args: x }); return { id: 90, agreementNo: "ARC-PUBM-2026-0090" }; }
+  };
+};
+
+test("一覧：条件書の無い条件を相手先ごとに。全部に条件書がある相手先は出ない。基本契約・メールの有無が分かる", async () => {
+  const svc = new MissingContractsService(db(), deps());
+  const { parties } = await svc.list();
+  assert.deepEqual(parties.map((p) => [p.partyName, p.missingTerms, p.missingWorks, p.master?.agreementNo ?? null, p.email]),
+    [["作家A", 2, 1, null, "a@example.test"], ["作家B", 1, 1, "ARC-PUBM-2026-0040", null]]);
+  assert.deepEqual(parties[0].conditions.map((c) => [c.conditionNo, c.hasTerms]), [["CL-1", false], ["CL-2", false], ["CL-3", true]]);
+});
+
+test("試算：基本契約の無い個人は出版許諾契約書（個人）を作る計画。必須の欄が空なら「必須の欄が空」。何も作らない", async () => {
+  const d = deps({ pub_master_individual: ["許諾者住所"] });
+  const svc = new MissingContractsService(d.db, d);
+  const { outcomes } = await svc.preview({ partyIds: [11, 12, 99], signedOn: "2026-10-07" });
+  assert.deepEqual(outcomes.map((o) => [o.partyId, o.status]), [[11, "missing"], [12, "ok"], [99, "nothing"]]);
+  assert.deepEqual(outcomes[0].plan, { master: "create", masterTemplateKey: "pub_master_individual", termsTemplateKey: "pub_license_terms_v3", conditionIds: [1, 2] });
+  assert.match(outcomes[0].problems[0], /pub_master_individual：許諾者住所/);
+  assert.deepEqual(outcomes[1].plan, { master: "existing", masterTemplateKey: null, termsTemplateKey: "pub_license_terms_v3", conditionIds: [4] });
+  assert.ok(d.calls.every((c) => c.what === "preview"), "試算は確かめるだけ");
+  assert.deepEqual((d.calls[0].args as { manualInputs: Record<string, unknown> }).manualInputs, { 締結日: "2026-10-07" });
+});
+
+test("決定：相手先ごとに文書セットを決定する（基本契約を作る → 条件書）。1 件の失敗で他を止めない", async () => {
+  const d = deps();
+  const svc = new MissingContractsService(d.db, d);
+  const r = await svc.run({ partyIds: [11], signedOn: "2026-10-07" }, "tester");
+  assert.equal(r.issued, 1);
+  assert.equal(r.outcomes[0].status, "ok");
+  assert.deepEqual(d.calls.filter((c) => c.what !== "preview").map((c) => c.what), ["agreement", "draft", "issue", "draft", "issue"]);
+  const agreement = d.calls.find((c) => c.what === "agreement")!.args as Record<string, unknown>;
+  assert.deepEqual([agreement.counterpartyId, agreement.kind, agreement.domain, agreement.title], [11, "master", "license", "出版等利用許諾基本契約"]);
+  const drafts = d.calls.filter((c) => c.what === "draft").map((c) => c.args as Record<string, any>);
+  assert.equal(drafts[0].templateKey, "pub_master_individual");
+  assert.deepEqual([drafts[1].templateKey, drafts[1].conditionIds, drafts[1].agreementId], ["pub_license_terms_v3", [1, 2], null], "条件書には合意を付けない（決定で自動の合意が立つ）");
+  assert.deepEqual(r.outcomes[0].result?.documents.map((x) => x.documentNo), ["DOC-501", "DOC-502"]);
+  assert.ok(d.db.find("INSERT INTO audit_events"));
+});

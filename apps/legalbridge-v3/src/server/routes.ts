@@ -73,6 +73,7 @@ import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
 import { AnnualCloseService } from "./royalty/annual-closes.js";
+import { MissingContractsService } from "./documents/missing-contracts.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
@@ -3707,6 +3708,34 @@ export function createRoutes(database: Transactable) {
       }, { domain: input.domain, counterpartyId: input.counterpartyId, matterId: input.matterId ?? null,
            master: input.master ?? null, docs: input.docs }, who));
     }));
+
+  // 契約書の無い相手先（出版）を一覧し、基本契約＋出版条件書をまとめて起こす（docs/royalty-shares.md §5.5）。
+  const missingContractsFor = (who: string) => new MissingContractsService(database, {
+    db: database,
+    preview: async (x) => {
+      const r = await issues.preview({ ...x, eventIds: [] });
+      return { missing: r.binding.missing as Array<{ name: string; label?: string | null }>, templateLabel: r.templateLabel };
+    },
+    createDraft: (x) => issues.createDraft(x, who),
+    issue: (id) => issueOne(id, [], who) as unknown as Promise<{ documentNo?: string | null }>,
+    createAgreement: (x) => agreements.create(x, who)
+  });
+  const missingRunSchema = z.object({
+    partyIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+    signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    masterTemplateKey: z.string().trim().max(60).nullable().optional(),
+    termsTemplateKey: z.string().trim().max(60).nullable().optional()
+  });
+  router.get("/document-sets/missing", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await missingContractsFor(actor(res)).list());
+  }));
+  router.post("/document-sets/missing/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await missingContractsFor(actor(res)).preview(missingRunSchema.parse(req.body ?? {})));
+  }));
+  router.post("/document-sets/missing/run", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const who = actor(res);
+    res.status(201).json(await missingContractsFor(who).run(missingRunSchema.parse(req.body ?? {}), who));
+  }));
 
   router.post("/documents/:id/issue",
     requireRole("admin", "legal"), requireWritable,
