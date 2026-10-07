@@ -23,9 +23,9 @@ import type { ImportReport, RowOutcome } from "./service.js";
  * 条件に、取り分・分配は電子（無ければ紙）の条件から作品全体に、CID は作品に、
  * カナ・著作権表示・第三者権利・作品備考・事業区分は作品に。空欄の列は触らない。
  * 料率が書いてあって条件が無い媒体は、その媒体の条件を新しく作る。
- * 取り分は比率（合計 100）で書くのが基本。紙と電子で按分が違う契約は「紙取り分」「電子取り分」に
- * 分けて書く（「取り分」は両方に同じ比率）。実値（11.25／3.75）で書いても、その媒体の料率で比率に
- * 直して保存するので、全体率を改訂しても按分は崩れない。
+ * 取り分は「紙取り分」「電子取り分」の 2 列（比率。合計 100）。紙と電子で同じ契約でも両方に書く。
+ * 旧形式の「取り分」1 列も読める（両方に同じ比率）。実値（11.25／3.75）で書いても、その媒体の料率で
+ * 比率に直して保存するので、全体率を改訂しても按分は崩れない。
  * 取り分を消すときは「なし」。書き出し（exportCsv）は同じ列で出すので、
  * 書き出して直してそのまま取り込める。
  */
@@ -227,8 +227,12 @@ export class PubWorksImportService {
     ];
     const dist = `（${p.distribution === "representative" ? "代表が分配" : "当社が分配"}）`;
     if (p.printShares || p.digitalShares) {
-      parts.push(`取り分 ${[p.printShares ? `紙：${sharesLabel(p.printShares)}` : "", p.digitalShares ? `電子：${sharesLabel(p.digitalShares)}` : ""]
-        .filter(Boolean).join("　")}${dist}`);
+      // 片方の媒体だけ取り分があるときは、無いほうも読み上げる（書き忘れに気づけるように）。
+      const media = [
+        p.print ? `紙：${p.printShares?.length ? sharesLabel(p.printShares) : "取り分なし"}` : "",
+        p.digital ? `電子：${p.digitalShares?.length ? sharesLabel(p.digitalShares) : "取り分なし"}` : ""
+      ].filter(Boolean).join("　");
+      parts.push(`取り分 ${media}${dist}`);
     } else if (p.shares.length) {
       parts.push(`取り分 ${sharesLabel(p.shares)}${dist}`);
     }
@@ -272,7 +276,7 @@ export class PubWorksImportService {
     const digitalText = text(row, "電子取り分");
     const isClear = (v: string) => /^(なし|無し|none|clear)$/i.test(v);
     if (both && (printText || digitalText)) {
-      throw new DomainError("VALIDATION", "「取り分」と「紙取り分／電子取り分」は同時に入れられません。紙・電子で同じなら「取り分」、違うなら媒体ごとの列に入れてください");
+      throw new DomainError("VALIDATION", "「取り分」（旧形式）と「紙取り分／電子取り分」は同時に入れられません。紙取り分・電子取り分の 2 列に入れてください");
     }
     const resolve = async (value: string, rate: number | null): Promise<Share[]> => {
       const out: Share[] = [];
@@ -640,17 +644,16 @@ export class PubWorksImportService {
       const printShares = printC ? sharesOf.get(String(printC.id)) ?? [] : [];
       const digitalShares = digitalC ? sharesOf.get(String(digitalC.id)) ?? [] : [];
       const shares = digitalShares.length ? digitalShares : printShares;
-      // 紙と電子で同じ按分なら「取り分」1 列、違えば媒体ごとの列。
-      const same = !printC || !digitalC || sameShares(toShare(printShares), toShare(digitalShares));
+      void toShare;
       const scopes = scopesOf.get(String(main.id)) ?? [];
       return {
         "作品名": String(main.title ?? ""), "作品コード": main.work_code ?? "", "カナ": main.title_kana ?? "",
         "相手先": main.party_name ?? "", "相手先コード": main.party_code ?? "",
         "紙料率": printC ? pct(printC.rate_ppm) : "", "電子料率": digitalC ? pct(digitalC.rate_ppm) : "",
         "独占": main.exclusivity === "exclusive" ? "独占" : main.exclusivity === "non_exclusive" ? "非独占" : "",
-        "取り分": same ? ratioText(shares) : "",
-        "紙取り分": same ? "" : ratioText(printShares),
-        "電子取り分": same ? "" : ratioText(digitalShares),
+        // 紙・電子の 2 列で出す（同じ按分でも両方に）。
+        "紙取り分": ratioText(printShares),
+        "電子取り分": ratioText(digitalShares),
         "分配": shares.length ? (main.distribution === "representative" ? "代表" : "当社") : "",
         "CID": (cidsOf.get(String(main.work_id)) ?? []).map((c) => String(c.cid)).join("／"),
         "契約番号": main.agreement_no ?? "", "開始日": date(main.term_start), "終了日": date(main.term_end),
@@ -782,20 +785,20 @@ export class PubWorksImportService {
 }
 
 export const PUB_WORKS_HEADERS = [
-  "作品名", "作品コード", "カナ", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "取り分", "紙取り分", "電子取り分", "分配", "CID",
+  "作品名", "作品コード", "カナ", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
   "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
 ];
 
 export const PUB_WORKS_SAMPLE =
-  "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,取り分,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考\n" +
-  "サタスペ エキスパンション デッドマン・ウォーキング,,,冒険支援株式会社,,10,15,非独占,,,,,BT000105758300100101,,2009-12-22,2031-09-30,,,日本語,© 冒険企画局 © 河嶋陶一朗,著：河嶋陶一朗,\n" +
-  "光砕のリヴァルチャー,,,瀧里フユ,,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,,,当社,BT000110567300100101,,2025-07-01,,,,日本語,,,\n" +
-  "神我狩 ストーリー＆データ集 神化の誓約,,,合同会社ダックルーズ,,10,15,非独占,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,,,代表,,,2025-07-01,,,,日本語,,,\n" +
-  "カローン,,,番棚葵,,10,15,非独占,,番棚葵（V-0301） 30／佐々宮智志（V-0302） 40／初夏（V-0303） 30,番棚葵（V-0301） 40／佐々宮智志（V-0302） 40／初夏（V-0303） 20,当社,,,2025-07-01,,,,日本語,,,";
+  "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考\n" +
+  "サタスペ エキスパンション デッドマン・ウォーキング,,,冒険支援株式会社,,10,15,非独占,,,,BT000105758300100101,,2009-12-22,2031-09-30,,,日本語,© 冒険企画局 © 河嶋陶一朗,著：河嶋陶一朗,\n" +
+  "光砕のリヴァルチャー,,,瀧里フユ,,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,当社,BT000110567300100101,,2025-07-01,,,,日本語,,,\n" +
+  "神我狩 ストーリー＆データ集 神化の誓約,,,合同会社ダックルーズ,,10,15,非独占,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,代表,,,2025-07-01,,,,日本語,,,\n" +
+  "カローン,,,番棚葵,,10,15,非独占,番棚葵（V-0301） 30／佐々宮智志（V-0302） 40／初夏（V-0303） 30,番棚葵（V-0301） 40／佐々宮智志（V-0302） 40／初夏（V-0303） 20,当社,,,2025-07-01,,,,日本語,,,";
 
 export const PUB_WORKS_UPDATE_SAMPLE =
-  "作品コード,作品名,相手先,紙料率,電子料率,取り分,紙取り分,電子取り分,分配,CID\n" +
-  "WRK-2026-0012,,,10,15,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,,,当社,BT000110567300100101\n" +
-  ",神我狩 ストーリー＆データ集 神化の誓約,合同会社ダックルーズ,,,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,,,代表,\n" +
-  "WRK-2026-0025,,,,,,番棚葵（V-0301） 30／佐々宮智志（V-0302） 40／初夏（V-0303） 30,番棚葵（V-0301） 40／佐々宮智志（V-0302） 40／初夏（V-0303） 20,当社,\n" +
-  "WRK-2026-0030,,,,,なし,,,,";
+  "作品コード,作品名,相手先,紙料率,電子料率,紙取り分,電子取り分,分配,CID\n" +
+  "WRK-2026-0012,,,10,15,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,当社,BT000110567300100101\n" +
+  ",神我狩 ストーリー＆データ集 神化の誓約,合同会社ダックルーズ,,,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,代表,\n" +
+  "WRK-2026-0025,,,,,番棚葵（V-0301） 30／佐々宮智志（V-0302） 40／初夏（V-0303） 30,番棚葵（V-0301） 40／佐々宮智志（V-0302） 40／初夏（V-0303） 20,当社,\n" +
+  "WRK-2026-0030,,,,,なし,なし,,";
