@@ -72,6 +72,7 @@ import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
+import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
@@ -2706,6 +2707,21 @@ export function createRoutes(database: Transactable) {
       res.json(await royaltyLedger.skipBefore(input.partyId, input.workId ?? null, input.before, actor(res)));
     }));
   // 計算書の出し方（条件）と、作家の計算書のまとめ方（取引先）。null で既定に戻す。
+  // 出版の条件に年 1 回の締め（時限式の回）をまとめて立てる（docs/royalty-shares.md §5.4）。試算してから立てる。
+  const annualCloses = new AnnualCloseService(database, { schedules: conditionSchedules });
+  const annualSchema = z.object({
+    usageType: z.enum(["pub_digital", "pub_print"]).default("pub_digital"),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    count: z.coerce.number().int().min(1).max(5).default(1)
+  });
+  router.post("/royalty-ledger/closes/bulk/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      res.json(await annualCloses.preview(annualSchema.parse(req.body ?? {})));
+    }));
+  router.post("/royalty-ledger/closes/bulk", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await annualCloses.run(annualSchema.parse(req.body ?? {}), actor(res)));
+    }));
   router.put("/royalty-ledger/timing", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({

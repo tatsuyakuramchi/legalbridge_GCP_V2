@@ -1,5 +1,5 @@
 import type { Queryable, Transactable } from "../core/db.js";
-import { int, str } from "../core/db.js";
+import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { floorRoyalty } from "../royalty/rounding.js";
@@ -244,6 +244,8 @@ export interface SalesGroup {
   work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
   condition: { id: number; conditionNo: string | null; ratePpm: number | null;
                counterparty: string | null; shares: string[] } | null;
+  /** 実績を付ける回（時限式の締め）。報告月の末日を集計期間に含む回。無ければ浮いた実績になる。 */
+  round: { id: number; label: string | null } | null;
   /** 配信価格 × DL数 × 料率（四捨五入）。登録できる行だけ。 */
   royalty: number | null;
   /** Excel が出していた印税の合計。突合の参考。 */
@@ -262,6 +264,8 @@ export interface EventWriter {
   add(conditionId: number, input: {
     eventType: "sales"; occurredOn: string; period: string | null; quantity: number;
     grossAmount: number; amount: number; note: string | null; unitAmount: number; workId: number;
+    /** 付ける回（年 1 回の締め）。無ければ予定の外の実績。 */
+    scheduleId?: number | null;
   }, actor: string): Promise<{ id: number }>;
 }
 
@@ -315,7 +319,9 @@ export class EbookSalesImportService {
             // 「電子書籍売上取込 報告月｜書店｜販売月 …」。書店は登録済みの検査（同じ行を二度入れない）と
             // 計算書の行の但し書きが読む。
             note: `電子書籍売上取込 ${g.month}｜${g.store ?? ""}${sales.length ? `｜販売月 ${sales.join("・")}` : ""}`,
-            unitAmount: g.listPrice, workId: g.work!.id
+            unitAmount: g.listPrice, workId: g.work!.id,
+            // 年 1 回の締め（回）に付ける。支払文書処理の「まとめて締める」がこの回を拾う。
+            scheduleId: g.round?.id ?? null
           }, actor);
           written += 1;
           results.push({ key: g.key, eventId: r.id, status: "ok", message: null });
@@ -396,7 +402,7 @@ export class EbookSalesImportService {
         key, cid: r.cid, title: r.title, volume: r.volume, authors: r.authors, month, salesMonths: [], store,
         listPrice: r.listPrice,
         downloads: 0, gross: 0, stores: [], lines: 0, status: "unresolved" as GroupStatus, message: null,
-        work: null, condition: null, royalty: null, royaltyInFile: null, candidates: []
+        work: null, condition: null, round: null, royalty: null, royaltyInFile: null, candidates: []
       };
       if (!g.salesMonths.includes(r.month)) g.salesMonths.push(r.month);
       g.downloads += r.downloads;
@@ -470,6 +476,23 @@ export class EbookSalesImportService {
     const existingKeys = new Set(existing.map((e) =>
       `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}|${storeOfNote(str(e.note)) ?? "*"}`));
 
+    // 回（時限式の締め）。報告月の末日を集計期間（service_from〜service_to）に含む回に付ける。
+    // 期間の無い回は締め日（due_on）以前の最初の回。
+    const scheduleRows = condIds.length ? (await client.query(
+      `SELECT id, condition_id, label, due_on, service_from, service_to
+         FROM condition_schedules WHERE condition_id = ANY($1::bigint[]) ORDER BY condition_id, seq`, [condIds])).rows as Array<Record<string, any>> : [];
+    const roundFor = (conditionId: number, day: string): { id: number; label: string | null } | null => {
+      const mine = scheduleRows.filter((s) => Number(s.condition_id) === conditionId);
+      const inRange = mine.find((s) => {
+        const from = dateStr(s.service_from), to = dateStr(s.service_to) ?? dateStr(s.due_on);
+        return from && to && from <= day && day <= to;
+      });
+      const next = inRange ?? mine
+        .filter((s) => !dateStr(s.service_from) && (dateStr(s.due_on) ?? "") >= day)
+        .sort((a, b) => String(dateStr(a.due_on)).localeCompare(String(dateStr(b.due_on))))[0];
+      return next ? { id: Number(next.id), label: str(next.label) } : null;
+    };
+
     for (const g of list) {
       if (!g.work) {
         g.status = "unresolved";
@@ -495,6 +518,7 @@ export class EbookSalesImportService {
       const c = digital[0];
       g.condition = { id: Number(c.id), conditionNo: str(c.condition_no), ratePpm: int(c.rate_ppm),
                       counterparty: str(c.party_name), shares: c.shares ? String(c.shares).split("・") : [] };
+      g.round = roundFor(Number(c.id), monthEnd(g.month));
       // 行ごとに切り捨て（Excel の ROUNDDOWN と同じ）。
       g.royalty = floorRoyalty((g.gross * (int(c.rate_ppm) ?? 0)) / 1_000_000);
       const dupBase = `${Number(c.id)}|${monthLabel(g.month)}|${g.listPrice}`;
