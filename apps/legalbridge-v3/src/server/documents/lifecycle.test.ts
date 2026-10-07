@@ -116,6 +116,9 @@ const issuing = (extra: Record<string, unknown> = {}, oldStatus = "issued") => {
       seenOld = true;
       return [{ id: 5, document_no: "ARC-INS-2026-1001", status: oldStatus }];
     }
+    // 訂正版の番号は元の番号に枝番を付ける。元の番号と、同じ本体を持つ版の一覧。
+    if (text.includes("SELECT document_no FROM documents WHERE id")) return [{ document_no: "ARC-INS-2026-1001" }];
+    if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-INS-2026-1001" }];
     if (text.includes("FROM documents WHERE id")) {
       return [doc("draft", { supersedes_id: 5, supersede_reason: "金額を訂正するため", ...extra })];
     }
@@ -138,7 +141,9 @@ const issuing = (extra: Record<string, unknown> = {}, oldStatus = "issued") => {
 test("訂正版を発行すると、前の版が退いて実績も移る（差し替えは1手）", async () => {
   const db = issuing();
   const r = await new DocumentIssueService(db).issue(9, "kuramochi");
-  assert.match(r.documentNo, /^ARC-INS-\d{4}-0012$/);
+  // 訂正版は連番を取らない。元の番号に枝番を付ける（相手に出した番号が版ごとに変わらない）。
+  assert.equal(r.documentNo, "ARC-INS-2026-1001-R2");
+  assert.ok(!db.queries.some((q) => /document_sequences/i.test(q.text)), "連番は進めない");
 
   const retired = db.queries.find((q) => q.text.includes("status = 'superseded'"))!;
   assert.equal(retired.params[0], 5, "前の版を退かせる");

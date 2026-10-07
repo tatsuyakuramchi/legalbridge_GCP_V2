@@ -1,4 +1,5 @@
 import { dateStr, str, type Queryable } from "../core/db.js";
+import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { DomainError, translate } from "../core/errors.js";
 import {
   MAIL_TEMPLATES_KEY, readMailTemplates, renderMail, templateKindOf,
@@ -118,6 +119,7 @@ export class MailDraftService {
                 v.counterparty, v.counterparty_id, t.template_key,
                 COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
                 NULLIF(d.manual_inputs->>'_ownerStaffId', '')::bigint AS manual_owner_staff_id,
+                d.manual_inputs->>'_showRevision' AS show_revision,
                 m.matter_no, m.title AS matter_title, m.owner_staff_id, m.requester_email, m.requester_slack_id
            FROM documents d
            LEFT JOIN v_document_display v ON v.document_id = d.id
@@ -205,7 +207,10 @@ export class MailDraftService {
       const rendered = renderMail(templates.templates[kind], templates.signature, {
         相手先: counterpartyName,
         宛名: to.length === 1 ? to[0].name ?? "" : "",
-        文書番号: str(doc.document_no) ?? "",
+        // 紙と同じ番号（訂正版の枝番は出さず、改訂の印は選んだときだけ）。
+        文書番号: doc.document_no
+          ? printedDocumentNumber(String(doc.document_no), showRevisionOf({ _showRevision: doc.show_revision }))
+          : "",
         文書名: str(doc.template_label) ?? "書類",
         案件番号: origin?.no ?? "",
         案件名: origin?.title ?? "",

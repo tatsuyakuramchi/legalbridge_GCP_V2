@@ -64,6 +64,74 @@ test("発行で採番し、確定値を焼き付ける", async () => {
   assert.ok(db.texts.includes("COMMIT"));
 });
 
+test("訂正版は連番を取らず、元の番号に枝番を付ける。紙には本体の番号と改訂の印", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT id, status, template_version_id")) {
+      return [{ id: 2, status: "draft", template_version_id: 401, matter_id: 501, agreement_id: 201,
+                manual_inputs: { PERIOD: "2026上期" }, supersedes_id: 1, supersede_reason: "金額の誤り" }];
+    }
+    // 退かせる元の版（supersede が FOR UPDATE で引く）。
+    if (text.includes("SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE")) {
+      return [{ id: 1, document_no: "ARC-RS-2026-0007", status: "issued" }];
+    }
+    if (text.includes("SELECT document_no FROM documents WHERE id = $1")) return [{ document_no: "ARC-RS-2026-0007" }];
+    if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-RS-2026-0007" }];
+    return base(text);
+  });
+  const result = await new DocumentIssueService(db).issue(2, "kuramochi");
+
+  assert.equal(result.documentNo, "ARC-RS-2026-0007-R2", "社内の番号は元の番号＋枝番");
+  assert.equal(db.all("INSERT INTO document_sequences").length, 0, "連番は進めない");
+  const values = JSON.parse(String(db.find("UPDATE documents")!.params[2]));
+  assert.equal(values.DOC_NO, "ARC-RS-2026-0007（改訂2）", "紙には本体の番号と改訂の印（既定は見せる）");
+  const supersede = db.find("SET status = 'superseded'");
+  assert.ok(supersede, "決定の瞬間に元の版が退く");
+});
+
+test("訂正版の改訂の印は、見せないと選べば紙には本体の番号だけ", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT id, status, template_version_id")) {
+      return [{ id: 2, status: "draft", template_version_id: 401, matter_id: 501, agreement_id: 201,
+                manual_inputs: { PERIOD: "2026上期", _showRevision: "0" }, supersedes_id: 1, supersede_reason: "金額の誤り" }];
+    }
+    if (text.includes("SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE")) {
+      return [{ id: 1, document_no: "ARC-RS-2026-0007-R2", status: "issued" }];
+    }
+    if (text.includes("SELECT document_no FROM documents WHERE id = $1")) return [{ document_no: "ARC-RS-2026-0007-R2" }];
+    if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-RS-2026-0007" }, { document_no: "ARC-RS-2026-0007-R2" }];
+    return base(text);
+  });
+  const result = await new DocumentIssueService(db).issue(2, "kuramochi");
+  assert.equal(result.documentNo, "ARC-RS-2026-0007-R3", "訂正版の訂正版でも本体は元のまま");
+  const values = JSON.parse(String(db.find("UPDATE documents")!.params[2]));
+  assert.equal(values.DOC_NO, "ARC-RS-2026-0007", "印を見せない");
+});
+
+test("訂正版のプレビューは、紙に出る番号（本体＋改訂の印）を先に見せる", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT document_no FROM documents WHERE id = $1")) return [{ document_no: "ARC-RS-2026-0007" }];
+    if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-RS-2026-0007" }];
+    // プレビューはひな形を鍵で引く（決定は版 ID で引く）。同じ行を返す。
+    if (text.includes("FROM document_templates t JOIN document_template_versions tv ON tv.id = t.current_version_id")) {
+      return base("FROM document_template_versions tv JOIN document_templates t");
+    }
+    return base(text);
+  });
+  const svc = new DocumentIssueService(db);
+  const input = { templateKey: "royalty_statement", conditionIds: [5], agreementId: 201, matterId: 501,
+                  manualInputs: { PERIOD: "2026上期" } as Record<string, unknown>, supersedesId: 1 as number | null };
+  const shown = await svc.preview({ ...input });
+  assert.equal(shown.binding.values.DOC_NO, "ARC-RS-2026-0007（改訂2）", "既定は改訂の印を見せる");
+  const hidden = await svc.preview({ ...input, manualInputs: { PERIOD: "2026上期", _showRevision: "0" } });
+  assert.equal(hidden.binding.values.DOC_NO, "ARC-RS-2026-0007", "見せないなら本体の番号だけ");
+  const fresh = await svc.preview({ ...input, supersedesId: null });
+  assert.equal(fresh.binding.values.DOC_NO, "（決定時に採番）", "新規は決定時に採番");
+  assert.equal(db.all("INSERT INTO document_sequences").length, 0, "プレビューで採番しない");
+});
+
 test("下書き以外は発行できない", async () => {
   const db = new FakeDatabase(responder({ status: "issued" }));
   await assert.rejects(

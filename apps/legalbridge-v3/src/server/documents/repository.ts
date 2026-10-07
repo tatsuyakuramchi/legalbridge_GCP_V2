@@ -4,10 +4,16 @@ import { DomainError, translate } from "../core/errors.js";
 import { parseVariables, type TemplateVariable } from "./binding.js";
 import { LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
 import { PUB_TERMS_VARIABLES, isPubTermsTemplate } from "./pub-terms.js";
+import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 
 export interface DocumentSummary {
   id: number;
   documentNo: string | null;
+  /**
+   * 紙・メールに出る番号。訂正版は社内の番号に枝番（-R2）が付くが、紙には本体の番号を
+   * 印字し、改訂の印「（改訂 n）」は訂正版ごとの選択で添える。1 版目は documentNo と同じ。
+   */
+  printedNo: string | null;
   status: string;
   templateKey: string | null;
   templateLabel: string | null;
@@ -87,6 +93,7 @@ export interface TemplateSource {
 const LIST_SELECT = `
   d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
   d.supersedes_id, d.batch_id,
+  d.manual_inputs->>'_showRevision' AS show_revision,
   v.title, v.counterparty, v.condition_count, t.template_key,
   m.matter_no,
   -- この版を差し替えた新しい版。参照は新→旧の向きしか無いので反転して読む。
@@ -138,6 +145,8 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
   return {
     id: Number(row.id),
     documentNo: str(row.document_no),
+    printedNo: row.document_no
+      ? printedDocumentNumber(String(row.document_no), showRevisionOf({ _showRevision: row.show_revision })) : null,
     status: String(row.status),
     templateKey: str(row.template_key),
     templateLabel: str(row.template_label),

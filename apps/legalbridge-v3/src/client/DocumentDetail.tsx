@@ -18,6 +18,8 @@ import { DocumentAttachFile } from "./DocumentImport.js";
 
 export interface DocumentRow {
   id: number; documentNo: string | null; status: string; templateLabel: string | null;
+  /** 紙・メールに出る番号。訂正版は枝番（-R2）を外した本体＋選んだなら「（改訂 n）」。 */
+  printedNo?: string | null;
   title: string | null; counterparty: string | null;
   conditionCount: number;
   conditions: Array<{ id: number; conditionNo: string | null }>;
@@ -108,6 +110,12 @@ export function DocumentDetail(
       <div className="panel">
         <div className="panel-hd">
           <h2 className="code">{doc.documentNo ?? "（未決定）"}</h2>
+          {/* 訂正版は社内の番号に枝番が付く。相手に出る番号はここに出す（違うときだけ）。 */}
+          {doc.printedNo && doc.printedNo !== doc.documentNo && (
+            <span className="faint" title="紙とメールに出る番号。枝番（-R）は社内の番号です">
+              紙には <b className="code">{doc.printedNo}</b>
+            </span>
+          )}
           <span className="tag">{doc.templateLabel ?? "種別なし"}</span>
           <StatusTag kind="document" value={doc.phase} />
           {doc.imported && <span className="tag">取込</span>}

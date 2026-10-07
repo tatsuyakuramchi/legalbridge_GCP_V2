@@ -3503,7 +3503,9 @@ export function createRoutes(database: Transactable) {
    * 気づくのでは遅いので、プレビューでも同じ試算を通す。
    */
   const previewSchema = draftSchema.extend({
-    royaltyInput: calculationSchema.nullable().optional()
+    royaltyInput: calculationSchema.nullable().optional(),
+    // 訂正版の下書き・作成中のプレビュー。紙に出る番号（本体＋改訂の印）を先に見せるために受ける。
+    supersedesId: z.coerce.number().int().positive().nullable().optional()
   });
   router.post("/documents/preview",
     requireRole("admin", "legal"),
