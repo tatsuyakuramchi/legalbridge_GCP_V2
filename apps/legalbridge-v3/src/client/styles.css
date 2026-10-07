@@ -809,3 +809,11 @@ table.report tr.work td .row .btn { margin-left: auto; }
 .amap-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .amap-issue{color:var(--warn);font-size:12px}
 .amap-form{border-top:1px solid var(--line);padding-top:8px;margin-top:4px}
+
+/* ── 流れの帯 ─────────────────────────────────────────────────────────
+   取引・契約・条件明細の画面から「文書を作る」で来たとき、文書の画面の上に出す。
+   どの流れの何段目にいて、済んだら何へ進むか、どこへ戻るかをここで示す。
+   これが無いと、左の「文書」を押したときと同じ画面に見えて、流れが切れる。 */
+.flow-bar{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:8px;padding:10px 12px;margin-bottom:12px}
+.flow-bar .pipe-step{flex:1 0 96px;padding:6px 9px}

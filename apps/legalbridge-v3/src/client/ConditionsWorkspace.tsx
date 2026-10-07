@@ -15,6 +15,7 @@ import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { templateKeyFor } from "./FlowBar.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
@@ -52,7 +53,7 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument }:
+  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated }:
   {
     initialId?: number;
     /**
@@ -65,6 +66,11 @@ export function ConditionsWorkspace(
     /** 決めた文書をそのまま開く。 */
     onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
+    /**
+     * 条件を登録したとき。あれば、登録した条件を選んだ状態で文書を作る画面へ進む
+     * （条件明細 → 文書 → 送信 を順に）。templateKey は登録した種類から推したひな形。
+     */
+    onCreated?: (created: { conditionIds: number[]; templateKey: string | null }) => void;
   }
 ) {
   const [rows, setRows] = useState<ConditionSummary[]>([]);
@@ -181,6 +187,22 @@ export function ConditionsWorkspace(
       setResult(null); setDetail(null); setSelected(undefined);
       reload();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+  }
+
+  /**
+   * 条件を登録し終えた。次は文書なので、そのまま文書を作る画面へ進む（戻る先はこの条件）。
+   * 以前はここで止まり、詳細の「文書を作る」を探してもらっていた。
+   */
+  async function created(ids: number[], templateKey: string | null) {
+    setCreating(false);
+    if (!onCreated || !ids.length) { reload(ids[0]); return; }
+    // 1 本の登録はフォームが種類を返さないので、条件を引いて向きと種類からひな形を推す。
+    let key = templateKey;
+    if (!key) {
+      const c = await api.get<{ direction?: string; kind?: string }>(`/conditions/${ids[0]}`).catch(() => null);
+      key = templateKeyFor(c?.direction, c?.kind);
+    }
+    onCreated({ conditionIds: ids, templateKey: key });
   }
 
   async function refreshFlow() {
@@ -310,22 +332,23 @@ export function ConditionsWorkspace(
 
       {creating === "one" && (
         <ConditionCreateForm
-          onDone={(r: { id: number }) => { setCreating(false); reload(r.id); }}
+          onDone={(r: { id: number }) => void created([r.id], null)}
           onCancel={() => setCreating(false)} />
       )}
       {creating === "publishing" && (
         <PubConditionSetForm
-          onDone={(r) => { setCreating(false); reload((r.print ?? r.digital)?.id); }}
+          onDone={(r) => void created([r.print, r.digital, r.translationPrint, r.translationDigital]
+                                        .flatMap((c) => (c ? [c.id] : [])), null)}
           onCancel={() => setCreating(false)} />
       )}
       {creating === "service" && (
         <ServiceLinesForm
-          onDone={(r) => { setCreating(false); reload(r.conditions[0]?.id); }}
+          onDone={(r) => void created(r.conditions.map((c) => c.id), "purchase_order")}
           onCancel={() => setCreating(false)} />
       )}
       {creating === "license" && (
         <LicenseSetForm
-          onDone={(r) => { setCreating(false); reload(r.conditions[0]?.id); }}
+          onDone={(r) => void created(r.conditions.map((c) => c.id), "individual_license_terms_v4")}
           onCancel={() => setCreating(false)} />
       )}
 

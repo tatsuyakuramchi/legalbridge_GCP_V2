@@ -6,6 +6,7 @@ import { api, ApiError, money } from "./api.js";
 import type { EntityKind } from "./Relations.js";
 import { DocumentDetail, type DocumentRow } from "./DocumentDetail.js";
 import { DetailBack } from "./DetailBack.js";
+import { FlowBar, type DocFlow, type FlowPhase } from "./FlowBar.js";
 import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
 import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
@@ -172,7 +173,7 @@ function Refs(
 const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, openNonce, onOpen, onBack }: {
+  { start, openDocumentId, openNonce, onOpen, onBack, flow }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /** デイリータスクから来たとき、その元の依頼。作った文書を依頼に繋ぐ。 */
               requestId?: number | null;
@@ -195,6 +196,11 @@ export function DocumentsWorkspace(
     onOpen?: (kind: EntityKind, id: number) => void;
     /** 台帳から来たとき、その回へ戻る。 */
     onBack?: { label: string; go: () => void };
+    /**
+     * 契約 → 条件明細 → 文書 → 送信 と順に進めている途中か。あれば上に流れの帯を出し、
+     * 一覧は出さない（この 1 枚を作って送る画面にする）。左の「文書」から開いたときは無い。
+     */
+    flow?: DocFlow | null;
   } = {}
 ) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -873,6 +879,8 @@ export function DocumentsWorkspace(
       // 文書のページを開く。
       setComposing(false); setBulk(false); setRendered(null); setSavedAt("");
       setSelected(done.id);
+      // 流れの途中なら、元の画面の段階を「送信」へ進めておく（戻ったときに続きから）。
+      flow?.onIssued?.(done.id);
       // 長いフォームの下で押すと、上に出た結果が見えない。結果まで運ぶ。
       issuedRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -904,6 +912,7 @@ export function DocumentsWorkspace(
       setIssued({ id: r.id, documentNo: r.documentNo });
       await reload();
       setSelected(id);
+      flow?.onIssued?.(id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); setWorking(null); }
   }
@@ -1075,13 +1084,16 @@ export function DocumentsWorkspace(
    */
   const [composePane, setComposePane] = useState<"form" | "preview">("form");
   const listShown = !composeMode || listWhileComposing;
+  /** 流れの帯に出す進み具合。開いている文書が決定済みなら「送る」、送付済みなら「済」。 */
+  const flowPhase: FlowPhase = current?.phase === "sent" ? "sent" : current?.status === "issued" ? "issued" : "compose";
   // 計算書は試算が返って初めて出せる。金額の無い紙を出させない。
   const ready = Boolean(templateKey) && spec !== null && specFresh && remaining === 0
     && (!isStatement || stmt !== null);
 
   return (
-    <section className={`workspace${selected === null ? "" : " picked"}`}>
+    <section className={`workspace${selected === null ? "" : " picked"}${flow ? " fullwidth" : ""}`}>
       <header className="workspace-head">
+        {flow && <FlowBar flow={flow} phase={flowPhase} onBack={() => { if (confirmDiscard()) flow.back.go(); }} />}
         {onBack && (
           <div className="row" style={{ marginBottom: 4 }}>
             <button className="linky" onClick={() => { if (confirmDiscard()) onBack.go(); }}>← {onBack.label} の台帳へ戻る</button>
@@ -1099,7 +1111,7 @@ export function DocumentsWorkspace(
             <b>デイリータスクの文書</b>　作った文書は依頼 #{requestId} の作業に自動で繋がり、進み具合とメールの下書き（依頼者・担当・件名）に使われます。
           </div>
         )}
-        <p>文書は条件の出力物。相手先も件名も条件と合意から解決するので、入力するのはそこから決まらないものだけ。</p>
+        {!flow && <p>文書は条件の出力物。相手先も件名も条件と合意から解決するので、入力するのはそこから決まらないものだけ。</p>}
       </header>
 
       {/* フォームを開いていないとき（一覧から下書きを決定したとき）の作業中の印。
@@ -1125,10 +1137,14 @@ export function DocumentsWorkspace(
                 続けてもう1枚作る
               </button>
             )}
-            <button className="btn btn-sm" onClick={() => {
-              setComposing(false); setDraft(null); setBulk(false);
-              setRendered(null); setSavedAt(""); setIssued(null);
-            }}>閉じて一覧へ</button>
+            {flow ? (
+              <button className="btn btn-sm" onClick={flow.back.go}>← {flow.back.label}に戻る</button>
+            ) : (
+              <button className="btn btn-sm" onClick={() => {
+                setComposing(false); setDraft(null); setBulk(false);
+                setRendered(null); setSavedAt(""); setIssued(null);
+              }}>閉じて一覧へ</button>
+            )}
           </div>
         </div>
       )}
@@ -1138,7 +1154,7 @@ export function DocumentsWorkspace(
       )}
 
       <div className="stack">
-        {!composing && !draft && !bulk && (
+        {!flow && !composing && !draft && !bulk && (
           <div className="row">
             <button className="btn primary" onClick={() => setComposing(true)}>
               新しく文書を作る
@@ -1158,7 +1174,7 @@ export function DocumentsWorkspace(
             </span>
           </div>
         )}
-        {!composing && !draft && !bulk && !settled && (
+        {!flow && !composing && !draft && !bulk && !settled && (
           <DocumentImport matterId={start?.matterId ?? undefined}
                           onDone={() => void reload()} onOpenDocument={(id) => setSelected(id)} />
         )}
@@ -1194,7 +1210,12 @@ export function DocumentsWorkspace(
               <h2>{draft ? "下書きを直して決定する" : "新しく文書を作る"}</h2>
               {!draft && (
                 <button className="btn btn-sm" style={{ marginLeft: "auto" }}
-                        onClick={() => { if (confirmDiscard()) { setComposing(false); setRendered(null); setSavedAt(""); } }}>
+                        onClick={() => {
+                          if (!confirmDiscard()) return;
+                          // 流れの途中なら、やめた先は元の画面（一覧ではない）。
+                          if (flow) { flow.back.go(); return; }
+                          setComposing(false); setRendered(null); setSavedAt("");
+                        }}>
                   やめる
                 </button>
               )}
@@ -1655,7 +1676,8 @@ export function DocumentsWorkspace(
         )}
 
         <div className="split">
-          <div className="panel md-list">
+          {/* 流れの途中では一覧を出さない。作る 1 枚（決定したらその文書）だけの画面にする。 */}
+          {!flow && <div className="panel md-list">
             <div className="panel-hd">
               <h2>文書</h2>
               {listShown ? (
@@ -1801,10 +1823,10 @@ export function DocumentsWorkspace(
             </div>
             </>
             )}
-          </div>
+          </div>}
 
           <div className="stack md-detail">
-          <DetailBack label="文書" count={documents.length} onBack={() => setSelected(null)} />
+          {!flow && <DetailBack label="文書" count={documents.length} onBack={() => setSelected(null)} />}
           {current && (
             <DocumentDetail
               onPayment={createPayment}
