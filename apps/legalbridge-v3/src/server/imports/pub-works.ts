@@ -23,6 +23,9 @@ import type { ImportReport, RowOutcome } from "./service.js";
  * 条件に、取り分・分配は電子（無ければ紙）の条件から作品全体に、CID は作品に、
  * カナ・著作権表示・第三者権利・作品備考・事業区分は作品に。空欄の列は触らない。
  * 料率が書いてあって条件が無い媒体は、その媒体の条件を新しく作る。
+ * 取り分は比率（合計 100）で書くのが基本。紙と電子で按分が違う契約は「紙取り分」「電子取り分」に
+ * 分けて書く（「取り分」は両方に同じ比率）。実値（11.25／3.75）で書いても、その媒体の料率で比率に
+ * 直して保存するので、全体率を改訂しても按分は崩れない。
  * 取り分を消すときは「なし」。書き出し（exportCsv）は同じ列で出すので、
  * 書き出して直してそのまま取り込める。
  */
@@ -82,10 +85,25 @@ export interface PubWorkRow {
   termStart: string | null; termEnd: string | null;
   paymentTerms: string | null; notes: string | null;
   scopes: ConditionScope[];
-  shares: Array<{ partyId: number; name: string; sharePpm: number }>;
+  /** 紙・電子に同じ按分（「取り分」）。媒体で違えば printShares / digitalShares。 */
+  shares: Share[];
+  printShares: Share[] | null;
+  digitalShares: Share[] | null;
   distribution: "direct" | "representative" | null;
   cids: string[];
 }
+
+export interface Share { partyId: number; name: string; sharePpm: number }
+
+/** 同じ按分か（同じ権利者に同じ比率）。 */
+export function sameShares(a: Share[] | null | undefined, b: Share[] | null | undefined): boolean {
+  const x = [...(a ?? [])].sort((p, q) => p.partyId - q.partyId);
+  const y = [...(b ?? [])].sort((p, q) => p.partyId - q.partyId);
+  return x.length === y.length && x.every((s, i) => s.partyId === y[i].partyId && s.sharePpm === y[i].sharePpm);
+}
+
+/** 取り分の文（「作家B 66.67%／作家C 33.33%」）。 */
+const sharesLabel = (shares: Share[]) => shares.map((s) => `${s.name} ${Math.round(s.sharePpm / 100) / 100}%`).join("／");
 
 interface PubCondition {
   id: number; conditionNo: string | null; usageType: string; ratePpm: number | null;
@@ -207,12 +225,75 @@ export class PubWorksImportService {
       [p.print ? `紙 ${p.print.ratePct}%` : null, p.digital ? `電子 ${p.digital.ratePct}%` : null].filter(Boolean).join("・"),
       `相手先 ${p.party.name}`
     ];
-    if (p.shares.length) {
-      parts.push(`取り分 ${p.shares.map((s) => `${s.name} ${Math.round(s.sharePpm / 100) / 100}%`).join("／")}`
-        + `（${p.distribution === "representative" ? "代表が分配" : "当社が分配"}）`);
+    const dist = `（${p.distribution === "representative" ? "代表が分配" : "当社が分配"}）`;
+    if (p.printShares || p.digitalShares) {
+      parts.push(`取り分 ${[p.printShares ? `紙：${sharesLabel(p.printShares)}` : "", p.digitalShares ? `電子：${sharesLabel(p.digitalShares)}` : ""]
+        .filter(Boolean).join("　")}${dist}`);
+    } else if (p.shares.length) {
+      parts.push(`取り分 ${sharesLabel(p.shares)}${dist}`);
     }
     if (p.cids.length) parts.push(`CID ${p.cids.length} 件`);
     return parts.join("・");
+  }
+
+  /**
+   * 取り分を条件に入れる。紙と電子で同じ按分なら電子（無ければ紙）から作品全体に、
+   * 媒体で違えばそれぞれの条件に（作品全体には広げない）。
+   */
+  private async writeShares(
+    conds: { print: { id: number } | null; digital: { id: number } | null },
+    p: { shares: Share[]; printShares: Share[] | null; digitalShares: Share[] | null; distribution: "direct" | "representative" | null },
+    actor: string
+  ): Promise<void> {
+    const rows = (s: Share[]) => s.map((x) => ({ partyId: x.partyId, sharePpm: x.sharePpm }));
+    if (p.printShares || p.digitalShares) {
+      if (p.printShares && conds.print) {
+        await this.deps.conditions.replaceShares(conds.print.id, rows(p.printShares), actor, p.distribution, { applyToWork: false });
+      }
+      if (p.digitalShares && conds.digital) {
+        await this.deps.conditions.replaceShares(conds.digital.id, rows(p.digitalShares), actor, p.distribution, { applyToWork: false });
+      }
+      return;
+    }
+    if (!p.shares.length) return;
+    const target = conds.digital ?? conds.print;
+    if (target) await this.deps.conditions.replaceShares(target.id, rows(p.shares), actor, p.distribution, { applyToWork: true });
+  }
+
+  /**
+   * 取り分の列を読む。「取り分」は紙・電子に同じ比率、「紙取り分」「電子取り分」は媒体ごと。
+   * 実値（その媒体の料率を分けた率）でも比率（合計 100）でも読み、比率で持つ。
+   */
+  private async readShareColumns(
+    row: Record<string, string>, printRate: number | null, digitalRate: number | null
+  ): Promise<{ shares: Share[]; printShares: Share[] | null; digitalShares: Share[] | null; clear: boolean; given: boolean }> {
+    const both = text(row, "取り分");
+    const printText = text(row, "紙取り分");
+    const digitalText = text(row, "電子取り分");
+    const isClear = (v: string) => /^(なし|無し|none|clear)$/i.test(v);
+    if (both && (printText || digitalText)) {
+      throw new DomainError("VALIDATION", "「取り分」と「紙取り分／電子取り分」は同時に入れられません。紙・電子で同じなら「取り分」、違うなら媒体ごとの列に入れてください");
+    }
+    const resolve = async (value: string, rate: number | null): Promise<Share[]> => {
+      const out: Share[] = [];
+      for (const s of parseShareText(value, rate)) {
+        const p = await this.findShareParty(s.code, s.name);
+        out.push({ partyId: p.id, name: p.name, sharePpm: s.ppm });
+      }
+      validateShareInput(out);
+      return out;
+    };
+    if (isClear(both)) return { shares: [], printShares: null, digitalShares: null, clear: true, given: true };
+    if (both) return { shares: await resolve(both, digitalRate ?? printRate), printShares: null, digitalShares: null, clear: false, given: true };
+    if (printText || digitalText) {
+      return {
+        shares: [],
+        printShares: printText ? (isClear(printText) ? [] : await resolve(printText, printRate)) : null,
+        digitalShares: digitalText ? (isClear(digitalText) ? [] : await resolve(digitalText, digitalRate)) : null,
+        clear: false, given: true
+      };
+    }
+    return { shares: [], printShares: null, digitalShares: null, clear: false, given: false };
   }
 
   /** 既存の作品に、同じ相手先の紙・電子の条件がもうあれば重複。 */
@@ -247,13 +328,7 @@ export class PubWorksImportService {
       scopes: p.scopes, print: p.print, digital: p.digital
     }, actor);
     const conditionNos = [set.print, set.digital].filter(Boolean).map((c) => c!.conditionNo ?? `#${c!.id}`);
-    if (p.shares.length) {
-      const target = set.digital ?? set.print;
-      if (target) {
-        await this.deps.conditions.replaceShares(target.id,
-          p.shares.map((s) => ({ partyId: s.partyId, sharePpm: s.sharePpm })), actor, p.distribution, { applyToWork: true });
-      }
-    }
+    await this.writeShares({ print: set.print, digital: set.digital }, p, actor);
     for (const cid of p.cids) {
       await this.database.query(
         `INSERT INTO ebook_work_codes (cid, work_id, title, created_by) VALUES ($1, $2, $3, $4)
@@ -394,39 +469,43 @@ export class PubWorksImportService {
       throw new DomainError("VALIDATION", `${who} に${creates.map((c) => c.usage === "pub_print" ? "紙" : "電子").join("・")}の条件がありません。作るなら相手先を入れてください`);
     }
 
-    // 取り分・分配。電子（無ければ紙）の条件から作品全体に入れる。
-    const shareText = text(row, "取り分");
+    // 取り分・分配。「取り分」は電子（無ければ紙）の条件から作品全体に、「紙取り分」「電子取り分」はその媒体だけに。
     const distText = text(row, "分配");
     if (distText && !DISTRIBUTION[distText]) throw new DomainError("VALIDATION", `分配は「当社」か「代表」です（"${distText}"）`);
-    const wholeRate = digital ?? (digitalCond?.ratePpm !== null && digitalCond?.ratePpm !== undefined ? digitalCond.ratePpm / 10000 : null)
-      ?? print ?? (printCond?.ratePpm !== null && printCond?.ratePpm !== undefined ? printCond.ratePpm / 10000 : null);
-    let shares: Array<{ partyId: number; name: string; sharePpm: number }> | null = null;   // null = 触らない
-    if (/^(なし|無し|none|clear)$/i.test(shareText)) shares = [];
-    else if (shareText) {
-      shares = [];
-      for (const s of parseShareText(shareText, wholeRate)) {
-        const p = await this.findShareParty(s.code, s.name);
-        shares.push({ partyId: p.id, name: p.name, sharePpm: s.ppm });
-      }
-      validateShareInput(shares);
-    }
+    const rateOf = (given: number | null, cond: PubCondition | null) =>
+      given ?? (cond?.ratePpm !== null && cond?.ratePpm !== undefined ? cond.ratePpm / 10000 : null);
+    const read = await this.readShareColumns(row, rateOf(print, printCond), rateOf(digital, digitalCond));
+    // shares: null = 触らない。[] = 消す。
+    let shares: Share[] | null = read.given && !read.printShares && !read.digitalShares ? read.shares : null;
+    const perMedia = read.printShares || read.digitalShares ? { print: read.printShares, digital: read.digitalShares } : null;
     const shareTarget = digitalCond ?? printCond;
     const shareTargetUsage: "pub_print" | "pub_digital" | null = digitalCond ? "pub_digital" : printCond ? "pub_print" : null;
     let distribution: "direct" | "representative" | null = distText ? DISTRIBUTION[distText] : null;
-    if (shares === null && distribution) {
+    if (shares === null && !perMedia && distribution) {
       // 分配のスイッチだけ替える：いまの取り分をそのまま入れ直す。
       if (!shareTarget) throw new DomainError("VALIDATION", `${who} に条件が無いので分配は替えられません`);
       const cur = await loadShares(this.database, shareTarget.id);
       if (!cur.length) throw new DomainError("VALIDATION", "分配を入れるなら取り分も入れてください（いまは取り分がありません）");
       shares = cur.map((s) => ({ partyId: s.partyId, name: s.partyName, sharePpm: s.sharePpm }));
     }
-    if (shares && shares.length && !distribution) distribution = "direct";
+    const anyShares = [...(shares ?? []), ...(perMedia?.print ?? []), ...(perMedia?.digital ?? [])];
+    if (anyShares.length && !distribution) distribution = "direct";
     const representative = createParty ?? (shareTarget ? { id: shareTarget.counterpartyId, name: shareTarget.partyName } : null);
-    if (distribution === "representative" && shares && shares.length && representative && !shares.some((s) => s.partyId === representative.id)) {
-      throw new DomainError("VALIDATION", "代表が分配する契約では、相手先（代表）を取り分の中に入れてください");
+    if (distribution === "representative" && representative) {
+      for (const set of [shares, perMedia?.print, perMedia?.digital]) {
+        if (set && set.length && !set.some((s) => s.partyId === representative.id)) {
+          throw new DomainError("VALIDATION", "代表が分配する契約では、相手先（代表）を取り分の中に入れてください");
+        }
+      }
     }
-    if (shares && !shareTarget && !creates.length) {
+    if ((shares || perMedia) && !shareTarget && !creates.length) {
       throw new DomainError("VALIDATION", `${who} に紙・電子の条件が無いので取り分は入れられません。料率も入れて条件を作ってください`);
+    }
+    if (perMedia?.print && !printCond && !creates.some((c) => c.usage === "pub_print")) {
+      throw new DomainError("VALIDATION", `${who} に紙の条件が無いので紙取り分は入れられません（紙料率も入れれば条件を作ります）`);
+    }
+    if (perMedia?.digital && !digitalCond && !creates.some((c) => c.usage === "pub_digital")) {
+      throw new DomainError("VALIDATION", `${who} に電子の条件が無いので電子取り分は入れられません（電子料率も入れれば条件を作ります）`);
     }
 
     const cids = text(row, "CID").split(/[／/;|｜,、\s]+/).map((c) => c.trim()).filter(Boolean);
@@ -439,10 +518,13 @@ export class PubWorksImportService {
     }
     for (const c of creates) parts.push(`${c.usage === "pub_print" ? "紙" : "電子"}の条件を新しく作る（${c.ratePct}%・相手先 ${createParty!.name}）`);
     if (scopes.length) parts.push(`地域・言語（${scopes.map((s) => s.label).join("、")}）`);
-    if (shares) {
-      parts.push(shares.length
-        ? `取り分 ${shares.map((s) => `${s.name} ${Math.round(s.sharePpm / 100) / 100}%`).join("／")}（${distribution === "representative" ? "代表が分配" : "当社が分配"}）`
-        : "取り分を消す");
+    const dist = `（${distribution === "representative" ? "代表が分配" : "当社が分配"}）`;
+    if (perMedia) {
+      const media = [perMedia.print ? `紙：${perMedia.print.length ? sharesLabel(perMedia.print) : "消す"}` : "",
+                     perMedia.digital ? `電子：${perMedia.digital.length ? sharesLabel(perMedia.digital) : "消す"}` : ""].filter(Boolean).join("　");
+      parts.push(`取り分 ${media}${anyShares.length ? dist : ""}`);
+    } else if (shares) {
+      parts.push(shares.length ? `取り分 ${sharesLabel(shares)}${dist}` : "取り分を消す");
     }
     if (cids.length) parts.push(`CID ${cids.length} 件`);
     if (!parts.length) {
@@ -475,7 +557,10 @@ export class PubWorksImportService {
         if (cond) await this.deps.conditions.replaceScopes(cond.id, scopes, actor);
       }
     }
-    if (shares) {
+    if (perMedia) {
+      await this.writeShares({ print: printCond ?? madePrint, digital: digitalCond ?? madeDigital },
+        { shares: [], printShares: perMedia.print, digitalShares: perMedia.digital, distribution }, actor);
+    } else if (shares) {
       const target = (shareTargetUsage === "pub_digital" ? shareTarget : madeDigital ?? shareTarget ?? madePrint) ?? null;
       if (target) {
         await this.deps.conditions.replaceShares(target.id,
@@ -491,6 +576,7 @@ export class PubWorksImportService {
     await recordAudit(this.database, {
       actor, action: "pub_works.update", targetType: "work", targetId: work.id,
       detail: { summary, shares: shares?.map((s) => ({ partyId: s.partyId, sharePpm: s.sharePpm })) ?? null,
+                printShares: perMedia?.print ?? null, digitalShares: perMedia?.digital ?? null,
                 distribution, cids }
     });
     return { status: "ok", id: work.id, code: work.code, message: `${who} の ${summary} を更新しました` };
@@ -521,7 +607,7 @@ export class PubWorksImportService {
     const ids = conds.map((c) => Number(c.id));
     const workIds = [...new Set(conds.map((c) => Number(c.work_id)))];
     const shareRows = ids.length ? (await this.database.query(
-      `SELECT s.condition_id, sp.name, sp.party_code, s.share_ppm FROM condition_shares s JOIN parties sp ON sp.id = s.party_id
+      `SELECT s.condition_id, s.party_id, sp.name, sp.party_code, s.share_ppm FROM condition_shares s JOIN parties sp ON sp.id = s.party_id
         WHERE s.condition_id = ANY($1::bigint[]) ORDER BY s.sort_order, s.id`, [ids])).rows as Array<Record<string, any>> : [];
     const scopeRows = ids.length ? (await this.database.query(
       `SELECT condition_id, scope_type, label FROM condition_scopes WHERE condition_id = ANY($1::bigint[]) ORDER BY sort_order, label`,
@@ -545,19 +631,26 @@ export class PubWorksImportService {
       const printC = list.find((c) => c.usage_type === "pub_print") ?? null;
       const digitalC = list.find((c) => c.usage_type === "pub_digital") ?? null;
       const main = digitalC ?? printC!;
-      const whole = main.rate_ppm === null || main.rate_ppm === undefined ? null : Number(main.rate_ppm) / 10000;
-      const shares = sharesOf.get(String(main.id)) ?? [];
-      const shareText = whole === null ? "" : shares
-        // 取引先コードの無い権利者はそのまま出す（取り込むときに「コードがありません」で止まる）。
-        .map((s) => `${s.name}${s.party_code ? `（${s.party_code}）` : ""} ${trimNumber((whole * Number(s.share_ppm)) / SHARE_TOTAL_PPM)}`)
-        .join("／");
+      // 取り分は比率（合計 100）で出す。実値で出すと、全体率を改訂したときに読み直せない。
+      // 取引先コードの無い権利者はそのまま出す（取り込むときに「コードがありません」で止まる）。
+      const ratioText = (list: Array<Record<string, any>>) => list
+        .map((s) => `${s.name}${s.party_code ? `（${s.party_code}）` : ""} ${trimNumber(Number(s.share_ppm) / 10000)}`).join("／");
+      const toShare = (list: Array<Record<string, any>>): Share[] =>
+        list.map((s) => ({ partyId: Number(s.party_id), name: String(s.name ?? ""), sharePpm: Number(s.share_ppm) }));
+      const printShares = printC ? sharesOf.get(String(printC.id)) ?? [] : [];
+      const digitalShares = digitalC ? sharesOf.get(String(digitalC.id)) ?? [] : [];
+      const shares = digitalShares.length ? digitalShares : printShares;
+      // 紙と電子で同じ按分なら「取り分」1 列、違えば媒体ごとの列。
+      const same = !printC || !digitalC || sameShares(toShare(printShares), toShare(digitalShares));
       const scopes = scopesOf.get(String(main.id)) ?? [];
       return {
         "作品名": String(main.title ?? ""), "作品コード": main.work_code ?? "", "カナ": main.title_kana ?? "",
         "相手先": main.party_name ?? "", "相手先コード": main.party_code ?? "",
         "紙料率": printC ? pct(printC.rate_ppm) : "", "電子料率": digitalC ? pct(digitalC.rate_ppm) : "",
         "独占": main.exclusivity === "exclusive" ? "独占" : main.exclusivity === "non_exclusive" ? "非独占" : "",
-        "取り分": shareText,
+        "取り分": same ? ratioText(shares) : "",
+        "紙取り分": same ? "" : ratioText(printShares),
+        "電子取り分": same ? "" : ratioText(digitalShares),
         "分配": shares.length ? (main.distribution === "representative" ? "代表" : "当社") : "",
         "CID": (cidsOf.get(String(main.work_id)) ?? []).map((c) => String(c.cid)).join("／"),
         "契約番号": main.agreement_no ?? "", "開始日": date(main.term_start), "終了日": date(main.term_end),
@@ -605,20 +698,23 @@ export class PubWorksImportService {
       agreementId = Number(a[0].id);
     }
 
-    // 取り分。電子（無ければ紙）の料率を分けた率で読む。
-    const shareText = text(row, "取り分");
-    const parsedShares = parseShareText(shareText, digital ?? print);
-    const shares: PubWorkRow["shares"] = [];
-    for (const s of parsedShares) {
-      const p = await this.findShareParty(s.code, s.name);
-      shares.push({ partyId: p.id, name: p.name, sharePpm: s.ppm });
+    // 取り分。「取り分」は紙・電子に同じ比率、「紙取り分」「電子取り分」は媒体ごと。
+    const read = await this.readShareColumns(row, print, digital);
+    const shares = read.shares;
+    const printShares = read.printShares;
+    const digitalShares = read.digitalShares;
+    if (printShares && print === null) throw new DomainError("VALIDATION", "紙取り分を入れるなら紙料率も入れてください");
+    if (digitalShares && digital === null) throw new DomainError("VALIDATION", "電子取り分を入れるなら電子料率も入れてください");
+    const anyShares = [...shares, ...(printShares ?? []), ...(digitalShares ?? [])];
+    const distribution = anyShares.length ? (distText ? DISTRIBUTION[distText] : "direct") : null;
+    if (distribution === "representative") {
+      for (const set of [shares, printShares, digitalShares]) {
+        if (set && set.length && !set.some((s) => s.partyId === party.id)) {
+          throw new DomainError("VALIDATION", "代表が分配する契約では、相手先（代表）を取り分の中に入れてください");
+        }
+      }
     }
-    validateShareInput(shares);
-    const distribution = shares.length ? (distText ? DISTRIBUTION[distText] : "direct") : null;
-    if (distribution === "representative" && !shares.some((s) => s.partyId === party.id)) {
-      throw new DomainError("VALIDATION", "代表が分配する契約では、相手先（代表）を取り分の中に入れてください");
-    }
-    if (!shares.length && distText) {
+    if (!anyShares.length && distText) {
       throw new DomainError("VALIDATION", "分配を入れるなら取り分も入れてください");
     }
 
@@ -639,7 +735,7 @@ export class PubWorksImportService {
       digital: digital === null ? null : { ratePct: digital, exclusivity },
       termStart: csvDate(text(row, "開始日")), termEnd: csvDate(text(row, "終了日")),
       paymentTerms: text(row, "支払条件") || null, notes: text(row, "備考") || null,
-      scopes, shares, distribution, cids
+      scopes, shares, printShares, digitalShares, distribution, cids
     };
   }
 
@@ -686,18 +782,20 @@ export class PubWorksImportService {
 }
 
 export const PUB_WORKS_HEADERS = [
-  "作品名", "作品コード", "カナ", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "取り分", "分配", "CID",
+  "作品名", "作品コード", "カナ", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "取り分", "紙取り分", "電子取り分", "分配", "CID",
   "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
 ];
 
 export const PUB_WORKS_SAMPLE =
-  "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考\n" +
-  "サタスペ エキスパンション デッドマン・ウォーキング,,,冒険支援株式会社,,10,15,非独占,,,BT000105758300100101,,2009-12-22,2031-09-30,,,日本語,© 冒険企画局 © 河嶋陶一朗,著：河嶋陶一朗,\n" +
-  "光砕のリヴァルチャー,,,瀧里フユ,,10,15,非独占,瀧里フユ（V-0102） 11.25／宝井ロメロ（V-0188） 3.75,当社,BT000110567300100101,,2025-07-01,,,,日本語,,,\n" +
-  "神我狩 ストーリー＆データ集 神化の誓約,,,合同会社ダックルーズ,,10,15,非独占,合同会社ダックルーズ（V-0231） 10／力造（V-0232） 5,代表,,,2025-07-01,,,,日本語,,,";
+  "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,取り分,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考\n" +
+  "サタスペ エキスパンション デッドマン・ウォーキング,,,冒険支援株式会社,,10,15,非独占,,,,,BT000105758300100101,,2009-12-22,2031-09-30,,,日本語,© 冒険企画局 © 河嶋陶一朗,著：河嶋陶一朗,\n" +
+  "光砕のリヴァルチャー,,,瀧里フユ,,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,,,当社,BT000110567300100101,,2025-07-01,,,,日本語,,,\n" +
+  "神我狩 ストーリー＆データ集 神化の誓約,,,合同会社ダックルーズ,,10,15,非独占,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,,,代表,,,2025-07-01,,,,日本語,,,\n" +
+  "カローン,,,番棚葵,,10,15,非独占,,番棚葵（V-0301） 30／佐々宮智志（V-0302） 40／初夏（V-0303） 30,番棚葵（V-0301） 40／佐々宮智志（V-0302） 40／初夏（V-0303） 20,当社,,,2025-07-01,,,,日本語,,,";
 
 export const PUB_WORKS_UPDATE_SAMPLE =
-  "作品コード,作品名,相手先,紙料率,電子料率,取り分,分配,CID\n" +
-  "WRK-2026-0012,,,10,15,瀧里フユ（V-0102） 11.25／宝井ロメロ（V-0188） 3.75,当社,BT000110567300100101\n" +
-  ",神我狩 ストーリー＆データ集 神化の誓約,合同会社ダックルーズ,,,合同会社ダックルーズ（V-0231） 10／力造（V-0232） 5,代表,\n" +
-  "WRK-2026-0030,,,,,なし,,";
+  "作品コード,作品名,相手先,紙料率,電子料率,取り分,紙取り分,電子取り分,分配,CID\n" +
+  "WRK-2026-0012,,,10,15,瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25,,,当社,BT000110567300100101\n" +
+  ",神我狩 ストーリー＆データ集 神化の誓約,合同会社ダックルーズ,,,合同会社ダックルーズ（V-0231） 66.67／力造（V-0232） 33.33,,,代表,\n" +
+  "WRK-2026-0025,,,,,,番棚葵（V-0301） 30／佐々宮智志（V-0302） 40／初夏（V-0303） 30,番棚葵（V-0301） 40／佐々宮智志（V-0302） 40／初夏（V-0303） 20,当社,\n" +
+  "WRK-2026-0030,,,,,なし,,,,";

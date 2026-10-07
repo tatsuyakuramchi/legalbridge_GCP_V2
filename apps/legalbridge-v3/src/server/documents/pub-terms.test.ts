@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, payeeRateText, payeeShareText, percentText,
+  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, mediaSharesText, payeeRateText, payeeShareText, percentText,
   pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, rowBlockerOf, sharesText
 } from "./pub-terms.js";
 import { pubMediaOf, pubMediaOfScopes } from "../core/pub-media.js";
@@ -296,4 +296,14 @@ test("受取人（共著者の一人）宛て：甲がその人になり、料�
   assert.equal(payeeRateText({ partyId: 21 }, { ratePct: 10, shares: SHARES }), "6.6667%（全体 10%）");
   assert.equal(payeeRateText(null, { ratePct: 10, shares: SHARES }), "10%");
   assert.equal(payeeRateText({ partyId: 21 }, undefined), "—");
+});
+
+test("紙と電子で按分が違う作品：共同著作の行に両方、受取人の取り分も媒体ごと", () => {
+  const print = { ratePct: 10, shares: [{ partyId: 21, name: "作家B", sharePpm: 600000 }, { partyId: 22, name: "作家C", sharePpm: 400000 }], distribution: "direct" };
+  const digital = { ratePct: 15, shares: SHARES, distribution: "direct" };
+  assert.equal(mediaSharesText(print, digital), "紙：作家B 60%・作家C 40%／電子：作家B 66.6667%・作家C 33.3333%");
+  assert.equal(mediaSharesText(digital, digital), "作家B 66.6667%・作家C 33.3333%", "同じなら 1 つ");
+  assert.equal(payeeShareText({ partyId: 21 }, print, digital), "甲の取り分 紙 60%・電子 66.6667%");
+  assert.equal(payeeRateText({ partyId: 21 }, print), "6%（全体 10%）");
+  assert.equal(payeeRateText({ partyId: 21 }, digital), "10%（全体 15%）");
 });
