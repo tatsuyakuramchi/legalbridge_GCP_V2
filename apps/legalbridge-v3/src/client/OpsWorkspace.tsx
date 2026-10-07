@@ -4,6 +4,7 @@ import { CsvBar } from "./CsvBar.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
 import { EbookSalesImport } from "./EbookSalesImport.js";
+import { MissingContracts } from "./MissingContracts.js";
 import { Leftovers } from "./Leftovers.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
@@ -56,7 +57,7 @@ const SOURCE_LABEL: Record<string, string> = {
   matter: "案件", agreement: "契約満了", payment: "支払", schedule: "予定", task: "タスク"
 };
 
-export type OpsTab = "quality" | "deadlines" | "leftovers" | "exports" | "imports" | "snippets" | "statement-models"
+export type OpsTab = "quality" | "deadlines" | "leftovers" | "exports" | "imports" | "contracts" | "snippets" | "statement-models"
   | "audit" | "integrations" | "settings";
 
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
@@ -110,6 +111,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
         <button aria-selected={tab === "leftovers"} onClick={() => setTab("leftovers")}>片づけ</button>
         <button aria-selected={tab === "exports"} onClick={() => setTab("exports")}>出力</button>
         <button aria-selected={tab === "imports"} onClick={() => setTab("imports")}>取込</button>
+        <button aria-selected={tab === "contracts"} onClick={() => setTab("contracts")}>契約なし</button>
         <button aria-selected={tab === "snippets"} onClick={() => setTab("snippets")}>定型文</button>
         <button aria-selected={tab === "statement-models"} onClick={() => setTab("statement-models")}>計算書の表示</button>
         <button aria-selected={tab === "audit"} onClick={() => setTab("audit")}>監査記録</button>
@@ -202,6 +204,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
       {tab === "leftovers" && <Leftovers />}
 
       {tab === "imports" && (<><EbookSalesImport /><CsvImport /></>)}
+      {tab === "contracts" && <MissingContracts />}
 
       {tab === "snippets" && <TextSnippets />}
       {tab === "statement-models" && <StatementModels />}
