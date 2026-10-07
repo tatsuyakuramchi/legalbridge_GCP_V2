@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, payeeShareText, percentText,
+  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, payeeRateText, payeeShareText, percentText,
   pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, rowBlockerOf, sharesText
 } from "./pub-terms.js";
 import { pubMediaOf, pubMediaOfScopes } from "../core/pub-media.js";
@@ -277,18 +277,23 @@ test("取り分のある作品：一覧の行に「共同著作 作家B 66.6667%
   assert.equal(patch.payeeTerms, false);
 });
 
-test("受取人（共著者の一人）宛て：甲がその人になり、全体率と取り分を併記。本文に取り分の一文が入る", () => {
+test("受取人（共著者の一人）宛て：甲がその人になり、料率の欄は甲の率を主に括弧で全体率。本文に取り分の一文が入る", () => {
   const ctx = { ...sharedContext(), payee: { partyId: 21, name: "作家B" } };
   ctx.condition = { ...ctx.condition, counterparty: { ...ctx.condition.counterparty, name: "作家B" } };
   const patch = pubTermsPatch(ctx, { [PUB_TITLES_FIELD]: pubTitleSeeds(ctx) });
   const titles = patch.titles as Array<Record<string, any>>;
-  assert.equal(titles[0].payeeShare, "甲の取り分 66.6667%（紙 7.3333%・電子 10%）");
-  assert.deepEqual([titles[0].printRate, titles[0].digitalRate], ["11%", "15%"], "一覧の料率は全体のまま（併記）");
+  assert.equal(titles[0].payeeShare, "甲の取り分 66.6667%");
+  assert.deepEqual([titles[0].printRate, titles[0].digitalRate], ["7.3333%（全体 11%）", "10%（全体 15%）"],
+    "甲に帰属する率が主。全体率は括弧（合計許諾料と読み違えない）");
   assert.equal(titles[1].payeeShare, "", "取り分に入っていない作品には出ない");
+  assert.deepEqual([titles[1].printRate, titles[1].digitalRate], ["10%", "—"], "取り分に入っていない作品は全体の率そのもの");
   assert.equal(patch.payeeTerms, true);
   assert.equal(patch.payeeName, "作家B");
   assert.equal(patch.licensorName, "作家B");
-  // 紙だけ・電子だけの作品でも落ちない。
-  assert.equal(payeeShareText({ partyId: 21 }, { ratePct: 10, shares: SHARES }, undefined), "甲の取り分 66.6667%（紙 6.6667%）");
+  // 紙だけの作品でも落ちない。受取人でなければ全体の率。
+  assert.equal(payeeShareText({ partyId: 21 }, { ratePct: 10, shares: SHARES }, undefined), "甲の取り分 66.6667%");
   assert.equal(payeeShareText({ partyId: 99 }, { ratePct: 10, shares: SHARES }, undefined), "");
+  assert.equal(payeeRateText({ partyId: 21 }, { ratePct: 10, shares: SHARES }), "6.6667%（全体 10%）");
+  assert.equal(payeeRateText(null, { ratePct: 10, shares: SHARES }), "10%");
+  assert.equal(payeeRateText({ partyId: 21 }, undefined), "—");
 });
