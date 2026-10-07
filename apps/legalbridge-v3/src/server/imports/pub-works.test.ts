@@ -213,8 +213,10 @@ test("書き出し：作品 × 相手先で 1 行。取り分は電子の料率�
               { ...base, id: 602, usage_type: "pub_digital", rate_ppm: 150000 }];
     }
     if (text.includes("FROM condition_shares s")) {
-      return [{ condition_id: 602, name: "瀧里フユ", party_code: "V-0102", share_ppm: 750000 },
-              { condition_id: 602, name: "宝井ロメロ", party_code: null, share_ppm: 250000 }];
+      return [{ condition_id: 601, party_id: 21, name: "瀧里フユ", party_code: "V-0102", share_ppm: 750000 },
+              { condition_id: 601, party_id: 22, name: "宝井ロメロ", party_code: null, share_ppm: 250000 },
+              { condition_id: 602, party_id: 21, name: "瀧里フユ", party_code: "V-0102", share_ppm: 750000 },
+              { condition_id: 602, party_id: 22, name: "宝井ロメロ", party_code: null, share_ppm: 250000 }];
     }
     if (text.includes("FROM condition_scopes")) return [{ condition_id: 602, scope_type: "language", label: "日本語" }];
     if (text.includes("FROM ebook_work_codes")) return [{ work_id: 7, cid: "BT0001" }];
@@ -222,10 +224,69 @@ test("書き出し：作品 × 相手先で 1 行。取り分は電子の料率�
   });
   const csv = await new PubWorksImportService(fake, deps()).exportCsv();
   const lines = csv.split("\r\n");
-  assert.equal(lines[0], "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考,作品備考,事業区分");
-  assert.equal(lines[1], "光砕のリヴァルチャー,WRK-7,,瀧里フユ,P-11,10,15,非独占,瀧里フユ（V-0102） 11.25／宝井ロメロ 3.75,当社,BT0001,,2025-07-01,,,,日本語,,,,,出版");
+  assert.equal(lines[0], "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,取り分,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考,作品備考,事業区分");
+  assert.equal(lines[1], "光砕のリヴァルチャー,WRK-7,,瀧里フユ,P-11,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ 25,,,当社,BT0001,,2025-07-01,,,,日本語,,,,,出版",
+    "取り分は比率（合計 100）で出す。実値で出すと全体率を改訂したときに読み直せない");
   // 書き出した取り分はそのまま読める。コードの無い権利者は取り込むときに止まる（先に取引先にコードを付ける）。
-  assert.deepEqual(parseShareText("瀧里フユ（V-0102） 11.25／宝井ロメロ（V-0188） 3.75", 15).map((s) => s.ppm), [750000, 250000]);
+  assert.deepEqual(parseShareText("瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25", 15).map((s) => s.ppm), [750000, 250000]);
   assert.throws(() => parseShareText("瀧里フユ（V-0102） 11.25／宝井ロメロ 3.75", 15),
     (e: unknown) => e instanceof DomainError && /「宝井ロメロ」に取引先コードがありません/.test(e.message));
+});
+
+// ---- 紙と電子で按分が違う契約 ---------------------------------------------
+
+test("紙取り分・電子取り分：媒体ごとに別の按分を、それぞれの条件に入れる（作品全体には広げない）", async () => {
+  const d = deps();
+  const row = { "作品名": "新しい作品", "相手先": "冒険支援株式会社", "紙料率": "10", "電子料率": "15",
+                "紙取り分": "作家B（V-21） 60／作家C（V-22） 40", "電子取り分": "作家B（V-21） 10／作家C（V-22） 5" };
+  const fake = db({ parties: PARTIES });
+  const dry = await new PubWorksImportService(fake, d).run([row], true, "tester");
+  assert.equal(dry.ok, 1, JSON.stringify(dry.rows));
+  assert.match(dry.rows[0].message ?? "", /取り分 紙：作家B 60%／作家C 40%　電子：作家B 66.67%／作家C 33.33%（当社が分配）/);
+  await new PubWorksImportService(fake, d).run([row], false, "tester");
+  const shares = d.calls.filter((c) => c.what === "shares");
+  assert.equal(shares.length, 2);
+  assert.deepEqual([shares[0].args[0], shares[0].args[1], shares[0].args[4]],
+    [501, [{ partyId: 21, sharePpm: 600000 }, { partyId: 22, sharePpm: 400000 }], { applyToWork: false }], "紙は紙の条件だけ");
+  assert.deepEqual([shares[1].args[0], shares[1].args[1], shares[1].args[4]],
+    [502, [{ partyId: 21, sharePpm: 666667 }, { partyId: 22, sharePpm: 333333 }], { applyToWork: false }], "電子は電子の条件だけ");
+
+  // 「取り分」と媒体ごとの列を同時に入れると止める。片方の媒体に料率が無ければ止める。
+  const bad = await new PubWorksImportService(db({ parties: PARTIES }), deps()).run([
+    { ...row, "取り分": "作家B（V-21） 50／作家C（V-22） 50" },
+    { ...row, "紙料率": "" }
+  ], true, "tester");
+  assert.equal(bad.error, 2);
+  assert.match(bad.rows[0].message ?? "", /同時に入れられません/);
+  assert.match(bad.rows[1].message ?? "", /紙取り分を入れるなら紙料率も/);
+});
+
+test("更新：電子取り分だけ直す（紙は触らない）。書き出しは紙と電子で違えば媒体ごとの列", async () => {
+  const d = deps();
+  const r = await new PubWorksImportService(db({ parties: PARTIES, works: WORKS, pub: PUB }), d)
+    .run([{ "作品コード": "WRK-7", "電子取り分": "作家B（V-21） 40／作家C（V-22） 60" }], false, "tester", "update");
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  assert.match(r.rows[0].message ?? "", /取り分 電子：作家B 40%／作家C 60%/);
+  assert.deepEqual(d.calls.map((c) => c.what), ["shares"]);
+  assert.deepEqual([d.calls[0].args[0], d.calls[0].args[4]], [602, { applyToWork: false }]);
+
+  const fake = new FakeDatabase((text) => {
+    if (text.includes("FROM conditions c") && text.includes("JOIN works w")) {
+      const base = { work_id: 7, title: "カローン", work_code: "WRK-7", title_kana: null, business_line: "出版",
+                     work_remarks: null, copyright_notice: null, third_party_rights: null, counterparty_id: 11,
+                     party_name: "番棚葵", party_code: "V-0301", agreement_no: null, term_start: null, term_end: null,
+                     payment_terms: null, notes: null, distribution: "direct", exclusivity: "non_exclusive" };
+      return [{ ...base, id: 601, usage_type: "pub_print", rate_ppm: 100000 }, { ...base, id: 602, usage_type: "pub_digital", rate_ppm: 150000 }];
+    }
+    if (text.includes("FROM condition_shares s")) {
+      return [{ condition_id: 601, party_id: 31, name: "番棚葵", party_code: "V-0301", share_ppm: 300000 },
+              { condition_id: 601, party_id: 32, name: "佐々宮智志", party_code: "V-0302", share_ppm: 700000 },
+              { condition_id: 602, party_id: 31, name: "番棚葵", party_code: "V-0301", share_ppm: 400000 },
+              { condition_id: 602, party_id: 32, name: "佐々宮智志", party_code: "V-0302", share_ppm: 600000 }];
+    }
+    return undefined;
+  });
+  const csv = await new PubWorksImportService(fake, deps()).exportCsv();
+  const cells = csv.split("\r\n")[1].split(",");
+  assert.deepEqual(cells.slice(8, 12), ["", "番棚葵（V-0301） 30／佐々宮智志（V-0302） 70", "番棚葵（V-0301） 40／佐々宮智志（V-0302） 60", "当社"]);
 });

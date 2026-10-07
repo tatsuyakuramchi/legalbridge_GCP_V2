@@ -229,6 +229,20 @@ export function sharesText(condition: Data | null | undefined): string {
   return `${text(condition?.distribution) === "representative" ? "代表が分配：" : ""}${body}`;
 }
 
+/** 紙・電子で同じ按分か。 */
+function sameSharesOf(a: Data | undefined, b: Data | undefined): boolean {
+  const key = (c: Data | undefined) => list(c?.shares).map((s) => `${number(s.partyId)}:${number(s.sharePpm)}`).sort().join("|");
+  return key(a) === key(b);
+}
+
+/** 紙と電子の両方の取り分。同じなら 1 つ、違えば「紙：…／電子：…」。 */
+export function mediaSharesText(print: Data | undefined, digital: Data | undefined): string {
+  if (print && digital && list(print.shares).length && list(digital.shares).length && !sameSharesOf(print, digital)) {
+    return `紙：${sharesText(print)}／電子：${sharesText(digital)}`;
+  }
+  return sharesText(digital ?? print);
+}
+
 /** 受取人（甲）の取り分（百万分率）。その条件の取り分に入っていなければ null。 */
 function payeeShareOf(payee: Data | null | undefined, condition: Data | undefined): number | null {
   const partyId = number(payee?.partyId);
@@ -242,7 +256,10 @@ function payeeShareOf(payee: Data | null | undefined, condition: Data | undefine
  * 媒体ごとの率は料率の欄（payeeRateText）に出すので、ここでは繰り返さない。受取人でなければ空。
  */
 export function payeeShareText(payee: Data | null | undefined, print: Data | undefined, digital: Data | undefined): string {
-  const ppm = payeeShareOf(payee, digital ?? print);
+  const p = payeeShareOf(payee, print);
+  const d = payeeShareOf(payee, digital);
+  if (p != null && d != null && p !== d) return `甲の取り分 紙 ${ppmPct(p)}%・電子 ${ppmPct(d)}%`;
+  const ppm = d ?? p;
   return ppm == null ? "" : `甲の取り分 ${ppmPct(ppm)}%`;
 }
 
@@ -291,7 +308,7 @@ export function pubTitleSeeds(context: Data): Data[] {
       copyright: text(head.work?.copyrightNotice),
       third_party: text(head.work?.thirdPartyRights),
       // 共同著作の取り分（A-068）。条件明細の写し。条件から出た行は紙に出すとき引き直す。
-      co_authors: sharesText(digital ?? print ?? head),
+      co_authors: print || digital ? mediaSharesText(print, digital) : sharesText(head),
       note: notes,
       print_rate: print ? percentText(print.ratePct) : "—",
       print_exclusivity: print ? exclusivityText(print) || "—" : "—",
@@ -470,8 +487,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       ? ([transPrint, transDigital].filter(Boolean).some((c) => consentLabel(c!.sublicenseConsent) === "要") ? "要" : "不要")
       : text(row.trans_consent);
     // 共同著作の取り分。条件から出た行は条件の取り分（受取人宛てならその人の取り分も）。
-    const sharesHead = digital ?? print ?? termHead;
-    const coAuthors = fromLedger ? sharesText(sharesHead) : text(row.co_authors);
+    const coAuthors = fromLedger ? (print || digital ? mediaSharesText(print, digital) : sharesText(termHead)) : text(row.co_authors);
     const payeeShare = fromLedger ? payeeShareText(context.payee, print, digital) : "";
     return {
       no: index + 1,
