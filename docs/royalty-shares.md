@@ -143,6 +143,12 @@ UNIQUE INDEX statements_document_condition_payee_uq (document_id, condition_id, 
 - 決定（`POST /document-sets/missing/run`）：「作れる」相手先だけ、文書セットの決定（`issueDocumentSet`：基本契約の記録 → 条件の載せ替え → 基本契約書 → 条件書）を相手先ごとに回す。決定した条件書は基本契約の下の個別契約になる（`agreements/auto.ts`）。1 相手先の失敗で他を止めない（結果に理由が残る）。
 - 送るのは文書の画面か「選んだ文書を 1 通・1 封筒で送る」（隙間 C で相手先ごとにまとめる）。
 
+### 5.6 相手先ごとに 1 通で送る
+
+運用 › 送付（`client/UnsentBundles.tsx`、`documents/unsent-bundles.ts`、`GET /documents/unsent-bundles`）。決定済みで送った記録（`gmail.send` / `cloudsign.send`）の無い基本契約書（出版許諾契約書・利用許諾基本契約書）・条件書・利用許諾計算書を相手先ごとに束ねる。受取人宛ての文書（`manual_inputs._payeePartyId`）はその受取人。「メールで 1 通に」は全部を添付して内容確認のメール、「CloudSign」は契約書（基本契約書・条件書）だけを 1 封筒で署名依頼（既存の「選んだ文書を 1 通・1 封筒で送る」）。送った文書は一覧から消える。メール未登録の相手先は「未登録」と出る。
+
+これで「CSV 取込 → 年 1 回の締め → 支払文書処理でまとめて締める（計算書）→ 契約なしに基本契約＋条件書 → 送付で相手先ごとに 1 通」が回る。
+
 ## 6. まだ無いもの
 
 - 台帳を受取人ごとに引く（いまは条件の相手先の下にだけ回が立つ）。

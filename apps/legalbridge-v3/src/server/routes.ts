@@ -74,6 +74,7 @@ import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
 import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
+import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
@@ -3726,6 +3727,11 @@ export function createRoutes(database: Transactable) {
     masterTemplateKey: z.string().trim().max(60).nullable().optional(),
     termsTemplateKey: z.string().trim().max(60).nullable().optional()
   });
+  // 相手先ごとの未送付の文書（基本契約書・条件書・計算書）。1 通・1 封筒で送る一覧（docs/royalty-shares.md §5.6）。
+  const unsentBundles = new UnsentBundlesService(database);
+  router.get("/documents/unsent-bundles", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await unsentBundles.list());
+  }));
   router.get("/document-sets/missing", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
     res.json(await missingContractsFor(actor(res)).list());
   }));
