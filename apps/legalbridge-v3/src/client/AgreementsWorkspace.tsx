@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { ListCount, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
@@ -6,6 +6,7 @@ import { Relations, type EntityKind } from "./Relations.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { templateKeyFor } from "./FlowBar.js";
 import { useReadOnly } from "./read-only.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
@@ -83,10 +84,20 @@ export interface CreatePreset {
 }
 
 export function AgreementsWorkspace(
-  { initialId, onOpen, createPreset }: {
+  { initialId, onOpen, createPreset, onCreated, onCompose }: {
     initialId?: number; onOpen?: (kind: EntityKind, id: number) => void;
     /** 案件の工程「契約を登録する」から来たとき。相手先が入った状態で登録を開く。 */
     createPreset?: CreatePreset | null;
+    /**
+     * 取引を進める画面から来た登録が済んだとき。あれば、この画面に残らずそちらへ戻る
+     * （登録した契約を選んだ状態で、次の段階へ）。
+     */
+    onCreated?: (id: number) => void;
+    /**
+     * この契約に条件明細を登録したら、その条件で文書を作りに行く。
+     * 契約 → 条件明細 → 文書 → 送信 を順に進めるための次の一歩。
+     */
+    onCompose?: (conditionIds: number[], agreement: { id: number; label: string }, templateKey: string | null) => void;
   }
 ) {
   const readOnly = useReadOnly();
@@ -101,6 +112,8 @@ export function AgreementsWorkspace(
   const [creating, setCreating] = useState<CreatePreset | null>(createPreset ?? null);
   const [terminating, setTerminating] = useState(false);
   const [addingCondition, setAddingCondition] = useState(false);
+  /** 登録した契約を開いたら、続けて条件明細の登録欄を出す（「登録して、条件明細の登録へ」）。 */
+  const nextCondition = useRef(false);
   const bump = () => setVersion((v) => v + 1);
 
   useEffect(() => {
@@ -112,7 +125,8 @@ export function AgreementsWorkspace(
 
   useEffect(() => {
     if (!selected) { setDetail(null); return; }
-    setTerminating(false); setAddingCondition(false);
+    setTerminating(false);
+    setAddingCondition(nextCondition.current); nextCondition.current = false;
     api.get<Detail>(`/agreements/${selected}`)
       .then(setDetail).catch((e: ApiError) => setError(e.message));
   }, [selected, version]);
@@ -153,8 +167,15 @@ export function AgreementsWorkspace(
 
       {creating && (
         <AgreementCreate preset={creating}
-          onDone={(id, no) => { setCreating(null); setSelected(id); bump();
-                                setNotice(`${no ?? "契約"} を登録しました`); }}
+          onDone={(id, no, thenConditions) => {
+            // 取引から来たなら、登録したら取引へ戻って続きから。
+            if (onCreated) { onCreated(id); return; }
+            nextCondition.current = thenConditions;
+            setCreating(null); setSelected(id); bump();
+            setNotice(thenConditions
+              ? `${no ?? "契約"} を登録しました。次は条件明細を登録します（登録すると、その条件で文書を作る画面へ進みます）`
+              : `${no ?? "契約"} を登録しました`);
+          }}
           onCancel={() => setCreating(null)} />
       )}
 
@@ -277,7 +298,16 @@ export function AgreementsWorkspace(
                               kind: a.domain === "license" ? "license" : "service" }}
                     presetLabels={{ counterpartyId: a.counterparty.name,
                                     agreementId: `${a.agreementNo ?? ""} ${a.title}`.trim() }}
-                    onDone={() => { setAddingCondition(false); bump(); setNotice("条件明細を登録しました"); }}
+                    onDone={(made) => {
+                      setAddingCondition(false);
+                      // 次は文書。登録した条件を選んだ状態で文書の画面へ進む（戻る先はこの契約）。
+                      if (onCompose) {
+                        onCompose([made.id], { id: a.id, label: a.agreementNo ?? a.title },
+                                  templateKeyFor(a.direction, a.domain === "license" ? "license" : "service"));
+                        return;
+                      }
+                      bump(); setNotice("条件明細を登録しました");
+                    }}
                     onCancel={() => setAddingCondition(false)} />
                 )}
               </div>
@@ -393,7 +423,8 @@ export function AgreementsWorkspace(
 
 function AgreementCreate({ preset, onDone, onCancel }: {
   preset: CreatePreset;
-  onDone: (id: number, agreementNo: string | null) => void;
+  /** thenConditions：続けて条件明細の登録欄を開く（条件明細がぶら下がる契約のとき）。 */
+  onDone: (id: number, agreementNo: string | null, thenConditions: boolean) => void;
   onCancel: () => void;
 }) {
   const [partyId, setPartyId] = useState(preset.partyId ? String(preset.partyId) : "");
@@ -442,9 +473,8 @@ function AgreementCreate({ preset, onDone, onCancel }: {
         renewalNoticeMonths: noticeMonths ? Number(noticeMonths) : null,
         counterpartyRefNo: refNo || null, sourceUrl: sourceUrl || null
       });
-      onDone(made.id, made.agreementNo);
-      // 「登録して、条件明細の登録へ」は、開いた詳細で登録欄を出す（親は detail 側）。
-      void thenConditions;
+      // 条件明細がぶら下がらない契約（文書だけ）には、続けて登録する欄が無い。
+      onDone(made.id, made.agreementNo, thenConditions && effectiveKind !== "document");
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -548,7 +578,7 @@ function AgreementCreate({ preset, onDone, onCancel }: {
 
         <div className="row">
           <button className="btn primary" disabled={!ready || busy} onClick={() => void submit(true)}>
-            {effectiveKind === "document" ? "登録する" : "登録する（続けて条件明細を登録できます）"}
+            {effectiveKind === "document" ? "登録する" : "登録して、条件明細の登録へ"}
           </button>
           <button className="btn" onClick={onCancel}>やめる</button>
           {!ready && <span className="faint">相手先・件名・締結日と、条件明細の要否を入れると登録できます</span>}

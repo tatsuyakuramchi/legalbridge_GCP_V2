@@ -34,6 +34,13 @@ export interface TradeCtx {
   pattern: TradePattern; matterId: number | null; partyId?: number | null; workIds?: number[];
   /** 支払（検収書・利用許諾計算書）。実績 → 文書 → 送る → 支払 の順に進める別の流れ。pattern は使わない。 */
   payment?: boolean;
+  /**
+   * 開いている段階と、選んだ基本契約。文書や契約の画面へ移って戻ってきたときに、
+   * 続きから開くために持つ（画面を離れると中の状態は消えるので、ここに写しておく）。
+   */
+  stage?: number;
+  agreementId?: number | null;
+  noAgreement?: boolean;
 }
 
 const PATTERNS: Array<{ value: TradePattern; group: string; label: string; detail: string }> = [
@@ -74,14 +81,21 @@ interface Staff { id: number; name: string; email: string | null; department?: s
 interface Agreement { id: number; agreementNo: string | null; title: string; status: string; kind: string; domain: string | null;
                       executedOn: string | null; counterparty: { id: number; name: string } }
 
-type Compose = (conditionIds: number[], eventIds?: number[], matterId?: number | null, templateKey?: string | null) => void;
+/**
+ * 文書を作りに行く。flowStep は、この画面のどの段階から行ったか（文書の画面の上に
+ * 「取引を進める」の流れの帯を出し、決定したら送信の段階へ戻れるようにする）。
+ * 支払の流れ（TradePayment）からは渡さない。
+ */
+type Compose = (conditionIds: number[], eventIds?: number[], matterId?: number | null, templateKey?: string | null,
+                flowStep?: number) => void;
 
 export function TradeWorkspace(
   { ctx, onCtx, onCompose, onOpenDocument, onOpenMatter, onRegisterAgreement, onOpenPayments }: {
     ctx: TradeCtx | null;
     onCtx: (ctx: TradeCtx | null) => void;
     onCompose: Compose;
-    onOpenDocument: (id: number) => void;
+    /** 文書を開く。flowStep はこの画面のどの段階から開いたか（Compose と同じ）。 */
+    onOpenDocument: (id: number, flowStep?: number) => void;
     onOpenMatter: (id: number) => void;
     onRegisterAgreement: (partyId: number, partyName: string | null) => void;
     /** 支払文書（検収書・利用許諾計算書）は支払文書処理の画面で作る。 */
@@ -113,7 +127,9 @@ export function TradeWorkspace(
     );
   }
   if (ctx.payment) {
-    return <TradePayment onBack={() => onCtx(null)} onCompose={onCompose} onOpenDocument={onOpenDocument}
+    // 支払の流れは段階が別（実績 → 文書 → 送る → 支払）。取引の帯は付けない。
+    return <TradePayment onBack={() => onCtx(null)}
+                         onCompose={(c, e, m, t) => onCompose(c, e, m, t)} onOpenDocument={(id) => onOpenDocument(id)}
                          onOpenPayments={onOpenPayments} />;
   }
   return <TradeFlow key={`${ctx.pattern}-${ctx.matterId ?? `p${ctx.partyId ?? 0}`}`} ctx={ctx} onCtx={onCtx} onCompose={onCompose}
@@ -123,7 +139,7 @@ export function TradeWorkspace(
 function TradeFlow(
   { ctx, onCtx, onCompose, onOpenDocument, onOpenMatter, onRegisterAgreement }: {
     ctx: TradeCtx; onCtx: (ctx: TradeCtx | null) => void; onCompose: Compose;
-    onOpenDocument: (id: number) => void; onOpenMatter: (id: number) => void;
+    onOpenDocument: (id: number, flowStep?: number) => void; onOpenMatter: (id: number) => void;
     onRegisterAgreement: (partyId: number, partyName: string | null) => void;
   }
 ) {
@@ -132,9 +148,18 @@ function TradeFlow(
   /** 案件を立てずに進めている（相手先と作品だけで組んだ文脈）。 */
   const caseless = !ctx.matterId && Boolean(ctx.partyId);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
-  const [agreementId, setAgreementId] = useState<string>("");
-  const [noAgreement, setNoAgreement] = useState(false);
-  const [stage, setStage] = useState<number>(ctx.matterId || ctx.partyId ? 1 : 0);
+  // 段階と基本契約の選択は ctx から戻す。文書・契約の画面へ移って戻ると、この部品は
+  // 作り直されるので、持っていないと毎回「基本契約」の段階からやり直しになっていた。
+  const [agreementId, setAgreementId] = useState<string>(ctx.agreementId ? String(ctx.agreementId) : "");
+  const [noAgreement, setNoAgreement] = useState(Boolean(ctx.noAgreement));
+  const [stage, setStage] = useState<number>(ctx.stage ?? (ctx.matterId || ctx.partyId ? 1 : 0));
+  useEffect(() => {
+    const next = { stage, agreementId: agreementId ? Number(agreementId) : null, noAgreement };
+    if (ctx.stage === next.stage && (ctx.agreementId ?? null) === next.agreementId && Boolean(ctx.noAgreement) === next.noAgreement) return;
+    onCtx({ ...ctx, ...next });
+  }, [stage, agreementId, noAgreement]);
+  /** 文書を開く。いまの段階を添える（文書の画面から、この段階へ戻れる）。 */
+  const openDoc = (id: number) => onOpenDocument(id, stage);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -286,8 +311,8 @@ function TradeFlow(
         <div className="stack">
           {stage === 0 && (
             <BasicsStage pattern={p} detail={detail}
-              onCreated={(id) => { onCtx({ pattern: p, matterId: id }); setStage(1); setNotice("案件を立てました。文書の担当者・メールの宛先はこの案件から入ります"); }}
-              onUse={(next) => { onCtx(next); setStage(1); }}
+              onCreated={(id) => { onCtx({ pattern: p, matterId: id, stage: 1 }); setStage(1); setNotice("案件を立てました。文書の担当者・メールの宛先はこの案件から入ります"); }}
+              onUse={(next) => { onCtx({ ...next, stage: 1 }); setStage(1); }}
               onError={setError} />
           )}
 
@@ -308,7 +333,7 @@ function TradeFlow(
                   {!agreements.length && <span className="faint">この取引先の契約はまだありません</span>}
                 </div>
                 <div className="row" style={{ flexWrap: "wrap" }}>
-                  <button className="btn" onClick={() => onCompose([], [], detail.id, MASTER[p].key)}>
+                  <button className="btn" onClick={() => onCompose([], [], detail.id, MASTER[p].key, 1)}>
                     {MASTER[p].label}を作って送る
                   </button>
                   <button className="btn" onClick={() => party && onRegisterAgreement(party.id, party.name)}>外で結んだ契約を登録する</button>
@@ -319,7 +344,7 @@ function TradeFlow(
                     <b>この案件の基本契約書</b>
                     {masterDocs.map((d) => (
                       <div key={d.id} className="row" style={{ gap: 8 }}>
-                        <button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
+                        <button className="linky code" onClick={() => openDoc(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
                         <StatusTag kind="document" value={d.status === "issued" ? (d.sentAt ? "sent" : "decided") : "draft"} />
                         {d.agreementStatus && <span className="tag">{d.agreementStatus}</span>}
                       </div>
@@ -382,7 +407,7 @@ function TradeFlow(
                 : creatable.length ? creatable : DOCS[p]}
               conditions={mine.map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name, work: c.work ? { id: c.work.id, title: c.work.title } : null }))}
               agreements={agreements} channels={channels} isAdmin={isAdmin}
-              onIssued={() => void load()} onOpenDocument={onOpenDocument} onClose={() => setSetOpen(false)} />
+              onIssued={() => void load()} onOpenDocument={openDoc} onClose={() => setSetOpen(false)} />
           )}
           {stage === 3 && detail && !setOpen && (
             <div className="panel">
@@ -400,7 +425,7 @@ function TradeFlow(
                 <div className="row" style={{ flexWrap: "wrap" }}>
                   {creatable.map((d) => (
                     <button key={d.key} className="btn primary" disabled={!mine.length}
-                            onClick={() => onCompose(conditionIdsFor(d.conditions), [], detail.id, d.key)}>
+                            onClick={() => onCompose(conditionIdsFor(d.conditions), [], detail.id, d.key, 3)}>
                       {d.label}を作る
                     </button>
                   ))}
@@ -411,7 +436,7 @@ function TradeFlow(
                     <b>この案件の{stages[3].name}</b>
                     {myDocs.map((d) => (
                       <div key={d.id} className="row" style={{ gap: 8 }}>
-                        <button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
+                        <button className="linky code" onClick={() => openDoc(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
                         <span>{d.templateLabel}</span>
                         <StatusTag kind="document" value={d.status === "issued" ? (d.sentAt ? "sent" : "decided") : d.status === "draft" ? "draft" : d.status} />
                       </div>
@@ -450,10 +475,10 @@ function TradeFlow(
                 })()}
                 {issued.map((d) => (
                   <div key={d.id} className="row" style={{ gap: 8 }}>
-                    <button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
+                    <button className="linky code" onClick={() => openDoc(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
                     <span>{d.templateLabel}</span>
                     {d.sentAt ? <span className="tag ok">送付 {d.sentAt.slice(0, 10)}（{d.sentVia === "cloudsign" ? "CloudSign" : "メール"}）</span>
-                      : <button className="btn btn-sm primary" onClick={() => onOpenDocument(d.id)}>開いて送る</button>}
+                      : <button className="btn btn-sm primary" onClick={() => openDoc(d.id)}>開いて送る</button>}
                   </div>
                 ))}
                 <span className="faint">文書の「送る」で、内容確認メール → CloudSign（署名者・CC は取引先の署名者と案件の担当者から入る）→ 締結 と進みます。</span>
