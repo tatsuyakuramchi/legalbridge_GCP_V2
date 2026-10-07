@@ -229,22 +229,35 @@ export function sharesText(condition: Data | null | undefined): string {
   return `${text(condition?.distribution) === "representative" ? "代表が分配：" : ""}${body}`;
 }
 
+/** 受取人（甲）の取り分（百万分率）。その条件の取り分に入っていなければ null。 */
+function payeeShareOf(payee: Data | null | undefined, condition: Data | undefined): number | null {
+  const partyId = number(payee?.partyId);
+  if (partyId == null || !condition) return null;
+  const share = list(condition.shares).find((s) => number(s.partyId) === partyId);
+  return share ? number(share.sharePpm) ?? null : null;
+}
+
 /**
- * 受取人（甲）の取り分の文。全体率と併記する（「甲の取り分 75%（紙 7.5%・電子 11.25%）」）。
- * 全体の料率は一覧の欄に出たままで、ここは甲に帰属する率。受取人でなければ空。
+ * 受取人（甲）の取り分の文（「甲の取り分 25%」）。一覧の「共同著作」欄に添える。
+ * 媒体ごとの率は料率の欄（payeeRateText）に出すので、ここでは繰り返さない。受取人でなければ空。
  */
 export function payeeShareText(payee: Data | null | undefined, print: Data | undefined, digital: Data | undefined): string {
-  const partyId = number(payee?.partyId);
-  if (partyId == null) return "";
-  const head = digital ?? print;
-  const share = list(head?.shares).find((s) => number(s.partyId) === partyId);
-  if (!share) return "";
-  const ppm = number(share.sharePpm) ?? 0;
-  const media = [
-    print && number(print.ratePct) != null ? `紙 ${ppmPct(Math.round((number(print.ratePct)! * ppm) / 100))}%` : "",
-    digital && number(digital.ratePct) != null ? `電子 ${ppmPct(Math.round((number(digital.ratePct)! * ppm) / 100))}%` : ""
-  ].filter(Boolean).join("・");
-  return `甲の取り分 ${ppmPct(ppm)}%${media ? `（${media}）` : ""}`;
+  const ppm = payeeShareOf(payee, digital ?? print);
+  return ppm == null ? "" : `甲の取り分 ${ppmPct(ppm)}%`;
+}
+
+/**
+ * 受取人（甲）宛ての料率の欄。甲に帰属する率を主にし、括弧で対象著作物全体の料率を添える
+ * （「2.5%（全体 10%）」）。全体の率だけを出すと、一覧の合計許諾料と読み違える。
+ * 受取人でないか、その条件の取り分に入っていなければ全体の率そのもの。
+ */
+export function payeeRateText(payee: Data | null | undefined, condition: Data | undefined): string {
+  if (!condition) return "—";
+  const whole = number(condition.ratePct);
+  if (whole == null) return "—";
+  const ppm = payeeShareOf(payee, condition);
+  if (ppm == null) return percentText(whole);
+  return `${ppmPct(Math.round((whole * ppm) / 100))}%（全体 ${percentText(whole)}）`;
 }
 
 export function pubTitleSeeds(context: Data): Data[] {
@@ -468,10 +481,10 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       thirdParty: text(row.third_party) || "なし",
       note: text(row.note),
       coAuthors, payeeShare, hasShares: Boolean(coAuthors),
-      printRate: fromLedger ? (print ? percentText(print.ratePct) : "—") : (text(row.print_rate) || "—"),
+      printRate: fromLedger ? payeeRateText(context.payee, print) : (text(row.print_rate) || "—"),
       printExclusivity: fromLedger ? (print ? exclusivityText(print) || "—" : "—")
         : (text(row.print_exclusivity) || "—"),
-      digitalRate: fromLedger ? (digital ? percentText(digital.ratePct) : "—") : (text(row.digital_rate) || "—"),
+      digitalRate: fromLedger ? payeeRateText(context.payee, digital) : (text(row.digital_rate) || "—"),
       digitalExclusivity: fromLedger ? (digital ? exclusivityText(digital) || "—" : "—")
         : (text(row.digital_exclusivity) || "—"),
       hasPrint: fromLedger ? Boolean(print) : text(row.print_rate) !== "" && text(row.print_rate) !== "—",
