@@ -1303,17 +1303,24 @@ export function createRoutes(database: Transactable) {
     royaltyInFile: z.coerce.number().nullable()
   });
   const ebookRowsSchema = z.object({ rows: z.array(ebookRowSchema).min(1).max(20000) });
+  // 登録する販売月の範囲（両端を含む）。外の行は「範囲外」で登録しない（支払済みの月を二重に払わない）。
+  const ebookRangeSchema = {
+    fromMonth: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional(),
+    toMonth: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional()
+  };
   // 2. 突合（作品・条件・登録済み）。書かない。
   router.post("/imports/ebook-sales/preview", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
-      const { rows } = ebookRowsSchema.parse(req.body ?? {});
-      res.json(await ebookSales.preview(rows));
+      const { rows, fromMonth, toMonth } = ebookRowsSchema.extend(ebookRangeSchema).parse(req.body ?? {});
+      res.json(await ebookSales.preview(rows, { fromMonth, toMonth }));
     }));
   // 3. 登録。突合をもう一度通し、登録できる行だけ実績にする。
   router.post("/imports/ebook-sales/commit", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const input = ebookRowsSchema.extend({ onlyKeys: z.array(z.string().max(500)).max(5000).optional() }).parse(req.body ?? {});
-      res.status(201).json(await ebookSales.commit(input.rows, actor(res), { onlyKeys: input.onlyKeys }));
+      const input = ebookRowsSchema.extend({ onlyKeys: z.array(z.string().max(500)).max(5000).optional(), ...ebookRangeSchema })
+        .parse(req.body ?? {});
+      res.status(201).json(await ebookSales.commit(input.rows, actor(res),
+        { onlyKeys: input.onlyKeys, fromMonth: input.fromMonth, toMonth: input.toMonth }));
     }));
   // CID → 作品 を決める（覚える）。
   router.put("/imports/ebook-sales/codes", requireRole("admin", "legal"), requireWritable,
