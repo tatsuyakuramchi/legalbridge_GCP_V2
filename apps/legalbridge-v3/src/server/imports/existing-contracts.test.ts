@@ -107,6 +107,8 @@ test("登録：基本契約は外部番号のまま 1 回だけ作り、条件�
 
   const links = fake.all("INSERT INTO document_conditions").map((q) => q.params.slice(0, 2));
   assert.deepEqual(links, [[9026, 111], [9026, 112], [9012, 121]]);
+  assert.ok(fake.all("INSERT INTO document_conditions").every((q) => q.text.includes("ON CONFLICT (document_id, condition_id) DO NOTHING")),
+    "当て先は主キー（行番号の一意制約は遅延可能で当て先にできない）");
   assert.equal(fake.all("INSERT INTO audit_events").filter((q) => q.params.includes("contracts.register_existing")).length, 2);
 });
 

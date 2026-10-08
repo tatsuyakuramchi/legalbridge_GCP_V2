@@ -252,8 +252,10 @@ export class ExistingContractsImportService {
           let lineNo = Number(next.n);
           for (const id of toLink) {
             lineNo += 1;
+            // 衝突の先は主キーだけ。行番号の一意制約は遅延可能なので ON CONFLICT の当て先にできない
+            // （当て先を書かないと全部の一意制約が当て先になり、Postgres が弾く）。
             await client.query(
-              "INSERT INTO document_conditions (document_id, condition_id, line_no) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+              "INSERT INTO document_conditions (document_id, condition_id, line_no) VALUES ($1, $2, $3) ON CONFLICT (document_id, condition_id) DO NOTHING",
               [documentId, id, lineNo]);
           }
         }
