@@ -159,6 +159,8 @@ UNIQUE INDEX statements_document_condition_payee_uq (document_id, condition_id, 
 
 運用 › 送付（`client/UnsentBundles.tsx`、`documents/unsent-bundles.ts`、`GET /documents/unsent-bundles`）。決定済みで送った記録（`gmail.send` / `cloudsign.send`）の無い基本契約書（出版許諾契約書・利用許諾基本契約書）・条件書・利用許諾計算書を相手先ごとに束ねる。受取人宛ての文書（`manual_inputs._payeePartyId`）はその受取人。「メールで 1 通に」は全部を添付して内容確認のメール、「CloudSign」は契約書（基本契約書・条件書）だけを 1 封筒で署名依頼（既存の「選んだ文書を 1 通・1 封筒で送る」）。送った文書は一覧から消える。メール未登録の相手先は「未登録」と出る。
 
+社内確認として送る：メールの送る画面（1 通ずつ・まとめて）で「社内確認として送る」に印を付けると、宛先（当社の担当者）へ送っても相手先へは送っていない扱いになる（`internal: true`）。送信の記録は対象 `document_review` に残し、文書ごとには `gmail.review` を残す。文書の「送信済み」は対象 `document` の `gmail.send` / `cloudsign.send` から読むので、未送付の一覧に残り、支払文書処理の「送る」も進まない。送る画面の「内容確認のメール」に「社内確認で ◯◯ へ送付済み」と出る。担当者の確認が済んだら、あらためて相手先へ送る。
+
 ### 5.7 移行前に紙で結んだ契約を外部番号のまま登録する
 
 運用 › 取込 › CSV（種類「既存契約」、`imports/existing-contracts.ts`）。DucQrews のように、システムを通さずに番号を付けて結んだ契約（基本契約 ATT-2026-00069、作品ごとの条件書 ARC-PUBT-2026-0012〜0031）を、番号を変えずに作品の条件に繋ぐ。計算書の「契約番号」（`royalty/in-contract.ts`）と 運用 › 契約なし の判定はこの繋がりを見るので、繋がないと条件書を二重に発行してしまう。
