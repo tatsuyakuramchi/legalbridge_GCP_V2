@@ -185,3 +185,15 @@ test("未送信に戻すと cloudsign.applied（status=unsent・manual）が残�
   assert.match(String(audit.params[6]), /^2026-09-20/);
   assert.ok(db.find("INSERT INTO matter_communications"), "やり取りにも残す");
 });
+
+test("社内確認として担当者に送った（gmail.review）だけなら、内容確認のメールは済にしない。送った先は出す", async () => {
+  const t = await new DocumentSendService(build([
+    ev("gmail.review", "2026-10-08T00:00:00Z", { recipient: "tanto@arclight.test", internal: true })
+  ])).timeline(5);
+  assert.equal(t.steps[0].done, false, "相手先にはまだ送っていない");
+  assert.match(t.steps[0].detail, /社内確認で tanto@arclight\.test へ送付済み.*相手先にはまだ送っていない/);
+  assert.equal(t.current?.key, "mail");
+  const db = build([]);
+  await new DocumentSendService(db).timeline(5);
+  assert.match(db.find("FROM audit_events")!.text, /'gmail\.review'/, "社内確認の記録も読む");
+});

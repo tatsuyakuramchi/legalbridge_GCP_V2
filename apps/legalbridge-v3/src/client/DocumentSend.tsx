@@ -83,6 +83,8 @@ export function DocumentSend(
   // メール
   // 宛先。下書きが入れた相手に、取引先の連絡先・自社の人を探して足せる（To / Cc）。
   const [mailTo, setMailTo] = useState<Record<string, Person[]>>({ to: [], cc: [] });
+  /** 社内確認として送る（担当者に送って中身を見てもらう。相手先へは送っていない扱い）。 */
+  const [internal, setInternal] = useState(false);
   const to = mailTo.to ?? [];
   const cc = mailTo.cc ?? [];
   /**
@@ -174,12 +176,12 @@ export function DocumentSend(
   }
 
   const sendMail = () => run(async () => {
-    const mail = { to: to.map((p) => p.email), cc: cc.map((p) => p.email), subject, body, attachPdf: true };
+    const mail = { to: to.map((p) => p.email), cc: cc.map((p) => p.email), subject, body, attachPdf: true, internal };
     // 添える文書があれば 1 通にまとめて送る（各文書に「送った」が残る）。
     const r = extras.length
       ? await api.post<{ outcome: Outcome }>("/documents/send-many", { ...mail, documentIds: [documentId, ...extras] })
       : await api.post<{ outcome: Outcome }>(`/documents/${documentId}/send`, mail);
-    return describe(r.outcome, "内容確認のメール");
+    return describe(r.outcome, internal ? "社内確認のメール（相手先にはまだ送っていない扱い）" : "内容確認のメール");
   }, "メールを送っています");
   const confirm = () => run(async () => {
     await api.post(`/documents/${documentId}/confirm`, { via, note: confirmNote || null });
@@ -298,9 +300,18 @@ export function DocumentSend(
                     <small className="faint">同じ相手先の決定済みの文書から選べます（基本契約と個別契約を一緒に送るなど）。選ぶと 1 通に PDF を並べて送り、添えた文書にも「送った」が残ります</small>
                   </>)}
               </div></div>
+            <label className="row" style={{ alignItems: "flex-start" }}>
+              <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+              <span>
+                社内確認として送る（相手先にはまだ送っていない扱い）
+                <div className="faint" style={{ fontSize: "0.85em" }}>
+                  宛先を当社の担当者に替えてください。送っても「内容確認のメール」は済にならず、未送付のまま残ります
+                </div>
+              </span>
+            </label>
             <div className="row">
               <button className="btn primary" disabled={busy || !to.length || !subject.trim() || !body.trim()}
-                      aria-busy={busy} onClick={() => void sendMail()}>{busy ? "送っています…" : "メールを送る"}</button>
+                      aria-busy={busy} onClick={() => void sendMail()}>{busy ? "送っています…" : internal ? "社内確認で送る" : "メールを送る"}</button>
               <button className="linky" onClick={() => setOpen("cloudsign")}>飛ばして CloudSign へ</button>
             </div>
           </div>

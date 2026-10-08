@@ -63,7 +63,7 @@ export class DocumentSendService {
       const r = await this.database.query(
         `SELECT occurred_at, action, actor, detail FROM audit_events
           WHERE (target_type = 'document' AND target_id = $1
-                 AND action IN ('gmail.send', 'gmail.blocked', 'document.confirmed', 'cloudsign.send', 'cloudsign.draft', 'cloudsign.blocked'))
+                 AND action IN ('gmail.send', 'gmail.review', 'gmail.blocked', 'document.confirmed', 'cloudsign.send', 'cloudsign.draft', 'cloudsign.blocked'))
              OR (action = 'cloudsign.applied' AND (detail->>'documentId')::bigint = $1)
           ORDER BY occurred_at, id`, [documentId]);
       const events: SendEvent[] = r.rows.map((e: Record<string, any>) => ({
@@ -73,6 +73,8 @@ export class DocumentSendService {
 
       const last = (action: string) => [...events].reverse().find((e) => e.action === action) ?? null;
       const mail = last("gmail.send");
+      // 社内確認として担当者に送ったもの（gmail.review）。相手には送っていないので段は進めない。
+      const review = last("gmail.review");
       const confirmed = last("document.confirmed");
       const sign = last("cloudsign.send");
       const drafted = last("cloudsign.draft");
@@ -87,7 +89,9 @@ export class DocumentSendService {
         { key: "mail", name: "内容確認のメール", done: mail !== null, at: mail?.at ?? null, optional: true,
           detail: mail
             ? `${String(mail.detail.recipient ?? "")} へ送付（${mail.actor}）`
-            : "任意。飛ばして CloudSign へ行ける" },
+            : review
+              ? `社内確認で ${String(review.detail.recipient ?? "")} へ送付済み（${review.actor}）。相手先にはまだ送っていない`
+              : "任意。飛ばして CloudSign へ行ける" },
         { key: "confirmed", name: "相手の確認", done: confirmed !== null, at: confirmed?.at ?? null, optional: true,
           detail: confirmed
             ? `${String(confirmed.detail.via ?? "")}で確認をもらった${confirmed.detail.note ? `：${String(confirmed.detail.note)}` : ""}`

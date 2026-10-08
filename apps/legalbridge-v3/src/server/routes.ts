@@ -4556,7 +4556,10 @@ export function createRoutes(database: Transactable) {
     cc: z.array(z.string().trim().email()).max(20).default([]),
     subject: z.string().trim().max(300).optional(),
     body: z.string().trim().min(1).max(20000),
-    attachPdf: z.boolean().default(true)
+    attachPdf: z.boolean().default(true),
+    // 社内確認として送る（担当者に送って中身を見てもらう）。相手先へは送っていない扱いで、
+    // 未送付の一覧・支払文書処理の「送る」は進めない。記録は文書ごとの gmail.review。
+    internal: z.boolean().default(false)
   });
   router.post("/documents/:id/send",
     requireRole("admin", "legal"), requireWritable,
@@ -4566,6 +4569,14 @@ export function createRoutes(database: Transactable) {
       const { document, attachment } = await pdfOf(id);
       const subject = input.subject
         ?? `${document.documentNo ?? ""} ${document.templateLabel ?? "文書"} のご確認`.trim();
+      if (input.internal) {
+        const who = actor(res);
+        const outcome = await sendForReview([id], {
+          recipient: input.to.join(", "), cc: input.cc, subject, body: input.body,
+          attachment: input.attachPdf ? attachment : null
+        }, who);
+        return res.json({ outcome, communication: null });
+      }
       if (document.matterId) {
         return res.json(await communications.sendEmail(document.matterId, {
           to: input.to, cc: input.cc, subject, body: input.body,
@@ -4628,6 +4639,39 @@ export function createRoutes(database: Transactable) {
     });
   };
 
+  /**
+   * 社内確認として送る（担当者に送って中身を見てもらう）。
+   *
+   * 送信そのものは別の対象（document_review）で記録する。文書の「送信済み」は
+   * target_type = 'document' の gmail.send / cloudsign.send から読むので、これでは進まない
+   * （未送付の一覧に残り、支払文書処理の「送る」も済にならない）。文書ごとには gmail.review を
+   * 残し、送る画面に「社内確認で送付済み」と出す。相手先へ送るのはあとで普通に送る。
+   */
+  const sendForReview = async (
+    ids: number[],
+    request: { recipient: string; cc: string[]; bcc?: string[]; subject: string; body: string;
+               attachment?: { filename: string; mimeType: string; data: Buffer } | null;
+               attachments?: Array<{ filename: string; mimeType: string; data: Buffer }> },
+    who: string
+  ) => {
+    const outcome = await dispatch.dispatch({
+      channel: "gmail", targetType: "document_review", targetId: ids[0], actor: who, request
+    });
+    if (outcome.sent) {
+      await inTransaction(database, async (client) => {
+        for (const id of ids) {
+          await recordAudit(client, {
+            actor: who, action: "gmail.review", targetType: "document", targetId: id,
+            idempotencyKey: `gmail.review:${outcome.externalId ?? "none"}:${id}`,
+            detail: { recipient: request.recipient, cc: request.cc, bcc: request.bcc ?? [], subject: request.subject,
+                      externalId: outcome.externalId ?? null, documentIds: ids, internal: true }
+          });
+        }
+      });
+    }
+    return outcome;
+  };
+
   const sendManySchema = z.object({
     documentIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
     to: z.array(z.string().trim().email()).min(1).max(20),
@@ -4635,7 +4679,9 @@ export function createRoutes(database: Transactable) {
     bcc: z.array(z.string().trim().email()).max(20).default([]),
     subject: z.string().trim().max(300).optional(),
     body: z.string().trim().min(1).max(20000),
-    attachPdf: z.boolean().default(true)
+    attachPdf: z.boolean().default(true),
+    // 社内確認として送る（相手先へは送っていない扱い）。sendForReview を見よ。
+    internal: z.boolean().default(false)
   });
   router.post("/documents/send-many",
     requireRole("admin", "legal"), requireWritable,
@@ -4648,6 +4694,12 @@ export function createRoutes(database: Transactable) {
       const subject = input.subject ?? `${numbers.join("・")} のご確認`;
       const attachments = input.attachPdf ? loaded.map((x) => x.attachment) : [];
       const matterId = loaded.find((x) => x.document.matterId)?.document.matterId ?? null;
+      if (input.internal) {
+        const outcome = await sendForReview(ids, {
+          recipient: input.to.join(", "), cc: input.cc, bcc: input.bcc, subject, body: input.body, attachments
+        }, who);
+        return res.json({ outcome, documentIds: ids, documentNos: numbers, internal: true });
+      }
 
       const outcome = await dispatch.dispatch({
         // 束そのものへの記録。文書ごとの「送信済み」は markSent が残す。

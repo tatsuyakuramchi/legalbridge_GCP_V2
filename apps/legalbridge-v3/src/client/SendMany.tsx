@@ -63,6 +63,8 @@ export function SendMany(
     ? `${numbers.join("・")} をお送りします。内容をご確認のうえ、ご署名をお願いいたします。`
     : `${numbers.join("・")} をお送りします。内容をご確認のうえ、問題なければご返信ください。`);
   const [attachPdf, setAttachPdf] = useState(true);
+  /** 社内確認として送る（担当者に送って中身を見てもらう。相手先へは送っていない扱いで未送付に残る）。 */
+  const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -123,7 +125,7 @@ export function SendMany(
         ? await api.post<{ outcome: Outcome }>("/documents/send-many", {
             documentIds: documents.map((d) => d.id),
             to: mail.to.map((p) => p.email), cc: mail.cc.map((p) => p.email),
-            bcc: mail.bcc.map((p) => p.email), subject, body, attachPdf
+            bcc: mail.bcc.map((p) => p.email), subject, body, attachPdf, internal
           })
         : await api.post<{ outcome: Outcome }>("/documents/sign-many", {
             documentIds: documents.map((d) => d.id),
@@ -197,6 +199,19 @@ export function SendMany(
             <input type="checkbox" checked={attachPdf}
                    onChange={(e) => setAttachPdf(e.target.checked)} />
             <span>PDF を添える（{documents.length} 枚）</span>
+          </label>
+        )}
+        {way === "mail" && (
+          <label className="row" style={{ alignItems: "flex-start" }}>
+            <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+            <span>
+              社内確認として送る（相手先にはまだ送っていない扱い）
+              <div className="faint" style={{ fontSize: "0.85em" }}>
+                宛先を当社の担当者に替えてください。送ったあとも未送付の一覧に残り、支払文書処理の「送る」も進みません。
+                担当者の確認が済んだら、あらためて相手先へ送ります
+              </div>
+              {internal && <div className="warn" style={{ fontSize: "0.85em" }}>To・Cc・Bcc に相手先の連絡先が残っていないか確かめてください</div>}
+            </span>
           </label>
         )}
         {way === "cloudsign" && (
