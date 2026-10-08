@@ -1224,7 +1224,9 @@ export function createRoutes(database: Transactable) {
   const combinedSchema = accountingSchema.extend({
     format: z.enum(["xlsx", "zip"]).optional().default("zip"),
     layout: z.enum(["sheets", "one"]).optional().default("sheets"),
-    withPdf: z.enum(["1", "0"]).optional().default("1")
+    withPdf: z.enum(["1", "0"]).optional().default("1"),
+    // 支払先ごとに 1 行、支払内容を 1 組にまとめる（作品ごとの組を並べない）。mergeByPayee を見よ。
+    merge: z.enum(["1", "0"]).optional().default("0")
   });
   router.get("/exports/accounting/combined", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
@@ -1238,10 +1240,10 @@ export function createRoutes(database: Transactable) {
     if (query.format === "xlsx") {
       res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.setHeader("content-disposition", disposition(`経理提出用_${query.from}_${query.to}.xlsx`));
-      return res.send(buildXlsx(combinedAccountingSheets(rows, query.layout)));
+      return res.send(buildXlsx(combinedAccountingSheets(rows, query.layout, { merge: query.merge === "1" })));
     }
     const bundle = await buildAccountingBundle(rows, { pdf: async (id) => await pdfs.ensure(id) },
-      { withPdf: query.withPdf !== "0", stem: `経理提出用_${query.from}_${query.to}` });
+      { withPdf: query.withPdf !== "0", stem: `経理提出用_${query.from}_${query.to}`, merge: query.merge === "1" });
     res.setHeader("content-type", "application/zip");
     res.setHeader("content-disposition", disposition(bundle.name));
     res.setHeader("x-pdf-failures", String(bundle.missing.length));

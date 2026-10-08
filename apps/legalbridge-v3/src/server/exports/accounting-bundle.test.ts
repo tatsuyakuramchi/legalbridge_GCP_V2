@@ -61,3 +61,42 @@ test("全部まとめて 1 つの xlsx：種別 × 個人／法人ごとのシ�
   assert.equal(one[0].rows.length, 1 + 4, "見出し 1 行 ＋ 4 件");
   assert.ok(sheets.every((s) => s.name.length <= 31), "Excel のシート名は 31 文字まで");
 });
+
+test("支払先ごとにまとめる：同じ支払先の支払を 1 行に足し、支払内容は 1 組（作品数と合計）。PDF は元の書類ごとに全部", async () => {
+  const { mergeByPayee, V1_ACCOUNTING_HEADERS } = await import("./accounting.js");
+  const { combinedAccountingSheets } = await import("./accounting-bundle.js");
+  const slot = (content: string, amount: number) => ({ content, unitPrice: "" as const, quantity: "" as const, amount, deliveryDate: "2026-06-30" });
+  const empty = { content: "", unitPrice: "" as const, quantity: "" as const, amount: "" as const, deliveryDate: "" };
+  const nine = Array.from({ length: 9 }, (_, i) => slot(`作品${i + 1}`, 1000));
+  const wakiya = (over: Partial<AccountingRow>) => row({
+    vendorCode: "V-1", vendorName: "脇屋彰太", invoiceRegistration: "", subtotal: 0, consumptionTax: 0,
+    withholdingTax: 0, afterTax: 0, netTransfer: 0, reimbursement: 0, ...over
+  });
+  const rows = [
+    wakiya({ paymentId: 1, documentId: 31, documentNo: "ARC-ROY-2026-1031", title: "キズナバレット 利用許諾料のご報告",
+             slots: nine.slice(0, 8), moreSlots: [[nine[8], ...Array(7).fill(empty)]],
+             subtotal: 9000, consumptionTax: 900, withholdingTax: 918, afterTax: 8982, netTransfer: 8982 }),
+    wakiya({ paymentId: 2, documentId: 28, documentNo: "ARC-ROY-2026-1028", title: "プリンセスウイング 利用許諾料のご報告",
+             slots: [slot("プリンセスウイング", 2000), ...Array(7).fill(empty)],
+             subtotal: 2000, consumptionTax: 200, withholdingTax: 204, afterTax: 1996, netTransfer: 1996 }),
+    row({ paymentId: 3, vendorCode: "V-2", vendorName: "伊藤圭亮", documentId: 21, slots: [slot("光砕のリヴァルチャー", 500), ...Array(7).fill(empty)],
+          subtotal: 500, consumptionTax: 50, withholdingTax: 0, afterTax: 550, netTransfer: 550 })
+  ];
+  const merged = mergeByPayee(rows);
+  assert.equal(merged.length, 2, "脇屋彰太の 2 件は 1 行");
+  const w = merged.find((r) => r.vendorName === "脇屋彰太")!;
+  assert.deepEqual([w.slots[0].content, w.slots[0].amount, w.slots.length, w.moreSlots],
+                   ["利用許諾料（10作品分）", 11000, 8, undefined]);
+  assert.ok(w.slots.slice(1).every((s) => !s.content && s.amount === ""), "2 組目以降は空");
+  assert.deepEqual([w.subtotal, w.consumptionTax, w.withholdingTax, w.netTransfer], [11000, 1100, 1122, 10978]);
+  assert.equal(w.title, "キズナバレット 利用許諾料のご報告 ほか1件");
+
+  const sheet = combinedAccountingSheets(rows, "sheets", { merge: true })[0];
+  assert.equal(sheet.rows.length, 1 + 2, "続きの行が無く、支払先ごとに 1 行");
+  assert.equal(sheet.rows[0].length, V1_ACCOUNTING_HEADERS.length, "52 列の形は変えない");
+
+  const asked: number[] = [];
+  const bundle = await buildAccountingBundle(rows, { pdf: async (id) => { asked.push(id); return new Uint8Array([1]); } }, { merge: true });
+  assert.deepEqual(asked, [31, 28, 21], "PDF は元の書類ごとに全部");
+  assert.equal(bundle.files.filter((f) => f.endsWith(".xlsx")).length, 1);
+});

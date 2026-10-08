@@ -46,6 +46,8 @@ export function AccountingExport() {
   const [to, setTo] = useState(iso(monthEnd));
   const [basis, setBasis] = useState<"due" | "paid">("due");
   const [includeExported, setIncludeExported] = useState(false);
+  /** 全部まとめての xlsx を、支払先ごとに 1 行・支払内容 1 組にする（作品ごとの組を並べない）。 */
+  const [merge, setMerge] = useState(true);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
@@ -141,15 +143,19 @@ export function AccountingExport() {
           {result && result.count > 0 && (
             <div className="row" style={{ gap: 6, marginTop: 9, flexWrap: "wrap", alignItems: "center" }}>
               <strong>全部まとめて</strong>
-              <a className="btn primary" href={`/api/v3/exports/accounting/combined?${query()}&format=zip`}
+              <label className="row" style={{ gap: 4 }} title="作品ごとの支払内容の組を並べず、支払先ごとに 1 行・支払内容 1 列（例「利用許諾料（12作品分）」）にまとめる">
+                <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} />
+                <span>支払先ごとに 1 行（支払内容を 1 列にまとめる）</span>
+              </label>
+              <a className="btn primary" href={`/api/v3/exports/accounting/combined?${query()}&format=zip&merge=${merge ? 1 : 0}`}
                  title="V1 の xlsx（種別 × 個人／法人 × 支払日）と、全部の PDF を 1 つの zip に">
                 ↓ 1 つの zip（xlsx ＋ 全部の PDF）
               </a>
-              <a className="btn" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=sheets`}
+              <a className="btn" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=sheets&merge=${merge ? 1 : 0}`}
                  title="1 つの xlsx。種別 × 個人／法人ごとにシートを分ける">
                 ↓ xlsx 1 ファイル（シート分け）
               </a>
-              <a className="btn ghost" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=one`}
+              <a className="btn ghost" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=one&merge=${merge ? 1 : 0}`}
                  title="1 つの xlsx の 1 シートに全部（種別 → 個人／法人 → 支払日の順）">
                 ↓ xlsx 1 シートに全部
               </a>

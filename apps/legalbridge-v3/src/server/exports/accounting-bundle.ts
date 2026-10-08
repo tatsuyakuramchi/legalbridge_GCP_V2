@@ -1,6 +1,6 @@
 import { buildZip, type ZipEntry } from "../core/zip.js";
 import {
-  ACCOUNTING_CATEGORIES, ACCOUNTING_ENTITIES, V1_ACCOUNTING_HEADERS,
+  ACCOUNTING_CATEGORIES, ACCOUNTING_ENTITIES, V1_ACCOUNTING_HEADERS, mergeByPayee,
   sheetRows, v1AccountingCells, v1FileStem, v1SheetName,
   type AccountingRow
 } from "./accounting.js";
@@ -53,8 +53,10 @@ export function v1Groups(rows: AccountingRow[]): AccountingRow[][] {
  *   sheets … 種別 × 個人／法人 ごとに 1 シート（支払日が 2 つ以上あればシート名に日付）
  *   one    … 1 シートに全部（種別 → 個人／法人 → 支払日 の順）
  */
-export function combinedAccountingSheets(rows: AccountingRow[], layout: "sheets" | "one" = "sheets"): XlsxSheet[] {
-  const groups = v1Groups(rows);
+export function combinedAccountingSheets(
+  rows: AccountingRow[], layout: "sheets" | "one" = "sheets", options: { merge?: boolean } = {}
+): XlsxSheet[] {
+  const groups = v1Groups(options.merge ? mergeByPayee(rows) : rows);
   if (layout === "one") {
     return [{ name: "経理提出用", rows: [V1_ACCOUNTING_HEADERS, ...groups.flatMap((g) => sheetRows(g).map(v1AccountingCells))] }];
   }
@@ -73,12 +75,13 @@ export function combinedAccountingSheets(rows: AccountingRow[], layout: "sheets"
 
 export async function buildAccountingBundle(
   rows: AccountingRow[], deps: BundleDeps,
-  options: { withPdf?: boolean; stem?: string } = {}
+  options: { withPdf?: boolean; stem?: string; merge?: boolean } = {}
 ): Promise<AccountingBundle> {
   const entries: ZipEntry[] = [];
   const files: string[] = [];
 
-  for (const list of v1Groups(rows)) {
+  // 支払先ごとにまとめるのは xlsx の行だけ。PDF は元の支払（書類）ごとに全部入れる。
+  for (const list of v1Groups(options.merge ? mergeByPayee(rows) : rows)) {
     const head = list[0]!;
     const name = `${v1FileStem(head.category, head.entity, head.paymentDate)}.xlsx`;
     entries.push({

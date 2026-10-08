@@ -165,6 +165,8 @@ UNIQUE INDEX statements_document_condition_payee_uq (document_id, condition_id, 
 
 経理提出用の帳票の「全部まとめて」（`GET /exports/accounting/combined`）：期間の支払を 1 つにする。束（支払日 × 社内担当 × 通貨）と V1 のファイル（種別 × 個人／法人 × 支払日）で二重に分かれるのを避ける。`format=zip` は V1 の xlsx と全部の PDF を 1 つの zip に、`format=xlsx` は 1 つの xlsx（`layout=sheets` で種別 × 個人／法人ごとのシート、`layout=one` で 1 シートに全部）。「全部を出力済みにする」で期間の支払をまとめて出力済みにする。
 
+支払先ごとに 1 行（`merge=1`。画面の「支払先ごとに 1 行」、既定で印あり）：計算書は作品ごとに支払内容の組を並べ、作品が多い人は 8 組を超えて続きの行に流れて読みにくかった。同じ種別・個人／法人・支払日・支払先の支払を 1 行に足し、支払内容は 1 組（「利用許諾料（12作品分）」・金額は組の合計）にする（`exports/accounting.ts` の `mergeByPayee`）。金額の欄は足す。52 列の形は変えない。zip の PDF は元の書類ごとに全部入れる。
+
 ### 5.7 移行前に紙で結んだ契約を外部番号のまま登録する
 
 運用 › 取込 › CSV（種類「既存契約」、`imports/existing-contracts.ts`）。DucQrews のように、システムを通さずに番号を付けて結んだ契約（基本契約 ATT-2026-00069、作品ごとの条件書 ARC-PUBT-2026-0012〜0031）を、番号を変えずに作品の条件に繋ぐ。計算書の「契約番号」（`royalty/in-contract.ts`）と 運用 › 契約なし の判定はこの繋がりを見るので、繋がないと条件書を二重に発行してしまう。
