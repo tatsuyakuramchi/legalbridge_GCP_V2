@@ -18,7 +18,7 @@ interface Group {
   store: string | null;
   listPrice: number; downloads: number; gross: number; stores: string[]; lines: number;
   status: Status; message: string | null;
-  work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
+  work: { id: number; title: string; workCode: string | null; via: "cid" | "title" | "partial" } | null;
   condition: { id: number; conditionNo: string | null; ratePpm: number | null; counterparty: string | null; shares: string[] } | null;
   round: { id: number; label: string | null } | null;
   royalty: number | null; royaltyInFile: number | null;
@@ -139,7 +139,10 @@ export function EbookSalesImport() {
                       <td className="faint">{g.store ?? "—"}</td>
                       <td className="code faint">{g.cid ?? "—"}</td>
                       <td>
-                        {g.work ? <>{g.work.title}{g.work.via === "title" && <span className="faint">（題名で当てた）</span>}</> : <span className="faint">—</span>}
+                        {g.work ? <>{g.work.title}
+                          {g.work.via === "title" && <span className="faint">（題名で当てた）</span>}
+                          {g.work.via === "partial" && <span className="tag" title="報告の題名を含む作品名に当てました。登録すると CID を覚えます">題名の一部で当てた</span>}
+                        </> : <span className="faint">—</span>}
                         {g.condition && (
                           <div className="faint" style={{ fontSize: "0.85em" }}>
                             {g.condition.conditionNo ?? `#${g.condition.id}`} · {g.condition.counterparty ?? ""} · {g.condition.ratePpm === null ? "" : `${g.condition.ratePpm / 10000}%`}

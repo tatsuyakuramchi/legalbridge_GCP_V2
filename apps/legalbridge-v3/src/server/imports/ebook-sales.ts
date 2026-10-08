@@ -18,6 +18,9 @@ import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xls
  *                 巻数が無い（1 巻だけ）ならタイトルが一致する作品。作品は作品名 × 巻数で
  *                 1 件（原作は 1 つで、巻は別の作品）。巻ごとの作品が無ければ当てない
  *                 （シリーズ名の作品に黙って載せない）。
+ *                 完全一致で決まらなければ、報告の題名を含む作品名（事業部の報告は題名を
+ *                 省く：「ソング・オブ・ホープ」→「ブレイド・オブ・アルカナ … サプリメント
+ *                 ソング・オブ・ホープ」）で、巻数も合うものが 1 件ならそれ。2 件以上は候補。
  *                 作品 → 有効な電子出版の料率条件。無ければ「印税なし」か「条件なし」。
  *   3. まとめる … 条件 × 報告月 × 書店 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
  *                 事業部の Excel の行と同じ単位。印税は行ごとに切り捨て（rounding.ts の
@@ -241,7 +244,8 @@ export interface SalesGroup {
   lines: number;
   status: GroupStatus;
   message: string | null;
-  work: { id: number; title: string; workCode: string | null; via: "cid" | "title" } | null;
+  /** via … cid: 覚えた CID、title: 題名の完全一致、partial: 題名の部分一致（登録の作品名が報告の題名を含む）。 */
+  work: { id: number; title: string; workCode: string | null; via: "cid" | "title" | "partial" } | null;
   condition: { id: number; conditionNo: string | null; ratePpm: number | null;
                counterparty: string | null; shares: string[] } | null;
   /** 実績を付ける回（時限式の締め）。報告月の末日を集計期間に含む回。無ければ浮いた実績になる。 */
@@ -288,6 +292,22 @@ export function storeOfNote(note: string | null | undefined): string | null {
 /** 巻数が無いか 1 巻（1 冊だけの本も巻数 1 で来る）。 */
 const isFirstOrNoVolume = (volume: string | null) => !volume || volume === "1";
 
+/**
+ * 登録の作品名（正規化済み）が報告の題名（正規化済み）を含み、巻数も合うか。
+ * 題名の後ろに残る部分の末尾の数字を巻数と見る（「… 3」「… 第3巻」「…（3）」「… vol.3」）。
+ * 残りに数字が無ければ巻なし＝1 巻。報告に巻数が無いか 1 なら、巻なしか 1 巻の作品だけ。
+ */
+export function titleContains(workTitle: string, key: string, volume: string | null): boolean {
+  if (!key) return false;
+  const at = workTitle.indexOf(key);
+  if (at < 0) return false;
+  const rest = workTitle.slice(at + key.length);
+  const m = rest.match(/(?:第|（|vol\.)?(\d+)(?:巻|）)?$/);
+  const vol = m ? String(Number(m[1])) : null;
+  const want = isFirstOrNoVolume(volume) ? "1" : String(Number(volume));
+  return (vol ?? "1") === want;
+}
+
 export class EbookSalesImportService {
   constructor(private readonly database: Transactable, private readonly events: EventWriter) {}
 
@@ -326,7 +346,7 @@ export class EbookSalesImportService {
           written += 1;
           results.push({ key: g.key, eventId: r.id, status: "ok", message: null });
           // CID をタイトルで当てたなら、次からは CID で当たるように覚える。
-          if (g.cid && g.work && g.work.via === "title") {
+          if (g.cid && g.work && g.work.via !== "cid") {
             await this.rememberCode(this.database, g.cid, g.work.id, g.title, actor);
           }
         } catch (error) {
@@ -448,6 +468,26 @@ export class EbookSalesImportService {
         g.message = `「${g.title} ${g.volume}」の作品がありません（「${g.title}」はあります）。巻ごとの作品を作ってから当ててください`;
         g.candidates = plain;
       }
+    }
+
+    // 題名の部分一致。事業部の報告は題名を省くことがある（「ソング・オブ・ホープ」→ 登録は
+    // 「ブレイド・オブ・アルカナ ―聖痕英雄譚RPG― サプリメント ソング・オブ・ホープ」）。
+    // 完全一致で決まらず候補も無い行だけ。登録の作品名が報告の題名を含み、巻数も合う作品が
+    // 1 件ならそれに当てる（登録時に CID を覚えるので次からは CID で当たる）。2 件以上は候補。
+    const partialGroups = list.filter((g) => !g.work && !g.message && normalizeTitle(g.title).length >= 2);
+    const partialKeys = [...new Set(partialGroups.map((g) => normalizeTitle(g.title)))];
+    const partialRows = partialKeys.length ? (await client.query(
+      `SELECT id, title, work_code FROM works
+        WHERE status <> 'archived'
+          AND EXISTS (SELECT 1 FROM unnest($1::text[]) k
+                       WHERE strpos(regexp_replace(lower(title), '[[:space:]　]', '', 'g'), k) > 0)`,
+      [partialKeys])).rows as Array<Record<string, any>> : [];
+    const partialWorks = partialRows.map((r) => ({ id: Number(r.id), title: String(r.title), workCode: str(r.work_code) }));
+    for (const g of partialGroups) {
+      const key = normalizeTitle(g.title);
+      const hits = partialWorks.filter((w) => titleContains(normalizeTitle(w.title), key, g.volume));
+      if (hits.length === 1) g.work = { ...hits[0], via: "partial" };
+      else if (hits.length > 1) { g.message = `題名を含む作品が ${hits.length} 件あります。当て先を選んでください`; g.candidates = hits; }
     }
 
     // 作品 → 条件。電子出版（pub_digital）の料率条件が本命。他の IN 条件は「印税なし」の判定に使う。
