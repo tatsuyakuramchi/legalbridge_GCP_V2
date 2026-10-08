@@ -1030,7 +1030,9 @@ export function createRoutes(database: Transactable) {
     assigneeStaffId: z.coerce.number().int().positive().nullable().optional(),
     dueOn: intakeDate,
     // 依頼者のメール（元の依頼に持つ）。文書のメールの下書きの宛先になる。
-    requesterEmail: z.string().trim().max(200).nullable().optional()
+    requesterEmail: z.string().trim().max(200).nullable().optional(),
+    // 作業のメモ。途中経過・相手とのやり取りの覚え。
+    memo: z.string().max(8000).nullable().optional()
   });
   router.patch("/tasks/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

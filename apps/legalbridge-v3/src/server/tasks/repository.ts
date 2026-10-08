@@ -26,6 +26,8 @@ export interface DailyTaskRow {
   overdue: boolean;
   doneAt: string | null;
   createdAt: string;
+  /** 作業のメモ（途中経過・相手とのやり取りの覚え）。tasks.description。 */
+  memo: string | null;
   request: {
     id: number; requestNo: string | null; source: string; targetDocNo: string | null;
     counterpartyName: string | null; requesterName: string | null; hasUnseenUpdate: boolean;
@@ -41,6 +43,7 @@ export interface DailyCounts {
 
 const SELECT = `
   SELECT t.id, t.title, t.status, t.purpose, t.assignee_staff_id, t.due_at, t.done_at, t.created_at,
+         t.description AS memo,
          st.name AS assignee_name,
          r.id AS request_id, r.request_no, r.source, r.source_payload, r.requester_name, r.has_unseen_update,
          r.created_at AS request_created_at, r.handled_at,
@@ -127,6 +130,7 @@ function toDaily(x: Record<string, any>): DailyTaskRow {
     assigneeName: x.assignee_name ?? null,
     dueOn: taskDueOn(x.due_at), overdue: Boolean(x.overdue) && x.status !== "done",
     doneAt: iso(x.done_at), createdAt: iso(x.created_at) ?? "",
+    memo: x.memo ? String(x.memo) : null,
     request: {
       id: Number(x.request_id), requestNo: x.request_no ?? null, source: String(x.source),
       targetDocNo: payload.targetDocNo ? String(payload.targetDocNo) : null,

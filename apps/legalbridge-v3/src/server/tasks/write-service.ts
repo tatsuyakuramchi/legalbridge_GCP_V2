@@ -19,6 +19,8 @@ export const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "blocked", "done"];
 export interface TaskPatch {
   status?: TaskStatus;
   title?: string | null;
+  /** 作業のメモ（tasks.description）。null で消す。undefined なら変えない。 */
+  memo?: string | null;
   assigneeStaffId?: number | null;
   /** 期日（日本の日付）。null で消す。undefined なら変えない。 */
   dueOn?: string | null;
@@ -74,16 +76,19 @@ export class TaskWriteService {
                   due_at = CASE WHEN $6::boolean THEN ($7::date::timestamp AT TIME ZONE 'Asia/Tokyo') ELSE due_at END,
                   done_at = CASE WHEN $2 = 'done' THEN COALESCE(done_at, now()) ELSE NULL END,
                   done_by = CASE WHEN $2 = 'done' THEN COALESCE(done_by, $8) ELSE NULL END,
+                  description = CASE WHEN $9::boolean THEN $10::text ELSE description END,
                   updated_at = now()
             WHERE id = $1`,
           [id, status, title ?? null,
            patch.assigneeStaffId !== undefined, patch.assigneeStaffId ?? null,
-           patch.dueOn !== undefined, patch.dueOn ?? null, actor]);
+           patch.dueOn !== undefined, patch.dueOn ?? null, actor,
+           patch.memo !== undefined, patch.memo === undefined ? null : (String(patch.memo ?? "").trim() || null)]);
         await recordAudit(client, {
           actor, action: "task.update", targetType: "task", targetId: id,
           detail: { from: row.status, to: status, matterId: row.matter_id ?? null, requestId: row.request_id ?? null,
                     ...(patch.assigneeStaffId !== undefined ? { assigneeStaffId: patch.assigneeStaffId ?? null } : {}),
                     ...(patch.dueOn !== undefined ? { dueOn: patch.dueOn ?? null } : {}),
+                    ...(patch.memo !== undefined ? { memo: true } : {}),
                     ...(requesterEmail !== undefined ? { requesterEmail } : {}) }
         });
         return { id, status };

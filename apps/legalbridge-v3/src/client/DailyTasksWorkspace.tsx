@@ -43,6 +43,7 @@ interface Task {
   id: number; title: string; status: Status; purpose: string; purposeLabel: string;
   assigneeStaffId: number | null; assigneeName: string | null; dueOn: string | null; overdue: boolean;
   doneAt: string | null; createdAt: string;
+  memo: string | null;
   request: { id: number; requestNo: string | null; source: string; targetDocNo: string | null;
              counterpartyName: string | null; requesterName: string | null; hasUnseenUpdate: boolean };
   progress: Progress | null;
@@ -221,6 +222,7 @@ export function DailyTasksWorkspace(
                     <td>
                       <div>{t.title}</div>
                       <div className="faint code">{t.request.requestNo ?? `#${t.request.id}`}{t.request.targetDocNo ? `　対象 ${t.request.targetDocNo}` : ""}</div>
+                      {t.memo && <div className="faint" title={t.memo}>✎ {t.memo.split("\n")[0].slice(0, 60)}{t.memo.length > 60 ? "…" : ""}</div>}
                       {t.request.hasUnseenUpdate && <span className="tag warn">依頼者から返信あり</span>}
                     </td>
                     <td className="faint md-list-extra">{t.request.counterpartyName ?? "—"}</td>
@@ -328,10 +330,21 @@ function TaskPanel(
   const [dueOn, setDueOn] = useState(t.dueOn ?? "");
   const [title, setTitle] = useState(t.title);
   const [requesterEmail, setRequesterEmail] = useState(r.requesterEmail ?? "");
+  /** メモ。保存した値と違うあいだだけ「保存」を出す。 */
+  const [memo, setMemo] = useState(t.memo ?? "");
+  const [memoSavedAt, setMemoSavedAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     setAssignee(t.assigneeStaffId ?? ""); setDueOn(t.dueOn ?? ""); setTitle(t.title); setRequesterEmail(r.requesterEmail ?? "");
   }, [t.id, t.assigneeStaffId, t.dueOn, t.title, r.requesterEmail]);
+  useEffect(() => { setMemo(t.memo ?? ""); setMemoSavedAt(null); }, [t.id, t.memo]);
+  const memoDirty = memo.trim() !== (t.memo ?? "").trim();
+  /**
+   * 文書の作り方の入口。作業の種類で既定を変える：定型文書はひな形、その他は外で作った文書
+   * （相手方の契約書・NDA・覚書など）を登録して送る。以前は業務委託とライセンスの入口が
+   * 主役に見え、それ以外の文書をどこから登録して送るのか分からなかった。
+   */
+  const [docWay, setDocWay] = useState<"template" | "external" | "send" | null>(null);
   const dirty = assignee !== (t.assigneeStaffId ?? "") || dueOn !== (t.dueOn ?? "")
     || title.trim() !== t.title || requesterEmail.trim() !== (r.requesterEmail ?? "");
 
@@ -363,6 +376,28 @@ function TaskPanel(
           {t.request.targetDocNo ? <>　対象 <span className="code">{t.request.targetDocNo}</span></> : null}
         </div>
         {r.detail && <pre className="locked" style={{ whiteSpace: "pre-wrap", margin: 0 }}>{r.detail}</pre>}
+
+        <div className="stack" style={{ gap: 4 }}>
+          <b>メモ<span className="faint" style={{ marginLeft: 8 }}>途中経過・相手とのやり取り・次にやることの覚え。一覧にも先頭の行が出ます</span></b>
+          <textarea rows={memo.split("\n").length > 3 ? Math.min(12, memo.split("\n").length + 1) : 3}
+                    value={memo} disabled={!canWrite || busy}
+                    placeholder="例：10/8 相手に NDA の文案を送付。10/15 までに返事をもらう"
+                    onChange={(e) => setMemo(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && memoDirty && canWrite) {
+                        void call(() => patch({ memo: memo.trim() || null }), "メモを保存しました").then(() => setMemoSavedAt(new Date().toLocaleTimeString("ja-JP")));
+                      }
+                    }} />
+          <div className="row" style={{ gap: 8 }}>
+            {canWrite && memoDirty && (
+              <button className="btn btn-sm primary" disabled={busy}
+                      onClick={() => void call(() => patch({ memo: memo.trim() || null }), "メモを保存しました").then(() => setMemoSavedAt(new Date().toLocaleTimeString("ja-JP")))}>
+                メモを保存
+              </button>
+            )}
+            <span className="faint">{memoDirty ? "保存していないメモがあります（Ctrl+Enter でも保存）" : memoSavedAt ? `保存しました（${memoSavedAt}）` : t.memo ? "保存済み" : ""}</span>
+          </div>
+        </div>
 
         <div className="stack" style={{ gap: 4 }}>
           <b>状態</b>
@@ -512,7 +547,18 @@ function TaskPanel(
                   <button className="btn btn-sm" onClick={() => go({ kind: "work", workId })}>作品の画面を開く</button>
                 </>} />
               )}
-              {(t.purpose === "template" || t.purpose === "other") && (<>
+              {(t.purpose === "template" || t.purpose === "other") && (() => {
+                const way = docWay ?? (t.purpose === "template" ? "template" : "external");
+                return (<>
+                <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  <span className="faint">どの文書か：</span>
+                  {([["external", "外で作った文書を登録して送る（相手方の契約書・NDA・覚書・Word で作った文書）"],
+                     ["template", "当社のひな形で作る（発注書・条件書・基本契約書・NDA）"],
+                     ["send", "作成済みの文書を送るだけ"]] as const).map(([v, text]) => (
+                    <button key={v} type="button" className="chip" aria-pressed={way === v} onClick={() => setDocWay(v)}>{text}</button>
+                  ))}
+                </div>
+                {way === "template" && (<>
                 {/* 条件から作る文書は、作品があるかで入口が変わる。作品があれば作品の画面
                     （許諾条件も委託の条件も作品にぶら下がる）、無ければ条件明細の画面。 */}
                 <Route title="作品がある ライセンス・業務委託（利用許諾条件書・基本契約書・発注書）" steps={[
@@ -536,29 +582,61 @@ function TaskPanel(
                 <Route title="条件の無い定型文書（当社ひな形の NDA など）" steps={["文書の画面でひな形を選んで作る → 決定 → 送る"]} buttons={
                   <button className={`btn btn-sm${t.purpose === "template" ? " primary" : ""}`} onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
                 } />
-              </>)}
-              {/* 作らずに送るだけ（CloudSign・メール）と、外で作った文書。できている文書を探して
-                  繋いで送るか、外部の文書を登録（番号を先に取る）して送る。 */}
-              <Route title="送るだけ・外で作った文書（CloudSign で署名依頼・メール送付）" steps={[
-                "作成済みの文書を送るなら、下で探して繋ぐ → 開いて「送る」（CloudSign の署名者・CC を選んで下書きを作る）",
-                "相手方から届いた文書は「外で作った文書を登録」→ 開いて「送る」",
-                "法務が Word などで作る文書は「番号を先に取る」→ 番号を本文に書き込む → その文書の「ファイルを付ける」→「送る」"
-              ]} buttons={<>
-                <div style={{ flex: 1, minWidth: 320 }}>
-                  <SearchSelect value="" search={searchDocuments} disabled={busy}
-                                placeholder="作成済みの文書を探して送る：文書番号・件名・取引先名・条件明細"
-                                onChange={(v) => {
-                                  if (!v) return;
-                                  const id = Number(v);
-                                  void call(async () => {
-                                    await post("documents", { documentId: id });
-                                    onOpenDocument?.(id);
-                                  }, "文書を繋ぎました。「送る」から送ってください");
-                                }} />
-                </div>
-                <DocumentImport requestId={r.id} onDone={() => onChanged("文書を登録しました")}
-                                onOpenDocument={onOpenDocument} onRegistered={onOpenDocument} />
-              </>} />
+                </>)}
+                {way === "external" && (
+                  /* 外で作った文書。登録（ファイル付き）すると決定済みになり、そのまま「送る」で
+                     CloudSign の署名依頼かメール送付へ進める。法務が Word で作る文書は番号を先に取る。 */
+                  <Route title="外で作った文書を登録して送る（CloudSign で署名依頼・メール送付）" steps={[
+                    "相手方から届いた契約書・NDA・覚書などは、下の「外で作った文書を登録」でファイルを付けて登録する（種別は選べる：秘密保持契約書・覚書・念書・通知書・利用許諾契約書・その他 …）",
+                    "法務が Word などで作る文書は「番号を先に取る」→ 番号を本文に書き込む → その文書の「ファイルを付ける」",
+                    "登録できた文書がそのまま開くので「送る」→ CloudSign で署名依頼（署名者・CC を選んで下書き）か、メールで送付"
+                  ]} buttons={
+                    <DocumentImport requestId={r.id} initialMode="import" onDone={() => onChanged("文書を登録しました")}
+                                    onOpenDocument={onOpenDocument} onRegistered={onOpenDocument} />
+                  } />
+                )}
+                {way === "send" && (
+                  <Route title="作成済みの文書を送る（CloudSign で署名依頼・メール送付）" steps={[
+                    "下で探して繋ぐ → 文書が開くので「送る」（CloudSign の署名者・CC を選んで下書きを作る、またはメール）"
+                  ]} buttons={
+                    <div style={{ flex: 1, minWidth: 320 }}>
+                      <SearchSelect value="" search={searchDocuments} disabled={busy}
+                                    placeholder="作成済みの文書を探して送る：文書番号・件名・取引先名・条件明細"
+                                    onChange={(v) => {
+                                      if (!v) return;
+                                      const id = Number(v);
+                                      void call(async () => {
+                                        await post("documents", { documentId: id });
+                                        onOpenDocument?.(id);
+                                      }, "文書を繋ぎました。「送る」から送ってください");
+                                    }} />
+                    </div>
+                  } />
+                )}
+                </>);
+              })()}
+              {/* 検収書・計算書の作業でも、作成済みの文書を繋いで送る・外で作った文書を登録する道は残す。 */}
+              {(t.purpose === "inspection" || t.purpose === "royalty") && (
+                <Route title="送るだけ・外で作った文書（CloudSign で署名依頼・メール送付）" steps={[
+                  "作成済みの文書を送るなら、下で探して繋ぐ → 開いて「送る」",
+                  "相手方から届いた文書は「外で作った文書を登録」→ 開いて「送る」"
+                ]} buttons={<>
+                  <div style={{ flex: 1, minWidth: 320 }}>
+                    <SearchSelect value="" search={searchDocuments} disabled={busy}
+                                  placeholder="作成済みの文書を探して送る：文書番号・件名・取引先名・条件明細"
+                                  onChange={(v) => {
+                                    if (!v) return;
+                                    const id = Number(v);
+                                    void call(async () => {
+                                      await post("documents", { documentId: id });
+                                      onOpenDocument?.(id);
+                                    }, "文書を繋ぎました。「送る」から送ってください");
+                                  }} />
+                  </div>
+                  <DocumentImport requestId={r.id} onDone={() => onChanged("文書を登録しました")}
+                                  onOpenDocument={onOpenDocument} onRegistered={onOpenDocument} />
+                </>} />
+              )}
               <span className="faint">
                 どの画面で作っても、ここから移って作った文書はこの作業（{r.requestNo ?? `#${r.id}`}）に自動で繋がります
                 （移った先の画面の上に「作業中」の帯が出ます）。自動で入らなかった文書は下の検索で繋げます。
