@@ -273,11 +273,19 @@ function AnnualClosesPanel() {
   const [usage, setUsage] = useState<"pub_digital" | "pub_print">("pub_digital");
   const [from, setFrom] = useState(defaultFrom());
   const [count, setCount] = useState("1");
+  /** yearly: 12 か月ずつ年数ぶん。span: from〜to の 1 回だけ（移行時に浮いた実績を 1 回の支払で一掃する）。 */
+  const [mode, setMode] = useState<"yearly" | "span">("yearly");
+  const [to, setTo] = useState("");
+  const [onlyWithStrays, setOnlyWithStrays] = useState(false);
   const [preview, setPreview] = useState<AnnualPreview | null>(null);
   const [done, setDone] = useState<AnnualPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const body = () => ({ usageType: usage, from, count: Number(count) || 1 });
+  const body = () => ({
+    usageType: usage, from, count: Number(count) || 1,
+    to: mode === "span" ? to || null : null, onlyWithStrays
+  });
+  const reset = () => setPreview(null);
 
   async function tryIt() {
     setBusy(true); setError(null); setDone(null);
@@ -311,20 +319,36 @@ function AnnualClosesPanel() {
                 <option value="pub_print">紙出版</option>
               </select>
             </label>
+            <label className="field"><span>立て方</span>
+              <select value={mode} onChange={(e) => { setMode(e.target.value as "yearly" | "span"); reset(); }}>
+                <option value="yearly">毎年（12 か月ずつ）</option>
+                <option value="span">期間を指定（1 回だけ）</option>
+              </select>
+            </label>
             <label className="field"><span>集計期間の開始</span>
-              <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPreview(null); }} />
+              <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); reset(); }} />
             </label>
-            <label className="field"><span>年数</span>
-              <input type="number" min={1} max={5} value={count} onChange={(e) => { setCount(e.target.value); setPreview(null); }} style={{ width: 70 }} />
+            {mode === "yearly" ? (
+              <label className="field"><span>年数</span>
+                <input type="number" min={1} max={5} value={count} onChange={(e) => { setCount(e.target.value); reset(); }} style={{ width: 70 }} />
+              </label>
+            ) : (
+              <label className="field"><span>集計期間の終わり</span>
+                <input type="date" value={to} onChange={(e) => { setTo(e.target.value); reset(); }} />
+              </label>
+            )}
+            <label className="row" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
+              <input type="checkbox" checked={onlyWithStrays} onChange={(e) => { setOnlyWithStrays(e.target.checked); reset(); }} />
+              浮いている実績のある条件だけ
             </label>
-            <button className="btn btn-sm" disabled={busy} onClick={() => void tryIt()}>試算</button>
+            <button className="btn btn-sm" disabled={busy || (mode === "span" && !to)} onClick={() => void tryIt()}>試算</button>
             {preview && !readOnly && (
               <button className="btn btn-sm primary" disabled={busy || !(preview.adding || preview.attaching)} onClick={() => void run()}>
                 {preview.adding} 本に立てる{preview.attaching ? `・実績 ${preview.attaching} 件を付け直す` : ""}
               </button>
             )}
           </div>
-          <div className="faint">締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません。回より先に取り込んで浮いている売上の実績（「予定が無いのに実績がある」）は、発生日を集計期間に含む回に付け直します</div>
+          <div className="faint">締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません。回より先に取り込んで浮いている売上の実績（「予定が無いのに実績がある」）は、発生日を集計期間に含む回に付け直します。「期間を指定」は移行時に浮いた実績をまとめて 1 回の支払で精算するためのもので、以後は「毎年」で立ててください</div>
           {error && <div className="alert">{error}</div>}
           {done && <div className="notice">{done.written ?? 0} 本の条件に回を立てました（飛ばした条件 {done.skipped}）{done.attached ? `。浮いていた実績 ${done.attached} 件を回に付け直しました` : ""}</div>}
           {preview && (

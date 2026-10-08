@@ -19,6 +19,9 @@ import type { ScheduleLine, ScheduleRow } from "../conditions/schedule-service.j
  *   - 既に同じ期間に回がある条件は飛ばす（重ねて立てない）。既存の回の後ろに足す。
  *   - 置き方は条件の予定明細の入れ替え（ConditionScheduleService.replace）を通す。
  *     実績の付いた回は触らない（replace が守る）。
+ *   - 移行時は、浮いている実績の範囲（例 2025/3〜2026/8）を 1 回にまとめて今回の支払で精算したい。
+ *     `to` を指定すると 12 か月ずつではなく from〜to の 1 回だけを立て、`onlyWithStrays` で
+ *     浮いた実績のある条件だけに絞る（売上の無い作品に回を増やさない）。
  *   - 回より先に売上を取り込んでいると、実績が回に付かず「予定が無いのに実績がある」に
  *     浮く。立てたあと（既にある回も含めて）、浮いている売上の実績を発生日を集計期間に
  *     含む回に付け直す。試算は付け直す件数だけ数える。
@@ -32,8 +35,15 @@ export interface AnnualCloseInput {
   usageType: AnnualUsage;
   /** 集計期間の開始（YYYY-MM-DD。例 2025-07-01）。 */
   from: string;
-  /** 何年ぶん立てるか（1〜5）。 */
+  /** 何年ぶん立てるか（1〜5）。`to` があれば使わない。 */
   count: number;
+  /**
+   * 集計期間の終わり（YYYY-MM-DD）。指定すると 12 か月ずつではなく、from〜to の 1 回だけを立てる
+   * （移行時に、浮いている実績を 1 回の支払でまとめて精算するため）。
+   */
+  to?: string | null;
+  /** 回に付いていない売上の実績がある条件だけに立てる（売上の無い作品に回を増やさない）。 */
+  onlyWithStrays?: boolean;
 }
 
 export interface AnnualCloseTarget {
@@ -77,15 +87,19 @@ export function periodLabel(from: string, to: string): string {
   return fy === ty ? `${fy}年${fm}〜${tm}月` : `${fy}年${fm}月〜${ty}年${tm}月`;
 }
 
-/** 立てる回。既存の回と期間が重なる年は飛ばす。 */
+const validDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(new Date(`${d}T00:00:00Z`).getTime());
+
+/** 立てる回。既存の回と期間が重なる年は飛ばす。`to` があれば from〜to の 1 回だけ。 */
 export function annualLines(
-  input: { from: string; count: number; paymentTerms: string | null; usageType: AnnualUsage },
+  input: { from: string; count: number; to?: string | null; paymentTerms: string | null; usageType: AnnualUsage },
   existing: ScheduleRow[]
 ): ScheduleLine[] {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.from) || Number.isNaN(new Date(`${input.from}T00:00:00Z`).getTime())) {
-    throw new DomainError("VALIDATION", `集計期間の開始が読み取れません：${input.from}`);
+  if (!validDay(input.from)) throw new DomainError("VALIDATION", `集計期間の開始が読み取れません：${input.from}`);
+  if (input.to) {
+    if (!validDay(input.to)) throw new DomainError("VALIDATION", `集計期間の終わりが読み取れません：${input.to}`);
+    if (input.to < input.from) throw new DomainError("VALIDATION", "集計期間の終わりが開始より前です");
   }
-  if (!(input.count >= 1 && input.count <= 5)) throw new DomainError("VALIDATION", "年数は 1〜5 で指定してください");
+  if (!input.to && !(input.count >= 1 && input.count <= 5)) throw new DomainError("VALIDATION", "年数は 1〜5 で指定してください");
   const fallback = input.usageType === "pub_print" ? PUB_PRINT_PAYMENT_TERMS : PUB_DIGITAL_PAYMENT_TERMS;
   const overlaps = (from: string, to: string) => existing.some((row) => {
     const close = row.dueOn ?? row.serviceTo ?? null;
@@ -95,9 +109,11 @@ export function annualLines(
   });
   let seq = existing.reduce((m, l) => Math.max(m, l.seq), 0);
   const out: ScheduleLine[] = [];
-  for (let i = 0; i < input.count; i += 1) {
-    const from = iso(addMonths(input.from, 12 * i));
-    const to = iso(dayBefore(addMonths(input.from, 12 * (i + 1))));
+  const periods: Array<[string, string]> = input.to
+    ? [[input.from, input.to]]
+    : Array.from({ length: input.count }, (_, i) =>
+        [iso(addMonths(input.from, 12 * i)), iso(dayBefore(addMonths(input.from, 12 * (i + 1))))] as [string, string]);
+  for (const [from, to] of periods) {
     if (overlaps(from, to)) continue;
     seq += 1;
     out.push({
@@ -144,7 +160,8 @@ export class AnnualCloseService {
       }
       await recordAudit(this.database, {
         actor, action: "royalty.annual_closes", targetType: "import", targetId: 0,
-        detail: { usageType: input.usageType, from: input.from, count: input.count, attached,
+        detail: { usageType: input.usageType, from: input.from, to: input.to ?? null, count: input.count,
+                  onlyWithStrays: Boolean(input.onlyWithStrays), attached,
                   conditions: preview.targets.filter((t) => t.adding.length).map((t) => t.conditionId) }
       });
       return { ...preview, written, attached };
@@ -175,8 +192,9 @@ export class AnnualCloseService {
     const targets: AnnualCloseTarget[] = [];
     for (const row of r.rows as Array<Record<string, any>>) {
       const conditionId = Number(row.id);
+      if (input.onlyWithStrays && !strays.has(conditionId)) continue;
       const existing = (await this.deps.schedules.list(conditionId)).lines;
-      const adding = annualLines({ from: input.from, count: input.count, paymentTerms: str(row.payment_terms), usageType: input.usageType }, existing);
+      const adding = annualLines({ from: input.from, count: input.count, to: input.to ?? null, paymentTerms: str(row.payment_terms), usageType: input.usageType }, existing);
       const periods = [...existing, ...adding].map((l) => ({ from: dateStr(l.serviceFrom), to: dateStr(l.serviceTo) }))
         .filter((p): p is { from: string; to: string } => Boolean(p.from && p.to));
       const days = strays.get(conditionId) ?? [];

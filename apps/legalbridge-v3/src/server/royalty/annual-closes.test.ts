@@ -32,6 +32,17 @@ test("既に同じ期間の回があれば飛ばし、既存の回の後ろに�
   assert.equal(annualLines({ from: "2025-07-01", count: 1, paymentTerms: null, usageType: "pub_digital" }, closeOnly).length, 0);
 });
 
+test("期間を指定すれば from〜to の 1 回だけ。支払期日は期末から支払条件（10 月末日の次）で", () => {
+  const lines = annualLines({ from: "2025-03-01", count: 1, to: "2026-08-31", paymentTerms: null, usageType: "pub_digital" }, []);
+  assert.equal(lines.length, 1);
+  assert.deepEqual([lines[0].label, lines[0].serviceFrom, lines[0].serviceTo, lines[0].dueOn, lines[0].payOn],
+    ["2025年3月〜2026年8月", "2025-03-01", "2026-08-31", "2026-08-31", "2026-10-31"]);
+  assert.throws(() => annualLines({ from: "2026-09-01", count: 1, to: "2026-08-31", paymentTerms: null, usageType: "pub_digital" }, []), /前/);
+  // 既に重なる回があれば立てない。
+  assert.deepEqual(annualLines({ from: "2025-03-01", count: 1, to: "2026-08-31", paymentTerms: null, usageType: "pub_digital" },
+    [row({ id: 1, serviceFrom: "2025-07-01", serviceTo: "2026-06-30", dueOn: "2026-06-30" })]), []);
+});
+
 test("一括：電子出版の有効な料率条件を拾い、試算は書かず、立てるときは既存の回に足して入れ替える。浮いた売上の実績は期間の合う回に付け直す", async () => {
   const db = new FakeDatabase((text, params) => {
     if (text.includes("c.usage_type = $1")) {
@@ -82,4 +93,29 @@ test("一括：電子出版の有効な料率条件を拾い、試算は書か�
   const updates = db.all("UPDATE condition_events SET schedule_id");
   assert.deepEqual(updates.map((u) => [u.params[0], u.params[1]]), [[5, 100], [6, 60]], "立てた回（id 付き）と既存の回に付ける");
   assert.ok(db.find("INSERT INTO audit_events"));
+
+  // 浮いた実績のある条件だけ：条件 5・6 とも実績があるので両方。実績の無い条件は試算に出ない。
+  const only = await svc.preview({ usageType: "pub_digital", from: "2025-07-01", count: 1, onlyWithStrays: true });
+  assert.deepEqual(only.targets.map((t) => t.conditionId), [5, 6]);
+});
+
+test("浮いた実績のある条件だけに絞れる", async () => {
+  const db = new FakeDatabase((text) => {
+    if (text.includes("c.usage_type = $1")) {
+      return [{ id: 5, condition_no: "CL-5", name: "A", payment_terms: null, work_title: "作品A", party_name: "作家A" },
+              { id: 7, condition_no: "CL-7", name: "C", payment_terms: null, work_title: "作品C（売上なし）", party_name: "作家C" }];
+    }
+    if (text.includes("schedule_id IS NULL AND status = 'active' AND event_type = 'sales'") && text.startsWith("SELECT")) {
+      return [{ condition_id: 5, occurred_on: "2026-03-31" }];
+    }
+    return undefined;
+  });
+  const deps = { schedules: { list: async () => ({ lines: [] }), replace: async () => ({}) } };
+  const svc = new AnnualCloseService(db, deps);
+  const all = await svc.preview({ usageType: "pub_digital", from: "2025-03-01", count: 1, to: "2026-08-31" });
+  assert.deepEqual(all.targets.map((t) => t.conditionId), [5, 7]);
+  const only = await svc.preview({ usageType: "pub_digital", from: "2025-03-01", count: 1, to: "2026-08-31", onlyWithStrays: true });
+  assert.deepEqual(only.targets.map((t) => t.conditionId), [5]);
+  assert.equal(only.targets[0].adding[0].label, "2025年3月〜2026年8月");
+  assert.deepEqual([only.targets[0].attaching, only.attaching], [1, 1]);
 });
