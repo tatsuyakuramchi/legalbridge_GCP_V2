@@ -479,6 +479,8 @@ function AgreementCreate({ preset, onDone, onCancel }: {
   const [renewalMonths, setRenewalMonths] = useState("");
   const [noticeMonths, setNoticeMonths] = useState("");
   const [refNo, setRefNo] = useState("");
+  /** 外部で付けた契約番号（移行前の紙の契約）。空ならシステムが採番する。 */
+  const [externalNo, setExternalNo] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   /** 「条件明細がぶら下がりますか」。null はまだ答えていない。 */
   const [hasConditions, setHasConditions] = useState<boolean | null>(preset.kind ? true : null);
@@ -512,7 +514,8 @@ function AgreementCreate({ preset, onDone, onCancel }: {
         effectiveOn: effectiveOn || executedOn, expiresOn: expiresOn || null,
         autoRenewal, renewalMonths: renewalMonths ? Number(renewalMonths) : null,
         renewalNoticeMonths: noticeMonths ? Number(noticeMonths) : null,
-        counterpartyRefNo: refNo || null, sourceUrl: sourceUrl || null
+        counterpartyRefNo: refNo || null, sourceUrl: sourceUrl || null,
+        agreementNo: externalNo.trim() || null
       });
       // 条件明細がぶら下がらない契約（文書だけ）には、続けて登録する欄が無い。
       onDone(made.id, made.agreementNo, thenConditions && effectiveKind !== "document");
@@ -576,6 +579,9 @@ function AgreementCreate({ preset, onDone, onCancel }: {
             <small>{autoRenewal ? "更新期間が空なら当初の期間と同じ長さ" : "終了日が来たら満了"}</small></label>
           <label className="fld"><span>相手方の契約番号</span>
             <input value={refNo} onChange={(e) => setRefNo(e.target.value)} placeholder="相手が付けた番号があれば" /></label>
+          <label className="fld"><span>自社の契約番号</span>
+            <input value={externalNo} onChange={(e) => setExternalNo(e.target.value)}
+              placeholder="空ならシステムが採番。移行前の紙の契約は ATT-2026-00069 のように" /></label>
         </div>
         <label className="fld"><span>契約書（Drive）</span>
           <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://drive.google.com/…" />

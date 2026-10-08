@@ -17,6 +17,8 @@ import { PartyAgreementMapService } from "../agreements/party-map.js";
 import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_UPDATE_COLUMNS,
          agreementCsvPatch } from "../agreements/csv.js";
 import { PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from "./pub-works.js";
+import { EXISTING_CONTRACTS_SAMPLE, ExistingContractsImportService } from "./existing-contracts.js";
+import { AgreementService } from "../agreements/service.js";
 
 /**
  * CSV の一括取込。
@@ -29,7 +31,7 @@ import { PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from
  * 画面から入れた行と取り込んだ行で品質が変わる。
  */
 
-export type ImportKind = "parties" | "works" | "license_conditions" | "service_conditions" | "agreements" | "pub_works";
+export type ImportKind = "parties" | "works" | "license_conditions" | "service_conditions" | "agreements" | "pub_works" | "existing_contracts";
 
 /**
  * 取り込み方。
@@ -120,6 +122,12 @@ export const IMPORT_SPECS: ImportSpec[] = [
                     "カナ", "著作権表示", "第三者権利", "作品備考", "事業区分"],
     updateSample: PUB_WORKS_UPDATE_SAMPLE,
     exportPath: "/imports/pub-works/export.csv", exportLabel: "登録済みの出版作品（作品 × 相手先で 1 行）"
+  },
+  {
+    kind: "existing_contracts", label: "既存契約（移行前に紙で結んだ基本契約＋条件書を、外部番号のまま作品の条件に繋ぐ）",
+    required: ["作品名", "相手先", "個別契約番号"],
+    optional: ["作品コード", "相手先コード", "基本契約番号", "基本契約名", "個別契約名", "締結日"],
+    sample: EXISTING_CONTRACTS_SAMPLE
   },
   {
     kind: "license_conditions", label: "利用許諾条件（作品に紐づく IN の許諾）",
@@ -283,6 +291,7 @@ export class ImportService {
   private readonly conditions: ConditionWriteService;
   private readonly agreements: PartyAgreementMapService;
   private readonly pubWorks: PubWorksImportService;
+  private readonly existingContracts: ExistingContractsImportService;
 
   constructor(private readonly database: Transactable) {
     this.agreements = new PartyAgreementMapService(database);
@@ -290,6 +299,7 @@ export class ImportService {
     this.works = new WorkWriteService(database);
     this.conditions = new ConditionWriteService(database);
     this.pubWorks = new PubWorksImportService(database, { works: this.works, conditions: this.conditions });
+    this.existingContracts = new ExistingContractsImportService(database, { agreements: new AgreementService(database) });
   }
 
   /** 登録済みの出版作品を、出版作品の取込と同じ列で書き出す。 */
@@ -373,6 +383,10 @@ export class ImportService {
     if (input.kind === "pub_works") {
       // 出版作品の一括登録。作品が無ければ作り、紙・電子の条件と取り分、CID を 1 行で入れる。
       return this.pubWorks.run(parsed.rows, input.dryRun, input.actor, mode);
+    }
+    if (input.kind === "existing_contracts") {
+      // 移行前の紙の契約を外部番号のまま登録し、作品の条件に繋ぐ。
+      return this.existingContracts.run(parsed.rows, input.dryRun, input.actor);
     }
     if (input.kind === "license_conditions" && mode === "create") {
       return this.licenseConditions(parsed.rows, input.dryRun, input.actor);

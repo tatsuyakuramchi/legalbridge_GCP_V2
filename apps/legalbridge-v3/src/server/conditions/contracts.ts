@@ -16,7 +16,7 @@ import { DomainError } from "../core/errors.js";
 
 /** 個別契約とみなす文書：条件書のひな形、取り込みなら文書の種別。 */
 export const TERMS_TEMPLATES = ["individual_license_terms_v3", "individual_license_terms_v4",
-  "pub_license_terms_v3", "pub_license_terms_v3_annex"];
+  "pub_license_terms", "pub_license_terms_v3", "pub_license_terms_v3_annex"];
 export const TERMS_IMPORT_KINDS = ["利用許諾契約書", "覚書"];
 
 const TERMS_DOC_SQL = `(t.template_key = ANY($2::text[]) OR d.manual_inputs->>'documentKind' = ANY($3::text[]))`;
