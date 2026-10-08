@@ -2725,7 +2725,10 @@ export function createRoutes(database: Transactable) {
   const annualSchema = z.object({
     usageType: z.enum(["pub_digital", "pub_print"]).default("pub_digital"),
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    count: z.coerce.number().int().min(1).max(5).default(1)
+    count: z.coerce.number().int().min(1).max(5).default(1),
+    // 期間を指定した 1 回だけの回（移行時の一掃）。
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    onlyWithStrays: z.coerce.boolean().optional()
   });
   router.post("/royalty-ledger/closes/bulk/preview", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
