@@ -1330,6 +1330,13 @@ export function createRoutes(database: Transactable) {
        .set("Content-Disposition", `attachment; filename="${filename("pub_works")}"`)
        .send(withBom(csv));
   }));
+  // 登録済みの作品（1 作品 1 行）を取込と同じ列で書き出す。直して「登録済みに当てる」で取り込める。
+  router.get("/imports/works/export.csv", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    const csv = await imports.exportWorks();
+    res.type("text/csv; charset=utf-8")
+       .set("Content-Disposition", `attachment; filename="${filename("works")}"`)
+       .send(withBom(csv));
+  }));
   const importSchema = z.object({
     kind: z.enum(["parties", "works", "license_conditions", "service_conditions", "agreements", "pub_works"]),
     csv: z.string().min(1).max(2_000_000),
