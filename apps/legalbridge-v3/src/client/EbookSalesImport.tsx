@@ -251,8 +251,10 @@ interface AnnualTarget {
   paymentTerms: string | null; existing: number;
   adding: Array<{ seq: number; label: string | null; dueOn: string | null; payOn: string | null; serviceFrom?: string | null; serviceTo?: string | null }>;
   skipped: string | null;
+  /** 回に付いていない売上の実績のうち、付け直せる件数と残る件数。 */
+  attaching: number; unattached: number;
 }
-interface AnnualPreview { targets: AnnualTarget[]; adding: number; skipped: number; written?: number }
+interface AnnualPreview { targets: AnnualTarget[]; adding: number; skipped: number; attaching: number; written?: number; attached?: number }
 
 /** 集計期間の開始の既定：直近の 7/1。 */
 const defaultFrom = () => {
@@ -284,8 +286,10 @@ function AnnualClosesPanel() {
     finally { setBusy(false); }
   }
   async function run() {
-    if (!preview || !preview.adding) return;
-    if (!window.confirm(`${preview.adding} 本の条件に回を立てます。よいですか？`)) return;
+    if (!preview || !(preview.adding || preview.attaching)) return;
+    const what = [preview.adding ? `${preview.adding} 本の条件に回を立てます` : "",
+                  preview.attaching ? `浮いている実績 ${preview.attaching} 件を回に付け直します` : ""].filter(Boolean).join("。");
+    if (!window.confirm(`${what}。よいですか？`)) return;
     setBusy(true); setError(null);
     try { const r = await api.post<AnnualPreview>("/royalty-ledger/closes/bulk", body()); setDone(r); setPreview(null); }
     catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -315,30 +319,31 @@ function AnnualClosesPanel() {
             </label>
             <button className="btn btn-sm" disabled={busy} onClick={() => void tryIt()}>試算</button>
             {preview && !readOnly && (
-              <button className="btn btn-sm primary" disabled={busy || !preview.adding} onClick={() => void run()}>
-                {preview.adding} 本に立てる
+              <button className="btn btn-sm primary" disabled={busy || !(preview.adding || preview.attaching)} onClick={() => void run()}>
+                {preview.adding} 本に立てる{preview.attaching ? `・実績 ${preview.attaching} 件を付け直す` : ""}
               </button>
             )}
           </div>
-          <div className="faint">締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません</div>
+          <div className="faint">締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません。回より先に取り込んで浮いている売上の実績（「予定が無いのに実績がある」）は、発生日を集計期間に含む回に付け直します</div>
           {error && <div className="alert">{error}</div>}
-          {done && <div className="notice">{done.written ?? 0} 本の条件に回を立てました（飛ばした条件 {done.skipped}）</div>}
+          {done && <div className="notice">{done.written ?? 0} 本の条件に回を立てました（飛ばした条件 {done.skipped}）{done.attached ? `。浮いていた実績 ${done.attached} 件を回に付け直しました` : ""}</div>}
           {preview && (
             <div className="tablewrap">
               <table>
-                <thead><tr><th>作品</th><th>条件</th><th>相手先</th><th>いまの回</th><th>立てる回</th><th>支払期日</th></tr></thead>
+                <thead><tr><th>作品</th><th>条件</th><th>相手先</th><th>いまの回</th><th>立てる回</th><th>支払期日</th><th>付け直す実績</th></tr></thead>
                 <tbody>
                   {preview.targets.map((t) => (
-                    <tr key={t.conditionId} className={t.adding.length ? "" : "faint"}>
+                    <tr key={t.conditionId} className={t.adding.length || t.attaching ? "" : "faint"}>
                       <td>{t.workTitle ?? "—"}</td>
                       <td className="code">{t.conditionNo ?? `#${t.conditionId}`}<div className="faint" style={{ fontSize: "0.85em" }}>{t.name}</div></td>
                       <td>{t.partyName ?? "—"}</td>
                       <td className="num">{t.existing}</td>
                       <td>{t.adding.length ? t.adding.map((l) => `${l.label}（締め ${l.dueOn}）`).join("、") : (t.skipped ?? "—")}</td>
                       <td>{t.adding.length ? t.adding.map((l) => l.payOn ?? "空").join("、") : ""}</td>
+                      <td className="num">{t.attaching || ""}{t.unattached ? <span className="tag out" title="どの回の集計期間にも入らない実績。期間を広げるか、条件明細で回を付けてください">期間外 {t.unattached}</span> : null}</td>
                     </tr>
                   ))}
-                  {!preview.targets.length && <tr><td colSpan={6} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
+                  {!preview.targets.length && <tr><td colSpan={7} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
                 </tbody>
               </table>
             </div>
