@@ -117,7 +117,7 @@ export function mediaLabel(usageType: string | null | undefined): string | null 
 
 /** 取込の備考「電子書籍売上取込 2026-03｜BOOKWALKER（PC）｜…」から書店名。 */
 function storeOfNote(note: string | null | undefined): string {
-  const m = String(note ?? "").match(/^電子書籍売上取込 \S+｜([^｜]*)/);
+  const m = String(note ?? "").match(/^電子書籍売上取込 [^｜\s]+｜([^｜]*)/);
   return m ? m[1].trim() : "";
 }
 

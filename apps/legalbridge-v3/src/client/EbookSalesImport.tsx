@@ -14,7 +14,7 @@ import { useDebounced } from "./ListTools.js";
 interface Row { sheet: string; line: number; month: string; reportMonth: string | null; title: string; volume: string | null; cid: string | null; [k: string]: unknown }
 type Status = "ok" | "duplicate" | "no_royalty" | "no_condition" | "unresolved" | "zero";
 interface Group {
-  key: string; cid: string | null; title: string; volume: string | null; authors: string | null; month: string; salesMonths: string[];
+  key: string; cid: string | null; title: string; volume: string | null; authors: string | null; month: string; reportMonth: string | null; salesMonths: string[];
   store: string | null;
   listPrice: number; downloads: number; gross: number; stores: string[]; lines: number;
   status: Status; message: string | null;
@@ -122,7 +122,7 @@ export function EbookSalesImport() {
             <div className="tablewrap">
               <table>
                 <thead>
-                  <tr><th title="シート名の月。期間と計算書の製品名（月＋作品名）になる">報告月</th><th>タイトル</th><th>書店</th><th>CID</th><th>作品 → 条件</th><th className="num">価格</th>
+                  <tr><th title="A 列の販売月。期間（集計期間の判定）と計算書の製品名（月＋作品名）になる">販売月</th><th>タイトル</th><th>書店</th><th>CID</th><th>作品 → 条件</th><th className="num">価格</th>
                       <th className="num">DL</th><th className="num">報告売上</th><th className="num">印税（見込み）</th>
                       <th className="num" title="事業部の Excel が出していた印税">Excel</th><th>判定</th></tr>
                 </thead>
@@ -130,8 +130,8 @@ export function EbookSalesImport() {
                   {shown.map((g) => (
                     <tr key={g.key}>
                       <td className="code">{g.month}
-                        {g.salesMonths.some((m) => m !== g.month) && (
-                          <div className="faint" style={{ fontSize: "0.85em" }}>販売月 {g.salesMonths.join("・")}</div>
+                        {g.reportMonth && g.reportMonth !== g.month && (
+                          <div className="faint" style={{ fontSize: "0.85em" }}>報告月 {g.reportMonth}</div>
                         )}
                       </td>
                       <td>{g.title}{g.volume && g.volume !== "1" && <span className="faint">　第{g.volume}巻</span>}

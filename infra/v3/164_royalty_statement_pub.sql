@@ -7,7 +7,8 @@
 --   合計と支払の欄が何ページも後ろになる。出版専用は出版条件書の別紙形式と同じ組み方で、
 --     本文（1 ページ） … 宛名・登録番号・番号・対象期間、作品ごとの要約 1 行、
 --                         税率ごとの対価と消費税、源泉、差引振込額、支払予定日、振込先、作成者
---     別紙1（2 ページ目以降） … 報告月・書店（紙は刷了・刊行の月）ごとの明細、作品ごとの小計
+--     別紙1（2 ページ目以降） … 販売月・書店（紙は刷了・刊行の月）ごとの明細、作品ごとの小計
+--   r2：集計期間を A 列の販売月にしたので、別紙の列と文言を「販売月」に（r1 を流していても流し直せば r2 になる）
 --   適格請求書（仕入明細書）の要件として、作成者と相手方の登録番号、税率ごとの対価・税額、
 --   相手方の確認を受ける文言を入れる。登録番号と振込先は取引先の登録から引く
 --   （共著の受取人宛てならその受取人）。
@@ -42,7 +43,7 @@ made AS (
   SELECT t.id,
          (SELECT COALESCE(max(x.version_no), 0) + 1
             FROM v3.document_template_versions x WHERE x.template_id = t.id),
-         $html$<!-- royalty_statement_pub r1 -->
+         $html$<!-- royalty_statement_pub r2 -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -98,7 +99,7 @@ made AS (
   </table>
 </div>
 
-<p class="lead">{{pubMediaLabel}}にかかる著作物利用許諾料を下記のとおりご報告いたします。作品ごとの内訳（{{#if pubHasDigital}}報告月・書店別{{/if}}{{#if pubHasPrint}}{{#if pubHasDigital}}／{{/if}}刷了・刊行の月別{{/if}}）は末尾の<b>別紙1「明細」</b>のとおりです。</p>
+<p class="lead">{{pubMediaLabel}}にかかる著作物利用許諾料を下記のとおりご報告いたします。作品ごとの内訳（{{#if pubHasDigital}}販売月・書店別{{/if}}{{#if pubHasPrint}}{{#if pubHasDigital}}／{{/if}}刷了・刊行の月別{{/if}}）は末尾の<b>別紙1「明細」</b>のとおりです。</p>
 
 <table class="t">
   <thead>
@@ -130,7 +131,7 @@ made AS (
   <tr><th>お支払予定日</th><td>{{#if PAYMENT_DATE}}{{formatDate PAYMENT_DATE}}{{else}}支払条件のとおり{{/if}}</td></tr>
   <tr><th>お振込先</th><td>{{#if BANK_INFO}}{{BANK_INFO}}{{else}}（振込先の登録がありません。ご連絡ください）{{/if}}</td></tr>
   <tr><th>取引内容</th><td>{{pubMediaLabel}}にかかる著作物利用許諾料（{{pubPeriodLabel}}）</td></tr>
-  <tr><th>計算方法</th><td>{{#if pubHasDigital}}電子：配信価格（税抜）× ダウンロード数 × 料率。報告月・書店ごとに円未満を切り捨てて合算。{{/if}}{{#if pubHasPrint}}{{#if pubHasDigital}}<br>{{/if}}紙：税抜定価 × 印税対象部数 × 料率。刷ごとに円未満を切り捨てて合算。{{/if}}</td></tr>
+  <tr><th>計算方法</th><td>{{#if pubHasDigital}}電子：配信価格（税抜）× ダウンロード数 × 料率。販売月・書店ごと（事業部の報告の行ごと）に円未満を切り捨てて合算。{{/if}}{{#if pubHasPrint}}{{#if pubHasDigital}}<br>{{/if}}紙：税抜定価 × 印税対象部数 × 料率。刷ごとに円未満を切り捨てて合算。{{/if}}</td></tr>
 </table>
 
 {{#if notes}}<p class="note">{{notes}}</p>{{/if}}
@@ -147,7 +148,7 @@ made AS (
   <p class="subhead">利用許諾料計算書 {{DOC_NO}}　{{VENDOR_NAME}} {{#if VENDOR_SUFFIX}}{{VENDOR_SUFFIX}}{{else}}様{{/if}}　対象期間 {{pubPeriodLabel}}　全 {{pubRowCount}} 行</p>
   <table class="t">
     <thead>
-      <tr><th style="width:20mm">報告月</th><th>作品</th><th style="width:26mm">書店・内容</th><th style="width:16mm">単価</th>
+      <tr><th style="width:20mm">販売月</th><th>作品</th><th style="width:26mm">書店・内容</th><th style="width:16mm">単価</th>
           <th style="width:12mm">数量</th><th style="width:20mm">報告売上</th><th style="width:11mm">料率</th><th style="width:18mm">許諾料</th></tr>
     </thead>
     <tbody>
@@ -169,13 +170,13 @@ made AS (
 </body>
 </html>$html$,
          '[]'::jsonb,
-         '初版：出版専用。本文に作品ごとの要約、別紙1に明細。適格請求書（仕入明細書）の要件',
+         'r2：出版専用。本文に作品ごとの要約、別紙1に販売月・書店ごとの明細。適格請求書（仕入明細書）の要件',
          'infra/v3/164'
     FROM t
    WHERE NOT EXISTS (
            SELECT 1 FROM v3.document_template_versions v
             WHERE v.id = t.current_version_id
-              AND position('<!-- royalty_statement_pub r1 -->' in v.html_source) > 0)
+              AND position('<!-- royalty_statement_pub r2 -->' in v.html_source) > 0)
   RETURNING id, template_id, version_no
 ),
 pointed AS (
