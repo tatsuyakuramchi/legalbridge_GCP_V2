@@ -72,7 +72,8 @@ test("ひな形（164）：本文に要約、別紙に明細。宛名の登録�
   const here = path.dirname(fileURLToPath(import.meta.url));
   const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/164_royalty_statement_pub.sql"), "utf8");
   const html = sql.split("$html$")[1];
-  assert.ok(html.includes("<!-- royalty_statement_pub r1 -->"));
+  assert.ok(html.includes("<!-- royalty_statement_pub r2 -->"));
+  assert.ok(html.includes(">販売月</th>") && !html.includes(">報告月</th>"), "別紙の列は販売月");
   const values = {
     ...royaltyStatementPatch({}, { rs_bundle_lines: LINES, rs_bundle_tax: 30155, rs_bundle_withholding: 30789, rs_bundle_net_transfer: 300920 })!,
     DOC_NO: "ARC-ROY-2026-0151", documentDate: "2026-10-08", PAYMENT_DATE: "2026-10-31",

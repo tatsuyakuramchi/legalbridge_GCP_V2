@@ -22,9 +22,10 @@ import { readWorkbook, serialToDate, type CellValue, type Workbook } from "./xls
  *                 省く：「ソング・オブ・ホープ」→「ブレイド・オブ・アルカナ … サプリメント
  *                 ソング・オブ・ホープ」）で、巻数も合うものが 1 件ならそれ。2 件以上は候補。
  *                 作品 → 有効な電子出版の料率条件。無ければ「印税なし」か「条件なし」。
- *   3. まとめる … 条件 × 報告月 × 書店 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
+ *   3. まとめる … 条件 × 販売月 × 報告月 × 書店 × 販売価格 で 1 件の実績（報告売上 = 配信価格 × DL数）。
  *                 事業部の Excel の行と同じ単位。印税は行ごとに切り捨て（rounding.ts の
  *                 floorRoyalty）で、計算書もその実績ごとに切り捨てて足す（Excel と 1 円まで合う）。
+ *                 期間（集計期間の判定）は A 列の販売月で持つ（契約の集計期間は販売月基準）。
  *                 報告月はシート名（「2026年3月」）。シートには前々月の販売月の行や
  *                 遅れて報告された古い月の行が載るので、期間はシートの月で持ち、
  *                 販売月は備考に書く。シート名が月でなければ（CSV など）販売月で持つ。
@@ -230,9 +231,11 @@ export interface SalesGroup {
   /** 巻数。作品は作品名 × 巻数で 1 件。 */
   volume: string | null;
   authors: string | null;
-  /** 期間の月（報告月＝シート名。シート名が月でなければ販売月）。 */
+  /** 期間の月＝販売月（A 列）。発生日はこの月の末日、期間は「YYYY年M月分」。 */
   month: string;
-  /** まとめた行の販売月。報告月と違えば備考に書く。 */
+  /** 報告月（シート名）。シート名が月でなければ null。備考に書き、登録済みの検査に使う。 */
+  reportMonth: string | null;
+  /** 互換：まとめた行の販売月（いまは month の 1 つだけ）。 */
   salesMonths: string[];
   /** 書店（Excel の行の単位）。 */
   store: string | null;
@@ -285,8 +288,14 @@ export function volumeTitles(title: string, volume: string | null): string[] {
 
 /** 取込の備考「電子書籍売上取込 2026-03｜BOOKWALKER（PC）｜…」から書店名。古い形（書店なし）は null。 */
 export function storeOfNote(note: string | null | undefined): string | null {
-  const m = String(note ?? "").match(/^電子書籍売上取込 \S+｜([^｜]*)/);
+  const m = String(note ?? "").match(/^電子書籍売上取込 [^｜\s]+｜([^｜]*)/);
   return m ? m[1].trim() : null;
+}
+
+/** 取込の備考「…｜書店｜報告月 2026-03」から報告月。古い形（報告月なし）は null。 */
+export function reportOfNote(note: string | null | undefined): string | null {
+  const m = String(note ?? "").match(/｜報告月 (\d{4}-\d{2})/);
+  return m ? m[1] : null;
 }
 
 /** 巻数が無いか 1 巻（1 冊だけの本も巻数 1 で来る）。 */
@@ -332,13 +341,12 @@ export class EbookSalesImportService {
         try {
           // 台帳の「報告を追加」と同じ形。総額＝実額＝報告売上（配信価格 × DL数）。
           // 料率は計算書を出すときに条件から掛かる（取り分もそこで割る）。
-          const sales = g.salesMonths.filter((m) => m !== g.month);
           const r = await this.events.add(g.condition!.id, {
             eventType: "sales", occurredOn: monthEnd(g.month), period: monthLabel(g.month),
             quantity: g.downloads, grossAmount: g.gross, amount: g.gross,
-            // 「電子書籍売上取込 報告月｜書店｜販売月 …」。書店は登録済みの検査（同じ行を二度入れない）と
-            // 計算書の行の但し書きが読む。
-            note: `電子書籍売上取込 ${g.month}｜${g.store ?? ""}${sales.length ? `｜販売月 ${sales.join("・")}` : ""}`,
+            // 「電子書籍売上取込 販売月｜書店｜報告月 YYYY-MM」。書店と報告月は登録済みの検査（同じ行を
+            // 二度入れない。遅れて報告された同じ販売月の行は別の報告）と計算書の但し書きが読む。
+            note: `電子書籍売上取込 ${g.month}｜${g.store ?? ""}${g.reportMonth ? `｜報告月 ${g.reportMonth}` : ""}`,
             unitAmount: g.listPrice, workId: g.work!.id,
             // 年 1 回の締め（回）に付ける。支払文書処理の「まとめて締める」がこの回を拾う。
             scheduleId: g.round?.id ?? null
@@ -410,16 +418,19 @@ export class EbookSalesImportService {
   }
 
   private async resolve(client: Queryable, rows: EbookSalesRow[]): Promise<SalesPreview> {
-    // まとめる：CID（無ければタイトル × 巻数）× 報告月（シート名。無ければ販売月）× 書店 × 販売価格。
-    // Excel の行と同じ単位（印税は行ごとに切り捨てなので、書店をまたいで足すと 1 円ずれる）。
+    // まとめる：CID（無ければタイトル × 巻数）× 販売月 × 報告月（シート名）× 書店 × 販売価格。
+    // Excel の行と同じ単位（印税は行ごとに切り捨てなので、行をまたいで足すと 1 円ずれる）。
+    // 期間は販売月。報告月も鍵に入れるのは、遅れて報告された同じ販売月の行（別のシート）を
+    // 同じ実績に混ぜず、あとの取込で「登録済み」と誤って落とさないため。
     const groups = new Map<string, SalesGroup>();
     for (const r of rows) {
       const id = r.cid ? `cid:${r.cid}` : `title:${normalizeTitle(r.title)}|${r.volume ?? ""}`;
-      const month = r.reportMonth ?? r.month;
+      const month = r.month;
+      const reportMonth = r.reportMonth ?? null;
       const store = r.store ?? r.storeCompany ?? null;
-      const key = `${id}|${month}|${store ?? ""}|${r.listPrice}`;
+      const key = `${id}|${month}|${reportMonth ?? ""}|${store ?? ""}|${r.listPrice}`;
       const g = groups.get(key) ?? {
-        key, cid: r.cid, title: r.title, volume: r.volume, authors: r.authors, month, salesMonths: [], store,
+        key, cid: r.cid, title: r.title, volume: r.volume, authors: r.authors, month, reportMonth, salesMonths: [], store,
         listPrice: r.listPrice,
         downloads: 0, gross: 0, stores: [], lines: 0, status: "unresolved" as GroupStatus, message: null,
         work: null, condition: null, round: null, royalty: null, royaltyInFile: null, candidates: []
@@ -513,10 +524,13 @@ export class EbookSalesImportService {
           AND e.condition_id IN (SELECT x.id FROM conditions x WHERE COALESCE(x.series_id, x.id) IN
                                    (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = ANY($1::bigint[])))`,
       [condIds])).rows as Array<Record<string, any>> : [];
-    const existingKeys = new Set(existing.map((e) =>
-      `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}|${storeOfNote(str(e.note)) ?? "*"}`));
+    // 書店・報告月の無い古い備考は、どの書店・報告月とも同じ扱い（*）。
+    const existingKeys = new Set(existing.map((e) => {
+      const store = storeOfNote(str(e.note));
+      return `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}|${store ?? "*"}|${store === null ? "*" : reportOfNote(str(e.note)) ?? "*"}`;
+    }));
 
-    // 回（時限式の締め）。報告月の末日を集計期間（service_from〜service_to）に含む回に付ける。
+    // 回（時限式の締め）。販売月の末日を集計期間（service_from〜service_to）に含む回に付ける。
     // 期間の無い回は締め日（due_on）以前の最初の回。
     const scheduleRows = condIds.length ? (await client.query(
       `SELECT id, condition_id, label, due_on, service_from, service_to
@@ -562,8 +576,9 @@ export class EbookSalesImportService {
       // 行ごとに切り捨て（Excel の ROUNDDOWN と同じ）。
       g.royalty = floorRoyalty((g.gross * (int(c.rate_ppm) ?? 0)) / 1_000_000);
       const dupBase = `${Number(c.id)}|${monthLabel(g.month)}|${g.listPrice}`;
-      if (existingKeys.has(`${dupBase}|${g.store ?? ""}`) || existingKeys.has(`${dupBase}|*`)) {
-        g.status = "duplicate"; g.message = "同じ報告月・同じ書店・同じ販売価格の実績がもうあります"; continue;
+      const report = g.reportMonth ?? "";
+      if ([`${dupBase}|${g.store ?? ""}|${report}`, `${dupBase}|${g.store ?? ""}|*`, `${dupBase}|*|*`].some((k) => existingKeys.has(k))) {
+        g.status = "duplicate"; g.message = "同じ販売月・同じ報告月・同じ書店・同じ販売価格の実績がもうあります"; continue;
       }
       if (!(g.royalty > 0)) { g.status = "zero"; g.message = "料率を掛けると 0 円"; continue; }
       g.status = "ok"; g.message = null;
@@ -571,7 +586,8 @@ export class EbookSalesImportService {
 
     const counts: Record<GroupStatus, number> = { ok: 0, duplicate: 0, no_royalty: 0, no_condition: 0, unresolved: 0, zero: 0 };
     for (const g of list) counts[g.status] += 1;
-    list.sort((a, b) => a.month.localeCompare(b.month) || a.title.localeCompare(b.title, "ja")
+    list.sort((a, b) => a.month.localeCompare(b.month) || (a.reportMonth ?? "").localeCompare(b.reportMonth ?? "")
+      || a.title.localeCompare(b.title, "ja")
       || (a.store ?? "").localeCompare(b.store ?? "", "ja") || a.listPrice - b.listPrice);
     return { groups: list, counts, months: [...new Set(list.map((g) => g.month))].sort() };
   }
