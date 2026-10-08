@@ -53,7 +53,8 @@ test("試算：基本契約の無い個人は出版許諾契約書（個人）�
   assert.match(outcomes[0].problems[0], /pub_master_individual：許諾者住所/);
   assert.deepEqual(outcomes[1].plan, { master: "existing", masterTemplateKey: null, termsTemplateKey: "pub_license_terms_v3", conditionIds: [4] });
   assert.ok(d.calls.every((c) => c.what === "preview"), "試算は確かめるだけ");
-  assert.deepEqual((d.calls[0].args as { manualInputs: Record<string, unknown> }).manualInputs, { 締結日: "2026-10-07" });
+  assert.deepEqual((d.calls[0].args as { manualInputs: Record<string, unknown> }).manualInputs, { 締結日: "2026-10-07", _partyId: 11 },
+    "まだ無い基本契約の試算は相手先を渡す（渡さないと宛名・住所が全部空に見える）");
 });
 
 test("決定：相手先ごとに文書セットを決定する（基本契約を作る → 条件書）。1 件の失敗で他を止めない", async () => {
@@ -126,7 +127,9 @@ test("試算：受取人の行は受取人宛て（_payeePartyId）の条件書�
   const { outcomes } = await svc.preview({ keys: ["payee:21", "payee:99"], signedOn: "2026-10-07" });
   assert.deepEqual(outcomes.map((o) => [o.key, o.role, o.status]), [["payee:21", "payee", "ok"], ["payee:99", "payee", "nothing"]]);
   assert.deepEqual(outcomes[0].plan, { master: "create", masterTemplateKey: "pub_master_individual", termsTemplateKey: "pub_license_terms_v3", conditionIds: [1, 2] });
-  const terms = d.calls.filter((c) => c.what === "preview").map((c) => c.args as Record<string, any>)[1];
+  const previews = d.calls.filter((c) => c.what === "preview").map((c) => c.args as Record<string, any>);
+  assert.deepEqual(previews[0].manualInputs, { 締結日: "2026-10-07", _partyId: 21 }, "基本契約は受取人と");
+  const terms = previews[1];
   assert.deepEqual(terms.manualInputs, { 締結日: "2026-10-07", _payeePartyId: 21 });
 });
 

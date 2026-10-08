@@ -31,6 +31,11 @@ export interface DocumentContextInput {
    * 条件の相手先ではなくこの人を宛名・口座・源泉の相手にする。
    */
   payeePartyId?: number | null;
+  /**
+   * 条件も契約も案件も無い文書の相手先（まだ作っていない基本契約の基本契約書を試算するとき）。
+   * 契約・案件があればそちらが先。
+   */
+  partyId?: number | null;
   documentNumber?: string | null;
   issuedOn?: string | null;
   /** 実績。検収書・納品書はここの日付と金額が要る。 */
@@ -131,7 +136,7 @@ export class DocumentContextRepository {
       // 引く。以前は条件を 1 本選ばないと相手先（Licensor・受託者）の欄が全部空だった。
       // 期間は契約の記録（有効期間・終了日・自動更新）から。
       if (!conditions.length) {
-        const partyIdFallback = agreement?.counterpartyId ?? matter?.counterpartyId ?? null;
+        const partyIdFallback = agreement?.counterpartyId ?? matter?.counterpartyId ?? input.partyId ?? null;
         if (partyIdFallback) {
           const party = await this.partyOnly(client, partyIdFallback);
           if (party) {

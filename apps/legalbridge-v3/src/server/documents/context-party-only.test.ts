@@ -44,3 +44,10 @@ test("契約が無ければ案件の相手先。どちらも無ければ条件�
   const none = await new DocumentContextRepository(db({ agreement: null, matter: null })).build({ conditionIds: [] });
   assert.equal(none.condition, null);
 });
+
+test("契約も案件も無い（まだ作っていない基本契約の基本契約書を試算する）ときは、渡した相手先", async () => {
+  const ctx = await new DocumentContextRepository(db({ agreement: null, matter: null })).build({ conditionIds: [], partyId: 3 });
+  assert.equal(ctx.condition?.counterparty.name, "合同会社アトリエ蒼");
+  assert.equal(ctx.condition?.counterparty.address, "東京都");
+  assert.equal(ctx.condition?.counterpartyId, 3);
+});

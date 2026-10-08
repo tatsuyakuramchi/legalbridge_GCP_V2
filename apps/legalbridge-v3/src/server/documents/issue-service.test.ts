@@ -439,8 +439,10 @@ test("取り消しにも理由が要る", async () => {
 test("文書フォームで選んだ番号は manual_inputs の内部の名前から読む", async () => {
   const { chosenRefs } = await import("./issue-service.js");
   assert.deepEqual(chosenRefs({ _parentPoNo: " ARC-PO-2026-0099 ", _termsNo: "" }),
-                   { parentPoNo: "ARC-PO-2026-0099", termsNo: null, payeePartyId: null });
-  assert.deepEqual(chosenRefs(undefined), { parentPoNo: null, termsNo: null, payeePartyId: null });
+                   { parentPoNo: "ARC-PO-2026-0099", termsNo: null, payeePartyId: null, partyId: null });
+  assert.deepEqual(chosenRefs(undefined), { parentPoNo: null, termsNo: null, payeePartyId: null, partyId: null });
   // 共著の取り分（A-068）。受取人は数で読む。
   assert.equal(chosenRefs({ _payeePartyId: "42" }).payeePartyId, 42);
+  // まだ無い基本契約の試算の相手先。
+  assert.equal(chosenRefs({ _partyId: 7 }).partyId, 7);
 });
