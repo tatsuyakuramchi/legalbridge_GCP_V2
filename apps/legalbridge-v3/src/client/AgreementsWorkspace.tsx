@@ -540,12 +540,19 @@ function AgreementCreate({ preset, onDone, onCancel }: {
             <select value={direction} onChange={(e) => setDirection(e.target.value as "in" | "out")}>
               <option value="in">IN 取得（費用側）</option><option value="out">OUT 許諾（収入側）</option>
             </select></label>
-          <label className="fld"><span>種別 <em>必須</em></span>
-            <select value={domain} onChange={(e) => setDomain(e.target.value as AgreementDomain)}>
-              <option value="service">業務委託</option><option value="license">ライセンス</option>
-            </select><small>番号の頭が決まる（SVC／LIC、単体は ISA／ILT）</small></label>
+          {/* 種別は、条件明細がぶら下がる契約（基本契約・単体契約）の番号の頭を決めるだけ。
+              NDA・覚書のように文書として登録するだけの契約には要らないので、問わない。 */}
+          {effectiveKind === "document" ? (
+            <label className="fld"><span>種別</span>
+              <span className="faint" style={{ padding: "6px 0" }}>問いません（文書として登録するだけ。NDA・覚書・念書など）</span></label>
+          ) : (
+            <label className="fld"><span>種別 <em>必須</em></span>
+              <select value={domain} onChange={(e) => setDomain(e.target.value as AgreementDomain)}>
+                <option value="service">業務委託</option><option value="license">ライセンス</option>
+              </select><small>番号の頭が決まる（SVC／LIC、単体は ISA／ILT）。NDA など条件の無い契約は下で「いいえ」</small></label>
+          )}
           <label className="fld"><span>件名 <em>必須</em></span>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="業務委託基本契約 など" /></label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="業務委託基本契約・秘密保持契約書 など" /></label>
         </div>
         <div className="grid4">
           <label className="fld"><span>締結日 <em>必須</em></span>

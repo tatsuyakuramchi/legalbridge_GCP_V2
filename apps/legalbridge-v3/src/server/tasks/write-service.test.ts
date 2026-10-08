@@ -92,3 +92,17 @@ test("依頼者のメールは元の依頼に書く。形が悪ければ止め�
   assert.deepEqual(d.find("UPDATE intake_requests SET requester_email")!.params, [7, "tanaka@example.co.jp"]);
   await assert.rejects(new TaskWriteService(d).update(9, { requesterEmail: "tanaka" }, "x"), /メールの形/);
 });
+
+test("メモは tasks.description に持つ。空で消す。触らなければ据え置き", async () => {
+  const d = new FakeDatabase((t) => (t.includes("FROM tasks WHERE id = $1 FOR UPDATE") ? [task()] : undefined));
+  await new TaskWriteService(d).update(9, { memo: " 10/8 相手に文案を送付 " }, "x");
+  const upd = d.find("UPDATE tasks")!;
+  assert.match(upd.text, /description = CASE WHEN \$9::boolean THEN \$10::text ELSE description END/);
+  assert.deepEqual(upd.params.slice(8, 10), [true, "10/8 相手に文案を送付"], "前後の空白は落とす");
+  const cleared = new FakeDatabase((t) => (t.includes("FROM tasks WHERE id = $1 FOR UPDATE") ? [task()] : undefined));
+  await new TaskWriteService(cleared).update(9, { memo: "" }, "x");
+  assert.deepEqual(cleared.find("UPDATE tasks")!.params.slice(8, 10), [true, null], "空は null");
+  const untouched = new FakeDatabase((t) => (t.includes("FROM tasks WHERE id = $1 FOR UPDATE") ? [task()] : undefined));
+  await new TaskWriteService(untouched).update(9, { status: "doing" }, "x");
+  assert.deepEqual(untouched.find("UPDATE tasks")!.params.slice(8, 10), [false, null], "メモは触らない");
+});
