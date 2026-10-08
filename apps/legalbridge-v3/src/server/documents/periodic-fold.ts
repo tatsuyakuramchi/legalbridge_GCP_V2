@@ -18,12 +18,19 @@
  * まとまりが切れて別の行になる（12回のうち9月だけ増額、なら3行になる）。
  *
  * 畳んでも台帳の予定明細・実績は1件も変わらない。変わるのは紙の見た目だけ。
+ *
+ * 「定期」の見分けは 2 つ。条件の計算方式が定期課金（calc_method = SUBSCRIPTION）か、
+ * 行の元になった予定の起点が定期（trigger_kind = periodic。業務委託の明細の「定期払い」で
+ * 立てた回）。以前は前者だけを見ていたので、単価×数量で登録した委託料に定期払いの
+ * 予定を立てると、発注書に月ごとの行が 12 本そのまま並んでいた。
  */
 
 import { num, rows as rowsOf, yen, type Row } from "./legacy-totals.js";
 
-/** 畳む対象の計算方式。定期課金だけ。 */
+/** 畳む対象の計算方式。定期課金。 */
 const SUBSCRIPTION = "SUBSCRIPTION";
+/** 畳む対象の予定の起点。定期の回。 */
+const PERIODIC = "periodic";
 
 const text = (value: unknown): string => String(value ?? "").trim();
 const dateOf = (value: unknown): string | null => {
@@ -120,7 +127,7 @@ function rangeOf(values: unknown[]): string | null {
  * 品目名（＝回の名前「2026年4月分」）は回ごとに違って当たり前なので見ない。
  */
 const SAME_KEYS = [
-  "condition_id", "spec", "unit_price", "quantity", "amount_ex_tax",
+  "condition_id", "trigger_kind", "spec", "unit_price", "quantity", "amount_ex_tax",
   "payment_terms", "tax_category", "deliverable_ownership", "reward_label",
   "order_no", "condition_no", "inspection_status"
 ];
@@ -134,8 +141,12 @@ const sameContent = (a: Row, b: Row): boolean =>
  * 金額を予定から動かした回（減額検収・追加）は、なぜ動いたのかが紙に残る
  * ようになっている。畳むとその1回がまとまりの中に消えるので、畳まない。
  */
+/** 定期の回か。計算方式が定期課金か、元の予定の起点が定期。 */
+const isPeriodic = (row: Row): boolean =>
+  text(row.calc_method) === SUBSCRIPTION || text(row.trigger_kind) === PERIODIC;
+
 function foldable(row: Row): boolean {
-  if (text(row.calc_method) !== SUBSCRIPTION) return false;
+  if (!isPeriodic(row)) return false;
   if (text(row.changeNote)) return false;
   const ordered = num(row.ordered_amount_ex_tax, Number.NaN);
   const actual = num(row.inspected_amount_ex_tax ?? row.amount_ex_tax, Number.NaN);
@@ -193,6 +204,9 @@ function foldRun(run: Row[]): Row {
 
   return {
     ...first,
+    // まとめた行は定期支払として刷る（役務提供期間・周期・支払日の形）。
+    // 単価×数量で登録した委託料でも、定期の回をまとめた以上は定期支払の行。
+    calc_method: SUBSCRIPTION,
     // 回の名前（「2026年4月分」）ではなく、条件の名前をまとめの品目名にする。
     item_name: text(first.condition_name) || text(first.item_name),
     spec,

@@ -204,10 +204,14 @@ export function ServiceLinesForm(
         contractForm: text(contractForm) ?? null, deliverableOwnership: ownership || null,
         rows: lines_.map((l) => ({
           kind: l.kind, name: text(l.name) ?? null,
-          pricingModel: l.kind === "service" ? "unit_rate" : "fixed",
+          // 定期払いの委託料は定期課金（1 回あたり＝単価×数量）。台帳でも定期と分かり、
+          // 発注書では期ごとの回が 1 行にまとまる。それ以外の委託料は単価×数量。
+          pricingModel: l.kind === "service" ? (payMode === "periodic" ? "subscription" : "unit_rate") : "fixed",
           unitAmount: l.kind === "service" ? Math.round(num(l.unitPrice)) : null,
           quantity: l.kind === "service" ? num(l.quantity || "1") : null,
-          flatAmount: l.kind === "service" ? null : amountOf(l),
+          flatAmount: l.kind === "service"
+            ? (payMode === "periodic" ? Math.round(num(l.unitPrice) * num(l.quantity || "1")) : null)
+            : amountOf(l),
           unitLabel: l.kind === "service" ? (text(l.unit) ?? null) : null,
           spec: text(l.spec) ?? null,
           deliveryDue: text(l.deliveryDue) ?? null,
@@ -418,7 +422,8 @@ export function ServiceLinesForm(
               <label className="field"><span>期間 開始</span><input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} /></label>
               <label className="field"><span>期間 終了</span><input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} /></label>
               <label className="field"><span>何か月ごと</span><input value={every} onChange={(e) => setEvery(e.target.value)} />
-                <small className="faint">行の金額が 1 回あたり。期ごとに予定明細が立ち、期の末日に検収・支払が起きる</small></label>
+                <small className="faint">行の金額（単価×数量）が 1 回あたり。期ごとに予定明細が立ち、期の末日に検収・支払が起きる。
+                  発注書には全回を 1 行にまとめて出す（例：全 12 回（毎月）1 回あたり ¥35,000）。回ごとの金額を直すのは条件明細の「予定」</small></label>
             </div>
           )}
           {payMode === "lump" && <span className="faint">発注書は行ごとに出ますが、検収は全行の納品後に 1 枚の検収書でまとめます（支払文書処理で選ぶ）。</span>}

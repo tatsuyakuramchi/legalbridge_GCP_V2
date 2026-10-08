@@ -75,7 +75,8 @@ export const ITEM_COLUMNS: Column[] = [
     options: [{ value: "FIXED", label: "固定額" },
               { value: "ROYALTY", label: "業績連動（利用許諾料・インセンティブ報酬）" },
               { value: "SUBSCRIPTION", label: "定期支払" }],
-    helpText: "未選択は固定額として出る" },
+    helpText: "未選択は固定額として出る。定期払いにするかは条件明細の予定（定期の回）で決まり、"
+            + "定期の回は自動で 1 行にまとまって定期支払になる。ここは紙の表記だけで、行は増えない" },
   { name: "delivery_kind", label: "納品の形", type: "select", showWhen: notSubscription,
     options: [{ value: "DELIVERABLE", label: "成果物納品（納期を書く）" },
               { value: "SERVICE", label: "役務提供（提供期間を書く）" }],
