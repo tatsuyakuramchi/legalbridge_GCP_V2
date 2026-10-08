@@ -76,6 +76,20 @@ export function AccountingExport() {
   }
   useEffect(() => { load(); }, [from, to, basis, includeExported]);
 
+  /** 全部の束をまとめて出力済みにする。経理に渡したあとで押す。 */
+  async function markAll() {
+    if (!result) return;
+    if (!window.confirm(`${result.count} 件を出力済みにします。次の集計から外れます。経理に渡したあとで押してください。よいですか？`)) return;
+    setBusy("all"); setError(null);
+    try {
+      await api.post("/exports/accounting/mark", {
+        paymentIds: result.groups.flatMap((g) => g.rows.map((r) => r.paymentId)), batchKey: `${from}_${to}`
+      });
+      load();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(""); }
+  }
+
   async function mark(group: Group) {
     setBusy(group.key); setError(null);
     try {
@@ -123,6 +137,27 @@ export function AccountingExport() {
                 <b style={{ color: "var(--out)" }}>　要確認 {result.flagged} 件</b>
               )}
             </p>
+          )}
+          {result && result.count > 0 && (
+            <div className="row" style={{ gap: 6, marginTop: 9, flexWrap: "wrap", alignItems: "center" }}>
+              <strong>全部まとめて</strong>
+              <a className="btn primary" href={`/api/v3/exports/accounting/combined?${query()}&format=zip`}
+                 title="V1 の xlsx（種別 × 個人／法人 × 支払日）と、全部の PDF を 1 つの zip に">
+                ↓ 1 つの zip（xlsx ＋ 全部の PDF）
+              </a>
+              <a className="btn" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=sheets`}
+                 title="1 つの xlsx。種別 × 個人／法人ごとにシートを分ける">
+                ↓ xlsx 1 ファイル（シート分け）
+              </a>
+              <a className="btn ghost" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=one`}
+                 title="1 つの xlsx の 1 シートに全部（種別 → 個人／法人 → 支払日の順）">
+                ↓ xlsx 1 シートに全部
+              </a>
+              <button className="btn ghost" disabled={busy === "all"} onClick={() => void markAll()}>
+                {busy === "all" ? "記録中…" : `全部（${result.count} 件）を出力済みにする`}
+              </button>
+              <span className="faint">下の束ごとのボタンは、担当者・支払日ごとに分けて出したいときに</span>
+            </div>
           )}
           {result && result.flagged > 0 && (
             <div className="note warn" style={{ marginTop: 4 }}>

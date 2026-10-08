@@ -4,7 +4,7 @@ import {
   sheetRows, v1AccountingCells, v1FileStem, v1SheetName,
   type AccountingRow
 } from "./accounting.js";
-import { buildXlsx } from "./xlsx.js";
+import { buildXlsx, type XlsxSheet } from "./xlsx.js";
 
 /**
  * 選んだ支払を、経理へ渡す形（V1 形式の xlsx ＋ 各書類の PDF）の zip にする。
@@ -28,14 +28,8 @@ export interface AccountingBundle {
   missing: string[];
 }
 
-export async function buildAccountingBundle(
-  rows: AccountingRow[], deps: BundleDeps,
-  options: { withPdf?: boolean; stem?: string } = {}
-): Promise<AccountingBundle> {
-  const entries: ZipEntry[] = [];
-  const files: string[] = [];
-
-  // 種別 × 個人／法人 × 支払日。並びは V1 と同じ（種別 → 個人／法人 → 日付）。
+/** 種別 × 個人／法人 × 支払日 に分ける。並びは V1 と同じ（種別 → 個人／法人 → 日付）。 */
+export function v1Groups(rows: AccountingRow[]): AccountingRow[][] {
   const keyOf = (r: AccountingRow) => `${r.category}\u0001${r.entity}\u0001${r.paymentDate}`;
   const groups = new Map<string, AccountingRow[]>();
   for (const row of rows) {
@@ -43,13 +37,48 @@ export async function buildAccountingBundle(
     list.push(row);
     groups.set(keyOf(row), list);
   }
-  const ordered = [...groups.values()].sort((a, b) => {
+  return [...groups.values()].sort((a, b) => {
     const x = a[0]!, y = b[0]!;
     return ACCOUNTING_CATEGORIES.indexOf(x.category) - ACCOUNTING_CATEGORIES.indexOf(y.category)
       || ACCOUNTING_ENTITIES.indexOf(x.entity) - ACCOUNTING_ENTITIES.indexOf(y.entity)
       || (x.paymentDate || "9999").localeCompare(y.paymentDate || "9999");
   });
-  for (const list of ordered) {
+}
+
+/**
+ * 期間の支払を 1 つの xlsx にまとめる（画面の「全部まとめて」）。
+ *
+ * 画面の束（支払日 × 社内担当 × 通貨）と V1 のファイル（種別 × 個人／法人 × 支払日）で
+ * 二重に分かれ、経理に渡すファイルが何本にもなっていた。中身（52 列・続きの行）は V1 と同じ。
+ *   sheets … 種別 × 個人／法人 ごとに 1 シート（支払日が 2 つ以上あればシート名に日付）
+ *   one    … 1 シートに全部（種別 → 個人／法人 → 支払日 の順）
+ */
+export function combinedAccountingSheets(rows: AccountingRow[], layout: "sheets" | "one" = "sheets"): XlsxSheet[] {
+  const groups = v1Groups(rows);
+  if (layout === "one") {
+    return [{ name: "経理提出用", rows: [V1_ACCOUNTING_HEADERS, ...groups.flatMap((g) => sheetRows(g).map(v1AccountingCells))] }];
+  }
+  const datesOf = new Map<string, Set<string>>();
+  for (const g of groups) {
+    const k = v1SheetName(g[0]!.category, g[0]!.entity);
+    datesOf.set(k, (datesOf.get(k) ?? new Set()).add(g[0]!.paymentDate));
+  }
+  return groups.map((g) => {
+    const head = g[0]!;
+    const base = v1SheetName(head.category, head.entity);
+    const name = (datesOf.get(base)?.size ?? 0) > 1 ? `${base}_${head.paymentDate || "期日未設定"}` : base;
+    return { name: name.slice(0, 31), rows: [V1_ACCOUNTING_HEADERS, ...sheetRows(g).map(v1AccountingCells)] };
+  });
+}
+
+export async function buildAccountingBundle(
+  rows: AccountingRow[], deps: BundleDeps,
+  options: { withPdf?: boolean; stem?: string } = {}
+): Promise<AccountingBundle> {
+  const entries: ZipEntry[] = [];
+  const files: string[] = [];
+
+  for (const list of v1Groups(rows)) {
     const head = list[0]!;
     const name = `${v1FileStem(head.category, head.entity, head.paymentDate)}.xlsx`;
     entries.push({

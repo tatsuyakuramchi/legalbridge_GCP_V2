@@ -42,3 +42,22 @@ test("PDF を作れなかった書類は理由を並べ、xlsx は出す。withP
   assert.deepEqual(noPdf.missing, []);
   assert.equal(noPdf.name, "支払申請_2026-10-20_2026-10-31.zip");
 });
+
+test("全部まとめて 1 つの xlsx：種別 × 個人／法人ごとのシート（支払日が 2 つ以上ならシート名に日付）、または 1 シートに全部", async () => {
+  const { combinedAccountingSheets } = await import("./accounting-bundle.js");
+  const rows = [
+    row({ paymentId: 1 }),
+    row({ paymentId: 2, entity: "法人", documentId: 11 }),
+    row({ paymentId: 3, category: "検収書", paymentDate: "2026-10-20" }),
+    row({ paymentId: 4, category: "検収書", paymentDate: "2026-10-31" })
+  ];
+  const sheets = combinedAccountingSheets(rows, "sheets");
+  assert.deepEqual(sheets.map((s) => [s.name, s.rows.length - 1]), [
+    ["検収書(個人)_2026-10-20", 1], ["検収書(個人)_2026-10-31", 1],
+    ["利用許諾料計算書(個人)", 1], ["利用許諾料計算書(法人)", 1]
+  ]);
+  const one = combinedAccountingSheets(rows, "one");
+  assert.equal(one.length, 1);
+  assert.equal(one[0].rows.length, 1 + 4, "見出し 1 行 ＋ 4 件");
+  assert.ok(sheets.every((s) => s.name.length <= 31), "Excel のシート名は 31 文字まで");
+});
