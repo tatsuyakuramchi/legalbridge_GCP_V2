@@ -42,6 +42,12 @@ export interface DocumentSetInput {
     manualInputs?: Record<string, unknown>;
   };
   docs: SetDocInput[];
+  /**
+   * 共著の受取人（取り分）宛ての文書セット。counterpartyId は受取人で、基本契約は受取人のもの。
+   * 条件の相手先は代表のままなので、相手先の照合をせず、条件を受取人の基本契約に載せ替えない。
+   * 条件書は受取人宛て（manual_inputs._payeePartyId）で、受取人の基本契約の下に置く（agreements/auto.ts）。
+   */
+  payeePartyId?: number | null;
 }
 
 export interface SetResultDoc { role: "master" | "main" | "extra"; templateKey: string; id: number; documentNo: string | null }
@@ -80,7 +86,11 @@ export async function issueDocumentSet(deps: DocumentSetDeps, input: DocumentSet
     `SELECT id, condition_no, direction, counterparty_id, agreement_id FROM conditions WHERE id = ANY($1::bigint[])`,
     [allConditionIds])).rows as any[] : [];
   if (conds.length !== allConditionIds.length) throw new DomainError("NOT_FOUND", "選んだ条件明細の一部が見つかりません");
-  const others = conds.filter((c) => int(c.counterparty_id) !== input.counterpartyId);
+  const payee = input.payeePartyId ?? null;
+  if (payee && payee !== input.counterpartyId) {
+    throw new DomainError("VALIDATION", "受取人宛ての文書セットは、相手先を受取人にしてください");
+  }
+  const others = payee ? [] : conds.filter((c) => int(c.counterparty_id) !== input.counterpartyId);
   if (others.length) {
     throw new DomainError("VALIDATION", `相手先の違う条件明細が入っています（${others.map((c) => c.condition_no ?? `#${c.id}`).join("、")}）`);
   }
@@ -106,7 +116,7 @@ export async function issueDocumentSet(deps: DocumentSetDeps, input: DocumentSet
 
   // 2. 条件を基本契約に載せる（まだ載っていないものだけ）
   let linked: number[] = [];
-  if (agreement && allConditionIds.length) {
+  if (agreement && allConditionIds.length && !payee) {
     const r = await deps.db.query(
       `UPDATE conditions SET agreement_id = $2, updated_at = now()
         WHERE id = ANY($1::bigint[]) AND agreement_id IS NULL RETURNING id`,
@@ -114,12 +124,16 @@ export async function issueDocumentSet(deps: DocumentSetDeps, input: DocumentSet
     linked = (r.rows as any[]).map((x) => Number(x.id));
   }
 
-  const agreementFor = (templateKey: string) => TERMS_KEYS.has(templateKey) ? null : agreement?.id ?? null;
+  // 条件書には合意を付けない（決定で自動の合意が立つ）。受取人宛ては受取人の基本契約を親として渡す。
+  const agreementFor = (templateKey: string) =>
+    TERMS_KEYS.has(templateKey) ? (payee ? agreement?.id ?? null : null) : agreement?.id ?? null;
+  const withPayee = (templateKey: string, manual: Record<string, unknown>) =>
+    payee && TERMS_KEYS.has(templateKey) ? { ...manual, _payeePartyId: payee } : manual;
   const plan: Array<{ role: SetResultDoc["role"]; templateKey: string; conditionIds: number[]; manualInputs: Record<string, unknown>; agreementId: number | null }> = [
     ...(makeMaster ? [{ role: "master" as const, templateKey: input.master!.templateKey!, conditionIds: [],
                         manualInputs: input.master!.manualInputs ?? {}, agreementId: agreement?.id ?? null }] : []),
     ...docs.map((d) => ({ role: d.role, templateKey: d.templateKey, conditionIds: d.conditionIds,
-                          manualInputs: d.manualInputs ?? {}, agreementId: agreementFor(d.templateKey) }))
+                          manualInputs: withPayee(d.templateKey, d.manualInputs ?? {}), agreementId: agreementFor(d.templateKey) }))
   ];
 
   // 3. すべてを先に確かめる。止まったら、ここで作ったものを戻す。

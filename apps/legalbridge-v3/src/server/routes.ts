@@ -3751,11 +3751,13 @@ export function createRoutes(database: Transactable) {
     createAgreement: (x) => agreements.create(x, who)
   });
   const missingRunSchema = z.object({
-    partyIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+    // 行の鍵：相手先 party:<id>／共著の受取人 payee:<id>。partyIds は相手先の行の旧い指定。
+    keys: z.array(z.string().regex(/^(party|payee):\d+$/)).max(400).optional(),
+    partyIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
     signedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     masterTemplateKey: z.string().trim().max(60).nullable().optional(),
     termsTemplateKey: z.string().trim().max(60).nullable().optional()
-  });
+  }).refine((x) => (x.keys?.length ?? 0) + (x.partyIds?.length ?? 0) > 0, { message: "相手先を 1 件以上選んでください" });
   // 相手先ごとの未送付の文書（基本契約書・条件書・計算書）。1 通・1 封筒で送る一覧（docs/royalty-shares.md §5.6）。
   const unsentBundles = new UnsentBundlesService(database);
   router.get("/documents/unsent-bundles", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
