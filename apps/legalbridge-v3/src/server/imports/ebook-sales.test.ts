@@ -372,3 +372,40 @@ test("販売月の範囲：外の行は「範囲外」で登録しない（支�
   // 範囲を指定しなければ全部。
   assert.equal((await svc.preview(rows)).counts.ok, 4);
 });
+
+test("月の基準：報告月は範囲・回・計算書の月すべて報告月。ハイブリッドは範囲と回が報告月で、計算書の月は販売月", async () => {
+  const schedules = [{ id: 90, condition_id: 50, label: "2025年7月〜2026年6月", due_on: "2026-06-30", service_from: "2025-07-01", service_to: "2026-06-30" }];
+  // 報告月 2025-08 に載った販売月 2025-06 の行（販売月では前期・報告月では今期）と、報告月 2026-08 に載った販売月 2026-06 の行（その逆）。
+  const rows = [row({ sheet: "2025年8月", reportMonth: "2025-08", month: "2025-06" }),
+                row({ sheet: "2026年8月", reportMonth: "2026-08", month: "2026-06", store: "Kindle" })];
+  const range = { fromMonth: "2025-07", toMonth: "2026-06" };
+  const run = async (basis: "sales" | "report" | "hybrid") => {
+    const w = writer();
+    const svc = new EbookSalesImportService(db({ codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL], schedules }), w as any);
+    const p = await svc.preview(rows, { ...range, basis });
+    await svc.commit(rows, "tester", { ...range, basis });
+    return { statuses: p.groups.map((g) => g.status), message: p.groups.find((g) => g.status === "out_of_range")?.message ?? "",
+             added: w.added.map((a) => [a.input.period, a.input.occurredOn, a.input.scheduleId]) };
+  };
+  const sales = await run("sales");
+  assert.deepEqual(sales.statuses, ["out_of_range", "ok"]);
+  assert.deepEqual(sales.added, [["2026年6月分", "2026-06-30", 90]]);
+
+  const report = await run("report");
+  assert.deepEqual(report.statuses, ["ok", "out_of_range"]);
+  assert.match(report.message, /報告月 2026-08 は登録する範囲/);
+  assert.deepEqual(report.added, [["2025年8月分", "2025-08-31", 90]]);
+
+  const hybrid = await run("hybrid");
+  assert.deepEqual(hybrid.statuses, ["ok", "out_of_range"]);
+  assert.deepEqual(hybrid.added, [["2025年6月分", "2025-08-31", 90]], "期間（計算書の月）は販売月、発生日と回は報告月");
+});
+
+test("登録済みの検査は基準によらず販売月で見る（報告月の基準で入れた実績も、販売月の基準で入れ直すと「登録済み」）", async () => {
+  const existing = [{ condition_id: 50, period: "2026年3月分", unit_amount: 1900, note: "電子書籍売上取込 2026-01｜BOOKWALKER（PC）｜報告月 2026-03" }];
+  const svc = new EbookSalesImportService(db({ codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL], existing }), writer() as any);
+  const r = [row({ sheet: "2026年3月", reportMonth: "2026-03", month: "2026-01" })];
+  for (const basis of ["sales", "report", "hybrid"] as const) {
+    assert.equal((await svc.preview(r, { basis })).groups[0].status, "duplicate", basis);
+  }
+});

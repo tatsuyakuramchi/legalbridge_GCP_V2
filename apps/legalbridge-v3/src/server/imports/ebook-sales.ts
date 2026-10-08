@@ -233,9 +233,25 @@ export type GroupStatus =
   | "out_of_range"; // 販売月が指定の範囲の外（支払済みの月・まだ先の月）。登録しない
 
 /** 登録する販売月の範囲（YYYY-MM。両端を含む）。空なら全部。 */
-export interface MonthRange { fromMonth?: string | null; toMonth?: string | null }
+/**
+ * 月の基準（どの月で範囲を切り、どの月の回に付け、計算書にどの月を出すか）。
+ *   sales  … 販売月（A 列）。範囲・回・計算書の月すべて販売月。契約の集計期間が販売月基準のとき。
+ *   report … 報告月（シート名）。範囲・回・計算書の月すべて報告月。事業部の支払が報告月で締まるとき。
+ *   hybrid … 範囲と回は報告月（その期の報告に載った行を、その期の支払に入れる）、
+ *            計算書の月（実績の期間）は販売月。
+ * シート名が月でない（CSV など）行は、どの基準でも販売月で読む。
+ */
+export type MonthBasis = "sales" | "report" | "hybrid";
+export interface MonthRange { fromMonth?: string | null; toMonth?: string | null; basis?: MonthBasis | null }
 const inRange = (month: string, range: MonthRange) =>
   (!range.fromMonth || month >= range.fromMonth) && (!range.toMonth || month <= range.toMonth);
+/** 範囲と回を切る月（実績の発生日の月）。 */
+export const cutMonthOf = (g: { month: string; reportMonth: string | null }, basis: MonthBasis | null | undefined) =>
+  basis === "report" || basis === "hybrid" ? g.reportMonth ?? g.month : g.month;
+/** 計算書に出す月（実績の期間）。 */
+export const periodMonthOf = (g: { month: string; reportMonth: string | null }, basis: MonthBasis | null | undefined) =>
+  basis === "report" ? g.reportMonth ?? g.month : g.month;
+const BASIS_LABEL: Record<MonthBasis, string> = { sales: "販売月", report: "報告月", hybrid: "報告月" };
 
 export interface SalesGroup {
   key: string;
@@ -305,6 +321,18 @@ export function storeOfNote(note: string | null | undefined): string | null {
   return m ? m[1].trim() : null;
 }
 
+/** 取込の備考「電子書籍売上取込 2026-01｜…」から販売月。読めなければ null。 */
+export function salesMonthOfNote(note: string | null | undefined): string | null {
+  const m = String(note ?? "").match(/^電子書籍売上取込 (\d{4}-\d{2})｜/);
+  return m ? m[1] : null;
+}
+
+/** 実績の期間「2026年1月分」から 2026-01。 */
+function monthOfLabel(label: string | null | undefined): string | null {
+  const m = String(label ?? "").match(/^(\d{4})年(\d{1,2})月分$/);
+  return m ? `${m[1]}-${m[2].padStart(2, "0")}` : null;
+}
+
 /** 取込の備考「…｜書店｜報告月 2026-03」から報告月。古い形（報告月なし）は null。 */
 export function reportOfNote(note: string | null | undefined): string | null {
   const m = String(note ?? "").match(/｜報告月 (\d{4}-\d{2})/);
@@ -355,7 +383,9 @@ export class EbookSalesImportService {
           // 台帳の「報告を追加」と同じ形。総額＝実額＝報告売上（配信価格 × DL数）。
           // 料率は計算書を出すときに条件から掛かる（取り分もそこで割る）。
           const r = await this.events.add(g.condition!.id, {
-            eventType: "sales", occurredOn: monthEnd(g.month), period: monthLabel(g.month),
+            // 発生日は範囲と回を切る月の末日、期間は計算書に出す月（基準で変わる）。
+            eventType: "sales", occurredOn: monthEnd(cutMonthOf(g, options.basis)),
+            period: monthLabel(periodMonthOf(g, options.basis)),
             quantity: g.downloads, grossAmount: g.gross, amount: g.gross,
             // 「電子書籍売上取込 販売月｜書店｜報告月 YYYY-MM」。書店と報告月は登録済みの検査（同じ行を
             // 二度入れない。遅れて報告された同じ販売月の行は別の報告）と計算書の但し書きが読む。
@@ -540,7 +570,9 @@ export class EbookSalesImportService {
     // 書店・報告月の無い古い備考は、どの書店・報告月とも同じ扱い（*）。
     const existingKeys = new Set(existing.map((e) => {
       const store = storeOfNote(str(e.note));
-      return `${Number(e.condition_id)}|${String(e.period ?? "")}|${int(e.unit_amount) ?? 0}|${store ?? "*"}|${store === null ? "*" : reportOfNote(str(e.note)) ?? "*"}`;
+      // 販売月は備考から（期間は基準で報告月のことがある）。備考で読めなければ期間から。
+      const sales = salesMonthOfNote(str(e.note)) ?? monthOfLabel(str(e.period)) ?? String(e.period ?? "");
+      return `${Number(e.condition_id)}|${sales}|${int(e.unit_amount) ?? 0}|${store ?? "*"}|${store === null ? "*" : reportOfNote(str(e.note)) ?? "*"}`;
     }));
 
     // 回（時限式の締め）。販売月の末日を集計期間（service_from〜service_to）に含む回に付ける。
@@ -562,9 +594,10 @@ export class EbookSalesImportService {
 
     for (const g of list) {
       // 販売月の範囲の外は登録しない（支払済みの月を二重に払わない）。行は画面に出して数える。
-      if (!inRange(g.month, range)) {
+      const cut = cutMonthOf(g, range.basis);
+      if (!inRange(cut, range)) {
         g.status = "out_of_range";
-        g.message = `販売月 ${g.month} は登録する範囲（${range.fromMonth ?? "最初"}〜${range.toMonth ?? "最後"}）の外です`;
+        g.message = `${BASIS_LABEL[range.basis ?? "sales"]} ${cut} は登録する範囲（${range.fromMonth ?? "最初"}〜${range.toMonth ?? "最後"}）の外です`;
         continue;
       }
       if (!g.work) {
@@ -591,10 +624,11 @@ export class EbookSalesImportService {
       const c = digital[0];
       g.condition = { id: Number(c.id), conditionNo: str(c.condition_no), ratePpm: int(c.rate_ppm),
                       counterparty: str(c.party_name), shares: c.shares ? String(c.shares).split("・") : [] };
-      g.round = roundFor(Number(c.id), monthEnd(g.month));
+      g.round = roundFor(Number(c.id), monthEnd(cutMonthOf(g, range.basis)));
       // 行ごとに切り捨て（Excel の ROUNDDOWN と同じ）。
       g.royalty = floorRoyalty((g.gross * (int(c.rate_ppm) ?? 0)) / 1_000_000);
-      const dupBase = `${Number(c.id)}|${monthLabel(g.month)}|${g.listPrice}`;
+      // 登録済みの検査は基準によらず販売月で見る（基準を替えて取り込み直しても二重にしない）。
+      const dupBase = `${Number(c.id)}|${g.month}|${g.listPrice}`;
       const report = g.reportMonth ?? "";
       if ([`${dupBase}|${g.store ?? ""}|${report}`, `${dupBase}|${g.store ?? ""}|*`, `${dupBase}|*|*`].some((k) => existingKeys.has(k))) {
         g.status = "duplicate"; g.message = "同じ販売月・同じ報告月・同じ書店・同じ販売価格の実績がもうあります"; continue;
