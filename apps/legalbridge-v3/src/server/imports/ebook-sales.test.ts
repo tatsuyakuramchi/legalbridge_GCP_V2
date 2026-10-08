@@ -336,3 +336,24 @@ test("備考から書店と報告月を読む。月の部分が区切り（｜�
   assert.equal(reportOfNote("電子書籍売上取込 2026-01｜Kindle｜報告月 2026-03"), "2026-03");
   assert.equal(reportOfNote("電子書籍売上取込 2026-03｜Kindle｜販売月 2026-01"), null);
 });
+
+test("販売月の範囲：外の行は「範囲外」で登録しない（支払済みの月を二重に払わない・先の月は次の取込で）", async () => {
+  const w = writer();
+  const svc = new EbookSalesImportService(db({ codes: [{ cid: "BT0001", id: 7, title: "キズナバレット 1" }], conditions: [DIGITAL] }), w as any);
+  const rows = [row({ sheet: "2025年8月", reportMonth: "2025-08", month: "2025-06" }),    // 支払済み
+                row({ sheet: "2025年8月", reportMonth: "2025-08", month: "2025-07" }),
+                row({ sheet: "2026年8月", reportMonth: "2026-08", month: "2026-06" }),
+                row({ sheet: "2026年8月", reportMonth: "2026-08", month: "2026-07" })];   // 次の期
+  const range = { fromMonth: "2025-07", toMonth: "2026-06" };
+  const p = await svc.preview(rows, range);
+  assert.deepEqual(p.groups.map((g) => [g.month, g.status]),
+    [["2025-06", "out_of_range"], ["2025-07", "ok"], ["2026-06", "ok"], ["2026-07", "out_of_range"]]);
+  assert.equal(p.counts.out_of_range, 2);
+  assert.match(p.groups[0].message ?? "", /2025-07〜2026-06/);
+  // 画面が全部の鍵を渡しても、範囲の外は登録しない。
+  const done = await svc.commit(rows, "tester", { ...range, onlyKeys: p.groups.map((g) => g.key) });
+  assert.equal(done.written, 2);
+  assert.deepEqual(w.added.map((a) => a.input.period), ["2025年7月分", "2026年6月分"]);
+  // 範囲を指定しなければ全部。
+  assert.equal((await svc.preview(rows)).counts.ok, 4);
+});

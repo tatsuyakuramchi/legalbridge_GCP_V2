@@ -12,7 +12,7 @@ import { useDebounced } from "./ListTools.js";
  */
 
 interface Row { sheet: string; line: number; month: string; reportMonth: string | null; title: string; volume: string | null; cid: string | null; [k: string]: unknown }
-type Status = "ok" | "duplicate" | "no_royalty" | "no_condition" | "unresolved" | "zero";
+type Status = "ok" | "duplicate" | "no_royalty" | "no_condition" | "unresolved" | "zero" | "out_of_range";
 interface Group {
   key: string; cid: string | null; title: string; volume: string | null; authors: string | null; month: string; reportMonth: string | null; salesMonths: string[];
   store: string | null;
@@ -33,7 +33,8 @@ const STATUS: Record<Status, { label: string; tag: string }> = {
   no_royalty: { label: "印税なし", tag: "" },
   no_condition: { label: "条件なし", tag: "warn" },
   unresolved: { label: "作品が未決定", tag: "out" },
-  zero: { label: "0", tag: "" }
+  zero: { label: "0", tag: "" },
+  out_of_range: { label: "範囲外", tag: "" }
 };
 
 export function EbookSalesImport() {
@@ -43,6 +44,10 @@ export function EbookSalesImport() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [filter, setFilter] = useState<Status | "all">("all");
   const [month, setMonth] = useState<string>("all");
+  /** 登録する販売月の範囲（両端を含む）。外の行は「範囲外」で登録しない（支払済みの月を二重に払わない）。 */
+  const [fromMonth, setFromMonth] = useState("");
+  const [toMonth, setToMonth] = useState("");
+  const range = () => ({ fromMonth: fromMonth || null, toMonth: toMonth || null });
   const [result, setResult] = useState<{ written: number; results: Array<{ key: string; status: string; message: string | null }> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -61,7 +66,7 @@ export function EbookSalesImport() {
 
   async function refresh(rows: Row[]) {
     setBusy("突き合わせています");
-    try { setPreview(await api.post<Preview>("/imports/ebook-sales/preview", { rows })); }
+    try { setPreview(await api.post<Preview>("/imports/ebook-sales/preview", { rows, ...range() })); }
     catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(null); }
   }
@@ -72,7 +77,7 @@ export function EbookSalesImport() {
     try {
       const keys = (preview?.groups ?? []).filter((g) => g.status === "ok" && (month === "all" || g.month === month)).map((g) => g.key);
       const r = await api.post<{ written: number; results: Array<{ key: string; status: string; message: string | null }>; preview: Preview }>(
-        "/imports/ebook-sales/commit", { rows: read.rows, onlyKeys: keys });
+        "/imports/ebook-sales/commit", { rows: read.rows, onlyKeys: keys, ...range() });
       setResult({ written: r.written, results: r.results });
       setPreview(r.preview);
       await refresh(read.rows);
@@ -99,6 +104,14 @@ export function EbookSalesImport() {
           {file && <span className="faint">{file.name}</span>}
           {busy && <span className="faint">{busy}…</span>}
         </div>
+        <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="faint">登録する販売月</span>
+          <input type="month" value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} aria-label="販売月の始め" />
+          <span>〜</span>
+          <input type="month" value={toMonth} onChange={(e) => setToMonth(e.target.value)} aria-label="販売月の終わり" />
+          {read && <button className="btn btn-sm" disabled={Boolean(busy)} onClick={() => void refresh(read.rows)}>範囲で突き合わせ直す</button>}
+          <span className="faint">支払済みの月を外すとき。範囲の外の行は「範囲外」に出て登録しません（空なら全部）</span>
+        </div>
         {error && <div className="alert">{error}</div>}
         <AnnualClosesPanel />
         {read && (
@@ -109,7 +122,7 @@ export function EbookSalesImport() {
         {preview && (
           <>
             <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
-              {(["all", "ok", "unresolved", "no_condition", "no_royalty", "duplicate", "zero"] as const).map((s) => (
+              {(["all", "ok", "unresolved", "no_condition", "no_royalty", "duplicate", "zero", "out_of_range"] as const).map((s) => (
                 <button key={s} className="chip" aria-pressed={filter === s} onClick={() => setFilter(s)}>
                   {s === "all" ? `すべて ${preview.groups.length}` : `${STATUS[s].label} ${preview.counts[s]}`}
                 </button>

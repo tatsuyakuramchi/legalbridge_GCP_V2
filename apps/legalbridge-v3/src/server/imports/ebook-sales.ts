@@ -222,7 +222,13 @@ export type GroupStatus =
   | "no_royalty"    // 作品はあるが電子出版の料率条件が無い（買い切り・社内制作など）
   | "no_condition"  // 作品はあるが条件が 1 本も無い（登録漏れの疑い）
   | "unresolved"    // 作品が分からない（CID もタイトルも当たらない）
-  | "zero";         // DL 0 または価格 0
+  | "zero"          // DL 0 または価格 0
+  | "out_of_range"; // 販売月が指定の範囲の外（支払済みの月・まだ先の月）。登録しない
+
+/** 登録する販売月の範囲（YYYY-MM。両端を含む）。空なら全部。 */
+export interface MonthRange { fromMonth?: string | null; toMonth?: string | null }
+const inRange = (month: string, range: MonthRange) =>
+  (!range.fromMonth || month >= range.fromMonth) && (!range.toMonth || month <= range.toMonth);
 
 export interface SalesGroup {
   key: string;
@@ -321,15 +327,15 @@ export class EbookSalesImportService {
   constructor(private readonly database: Transactable, private readonly events: EventWriter) {}
 
   /** 行をまとめて突合する。書かない。 */
-  async preview(rows: EbookSalesRow[]): Promise<SalesPreview> {
-    try { return await this.resolve(this.database, rows); }
+  async preview(rows: EbookSalesRow[], range: MonthRange = {}): Promise<SalesPreview> {
+    try { return await this.resolve(this.database, rows, range); }
     catch (error) { throw translate(error); }
   }
 
   /** 登録できる行を実績にする。突合はここでもう一度行う。 */
-  async commit(rows: EbookSalesRow[], actor: string, options: { onlyKeys?: string[] } = {}) {
+  async commit(rows: EbookSalesRow[], actor: string, options: { onlyKeys?: string[] } & MonthRange = {}) {
     try {
-      const preview = await this.resolve(this.database, rows);
+      const preview = await this.resolve(this.database, rows, options);
       const picked = new Set(options.onlyKeys ?? []);
       const results: Array<{ key: string; eventId: number | null; status: GroupStatus | "error"; message: string | null }> = [];
       let written = 0;
@@ -417,7 +423,7 @@ export class EbookSalesImportService {
     });
   }
 
-  private async resolve(client: Queryable, rows: EbookSalesRow[]): Promise<SalesPreview> {
+  private async resolve(client: Queryable, rows: EbookSalesRow[], range: MonthRange = {}): Promise<SalesPreview> {
     // まとめる：CID（無ければタイトル × 巻数）× 販売月 × 報告月（シート名）× 書店 × 販売価格。
     // Excel の行と同じ単位（印税は行ごとに切り捨てなので、行をまたいで足すと 1 円ずれる）。
     // 期間は販売月。報告月も鍵に入れるのは、遅れて報告された同じ販売月の行（別のシート）を
@@ -548,6 +554,12 @@ export class EbookSalesImportService {
     };
 
     for (const g of list) {
+      // 販売月の範囲の外は登録しない（支払済みの月を二重に払わない）。行は画面に出して数える。
+      if (!inRange(g.month, range)) {
+        g.status = "out_of_range";
+        g.message = `販売月 ${g.month} は登録する範囲（${range.fromMonth ?? "最初"}〜${range.toMonth ?? "最後"}）の外です`;
+        continue;
+      }
       if (!g.work) {
         g.status = "unresolved";
         g.message ??= g.cid ? "この CID の作品がまだ決まっていません"
@@ -584,7 +596,7 @@ export class EbookSalesImportService {
       g.status = "ok"; g.message = null;
     }
 
-    const counts: Record<GroupStatus, number> = { ok: 0, duplicate: 0, no_royalty: 0, no_condition: 0, unresolved: 0, zero: 0 };
+    const counts: Record<GroupStatus, number> = { ok: 0, duplicate: 0, no_royalty: 0, no_condition: 0, unresolved: 0, zero: 0, out_of_range: 0 };
     for (const g of list) counts[g.status] += 1;
     list.sort((a, b) => a.month.localeCompare(b.month) || (a.reportMonth ?? "").localeCompare(b.reportMonth ?? "")
       || a.title.localeCompare(b.title, "ja")
