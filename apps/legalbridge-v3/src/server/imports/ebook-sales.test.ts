@@ -52,6 +52,21 @@ test("シートをまたいで同じ行は 1 回だけ数える（年次の集�
   assert.match(r.sheets[1].note ?? "", /2 行は他のシートと同じ行/);
 });
 
+test("月のシート（その月の報告）は別々の報告。同じ内容の行が別の月や同じ月のシートにあっても全部数える", () => {
+  const line = [45839, "ドワンゴ", "BOOKWALKER（PC）", 1, "ケダモノオペラ", "池梟リョーマ", 2500, 55, 1375, 5, 6875, 1875];
+  const header = ["販売月", "書店会社名", "書店名", "巻数", "タイトル名称", "著者名", "販売価格", "料率", "支払い単価", "DL数", "税抜き金額", "印税"];
+  const r = readWorkbookRows({ sheets: [
+    { name: "2025年7月", rows: [header, line, line] },
+    { name: "2025年8月", rows: [header, line] },
+    // 月のシートのあとに支払先ごとのシートがあれば、そちらは前の行と同じなら飛ばす。
+    { name: "池梟リョーマ", rows: [header, line] }
+  ] });
+  assert.equal(r.rows.length, 3, "Excel はどの行も払う");
+  assert.deepEqual(r.rows.map((x) => x.reportMonth), ["2025-07", "2025-07", "2025-08"]);
+  assert.equal(r.sheets[0].note, null);
+  assert.equal(r.sheets[2].rows, 0);
+});
+
 test("CSV も同じ列の規則で読む", () => {
   const csv = "販売月,書店会社名,書店名,巻数,タイトル名称,著者名,販売価格,料率,支払い単価,DL数,税抜き金額,印税\n"
     + "2026-01-01,ドワンゴ,BOOKWALKER（PC）,1,ケダモノオペラ,池梟リョーマ,3000,55,1650,2,3300,900\n";
