@@ -24,6 +24,12 @@ interface Group {
   royalty: number | null; royaltyInFile: number | null;
   candidates: Array<{ id: number; title: string; workCode: string | null }>;
 }
+type Basis = "sales" | "report" | "hybrid";
+const BASIS: Record<Basis, { label: string; cut: string; hint: string }> = {
+  sales: { label: "販売月", cut: "販売月", hint: "範囲・回・計算書の月すべて A 列の販売月" },
+  report: { label: "報告月", cut: "報告月", hint: "範囲・回・計算書の月すべてシートの報告月" },
+  hybrid: { label: "ハイブリッド", cut: "報告月", hint: "範囲と回は報告月（その期の報告に載った行をその期に払う）、計算書の月は販売月" }
+};
 interface Preview { groups: Group[]; counts: Record<Status, number>; months: string[] }
 interface ReadResult { rows: Row[]; sheets: Array<{ name: string; rows: number; note: string | null }> }
 
@@ -94,7 +100,9 @@ export function EbookSalesImport() {
   /** 登録する販売月の範囲（両端を含む）。外の行は「範囲外」で登録しない（支払済みの月を二重に払わない）。 */
   const [fromMonth, setFromMonth] = useState("");
   const [toMonth, setToMonth] = useState("");
-  const range = () => ({ fromMonth: fromMonth || null, toMonth: toMonth || null });
+  /** 月の基準。範囲と回を切る月・計算書に出す月を決める（docs/royalty-shares.md §5.1）。 */
+  const [basis, setBasis] = useState<Basis>("sales");
+  const range = () => ({ fromMonth: fromMonth || null, toMonth: toMonth || null, basis });
   const [result, setResult] = useState<{ written: number; results: Array<{ key: string; status: string; message: string | null }> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -155,12 +163,18 @@ export function EbookSalesImport() {
           {busy && <span className="faint">{busy}…</span>}
         </div>
         <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span className="faint">登録する販売月</span>
-          <input type="month" value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} aria-label="販売月の始め" />
+          <label className="row" style={{ gap: 4, alignItems: "center" }}>
+            <span className="faint">月の基準</span>
+            <select value={basis} onChange={(e) => setBasis(e.target.value as Basis)} disabled={Boolean(busy)}>
+              {(Object.keys(BASIS) as Basis[]).map((b) => <option key={b} value={b}>{BASIS[b].label}</option>)}
+            </select>
+          </label>
+          <span className="faint">登録する{BASIS[basis].cut}</span>
+          <input type="month" value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} aria-label="範囲の始め" />
           <span>〜</span>
-          <input type="month" value={toMonth} onChange={(e) => setToMonth(e.target.value)} aria-label="販売月の終わり" />
-          {read && <button className="btn btn-sm" disabled={Boolean(busy)} onClick={() => void refresh(read.rows)}>範囲で突き合わせ直す</button>}
-          <span className="faint">支払済みの月を外すとき。範囲の外の行は「範囲外」に出て登録しません（空なら全部）</span>
+          <input type="month" value={toMonth} onChange={(e) => setToMonth(e.target.value)} aria-label="範囲の終わり" />
+          {read && <button className="btn btn-sm" disabled={Boolean(busy)} onClick={() => void refresh(read.rows)}>基準・範囲で突き合わせ直す</button>}
+          <span className="faint">{BASIS[basis].hint}。範囲の外の行は「範囲外」に出て登録しません（空なら全部）。基準を替えたら突き合わせ直してください</span>
         </div>
         {error && <div className="alert">{error}</div>}
         <AnnualClosesPanel />
