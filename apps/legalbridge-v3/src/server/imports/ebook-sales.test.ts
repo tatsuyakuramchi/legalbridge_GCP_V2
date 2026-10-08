@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
 import { DomainError } from "../core/errors.js";
 import {
-  EbookSalesImportService, monthEnd, monthLabel, monthOf, normalizeTitle, readRows, readWorkbookRows, rowsOfSheet, volumeOf, volumeTitles,
+  EbookSalesImportService, monthEnd, monthLabel, monthOf, normalizeTitle, readRows, readWorkbookRows, rowsOfSheet, titleContains, volumeOf, volumeTitles,
   type EbookSalesRow
 } from "./ebook-sales.js";
 
@@ -84,6 +84,8 @@ const row = (over: Partial<EbookSalesRow>): EbookSalesRow => ({
 interface Options {
   codes?: Array<{ cid: string; id: number; title: string }>;
   titles?: Array<{ id: number; title: string }>;
+  /** 部分一致の候補（登録の作品名が報告の題名を含むもの）。SQL の絞りは真似ず、全部返して JS 側で選ばせる。 */
+  partial?: Array<{ id: number; title: string }>;
   conditions?: Array<Record<string, unknown>>;
   existing?: Array<{ condition_id: number; period: string; unit_amount: number; note?: string | null }>;
   schedules?: Array<Record<string, unknown>>;
@@ -92,6 +94,7 @@ const db = (o: Options = {}) => new FakeDatabase((text, params) => {
   if (text.includes("FROM ebook_work_codes c JOIN works w")) {
     return (o.codes ?? []).filter((c) => (params[0] as string[]).includes(c.cid)).map((c) => ({ cid: c.cid, id: c.id, title: c.title, work_code: null }));
   }
+  if (text.includes("strpos(regexp_replace(lower(title)")) return (o.partial ?? []).map((t) => ({ ...t, work_code: null }));
   if (text.includes("regexp_replace(lower(title)")) return (o.titles ?? []).map((t) => ({ ...t, work_code: null }));
   if (text.includes("FROM conditions c LEFT JOIN parties p")) return o.conditions ?? [];
   if (text.includes("e.event_type = 'sales' AND c.id = ANY")) return o.existing ?? [];
@@ -254,6 +257,45 @@ test("巻数：作品は作品名 × 巻数で 1 件。CID が無い行は「タ
   assert.match(by["5"].message ?? "", /「スピタのコピタの！ 5」の作品がありません/);
   assert.deepEqual(by["5"].candidates.map((c: { id: number }) => c.id), [30], "候補にシリーズ名の作品は出す（人が選ぶ）");
   assert.equal(by["1"].work!.id, 30);
+});
+
+test("題名の部分一致：報告が題名を省いていても、登録の作品名が報告の題名を含み巻数も合う作品が 1 件ならそれに当てる", async () => {
+  const n = normalizeTitle;
+  assert.ok(titleContains(n("ブレイド・オブ・アルカナ ―聖痕英雄譚RPG― サプリメント　ソング・オブ・ホープ"), n("ソング・オブ・ホープ"), null));
+  assert.ok(titleContains(n("サプリメント ソング・オブ・ホープ 第2巻"), n("ソング・オブ・ホープ"), "2"));
+  assert.ok(titleContains(n("サプリメント ソング・オブ・ホープ（2）"), n("ソング・オブ・ホープ"), "2"));
+  assert.ok(!titleContains(n("サプリメント ソング・オブ・ホープ 2"), n("ソング・オブ・ホープ"), null), "報告に巻が無ければ 2 巻には当てない");
+  assert.ok(!titleContains(n("サプリメント ソング・オブ・ホープ"), n("ソング・オブ・ホープ"), "2"), "巻なしの作品に 2 巻は載せない");
+  assert.ok(!titleContains(n("サプリメント ソング・オブ・ホープ 12"), n("ソング・オブ・ホープ"), "2"), "12 巻を 2 巻と読まない");
+  assert.ok(titleContains(n("ソング・オブ・ホープ 設定資料集"), n("ソング・オブ・ホープ"), null), "後ろに別の語が続いても含めば候補");
+  assert.ok(!titleContains(n("ソング・オブ・ホープ"), "", null));
+
+  const partial = [
+    { id: 70, title: "ブレイド・オブ・アルカナ ―聖痕英雄譚RPG― サプリメント　ソング・オブ・ホープ" },
+    { id: 71, title: "ブレイド・オブ・アルカナ ―聖痕英雄譚RPG― サプリメント　ソング・オブ・ホープ 2" },
+    { id: 80, title: "ガンドッグ 基本ルールブック" }, { id: 81, title: "ガンドッグゼロ" }
+  ];
+  const w = writer();
+  const fake = db({ partial, conditions: [{ ...DIGITAL, id: 61, work_id: 70 }, { ...DIGITAL, id: 62, work_id: 71 }] });
+  const svc = new EbookSalesImportService(fake, w as any);
+  const p = await svc.preview([
+    row({ cid: "SOH001", title: "ソング・オブ・ホープ", volume: null }),    // 70 に当たる
+    row({ cid: "SOH002", title: "ソング・オブ・ホープ", volume: "2" }),     // 71 に当たる
+    row({ cid: "GD0001", title: "ガンドッグ", volume: null }),             // 2 件 → 候補
+    row({ cid: "XX0001", title: "知らない", volume: null })                // 当たらない
+  ]);
+  const by = Object.fromEntries(p.groups.map((g) => [g.cid, g]));
+  assert.equal(by["SOH001"].work!.id, 70); assert.equal(by["SOH001"].work!.via, "partial"); assert.equal(by["SOH001"].status, "ok");
+  assert.equal(by["SOH002"].work!.id, 71); assert.equal(by["SOH002"].status, "ok");
+  assert.equal(by["GD0001"].status, "unresolved");
+  assert.match(by["GD0001"].message ?? "", /題名を含む作品が 2 件/);
+  assert.deepEqual(by["GD0001"].candidates.map((c: { id: number }) => c.id), [80, 81]);
+  assert.equal(by["XX0001"].status, "unresolved");
+
+  // 登録すると CID を覚えるので、次からは CID で当たる。
+  await svc.commit([row({ cid: "SOH001", title: "ソング・オブ・ホープ", volume: null })], "tester");
+  const remember = fake.all("INSERT INTO ebook_work_codes");
+  assert.deepEqual(remember.map((q) => q.params.slice(0, 2)), [["SOH001", 70]]);
 });
 
 test("回（年 1 回の締め）があれば、報告月の末日を集計期間に含む回に実績を付ける。無ければ浮いた実績", async () => {
