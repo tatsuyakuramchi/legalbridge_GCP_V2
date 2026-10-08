@@ -179,17 +179,24 @@ export function rowsOfSheet(name: string, cells: CellValue[][]): { rows: EbookSa
 export function readWorkbookRows(workbook: Workbook): ReadResult {
   const out: ReadResult = { rows: [], sheets: [] };
   // 年次の集計ファイルは、全体のシートと支払先ごとのシートに同じ行が載る。
-  // シートをまたいで同じ行（月・書店・題名・価格・DL数・金額）は 1 回だけ数える。
+  // 月の名前でないシート（支払先ごと・集計）の行は、前のシートに同じ行（月・書店・題名・価格・
+  // DL数・金額）があれば 1 回だけ数える。
+  // 月のシート（「2025年7月」＝その月の報告）は別々の報告なので飛ばさない。同じ販売月・同じ書店・
+  // 同じ DL 数の行が別の月の報告や同じ報告に載ることがあり、事業部の Excel はどれも払う
+  // （飛ばすと計算書が Excel より安くなる）。同じシートの中の同じ内容の行も別の行。
   const seen = new Set<string>();
   for (const sheet of workbook.sheets) {
     const r = rowsOfSheet(sheet.name, sheet.rows);
+    const monthSheet = monthOf(sheet.name) !== null;
+    const mine: string[] = [];
     let repeated = 0;
     for (const row of r.rows) {
       const key = [row.month, row.storeCompany, row.store, row.title, row.cid, row.listPrice, row.downloads, row.netAmount].join("|");
-      if (seen.has(key)) { repeated += 1; continue; }
-      seen.add(key);
+      if (!monthSheet && seen.has(key)) { repeated += 1; continue; }
+      mine.push(key);
       out.rows.push(row);
     }
+    for (const key of mine) seen.add(key);
     const notes = [r.note, repeated ? `${repeated} 行は他のシートと同じ行として読み飛ばし` : null].filter(Boolean);
     out.sheets.push({ name: sheet.name, rows: r.rows.length - repeated, note: notes.length ? notes.join("・") : null });
   }
