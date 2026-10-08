@@ -9,6 +9,7 @@ import { CONDITION_USAGE_TYPES, isSublicensingUsage,
 import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
 import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
+import { toCsv } from "../exports/csv.js";
 import { FEE_BASIS } from "./fee-basis.js";
 import { CONDITION_KIND_CSV, DELIVERABLE_OWNERSHIP_CSV, PRICING_MODEL_CSV, SERVICE_CONDITION_EXPORT_HEADERS,
          TAX_CATEGORY_CSV } from "../conditions/export.js";
@@ -45,6 +46,14 @@ export const SERVICE_CONDITION_UPDATE_COLUMNS = [
   "条件名", "金額", "単価", "数量", "単位", "開始日", "終了日", "納期", "支払条件", "契約形式", "税区分",
   "成果物の帰属", "発注番号", "仕様・成果物", "備考"
 ];
+
+/**
+ * 作品の書き出しの見出し。取込（works）と同じ語。登録済みを書き出して直して
+ * 「登録済みに当てる」で戻せるように、当てる手がかりの作品コードを先頭に置く。
+ */
+export const WORKS_EXPORT_HEADERS = [
+  "作品コード", "作品名", "カナ", "種別", "状態", "事業区分", "親作品", "著作権表示", "第三者権利", "備考"
+] as const;
 
 export interface ImportSpec {
   kind: ImportKind;
@@ -91,7 +100,8 @@ export const IMPORT_SPECS: ImportSpec[] = [
     updateColumns: ["カナ", "種別", "状態", "事業区分", "著作権表示", "第三者権利", "備考", "作品名"],
     updateSample: "作品コード,備考\n" +
                   "WRK-2026-0001,初版1000部。奥付の表記は別紙のとおり\n" +
-                  "WRK-2026-0002,重版分は別途協議"
+                  "WRK-2026-0002,重版分は別途協議",
+    exportPath: "/imports/works/export.csv", exportLabel: "登録済みの作品（1 作品 1 行）"
   },
   {
     kind: "pub_works", label: "出版作品（作品＋紙・電子の条件＋共著の取り分＋CID を 1 行で）",
@@ -284,6 +294,36 @@ export class ImportService {
 
   /** 登録済みの出版作品を、出版作品の取込と同じ列で書き出す。 */
   exportPubWorks(): Promise<string> { return this.pubWorks.exportCsv(); }
+
+  /**
+   * 登録済みの作品を、作品の取込と同じ列で書き出す（1 作品 1 行）。
+   *
+   * 作品の一括修正（「登録済みに当てる」）は作品コードで当てるので、今なにが
+   * 入っているかをコード付きで手元に出せないと直しようがない。種別・状態は
+   * 取込が受ける語（自社作品／発売済 …）で出す。親作品は取込が当てる語
+   * （作品コード、無ければ作品名）。何本もあれば ／ で繋ぐ（取込は更新で
+   * 親作品を触らないので、読むだけ）。
+   */
+  async exportWorks(): Promise<string> {
+    const r = await this.database.query(
+      `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line, w.remarks,
+              to_jsonb(w) ->> 'copyright_notice' AS copyright_notice,
+              to_jsonb(w) ->> 'third_party_rights' AS third_party_rights,
+              (SELECT string_agg(COALESCE(NULLIF(btrim(pw.work_code), ''), pw.title), '／' ORDER BY pw.title)
+                 FROM work_lineage l JOIN works pw ON pw.id = l.parent_work_id
+                WHERE l.child_work_id = w.id) AS parents
+         FROM works w
+        ORDER BY w.work_code NULLS LAST, w.title, w.id`);
+    const kindLabel = (v: unknown) => Object.entries(WORK_KIND).find(([k, val]) => val === v && /[^\x00-\x7f]/.test(k))?.[0] ?? String(v ?? "");
+    const statusLabel = (v: unknown) => Object.entries(WORK_STATUS).find(([k, val]) => val === v && /[^\x00-\x7f]/.test(k))?.[0] ?? String(v ?? "");
+    const rows = (r.rows as Array<Record<string, any>>).map((w) => ({
+      "作品コード": w.work_code ?? "", "作品名": String(w.title ?? ""), "カナ": w.title_kana ?? "",
+      "種別": kindLabel(w.kind), "状態": statusLabel(w.status), "事業区分": w.business_line ?? "",
+      "親作品": w.parents ?? "", "著作権表示": w.copyright_notice ?? "", "第三者権利": w.third_party_rights ?? "",
+      "備考": w.remarks ?? ""
+    }));
+    return toCsv(WORKS_EXPORT_HEADERS.map((h) => ({ header: h, value: (row: Record<string, string>) => row[h] })), rows);
+  }
 
   async run(input: {
     kind: ImportKind; csv: string; dryRun: boolean; actor: string; mode?: ImportMode;

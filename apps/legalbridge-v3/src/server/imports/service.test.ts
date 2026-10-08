@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ImportService } from "./service.js";
+import { WORKS_EXPORT_HEADERS, ImportService } from "./service.js";
 
 /**
  * 利用許諾条件の CSV 取込。作品・許諾者は登録済みのものに当て、条件名は
@@ -474,4 +474,35 @@ test("種類違いは止める：許諾の条件を業務委託で、委託料�
   )).run({ kind: "license_conditions", dryRun: true, actor: "k", mode: "update", csv: "条件番号,料率\nCL-1,10" });
   assert.equal(service.error, 1);
   assert.match(service.rows[0].message ?? "", /委託料の条件です/);
+});
+
+/**
+ * 登録済みの作品の書き出し。作品の一括修正は作品コードで当てるので、
+ * コード付きで今の値を手元に出せないと直しようがない。
+ */
+test("作品の書き出し：取込と同じ語で 1 作品 1 行。種別・状態は取込が受ける語、親作品はコード（無ければ名前）", async () => {
+  const db = new FakeDatabase((text) => {
+    if (text.includes("FROM works w")) {
+      return [
+        { id: 1, work_code: "WRK-1", title: "原作小説", title_kana: "ゲンサクショウセツ", kind: "source_ip", status: "released",
+          business_line: "出版", remarks: null, copyright_notice: "© 2026 著者名", third_party_rights: null, parents: null },
+        { id: 2, work_code: null, title: "新作, ボードゲーム", title_kana: null, kind: "derivative", status: "planning",
+          business_line: "ゲーム", remarks: "重版分は別途協議", copyright_notice: null, third_party_rights: "挿絵：〇〇", parents: "WRK-1" }
+      ];
+    }
+    return undefined;
+  });
+  const csv = await new ImportService(db).exportWorks();
+  const lines = csv.split("\r\n");
+  assert.equal(lines[0], WORKS_EXPORT_HEADERS.join(","));
+  assert.equal(lines[1], "WRK-1,原作小説,ゲンサクショウセツ,原作IP,発売済,出版,,© 2026 著者名,,");
+  assert.equal(lines[2], ',"新作, ボードゲーム",,派生作品,企画中,ゲーム,WRK-1,,挿絵：〇〇,重版分は別途協議',
+    "半角カンマを含む作品名は囲む。親作品は取込が当てる語（コード）");
+  // 書き出した語はそのまま取込（update）が読める
+  const back = new FakeDatabase((text, params) => {
+    if (text.includes("FROM works WHERE lower(btrim(work_code))")) return String(params?.[0]) === "WRK-1" ? [{ id: 1, work_code: "WRK-1", title: "原作小説" }] : [];
+    return undefined;
+  });
+  const r = await new ImportService(back).run({ kind: "works", csv: lines.slice(0, 2).join("\n"), dryRun: true, actor: "k", mode: "update" });
+  assert.equal(r.error, 0, JSON.stringify(r.rows));
 });
