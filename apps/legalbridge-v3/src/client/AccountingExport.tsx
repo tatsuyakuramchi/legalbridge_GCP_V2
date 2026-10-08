@@ -46,6 +46,8 @@ export function AccountingExport() {
   const [to, setTo] = useState(iso(monthEnd));
   const [basis, setBasis] = useState<"due" | "paid">("due");
   const [includeExported, setIncludeExported] = useState(false);
+  /** 全部まとめての xlsx を、支払先ごとに 1 行・支払内容 1 組にする（作品ごとの組を並べない）。 */
+  const [merge, setMerge] = useState(true);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
@@ -75,6 +77,20 @@ export function AccountingExport() {
       .then(setResult).catch((e: ApiError) => setError(e.message));
   }
   useEffect(() => { load(); }, [from, to, basis, includeExported]);
+
+  /** 全部の束をまとめて出力済みにする。経理に渡したあとで押す。 */
+  async function markAll() {
+    if (!result) return;
+    if (!window.confirm(`${result.count} 件を出力済みにします。次の集計から外れます。経理に渡したあとで押してください。よいですか？`)) return;
+    setBusy("all"); setError(null);
+    try {
+      await api.post("/exports/accounting/mark", {
+        paymentIds: result.groups.flatMap((g) => g.rows.map((r) => r.paymentId)), batchKey: `${from}_${to}`
+      });
+      load();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(""); }
+  }
 
   async function mark(group: Group) {
     setBusy(group.key); setError(null);
@@ -123,6 +139,31 @@ export function AccountingExport() {
                 <b style={{ color: "var(--out)" }}>　要確認 {result.flagged} 件</b>
               )}
             </p>
+          )}
+          {result && result.count > 0 && (
+            <div className="row" style={{ gap: 6, marginTop: 9, flexWrap: "wrap", alignItems: "center" }}>
+              <strong>全部まとめて</strong>
+              <label className="row" style={{ gap: 4 }} title="作品ごとの支払内容の組を並べず、支払先ごとに 1 行・支払内容 1 列（例「利用許諾料（12作品分）」）にまとめる">
+                <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} />
+                <span>支払先ごとに 1 行（支払内容を 1 列にまとめる）</span>
+              </label>
+              <a className="btn primary" href={`/api/v3/exports/accounting/combined?${query()}&format=zip&merge=${merge ? 1 : 0}`}
+                 title="V1 の xlsx（種別 × 個人／法人 × 支払日）と、全部の PDF を 1 つの zip に">
+                ↓ 1 つの zip（xlsx ＋ 全部の PDF）
+              </a>
+              <a className="btn" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=sheets&merge=${merge ? 1 : 0}`}
+                 title="1 つの xlsx。種別 × 個人／法人ごとにシートを分ける">
+                ↓ xlsx 1 ファイル（シート分け）
+              </a>
+              <a className="btn ghost" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=one&merge=${merge ? 1 : 0}`}
+                 title="1 つの xlsx の 1 シートに全部（種別 → 個人／法人 → 支払日の順）">
+                ↓ xlsx 1 シートに全部
+              </a>
+              <button className="btn ghost" disabled={busy === "all"} onClick={() => void markAll()}>
+                {busy === "all" ? "記録中…" : `全部（${result.count} 件）を出力済みにする`}
+              </button>
+              <span className="faint">下の束ごとのボタンは、担当者・支払日ごとに分けて出したいときに</span>
+            </div>
           )}
           {result && result.flagged > 0 && (
             <div className="note warn" style={{ marginTop: 4 }}>

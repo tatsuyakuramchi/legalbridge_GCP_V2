@@ -525,3 +525,44 @@ export function v1FileStem(category: AccountingCategory, entity: AccountingEntit
 /** V1 のシート名。例：検収書(個人) */
 export const v1SheetName = (category: AccountingCategory, entity: AccountingEntity): string =>
   `${category}(${entity})`;
+
+/**
+ * 支払先ごとに 1 行、支払内容を 1 組にまとめる（経理提出用の「支払先ごとにまとめる」）。
+ *
+ * 計算書は作品ごとに支払内容の組（支払内容・単価・数量・金額・納品日）を並べるので、作品が
+ * 多い人は 8 組を超えて続きの行に流れ、表がとても読みにくかった。経理が見るのは「誰にいくら」
+ * なので、同じ種別・個人／法人・支払日・支払先（取引先コード・氏名・登録番号）の支払を 1 行に足し、
+ * 支払内容は 1 組（例「利用許諾料（12作品分）」・金額は組の合計）にする。金額の欄（立替金・
+ * 小計・消費税・源泉税・税引後・差引振込額）は足す。経理へ渡す 52 列の形は変えない。
+ */
+export function mergeByPayee(rows: AccountingRow[]): AccountingRow[] {
+  const keyOf = (r: AccountingRow) =>
+    [r.category, r.entity, r.paymentDate, r.currency, r.vendorCode, r.vendorName, r.invoiceRegistration].join("\u0001");
+  const groups = new Map<string, AccountingRow[]>();
+  for (const r of rows) groups.set(keyOf(r), [...(groups.get(keyOf(r)) ?? []), r]);
+  return [...groups.values()].map((list) => {
+    const head = list[0]!;
+    const slots = list.flatMap((r) => [...r.slots, ...(r.moreSlots ?? []).flat()]).filter((s) => s.content || s.amount !== "");
+    const sum = (pick: (r: AccountingRow) => number) => list.reduce((n, r) => n + pick(r), 0);
+    const slotTotal = slots.reduce((n, s) => n + (Number(s.amount) || 0), 0);
+    const amount = slots.some((s) => s.amount !== "") ? slotTotal : sum((r) => r.subtotal + r.taxIncluded);
+    const content = head.category === "利用許諾料計算書"
+      ? `利用許諾料（${Math.max(slots.length, 1)}作品分）`
+      : `${slots[0]?.content || head.title}${slots.length > 1 ? ` ほか${slots.length - 1}件` : ""}`;
+    const dates = slots.map((s) => s.deliveryDate).filter(Boolean).sort();
+    const titles = [...new Set(list.map((r) => r.title).filter(Boolean))];
+    return {
+      ...head,
+      title: titles.length > 1 ? `${titles[0]} ほか${titles.length - 1}件` : titles[0] ?? head.title,
+      slots: [{ content, unitPrice: "", quantity: "", amount, deliveryDate: dates.at(-1) ?? "" },
+              ...Array.from({ length: ACCOUNTING_SLOT_COUNT - 1 }, emptySlot)],
+      moreSlots: undefined, continuation: false,
+      reimbursement: sum((r) => r.reimbursement), subtotal: sum((r) => r.subtotal),
+      consumptionTax: sum((r) => r.consumptionTax), withholdingTax: sum((r) => r.withholdingTax),
+      afterTax: sum((r) => r.afterTax), netTransfer: sum((r) => r.netTransfer),
+      taxable10: sum((r) => r.taxable10), reduced8: sum((r) => r.reduced8), exempt: sum((r) => r.exempt),
+      taxIncluded: sum((r) => r.taxIncluded), withholdingExpected: sum((r) => r.withholdingExpected),
+      flags: [...new Set(list.flatMap((r) => r.flags))]
+    };
+  });
+}

@@ -25,6 +25,8 @@ export type UnsentKind = "master" | "terms" | "statement" | "other";
 export interface UnsentDoc {
   id: number; documentNo: string | null; templateKey: string | null; templateLabel: string | null;
   kind: UnsentKind; issuedOn: string | null;
+  /** 社内確認として担当者に送った日時（gmail.review。相手先へはまだ送っていない）。 */
+  reviewedAt: string | null;
 }
 export interface UnsentBundle {
   partyId: number; partyName: string; partyKind: string | null; email: string | null;
@@ -50,7 +52,9 @@ export class UnsentBundlesService {
                 COALESCE(t.label, d.manual_inputs->>'documentKind') AS template_label,
                 COALESCE(CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
                               THEN (d.manual_inputs->>'_payeePartyId')::bigint END,
-                         v.counterparty_id) AS party_id
+                         v.counterparty_id) AS party_id,
+                (SELECT max(r.occurred_at) FROM audit_events r
+                  WHERE r.target_type = 'document' AND r.target_id = d.id AND r.action = 'gmail.review') AS reviewed_at
            FROM documents d
            JOIN v_document_display v ON v.document_id = d.id
            LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
@@ -79,7 +83,8 @@ export class UnsentBundlesService {
         if (!bundle) continue;
         const kind = kindOfTemplate(str(d.template_key));
         bundle.docs.push({ id: Number(d.id), documentNo: str(d.document_no), templateKey: str(d.template_key),
-                           templateLabel: str(d.template_label), kind, issuedOn: dateStr(d.issued_at) });
+                           templateLabel: str(d.template_label), kind, issuedOn: dateStr(d.issued_at),
+                           reviewedAt: d.reviewed_at ? new Date(String(d.reviewed_at)).toISOString() : null });
         bundle.counts[kind] += 1;
       }
       const order: Record<UnsentKind, number> = { master: 0, terms: 1, statement: 2, other: 3 };

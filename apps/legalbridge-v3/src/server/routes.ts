@@ -94,7 +94,7 @@ import {
   V1_ACCOUNTING_HEADERS, v1AccountingCells, v1FileStem, v1SheetName
 } from "./exports/accounting.js";
 import { buildXlsx } from "./exports/xlsx.js";
-import { buildAccountingBundle } from "./exports/accounting-bundle.js";
+import { buildAccountingBundle, combinedAccountingSheets } from "./exports/accounting-bundle.js";
 import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
@@ -1213,6 +1213,41 @@ export function createRoutes(database: Transactable) {
     res.setHeader("content-disposition", disposition(`${stem}.zip`));
     res.setHeader("x-pdf-failures", String(missing.length));
     res.send(Buffer.from(buildZip(entries)));
+  }));
+
+  /**
+   * 期間の支払を全部まとめて 1 つにする（画面の「全部まとめて」）。束（支払日 × 社内担当 × 通貨）と
+   * V1 のファイル（種別 × 個人／法人 × 支払日）で二重に分かれて何本にもなるのを避ける。
+   *   format=xlsx … 1 つの xlsx（layout=sheets：種別 × 個人／法人ごとのシート／one：1 シート）
+   *   format=zip  … V1 の xlsx（種別 × 個人／法人 × 支払日）と全部の PDF を 1 つの zip に
+   */
+  const combinedSchema = accountingSchema.extend({
+    format: z.enum(["xlsx", "zip"]).optional().default("zip"),
+    layout: z.enum(["sheets", "one"]).optional().default("sheets"),
+    withPdf: z.enum(["1", "0"]).optional().default("1"),
+    // 支払先ごとに 1 行、支払内容を 1 組にまとめる（作品ごとの組を並べない）。mergeByPayee を見よ。
+    merge: z.enum(["1", "0"]).optional().default("0")
+  });
+  router.get("/exports/accounting/combined", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+    const query = combinedSchema.parse(req.query);
+    const result = await accounting.build(query);
+    const rows = result.groups.flatMap((g) => g.rows);
+    if (!rows.length) return res.status(404).json({ error: "この期間に出す支払はありません" });
+    const disposition = (name: string) =>
+      `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+    res.setHeader("cache-control", "no-store");
+    if (query.format === "xlsx") {
+      res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("content-disposition", disposition(`経理提出用_${query.from}_${query.to}.xlsx`));
+      return res.send(buildXlsx(combinedAccountingSheets(rows, query.layout, { merge: query.merge === "1" })));
+    }
+    const bundle = await buildAccountingBundle(rows, { pdf: async (id) => await pdfs.ensure(id) },
+      { withPdf: query.withPdf !== "0", stem: `経理提出用_${query.from}_${query.to}`, merge: query.merge === "1" });
+    res.setHeader("content-type", "application/zip");
+    res.setHeader("content-disposition", disposition(bundle.name));
+    res.setHeader("x-pdf-failures", String(bundle.missing.length));
+    res.send(Buffer.from(bundle.data));
   }));
 
   const markSchema = z.object({ paymentIds: z.array(z.number().int().positive()).min(1).max(1000),
@@ -4601,12 +4636,14 @@ export function createRoutes(database: Transactable) {
    * **相手先が違う文書を混ぜない。** 1通に混ざると、A社への便りに B社の
    * 発注書が付く。取り返しがつかないので、混ざっていたら送らずに弾く。
    */
-  const manyDocuments = async (documentIds: number[]) => {
+  const manyDocuments = async (documentIds: number[], options: { allowMixed?: boolean } = {}) => {
     const ids = [...new Set(documentIds.map(Number))];
     const loaded = [];
     for (const id of ids) loaded.push(await pdfOf(id));
     const parties = [...new Set(loaded.map((x) => x.document.counterparty ?? "（相手先なし）"))];
-    if (parties.length > 1) {
+    // 社内確認（担当者に送る）は相手先に届かないので、相手先が混ざっていてよい
+    // （受取人宛ての条件書と代表宛ての文書を同じ担当者が見る、など）。
+    if (parties.length > 1 && !options.allowMixed) {
       throw new DomainError("VALIDATION",
         `相手先の違う文書は1通にまとめられません（${parties.join("・")}）。` +
         "相手先ごとに分けて送ってください");
@@ -4688,7 +4725,7 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = sendManySchema.parse(req.body ?? {});
       const who = actor(res);
-      const loaded = await manyDocuments(input.documentIds);
+      const loaded = await manyDocuments(input.documentIds, { allowMixed: input.internal });
       const ids = loaded.map((x) => x.document.id);
       const numbers = loaded.map((x) => x.document.documentNo ?? `#${x.document.id}`);
       const subject = input.subject ?? `${numbers.join("・")} のご確認`;
