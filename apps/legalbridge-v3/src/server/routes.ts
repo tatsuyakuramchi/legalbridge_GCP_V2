@@ -417,6 +417,8 @@ export function createRoutes(database: Transactable) {
     domain: z.enum(["service", "license"]).nullable().optional(),
     parentId: z.coerce.number().int().positive().nullable().optional(),
     title: z.string().trim().min(1).max(200),
+    // 外部で付けた契約番号（移行前の紙の契約）。空ならシステムが採番する。
+    agreementNo: z.string().trim().max(60).nullable().optional(),
     status: z.enum(["draft", "negotiating", "executed"]).nullable().optional(),
     executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     effectiveOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
@@ -1338,7 +1340,7 @@ export function createRoutes(database: Transactable) {
        .send(withBom(csv));
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works", "license_conditions", "service_conditions", "agreements", "pub_works"]),
+    kind: z.enum(["parties", "works", "license_conditions", "service_conditions", "agreements", "pub_works", "existing_contracts"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean(),
     // create（新しく作る）か update（既存に当てる）か。既定は create。

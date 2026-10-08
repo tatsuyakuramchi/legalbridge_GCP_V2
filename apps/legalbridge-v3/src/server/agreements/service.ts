@@ -44,6 +44,11 @@ export interface AgreementInput {
   /** 補助文書・解除合意の親。 */
   parentId?: number | null;
   title: string;
+  /**
+   * 外部で付けた契約番号。システムの採番を使わず、この番号で登録する
+   * （移行前に紙で結んだ契約。ATT-2026-00069 など）。同じ番号があれば登録できない。
+   */
+  agreementNo?: string | null;
   status?: "draft" | "negotiating" | "executed" | null;
   executedOn?: string | null;
   effectiveOn?: string | null;
@@ -216,7 +221,12 @@ export class AgreementService {
             throw new DomainError("VALIDATION", "親の契約と相手先が違います");
           }
         }
-        const agreementNo = await this.numberFor(client, input.kind, input.domain ?? (parent?.domain ?? null), parent);
+        const external = String(input.agreementNo ?? "").trim();
+        if (external) {
+          const dup = await client.query("SELECT id FROM agreements WHERE lower(btrim(agreement_no)) = lower($1)", [external]);
+          if (dup.rows[0]) throw new DomainError("CONFLICT", `契約番号 ${external} はもう使われています（#${(dup.rows[0] as { id: number }).id}）`);
+        }
+        const agreementNo = external || await this.numberFor(client, input.kind, input.domain ?? (parent?.domain ?? null), parent);
         const status = input.status ?? (input.executedOn ? "executed" : "negotiating");
         const r = await client.query(
           `INSERT INTO agreements
@@ -233,7 +243,7 @@ export class AgreementService {
         const id = Number((r.rows[0] as { id: number }).id);
         await recordAudit(client, {
           actor, action: "agreement.create", targetType: "agreement", targetId: id,
-          detail: { agreementNo, kind: input.kind, domain: input.domain ?? null,
+          detail: { agreementNo, external: Boolean(external), kind: input.kind, domain: input.domain ?? null,
                     parentId: input.parentId ?? null, counterpartyId: input.counterpartyId, status }
         });
         return { id, agreementNo };
