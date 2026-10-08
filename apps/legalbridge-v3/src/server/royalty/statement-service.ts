@@ -89,6 +89,10 @@ export interface StatementBasis {
   ratePct?: number | null;
   /** その行の許諾料（税抜・最小通貨単位）。 */
   amount?: number | null;
+  /** 作品名（実績の作品、無ければ条件の作品）。出版の計算書の要約と別紙で作品ごとに束ねる。 */
+  workTitle?: string | null;
+  /** 条件の利用形態（pub_print / pub_digital …）。出版の計算書の「紙・電子」の別。 */
+  conditionUsageType?: string | null;
 }
 
 export interface CalculationPreview {
@@ -311,6 +315,8 @@ export class RoyaltyStatementService {
         eventScope: eventScopeLabel(e.scope_languages, e.scope_regions),
         inUsageType: str(e.in_usage_type), period: str(e.period)
       }) || null,
+      workTitle: str(e.event_work_title) ?? str(e.in_work_title),
+      conditionUsageType: str(e.in_usage_type),
       ...(perEvent ? { ratePct: conditionRatePct, amount: floorRoyalty((basis[i] * conditionRatePct) / 100) } : {})
     }));
 

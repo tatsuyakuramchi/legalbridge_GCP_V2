@@ -25,6 +25,8 @@ export interface ContractAgreement { id: number; no: string | null; title: strin
 export interface TermsDocument {
   id: number; no: string | null; label: string; status: string; issuedOn: string | null;
   agreementNo: string | null; used: boolean;
+  /** 受取人（共著の取り分）宛ての条件書なら、その受取人。代表宛て・相手先宛ては null。 */
+  payeePartyId?: number | null;
 }
 export interface ConditionContracts {
   conditionId: number; direction: string; counterpartyId: number | null;
@@ -53,7 +55,9 @@ export function contractRefText(masterNo: string | null | undefined, termsNo: st
 export async function termsDocumentsOf(q: Queryable, conditionId: number): Promise<TermsDocument[]> {
   const r = await q.query(
     `SELECT d.id, d.document_no, d.status, d.issued_at, COALESCE(t.label, d.manual_inputs->>'documentKind') AS label,
-            a.agreement_no
+            a.agreement_no,
+            CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
+                 THEN (d.manual_inputs->>'_payeePartyId')::bigint END AS payee_party_id
        FROM documents d
        LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
        LEFT JOIN document_templates t ON t.id = tv.template_id
@@ -69,7 +73,8 @@ export async function termsDocumentsOf(q: Queryable, conditionId: number): Promi
     [conditionId, TERMS_TEMPLATES, TERMS_IMPORT_KINDS]);
   const docs = (r.rows as any[]).map((d): TermsDocument => ({
     id: Number(d.id), no: str(d.document_no), label: String(d.label ?? "文書"), status: String(d.status),
-    issuedOn: dateStr(d.issued_at), agreementNo: str(d.agreement_no), used: false
+    issuedOn: dateStr(d.issued_at), agreementNo: str(d.agreement_no), used: false,
+    payeePartyId: d.payee_party_id === null || d.payee_party_id === undefined ? null : Number(d.payee_party_id)
   }));
   const used = docs.find((d) => d.status === "issued");
   if (used) used.used = true;

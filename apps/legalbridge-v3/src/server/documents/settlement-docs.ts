@@ -11,6 +11,16 @@
  */
 export const SETTLEMENT_TEMPLATE_PATTERN = /inspection|acceptance|delivery|statement|royalty/;
 
+/**
+ * 利用許諾料計算書のひな形。従来の計算書と、出版（紙・電子）専用の計算書
+ * （本文に作品ごとの要約、別紙に報告月・書店ごとの明細。royalty/statement-issue.ts）。
+ * 計算書かどうかはここで見る（鍵を 1 つに決め打ちすると、出版の計算書が
+ * 送付・経理提出・工程表から漏れる）。
+ */
+export const ROYALTY_STATEMENT_KEYS = ["royalty_statement", "royalty_statement_pub"];
+export const isRoyaltyStatementKey = (templateKey: string | null | undefined): boolean =>
+  ROYALTY_STATEMENT_KEYS.includes(String(templateKey ?? ""));
+
 export function settlesEvents(templateKey: string | null | undefined): boolean {
   return SETTLEMENT_TEMPLATE_PATTERN.test(String(templateKey ?? ""));
 }

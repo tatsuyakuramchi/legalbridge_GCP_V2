@@ -23,7 +23,8 @@ import type { GridRow } from "./grid.js";
 
 /** 文書のひな形（工程表と同じ2群）。 */
 const DOC_KEYS = `('purchase_order', 'intl_purchase_order',
-                   'inspection_certificate', 'intl_inspection_certificate', 'royalty_statement')`;
+                   'inspection_certificate', 'intl_inspection_certificate', 'royalty_statement',
+                   'royalty_statement_pub')`;
 
 export interface DriftRow {
   row: GridRow;

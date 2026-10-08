@@ -98,8 +98,21 @@ export function eventBundleLines(preview: CalculationPreview): BundleLine[] {
     basisNote: [e.period ? `対象期間 ${e.period}` : "", storeOfNote(e.note)].filter(Boolean).join("・"),
     occurredOn: e.occurredOn ?? null,
     quantity: Number(e.quantity ?? 0) > 0
-      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null
+      ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null,
+    // 出版の計算書（royalty_statement_pub）の要約・別紙に使う。
+    workTitle: e.workTitle ?? null,
+    media: mediaLabel(e.conditionUsageType),
+    unitPrice: e.unitAmount === null || e.unitAmount === undefined ? null : toMajor(e.unitAmount, currency),
+    store: storeOfNote(e.note) || null,
+    period: e.period ?? null
   }));
+}
+
+/** 出版の利用形態 → 紙に出す媒体名。出版でなければ空。 */
+export function mediaLabel(usageType: string | null | undefined): string | null {
+  if (usageType === "pub_digital") return "電子";
+  if (usageType === "pub_print") return "紙";
+  return null;
 }
 
 /** 取込の備考「電子書籍売上取込 2026-03｜BOOKWALKER（PC）｜…」から書店名。 */

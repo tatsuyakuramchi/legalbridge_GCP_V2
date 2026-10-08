@@ -76,6 +76,7 @@ import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
+import { PUB_STATEMENT_KEY, StatementIssuer } from "./royalty/statement-issue.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
 import { undeliverableEmails } from "./integrations/mail-domain.js";
@@ -183,11 +184,14 @@ export function createRoutes(database: Transactable) {
     const out: ReturnType<typeof bundleLinesFor> = [];
     for (const p of previews) {
       const ref = await inContractRef(database, p.condition.id,
-        { masterAgreementId: chosen.agreementId ?? null, termsNo });
+        { masterAgreementId: chosen.agreementId ?? null, termsNo, payeePartyId: p.payee?.partyId ?? null });
       out.push(...withInContract(bundleLinesFor(p), ref));
     }
     return out;
   };
+  // 計算書を 1 枚出す共通の手順。文書作成フォームと支払文書処理の「まとめて締める」が使う。
+  const statementIssuer = new StatementIssuer(database, { royalty, issues });
+  closingClose.useStatements(statementIssuer);
   const royaltyLedger = new RoyaltyLedgerService(database);
   const payments = new PaymentService(database);
   const allocations = new PaymentAllocationService(database);
@@ -3904,8 +3908,23 @@ export function createRoutes(database: Transactable) {
               rs_stage_notes: stageNotesOf(preview.events ?? []) }
           : {})
       };
+      // 出版（紙・電子）の条件なら出版専用の計算書（作品ごとの要約＋別紙の明細）。本文は焼き付けた
+      // 行から組むので、出版専用にするときは行と税・源泉も焼き付ける。
+      const pubLines = applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {});
+      const templateKey = await statementIssuer.templateFor(input.templateKey, pubLines);
+      if (templateKey === PUB_STATEMENT_KEY && !Array.isArray(manualInputs.rs_bundle_lines)) {
+        Object.assign(manualInputs, {
+          statementMode: "multi", rs_bundle_lines: pubLines, rs_bundle_tax: preview.fee.tax_amount,
+          rs_stage_notes: stageNotesOf(preview.events ?? [])
+        });
+      }
+      if (templateKey === PUB_STATEMENT_KEY) {
+        Object.assign(manualInputs, {
+          rs_bundle_withholding: preview.payment.withholdingTax, rs_bundle_net_transfer: preview.payment.netTransfer
+        });
+      }
       const draft = await issues.createDraft({
-        templateKey: input.templateKey, conditionIds: [conditionId],
+        templateKey, conditionIds: [conditionId],
         matterId: input.matterId ?? null, manualInputs
       }, actor(res));
       let issued;
@@ -4013,66 +4032,15 @@ export function createRoutes(database: Transactable) {
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = bundleSchema.parse(req.body ?? {});
-      const who = actor(res);
-      const supersedes = supersedesOf(input);
-      if (supersedes.length && !String(input.reason ?? "").trim()) {
-        throw new DomainError("VALIDATION", "訂正版を出す理由を書いてください");
-      }
-      const previews = await previewBundle(input.entries, supersedes);
-      const payeePartyId = payeeOfBundle(previews);
-      const totals = bundleTotals(previews);
-      // 人がフォームで直した見出し（製品名・対象契約）を重ねる。金額は触らせない。
-      const lines = applyLineLabels(await statementLines(previews, input), input.manualInputs ?? {});
-      const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
-
-      const draft = await issues.createDraft({
-        templateKey: input.templateKey,
-        conditionIds: input.entries.map((e) => e.conditionId),
+      // 試算 → 行を焼き付けた下書き → 決定 → 計算書を結ぶ。まとめて締めると同じ手順
+      // （royalty/statement-issue.ts）。出版だけの束は出版専用のひな形になる。
+      const out = await statementIssuer.issue({
+        templateKey: input.templateKey, entries: input.entries,
         matterId: input.matterId ?? null, requestId: input.requestId ?? null,
-        agreementId: input.agreementId ?? null,
-        // 本文はここに焼き付けた行から描く。計算済みなので、印字のときに
-        // 計算し直さない（rs_bundle_lines を royalty-patch が拾う）。
-        manualInputs: {
-          ...input.manualInputs,
-          // 受取人（共著の取り分）。宛名・口座・源泉がこの人になる。
-          ...(payeePartyId ? { _payeePartyId: payeePartyId } : {}),
-          statementMode: "bundle",
-          rs_bundle_lines: lines,
-          rs_bundle_tax: totals.tax,
-          rs_stage_notes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
-          // 2枚目以降の退かせる計算書。決定の瞬間に issue-service が退かせて実績を移す。
-          ...(supersedes.length > 1 ? { _supersedesExtra: supersedes.slice(1) } : {})
-        },
-        supersedesId: supersedes[0] ?? null,
-        supersedeReason: input.reason ?? null
-      }, who);
-
-      let issued;
-      try {
-        issued = await issues.issue(draft.id, who, { eventIds });
-      } catch (error) {
-        await issues.void(draft.id, "発行できなかったため破棄", who).catch(() => undefined);
-        throw error;
-      }
-      // 金額は確定時にもう一度計算し直す（V1・V2 と同じ防御）。ここで弾かれたら
-      // 文書を無効にする。番号の振られた紙だけが残って、計算書の無い計算書に
-      // なるのを防ぐ。
-      let statements;
-      try {
-        statements = await royalty.finalizeAll(
-          input.entries.map((e) => ({
-            conditionId: e.conditionId, period: e.period, occurredOn: e.occurredOn,
-            eventType: e.eventType, reported: e.reported, eventIds: e.eventIds,
-            payeePartyId: e.payeePartyId ?? null,
-            documentId: issued.id,
-            // 訂正版なら、元から移ってきた実績（いまはこの文書を指す）をそのまま結ぶ。
-            freeDocumentId: supersedes.length ? issued.id : null
-          })), who);
-      } catch (error) {
-        await issues.void(issued.id, "計算書を結べなかったため無効", who).catch(() => undefined);
-        throw error;
-      }
-      res.status(201).json({ document: issued, statements, totals, lines });
+        agreementId: input.agreementId ?? null, manualInputs: input.manualInputs,
+        supersedes: supersedesOf(input), reason: input.reason ?? null
+      }, actor(res));
+      res.status(201).json({ document: out.document, statements: out.statements, totals: out.totals, lines: out.lines });
     }));
 
   /**

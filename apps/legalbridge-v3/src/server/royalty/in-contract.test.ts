@@ -9,13 +9,13 @@ test("対象契約：イン側の基本契約・個別契約を締結日付き�
   const terms = { no: "ARC-ILT-D-2026-0001", title: "個別利用許諾条件書", on: "2025-06-01" };
   assert.deepEqual(inContractRefText(master, terms), {
     title: "2024年4月1日付利用許諾基本契約 / 2025年6月1日付個別利用許諾条件書",
-    number: "ARC-ILT-D-2026-0001"
+    number: "ARC-ILT-D-2026-0001", masterNumber: "ARC-LIC-2024-0012"
   });
   assert.deepEqual(inContractRefText(null, terms),
-                   { title: "2025年6月1日付個別利用許諾条件書", number: "ARC-ILT-D-2026-0001" });
+                   { title: "2025年6月1日付個別利用許諾条件書", number: "ARC-ILT-D-2026-0001", masterNumber: "" });
   assert.deepEqual(inContractRefText(master, null),
-                   { title: "2024年4月1日付利用許諾基本契約", number: "ARC-LIC-2024-0012" });
-  assert.deepEqual(inContractRefText(null, null), { title: "", number: "" });
+                   { title: "2024年4月1日付利用許諾基本契約", number: "ARC-LIC-2024-0012", masterNumber: "ARC-LIC-2024-0012" });
+  assert.deepEqual(inContractRefText(null, null), { title: "", number: "", masterNumber: "" });
 });
 
 test("行のアウト側の契約（許諾先の取引先名・条件名・番号）を、イン側の契約に置き換える", () => {
@@ -33,6 +33,9 @@ test("行のアウト側の契約（許諾先の取引先名・条件名・番�
 const fake = (agreement: Record<string, unknown>, docs: Array<Record<string, unknown>> = []) =>
   new FakeDatabase((t) => {
     if (t.includes("FROM conditions c\n       LEFT JOIN agreements a")) return [{ id: 7, direction: "in", counterparty_id: 5, ...agreement }];
+    if (t.includes("FROM documents d JOIN agreements a ON a.id = d.agreement_id")) {
+      return [{ agreement_no: "ATT-2026-00070", title: "出版及び著作物利用許諾に関する基本契約書", executed_on: "2026-09-24", kind: "master" }];
+    }
     if (t.includes("FROM documents d")) return docs;
     if (t.includes("SELECT executed_on FROM agreements")) return [{ executed_on: "2025-07-31" }];
     return [];
@@ -41,14 +44,14 @@ const fake = (agreement: Record<string, unknown>, docs: Array<Record<string, unk
 test("単体契約に載った条件で条件書が無ければ、その単体契約を個別契約として出す（契約未指定にしない）", async () => {
   const db = fake({ a_id: 3, a_no: "ARC-ILT-2026-0037", a_title: "利用許諾契約書", a_kind: "standalone", a_status: "executed" });
   assert.deepEqual(await inContractRef(db, 7),
-                   { title: "2025年7月31日付利用許諾契約書", number: "ARC-ILT-2026-0037" });
+                   { title: "2025年7月31日付利用許諾契約書", number: "ARC-ILT-2026-0037", masterNumber: "" });
 });
 
 test("条件書が繋がっていれば、個別契約は条件書を優先する", async () => {
   const db = fake({ a_id: 3, a_no: "ARC-ILT-2026-0037", a_title: "利用許諾契約書", a_kind: "standalone", a_status: "executed" },
     [{ id: 9, document_no: "ARC-ILT-D-2026-0001", status: "issued", issued_at: "2025-06-01", label: "個別利用許諾条件書" }]);
   assert.deepEqual(await inContractRef(db, 7),
-                   { title: "2025年6月1日付個別利用許諾条件書", number: "ARC-ILT-D-2026-0001" });
+                   { title: "2025年6月1日付個別利用許諾条件書", number: "ARC-ILT-D-2026-0001", masterNumber: "" });
 });
 
 test("補助文書に載った条件：基本契約（親）/ 補助文書", async () => {
@@ -62,10 +65,27 @@ test("補助文書に載った条件：基本契約（親）/ 補助文書", asy
 test("基本契約に直接載った条件で条件書が無ければ基本契約だけ", async () => {
   const db = fake({ a_id: 1, a_no: "ARC-LIC-2024-0012", a_title: "利用許諾基本契約", a_kind: "master", a_status: "executed" });
   assert.deepEqual(await inContractRef(db, 7),
-                   { title: "2025年7月31日付利用許諾基本契約", number: "ARC-LIC-2024-0012" });
+                   { title: "2025年7月31日付利用許諾基本契約", number: "ARC-LIC-2024-0012", masterNumber: "ARC-LIC-2024-0012" });
 });
 
 test("文書フォームで選んだ個別契約番号を使う", async () => {
   const db = fake({ a_id: 3, a_no: "ARC-ILT-2026-0037", a_title: "利用許諾契約書", a_kind: "standalone", a_status: "executed" });
   assert.equal((await inContractRef(db, 7, { termsNo: "IMP-2025-0007" })).number, "IMP-2025-0007");
+});
+
+test("共著の受取人宛ての計算書は、受取人宛ての条件書と受取人の基本契約を出す（代表や別の共著者の番号を出さない）", async () => {
+  const docs = [
+    { id: 9, document_no: "ARC-PUBT-2026-1006", status: "issued", issued_at: "2026-09-18", label: "出版条件書", payee_party_id: null },
+    { id: 10, document_no: "ARC-PUBT-2026-1010", status: "issued", issued_at: "2026-09-20", label: "出版条件書", payee_party_id: 31 },
+    { id: 11, document_no: "ARC-PUBT-2026-1011", status: "issued", issued_at: "2026-09-21", label: "出版条件書", payee_party_id: 32 }
+  ];
+  const db = fake({ a_id: 1, a_no: "ATT-2026-00069", a_title: "基本契約", a_kind: "master", a_status: "executed" }, docs);
+  const payee = await inContractRef(db, 7, { payeePartyId: 31 });
+  assert.equal(payee.number, "ARC-PUBT-2026-1010");
+  assert.equal(payee.masterNumber, "ATT-2026-00070", "受取人の基本契約（条件の基本契約は代表のもの）");
+  const rep = await inContractRef(db, 7);
+  assert.equal(rep.number, "ARC-PUBT-2026-1006", "受取人の無い計算書は受取人宛てでない条件書");
+  assert.equal(rep.masterNumber, "ATT-2026-00069");
+  const none = await inContractRef(db, 7, { payeePartyId: 99 });
+  assert.equal(none.number, "", "受取人の条件書が無ければ番号を出さない（別の人の番号は出さない）");
 });

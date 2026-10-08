@@ -1,3 +1,4 @@
+import { isRoyaltyStatementKey } from "../documents/settlement-docs.js";
 import { resolveWithholdingEnabled, withholdingFor } from "../royalty/tax.js";
 import type { XlsColumn } from "./xls.js";
 
@@ -149,7 +150,7 @@ export const ACCOUNTING_ENTITIES: AccountingEntity[] = ["個人", "法人"];
 export function categoryOf(
   templateKey: string | null | undefined, conditionKinds: string[] = []
 ): AccountingCategory {
-  if (templateKey) return templateKey === "royalty_statement" ? "利用許諾料計算書" : "検収書";
+  if (templateKey) return isRoyaltyStatementKey(templateKey) ? "利用許諾料計算書" : "検収書";
   return conditionKinds.length > 0 && conditionKinds.every((k) => k === "license")
     ? "利用許諾料計算書" : "検収書";
 }

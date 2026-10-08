@@ -33,6 +33,7 @@ import { deliveryKindFor, orderPeriodSummary, withPeriodText } from "./order-per
 import { contextMasterAgreement, resolveLegacyVariable } from "./legacy-variables.js";
 import { contractRefText } from "../conditions/contracts.js";
 import { toInternationalPhone } from "../core/phone.js";
+import { isRoyaltyStatementKey } from "./settlement-docs.js";
 
 type Ctx = Record<string, any>;
 
@@ -65,7 +66,7 @@ const PURCHASE_ORDER_KEYS = new Set(["purchase_order", "intl_purchase_order"]);
  * 画面もここを見て入力の枠を出し分ける（別々に書くと片方だけ増えて食い違う）。
  */
 export const isStatementTemplate = (templateKey: string): boolean =>
-  templateKey === "royalty_statement";
+  isRoyaltyStatementKey(templateKey);
 
 /**
  * ひな形ごとの明細の欄。画面はここに挙がった名前の分だけ行の編集欄を出す。
