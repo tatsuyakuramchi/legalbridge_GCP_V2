@@ -21,7 +21,7 @@ SELECT d.id,
            '  {{#if pubHasWithholding}}' || chr(10) || '  <tr><th>源泉徴収税額</th><td class="r">▲¥{{pubWithholdingStr}}</td></tr>' || chr(10) || '  <tr class="big"><th>差引お振込額</th><td class="r">¥{{pubNetTransferStr}}</td></tr>' || chr(10) || '  {{/if}}' || chr(10) || '',
            ''),
            '<p class="note">本計算書は仕入明細書として作成しています。',
-           '{{#if pubHasWithholding}}<p class="note">※ お振込額は、上記のお支払額（税込）から所得税及び復興特別所得税（源泉徴収税）を差し引いた金額となります。</p>{{/if}}' || chr(10) || '<p class="note">本計算書は仕入明細書として作成しています。'),
+           '{{#if pubHasWithholding}}<p class="note">※ お振込額は、上記のお支払額（税込）から源泉徴収税額を差し引いた金額となります。</p>{{/if}}' || chr(10) || '<p class="note">本計算書は仕入明細書として作成しています。'),
        '[]'::jsonb,
        'r3：源泉徴収税額・差引お振込額の行を消して税込（源泉徴収前）で締め、源泉の注記。作品の列の潰れを直す',
        'infra/v3/165_studio'

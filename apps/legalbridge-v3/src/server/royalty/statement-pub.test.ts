@@ -107,14 +107,15 @@ test("ひな形 r3（165）：源泉の行を出さず税込（源泉徴収前�
   };
   const out = renderDocumentHtml(html, values);
   assert.ok(out.includes("お支払額（税込・源泉徴収前）") && out.includes("¥331,709"));
-  assert.ok(!out.includes("源泉徴収税額") && !out.includes("差引お振込額") && !out.includes("▲¥30,789") && !out.includes("¥300,920"),
+  assert.ok(!out.includes("<th>源泉徴収税額</th>") && !out.includes("差引お振込額") && !out.includes("▲¥30,789") && !out.includes("¥300,920"),
     "源泉の額と差引振込額は刷らない");
-  assert.match(out, /お振込額は、上記のお支払額（税込）から所得税及び復興特別所得税（源泉徴収税）を差し引いた金額となります/);
+  assert.match(out, /お振込額は、上記のお支払額（税込）から源泉徴収税額を差し引いた金額となります/);
+  assert.ok(!out.includes("復興特別所得税"), "税の名前は書かない（制度が変わっても直さずに済む）");
   assert.ok(out.includes('<td class="work">ケダモノオペラ</td>') && out.includes("td.work { min-width: 40mm }"), "作品の列に最小幅");
   assert.ok(!/{{|}}/.test(out), "差し込み漏れ");
   // 源泉の無い相手（法人など）には注記を出さない。
   const corp = renderDocumentHtml(html, { ...values, ...royaltyStatementPatch({}, { rs_bundle_lines: LINES, rs_bundle_tax: 30155, rs_bundle_withholding: 0, rs_bundle_net_transfer: 331709 })! });
-  assert.ok(!corp.includes("源泉徴収税）を差し引いた"));
+  assert.ok(!corp.includes("源泉徴収税額を差し引いた"));
 });
 
 test("ひな形の選択：従来の計算書を指定していても、出版だけの束で出版専用が登録済みなら出版専用", async () => {
