@@ -489,6 +489,7 @@ export class DocumentContextRepository {
               ${CHILD_TITLES_SQL("c.work_id")} AS child_titles,
               e.work_id AS event_work_id, ew.title AS event_work_title,
               s.contract_form AS schedule_contract_form,
+              s.trigger_kind AS schedule_trigger_kind,
               s.service_from AS schedule_service_from, s.service_to AS schedule_service_to,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
               s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on,
@@ -557,6 +558,8 @@ export class DocumentContextRepository {
           workTitle: str(row.out_work_title)
         } : null,
         contractForm: str(row.contract_form) ?? str(row.schedule_contract_form),
+        /** 元の予定の起点。定期の回（periodic）なら、紙では同じ内容の回を 1 行に畳む。 */
+        triggerKind: str(row.schedule_trigger_kind),
         serviceFrom: dateStr(row.service_from) ?? dateStr(row.schedule_service_from),
         serviceTo: dateStr(row.service_to) ?? dateStr(row.schedule_service_to),
         note: str(row.note),

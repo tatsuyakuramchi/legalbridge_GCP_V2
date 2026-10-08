@@ -133,7 +133,8 @@ export interface ServiceSetRow {
   kind: "service" | "expense" | "fee";
   /** 空なら業務名から付ける（「◯◯ 実費」）。委託料の行が複数なら必須（品目名）。 */
   name?: string | null;
-  pricingModel?: "fixed" | "unit_rate";
+  /** subscription は定期払いの委託料（flatAmount が 1 回あたり）。 */
+  pricingModel?: "fixed" | "unit_rate" | "subscription";
   flatAmount?: number | null;
   unitAmount?: number | null;
   quantity?: number | null;

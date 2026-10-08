@@ -178,3 +178,36 @@ test("人が入れた周期は上書きしない", () => {
   assert.equal(out.length, 1);
   assert.equal(out[0].cycle, "ANNUAL");
 });
+
+test("単価×数量の委託料でも、定期の回（trigger_kind=periodic）は畳んで定期支払の行にする", () => {
+  // 業務委託の明細の「定期払い」で立てた回。計算方式は単価×数量のまま（FIXED）。
+  const rows = beats(6, () => ({ calc_method: "FIXED", trigger_kind: "periodic" }));
+  const out = foldPeriodicLines(rows);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].quantity, 6);
+  assert.equal(out[0].amount_ex_tax, 210000);
+  assert.equal(out[0].calc_method, "SUBSCRIPTION", "まとめた行は定期支払として刷る");
+  assert.equal(out[0].period_interval, "毎月");
+  // 定期でない固定額の回は、これまでどおり畳まない。
+  assert.equal(foldPeriodicLines(beats(3, () => ({ calc_method: "FIXED" }))).length, 3);
+});
+
+test("発注書：単価×数量の委託料に定期払いの予定 12 回があれば 1 行になる", () => {
+  const unitRate = { id: 9, name: "サーバー管理", pricingModel: "unit_rate", unitAmount: 20000, taxCategory: "taxable" };
+  const schedules = Array.from({ length: 12 }, (_, i) => ({
+    id: i + 1, conditionId: 9, seq: i + 1, triggerKind: "periodic",
+    label: `サーバー管理 2026-${String(i + 1).padStart(2, "0")}`, plannedAmount: 20000,
+    dueOn: `2026-${String(i + 1).padStart(2, "0")}-28`, payOn: null,
+    serviceFrom: `2026-${String(i + 1).padStart(2, "0")}-01`, serviceTo: `2026-${String(i + 1).padStart(2, "0")}-28`
+  }));
+  const lines = orderLinesFrom({ conditions: [unitRate], condition: unitRate, schedules }) as Row[];
+  assert.equal(lines.length, 1, "月ごとの 12 行ではなく 1 行");
+  assert.equal(lines[0].quantity, 12);
+  assert.equal(lines[0].unit_price, 20000);
+  assert.equal(lines[0].amount_ex_tax, 240000);
+  assert.equal(lines[0].calc_method, "SUBSCRIPTION");
+  assert.equal(lines[0].item_name, "サーバー管理");
+  // 定期でない予定（納品ごと）は畳まない。
+  const perDelivery = schedules.slice(0, 3).map((s) => ({ ...s, triggerKind: "on_delivery" }));
+  assert.equal((orderLinesFrom({ conditions: [unitRate], condition: unitRate, schedules: perDelivery }) as Row[]).length, 3);
+});

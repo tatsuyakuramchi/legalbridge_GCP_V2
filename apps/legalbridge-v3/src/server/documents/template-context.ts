@@ -282,6 +282,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
         condition_id: condition.id ?? null,
         condition_name: condition.name ?? null,
+        // 元の予定が定期の回なら、同じ額の回は 1 行に畳む（発注書と同じ）。
+        trigger_kind: event.triggerKind ?? null,
         // 名前は本番のひな形が差しているものに合わせる。inspected_quantity と
         // paid_date は検収書の本文が直接読む列で、別名では出ない。
         quantity: event.quantity ?? null,
@@ -372,6 +374,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
         // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
         condition_id: condition.id ?? null,
         condition_name: condition.name ?? null,
+        // 定期の回（業務委託の「定期払い」）か。計算方式が単価×数量でも、定期の回は 1 行に畳む。
+        trigger_kind: s.triggerKind ?? null,
         deliverable_ownership: ownershipOf(condition),
         // 本文は 数量×単価 を印字する。空だと「¥0」が出るので、1 × 金額 で置く。
         quantity: 1,

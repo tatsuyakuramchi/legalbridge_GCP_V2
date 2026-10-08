@@ -1867,7 +1867,7 @@ export function createRoutes(database: Transactable) {
     rows: z.array(z.object({
       kind: z.enum(["service", "expense", "fee"]),
       name: z.string().trim().max(300).nullable().optional(),
-      pricingModel: z.enum(["fixed", "unit_rate"]).optional(),
+      pricingModel: z.enum(["fixed", "unit_rate", "subscription"]).optional(),
       flatAmount: z.coerce.number().int().min(0).nullable().optional(),
       unitAmount: z.coerce.number().int().min(0).nullable().optional(),
       quantity: z.coerce.number().nullable().optional(),
