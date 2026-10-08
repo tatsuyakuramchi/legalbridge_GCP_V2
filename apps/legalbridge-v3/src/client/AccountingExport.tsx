@@ -34,7 +34,10 @@ const FLAG_LABEL: Record<string, string> = {
 };
 
 const today = new Date();
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+// 手元の日付で YYYY-MM-DD にする。toISOString は UTC なので、日本時間では月初・月末の
+// 0 時が前日になり、既定の期間が 9/30〜10/30 になって 10/31 期日の支払が出なかった。
+const iso = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
 const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
