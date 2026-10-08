@@ -393,6 +393,21 @@ export interface BundleLine {
   quantity?: number | null;
   /** 行の利用形態（取引モデル）。計算書の出し分け（statement-model.ts）に使う。紙には出さない。 */
   usageType?: string | null;
+  /**
+   * 出版の計算書（royalty_statement_pub）の要約と別紙に使う値。出版の実績の行だけが持つ。
+   *   workTitle … 作品名（要約と別紙で作品ごとに束ねる）
+   *   media     … 「紙」か「電子」
+   *   unitPrice … 配信価格（電子）／定価（紙）。主単位
+   *   store     … 書店（電子の取込の備考から）
+   *   period    … 報告月（「2026年3月分」）。紙は刷了・刊行の月
+   */
+  workTitle?: string | null;
+  /** 基本契約の番号（出版の計算書の見出し）。条件書の番号は contractNumber。 */
+  masterNumber?: string | null;
+  media?: string | null;
+  unitPrice?: number | null;
+  store?: string | null;
+  period?: string | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -412,7 +427,13 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     languageLabel: String(row.languageLabel ?? ""),
     occurredOn: String(row.occurredOn ?? ""),
     quantity: num(row.quantity) || null,
-    usageType: String(row.usageType ?? "") || null
+    usageType: String(row.usageType ?? "") || null,
+    workTitle: String(row.workTitle ?? "") || null,
+    masterNumber: String(row.masterNumber ?? "") || null,
+    media: String(row.media ?? "") || null,
+    unitPrice: row.unitPrice === null || row.unitPrice === undefined || row.unitPrice === "" ? null : num(row.unitPrice),
+    store: String(row.store ?? "") || null,
+    period: String(row.period ?? "") || null
   }));
 }
 
@@ -699,6 +720,116 @@ export function stageNotesOf(events: Array<{ paymentStage?: string | null; note?
   return out.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// 出版専用の計算書（royalty_statement_pub）
+//
+// 本文は作品ごとの要約 1 行（集計期間・数量・報告売上・料率・許諾料・別紙の行数）で 1 ページに
+// 閉じ、報告月・書店（紙は刷了・刊行の月）ごとの明細は別紙1 に出す。明細を先に並べると、
+// 作品の多い著者では合計と支払の欄が何ページも後ろになる。金額は焼き付けた行のまま
+// （報告月・書店ごとに切り捨て。事業部の Excel と 1 円まで合う）。
+// ---------------------------------------------------------------------------
+
+/** 「2026年3月分」→ 202603。並べ替えと期間の端に使う。読めなければ発生日の年月。 */
+function monthKey(line: BundleLine): number {
+  const m = String(line.period ?? "").match(/(\d{4})年(\d{1,2})月/);
+  if (m) return Number(m[1]) * 100 + Number(m[2]);
+  const d = String(line.occurredOn ?? "").match(/^(\d{4})-(\d{2})/);
+  return d ? Number(d[1]) * 100 + Number(d[2]) : 0;
+}
+const monthLabelOf = (key: number) => key ? `${Math.floor(key / 100)}年${key % 100}月分` : "";
+function spanLabel(keys: number[]): string {
+  const ks = keys.filter(Boolean).sort((a, b) => a - b);
+  if (!ks.length) return "";
+  const from = monthLabelOf(ks[0]), to = monthLabelOf(ks[ks.length - 1]);
+  return from === to ? from : `${from}〜${to}`;
+}
+const pctText = (value: number) => `${Math.round(value * 100) / 100}%`;
+
+export function publishingStatementPatch(
+  lines: BundleLine[], totals: { tax: number; withholding: number; netTransfer: number | null }
+): Data {
+  const pub = lines.filter((l) => l.media === "紙" || l.media === "電子");
+  if (!pub.length) return {};
+
+  // 作品 × 媒体で束ねる（同じ作品の紙と電子は料率も計算も違うので別の行）。
+  const groups: Array<{ key: string; title: string; media: string; lines: BundleLine[] }> = [];
+  for (const line of pub) {
+    const title = line.workTitle || line.conditionName || "（作品名なし）";
+    const key = `${title}\u0001${line.media}`;
+    const hit = groups.find((g) => g.key === key);
+    if (hit) hit.lines.push(line); else groups.push({ key, title, media: String(line.media), lines: [line] });
+  }
+  groups.sort((a, b) => a.title.localeCompare(b.title, "ja") || (a.media === "電子" ? -1 : 1));
+
+  const sum = (ls: BundleLine[], pick: (l: BundleLine) => number) => ls.reduce((a, l) => a + pick(l), 0);
+  const qty = (l: BundleLine) => Number(l.quantity ?? 0);
+  const rates = (ls: BundleLine[]) => [...new Set(ls.map((l) => pctText(l.ratePct)))].join("・");
+  const numbersOf = (ls: BundleLine[]) => [...new Set(ls.map((l) => String(l.contractNumber ?? "").trim()).filter(Boolean))];
+
+  const works = groups.map((g, i) => ({
+    no: i + 1, title: g.title, media: g.media,
+    period: spanLabel(g.lines.map(monthKey)),
+    contractNumber: numbersOf(g.lines).join("・"),
+    quantityStr: fmtYen(sum(g.lines, qty)),
+    salesStr: fmtYen(sum(g.lines, (l) => l.salesJpy)),
+    rate: rates(g.lines),
+    feeStr: fmtYen(sum(g.lines, (l) => l.paymentJpy)),
+    rowCount: g.lines.length
+  }));
+
+  const annex = groups.map((g) => {
+    const rows = [...g.lines].sort((a, b) => monthKey(a) - monthKey(b)
+      || String(a.store ?? "").localeCompare(String(b.store ?? ""), "ja"));
+    return {
+      title: g.title, media: g.media,
+      contractNumber: numbersOf(g.lines).join("・"),
+      rows: rows.map((l, i) => ({
+        first: i === 0,
+        period: String(l.period ?? "") || (l.occurredOn ? String(l.occurredOn).slice(0, 10) : ""),
+        // 電子は書店、紙は但し書き（刷・版など）。
+        detail: String(l.store ?? "") || (l.media === "紙" ? String(l.basisNote ?? "").replace(/^対象期間 [^・]*・?/, "") : ""),
+        unitPriceStr: l.unitPrice === null || l.unitPrice === undefined ? "" : fmtYen(l.unitPrice),
+        quantityStr: l.quantity ? fmtYen(qty(l)) : "",
+        salesStr: fmtYen(l.salesJpy),
+        rate: pctText(l.ratePct),
+        feeStr: fmtYen(l.paymentJpy)
+      })),
+      subtotalQuantityStr: fmtYen(sum(g.lines, qty)),
+      subtotalSalesStr: fmtYen(sum(g.lines, (l) => l.salesJpy)),
+      subtotalFeeStr: fmtYen(sum(g.lines, (l) => l.paymentJpy))
+    };
+  });
+
+  const fee = sum(pub, (l) => l.paymentJpy);
+  const media = [...new Set(pub.map((l) => l.media))];
+  const masters = [...new Set(pub.map((l) => String(l.masterNumber ?? "").trim()).filter(Boolean))];
+  const terms = numbersOf(pub);
+  const withholding = Math.max(0, Math.round(totals.withholding || 0));
+  const incTax = fee + totals.tax;
+  const netTransfer = totals.netTransfer === null ? incTax - withholding : Math.round(totals.netTransfer);
+  return {
+    pubStatement: true,
+    pubWorks: works,
+    pubAnnex: annex,
+    pubRowCount: pub.length,
+    pubWorkCount: works.length,
+    pubPeriodLabel: spanLabel(pub.map(monthKey)),
+    pubMediaLabel: media.length > 1 ? "紙媒体出版・電子書籍配信" : media[0] === "紙" ? "紙媒体出版" : "電子書籍配信",
+    pubHasDigital: media.includes("電子"),
+    pubHasPrint: media.includes("紙"),
+    pubMasterNo: masters.join("・"),
+    pubTermsNo: terms.length > 3 ? `${terms[0]} ほか ${terms.length - 1} 件（作品ごとは下表）` : terms.join("・"),
+    pubTotalQuantityStr: fmtYen(sum(pub, qty)),
+    pubTotalSalesStr: fmtYen(sum(pub, (l) => l.salesJpy)),
+    pubTotalFeeStr: fmtYen(fee),
+    pubTaxStr: fmtYen(totals.tax),
+    pubTotalIncTaxStr: fmtYen(incTax),
+    pubHasWithholding: withholding > 0,
+    pubWithholdingStr: fmtYen(withholding),
+    pubNetTransferStr: fmtYen(netTransfer)
+  };
+}
+
 /** 備考に前金・後金の説明を足す。人が備考に同じ文を入れていれば重ねない。 */
 export function notesWithStages(manualNotes: unknown, stageNotes: unknown): string {
   const notes = String(manualNotes ?? "").trim();
@@ -725,10 +856,21 @@ export function royaltyStatementPatch(
   if (computedLines.length) {
     const total = manual.rs_bundle_tax;
     const notes = notesWithStages(manual.notes, manual.rs_stage_notes);
+    const base = bundleLinesPatch({
+      lines: computedLines, taxRatePct: rate,
+      taxTotal: total === undefined || total === null ? null : num(total)
+    });
     return {
-      ...bundleLinesPatch({
-        lines: computedLines, taxRatePct: rate,
-        taxTotal: total === undefined || total === null ? null : num(total)
+      ...base,
+      // 出版専用の計算書（royalty_statement_pub）の本文。出版の行が無ければ空。
+      ...publishingStatementPatch(computedLines, {
+        // 消費税は bundleLinesPatch と同じ（焼き付けた合計があればそれ、無ければ税率を掛ける）。
+        tax: total === undefined || total === null
+          ? taxOf(computedLines.reduce((a, l) => a + l.paymentJpy, 0), taxRateOrDefault(rate))
+          : Math.round(num(total)),
+        withholding: num(manual.rs_bundle_withholding),
+        netTransfer: manual.rs_bundle_net_transfer === undefined || manual.rs_bundle_net_transfer === null
+          ? null : num(manual.rs_bundle_net_transfer)
       }),
       ...receiptHeader(context, computedLines),
       // 取引モデル（利用形態）で、そのモデルに要らない欄を空にする。

@@ -7,6 +7,8 @@ import { DocumentIssueService } from "../documents/issue-service.js";
 import { PaymentService } from "../payments/service.js";
 import { ClosingService, type PeriodRow } from "./service.js";
 import { documentFor, needsReport, notYet } from "./state.js";
+import { loadDistribution, loadShares } from "../royalty/shares.js";
+import type { StatementIssuer } from "../royalty/statement-issue.js";
 
 /**
  * まとめて締める。
@@ -22,7 +24,23 @@ import { documentFor, needsReport, notYet } from "./state.js";
  * - 決済文書の決定日はその回の締め日。紙の日付と台帳の決定日を合わせる。
  * - 支払は「立てる」まで。払った事実は銀行にしかない。
  * - 料率で売上報告の入っていない回は対象から外す。金額が出ない。
+ * - 料率（売上報告ベース）の計算書の回は、検収書の道ではなく計算書の道（StatementIssuer）で
+ *   締める。実績の額は報告売上で、そのまま支払にすると料率が掛からない。計算書は試算の行を
+ *   焼き付け、支払は計算書から立てる。共著の取り分（直接払い）は受取人ごとに 1 枚。
  */
+
+/** 計算書の道で締める回。料率（売上報告ベース）の許諾。 */
+export const isStatementRow = (row: Pick<PeriodRow, "kind" | "pricingModel">): boolean =>
+  documentFor(row.kind).templateKey === "royalty_statement" && needsReport(row.pricingModel);
+
+/** 計算書 1 枚ぶん。宛先（受取人か相手先）・載る条件と実績・回。 */
+export interface StatementDocPlan {
+  key: string;
+  party: { id: number; name: string } | null;
+  payeePartyId: number | null;
+  rows: PeriodRow[];
+  entries: Array<{ conditionId: number; eventIds: number[]; payeePartyId: number | null }>;
+}
 
 /** 締められない理由。preview でも run でも同じ言葉を使う。 */
 export type Refusal =
@@ -215,6 +233,54 @@ export class ClosingCloseService {
     this.reads = new ClosingService(database);
   }
 
+  /** 計算書の道。routes が文書作成フォームと同じものを渡す（渡さなければ検収書の道のまま）。 */
+  private statements: StatementIssuer | null = null;
+  useStatements(issuer: StatementIssuer): this { this.statements = issuer; return this; }
+  private viaStatement(row: PeriodRow): boolean { return this.statements !== null && isStatementRow(row); }
+
+  /**
+   * 計算書の回を 1 枚ずつの組にする。相手先ごとなら宛先（受取人か相手先）× 通貨、条件ごとなら
+   * 条件 × 受取人。共著の取り分（直接払い）の条件は、取り分の人数ぶん計算書が出る。
+   * 載せる実績は、選んだ回に付いた、まだ文書の無い実績。
+   */
+  async statementDocs(rows: PeriodRow[], bundle: CloseBundle): Promise<StatementDocPlan[]> {
+    const scheduleIds = rows.map((r) => r.scheduleId!).filter(Boolean);
+    if (!scheduleIds.length) return [];
+    const events = (await this.database.query(
+      `SELECT id, schedule_id FROM condition_events
+        WHERE schedule_id = ANY($1::bigint[]) AND status = 'active' AND document_id IS NULL
+        ORDER BY id`, [scheduleIds])).rows as Array<{ id: number; schedule_id: number }>;
+    const eventsOf = new Map<number, number[]>();
+    for (const e of events) eventsOf.set(Number(e.schedule_id), [...(eventsOf.get(Number(e.schedule_id)) ?? []), Number(e.id)]);
+
+    const payeesOf = new Map<number, Array<{ id: number; name: string } | null>>();
+    for (const conditionId of new Set(rows.map((r) => r.conditionId))) {
+      const shares = await loadShares(this.database, conditionId);
+      const direct = shares.length > 0 && await loadDistribution(this.database, conditionId) === "direct";
+      payeesOf.set(conditionId, direct ? shares.map((x) => ({ id: x.partyId, name: x.partyName })) : [null]);
+    }
+
+    const docs = new Map<string, StatementDocPlan>();
+    for (const row of rows) {
+      const eventIds = eventsOf.get(row.scheduleId!) ?? [];
+      if (!eventIds.length) continue;
+      for (const payee of payeesOf.get(row.conditionId) ?? [null]) {
+        const to = payee ?? row.party;
+        // 受取人として載る分と、自分が相手先の条件は別の紙（受取人宛ての紙は載る条件すべてに取り分が要る）。
+        const key = bundle === "party"
+          ? `s:${to?.id ?? `c${row.conditionId}`}:${payee ? "payee" : "party"}:${row.currency || "JPY"}`
+          : `s:c${row.conditionId}:${payee?.id ?? 0}`;
+        const doc = docs.get(key) ?? { key, party: to, payeePartyId: payee?.id ?? null, rows: [], entries: [] };
+        if (!doc.rows.includes(row)) doc.rows.push(row);
+        const entry = doc.entries.find((x) => x.conditionId === row.conditionId);
+        if (entry) entry.eventIds.push(...eventIds);
+        else doc.entries.push({ conditionId: row.conditionId, eventIds: [...eventIds], payeePartyId: payee?.id ?? null });
+        docs.set(key, doc);
+      }
+    }
+    return [...docs.values()];
+  }
+
   /**
    * 何が起きるかを先に出す。枚数・番号・合計・支払期日の根拠まで。
    * 押したあとに「思っていたのと違う」が起きないようにする。
@@ -250,11 +316,25 @@ export class ClosingCloseService {
         });
       }
 
+      // 計算書の回は、報告売上ではなく料率を掛けた額（試算）を出す。
+      const statementRows = rows.filter((r) => !refuse(r) && r.documentId === null && this.viaStatement(r));
+      const statementPlans = await this.statementDocs(statementRows, bundle);
+      const royaltyOf = new Map<number, number>();
+      for (const row of statementRows) {
+        const eventIds = statementPlans.flatMap((d) => d.entries)
+          .filter((e) => e.conditionId === row.conditionId).flatMap((e) => e.eventIds);
+        try {
+          const [p] = await this.statements!.previewBundle([{ conditionId: row.conditionId, eventIds: [...new Set(eventIds)] }]);
+          royaltyOf.set(row.scheduleId!, p.fee.actual_ex_tax);
+        } catch { /* 試算できない回は額を出さない（締めるときに理由が出る） */ }
+      }
+      for (const t of targets) if (royaltyOf.has(t.scheduleId)) t.amount = royaltyOf.get(t.scheduleId)!;
+
       // 決済文書は条件ごと（または相手先ごと）に1枚。同じ組の回を1枚にまとめる。
       // すでに文書のある回は枚数に数えない（その回は支払だけが残っている）。
       const groups = new Map<string, PeriodRow[]>();
       for (const row of rows) {
-        if (refuse(row) || row.documentId !== null) continue;
+        if (refuse(row) || row.documentId !== null || this.viaStatement(row)) continue;
         const key = bundleKey(row, bundle);
         const list = groups.get(key) ?? [];
         list.push(row);
@@ -276,11 +356,32 @@ export class ClosingCloseService {
           willCreatePayment: true
         };
       });
+      for (const plan of statementPlans) {
+        const head = plan.rows[0]!;
+        let amount = 0;
+        try {
+          const previews = await this.statements!.previewBundle(plan.entries);
+          amount = previews.reduce((a, p) => a + p.fee.actual_ex_tax, 0);
+        } catch { amount = 0; }
+        const conditions = new Map(plan.rows.map((r) => [r.conditionId, r.conditionName]));
+        documents.push({
+          conditionId: head.conditionId, conditionName: head.conditionName,
+          conditionIds: [...conditions.keys()], conditionNames: [...conditions.values()],
+          party: plan.party,
+          templateKey: documentFor(head.kind).templateKey,
+          documentLabel: plan.payeePartyId ? `${head.documentLabel}（受取人 ${plan.party?.name ?? ""}）` : head.documentLabel,
+          scheduleIds: plan.rows.map((r) => r.scheduleId!),
+          issuedOn: plan.rows.map((r) => r.closingOn).filter((d): d is string => !!d).sort().at(-1) ?? null,
+          amount, willCreatePayment: true
+        });
+      }
 
       // 支払は文書1枚につき1件。すでに文書のある回はその文書で、まだの回は組で数える。
-      const payingRows = rows.filter((r) => !refuse(r) && r.paymentId === null);
-      const payingKeys = new Set(payingRows.map((r) =>
-        r.documentId !== null ? `d:${r.documentId}` : bundleKey(r, bundle)));
+      const payingRows = rows.filter((r) => !refuse(r) && r.paymentId === null && !(r.documentId === null && this.viaStatement(r)));
+      const payingKeys = new Set([
+        ...payingRows.map((r) => r.documentId !== null ? `d:${r.documentId}` : bundleKey(r, bundle)),
+        ...statementPlans.map((d) => d.key)
+      ]);
       return {
         targets, skipped, documents, bundle,
         numbers: await this.peekNumbers(documents),
@@ -316,9 +417,13 @@ export class ClosingCloseService {
       ? await this.rowsFor(plan.targets.map((t) => t.scheduleId)) : [];
     const rowOf = new Map(rows.map((r) => [r.scheduleId!, r]));
     assertReasons(rows.filter((r) => r.step === "event"), overrides);
+    // 計算書の回（料率）は計算書の道でまとめて締める。
+    const statementRows = rows.filter((r) => r.documentId === null && this.viaStatement(r));
+    if (statementRows.length) outcomes.push(...await this.closeStatements(statementRows, plan.bundle, actor));
     const groups = new Map<string, CloseTarget[]>();
     for (const t of plan.targets) {
       const row = rowOf.get(t.scheduleId);
+      if (row && statementRows.includes(row)) continue;
       const key = row ? bundleKey(row, plan.bundle) : `c:${t.conditionId}`;
       const list = groups.get(key) ?? [];
       list.push(t);
@@ -354,6 +459,57 @@ export class ClosingCloseService {
                 ...(Object.keys(overrides).length ? { overrides } : {}) }
     });
     return result;
+  }
+
+  /**
+   * 計算書の回を締める。計算書 1 枚ごとに 試算 → 決定 → 計算書を結ぶ（StatementIssuer）→
+   * 支払（計算書から）。1 枚が落ちても他は進める。回の結果は、その回が載った計算書が
+   * 全部できたときだけ ok。
+   */
+  private async closeStatements(rows: PeriodRow[], bundle: CloseBundle, actor: string): Promise<CloseOutcome[]> {
+    const out = new Map<number, CloseOutcome>(rows.map((r) => [r.scheduleId!, {
+      scheduleId: r.scheduleId!, conditionId: r.conditionId, conditionName: r.conditionName, seq: r.seq,
+      ok: false, eventId: r.eventId, documentId: null, documentNo: null,
+      paymentId: null, paymentNo: null, reached: "event", error: null
+    }]));
+    const add = (prev: string | null, next: string | null) => [prev, next].filter(Boolean).join("・") || null;
+    const docs = await this.statementDocs(rows, bundle);
+    for (const doc of docs) {
+      const issuedOn = doc.rows.map((r) => r.closingOn).filter((d): d is string => !!d).sort().at(-1) ?? null;
+      const dueOn = doc.rows.map((r) => r.due.on).filter((d): d is string => !!d).sort()[0] ?? null;
+      const matters = new Set(doc.rows.map((r) => r.matter?.id ?? null));
+      try {
+        const made = await this.statements!.issue({
+          templateKey: documentFor(doc.rows[0]!.kind).templateKey,
+          entries: doc.entries, issuedOn,
+          matterId: matters.size === 1 ? doc.rows[0]!.matter?.id ?? null : null
+        }, actor);
+        for (const r of doc.rows) {
+          const o = out.get(r.scheduleId!)!;
+          o.documentId ??= made.document.id; o.documentNo = add(o.documentNo, made.document.documentNo);
+          if (o.reached === "event") o.reached = "document";
+        }
+        const paid = await this.payments.createFromStatementDocument(made.document.id, actor, { dueOn });
+        for (const r of doc.rows) {
+          const o = out.get(r.scheduleId!)!;
+          o.paymentId ??= paid.paymentId; o.paymentNo = add(o.paymentNo, paid.paymentNo ?? null);
+          o.reached = "payment";
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const who = doc.payeePartyId ? `（${doc.party?.name ?? "受取人"}）` : "";
+        for (const r of doc.rows) {
+          const o = out.get(r.scheduleId!)!;
+          o.error = add(o.error, `${message}${who}`);
+        }
+      }
+    }
+    for (const r of rows) {
+      const o = out.get(r.scheduleId!)!;
+      if (!docs.some((d) => d.rows.includes(r))) o.error ??= "この回に、計算書に載せられる実績がありません（実績がもう別の文書に結ばれています）";
+      o.ok = !o.error && o.paymentId !== null;
+    }
+    return [...out.values()];
   }
 
   /** 1つの組（条件、または相手先）の回をまとめて進める。 */
@@ -435,7 +591,10 @@ export class ClosingCloseService {
       // 期日が違うと、見て決めた意味がなくなる。
       const dueOn = list.map((r) => r.due.on).filter((d): d is string => !!d).sort()[0] ?? null;
       try {
-        const paid = await this.payments.createFromInspection(documentId, actor, { dueOn });
+        // 計算書（料率）の支払は計算書から（実績の額は報告売上で、料率が掛かっていない）。
+        const paid = list.some((r) => isStatementRow(r))
+          ? await this.payments.createFromStatementDocument(documentId, actor, { dueOn })
+          : await this.payments.createFromInspection(documentId, actor, { dueOn });
         for (const r of list) {
           const o = out.get(r.scheduleId!)!;
           o.paymentId = paid.paymentId; o.paymentNo = paid.paymentNo;

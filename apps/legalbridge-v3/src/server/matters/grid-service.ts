@@ -31,7 +31,7 @@ const ORDER_KEYS = "('purchase_order', 'intl_purchase_order')";
  */
 const ORDER_IMPORT_KINDS = "('発注書')";
 /** 結果の文書。検収書と計算書。 */
-const RESULT_KEYS = "('inspection_certificate', 'intl_inspection_certificate', 'royalty_statement')";
+const RESULT_KEYS = "('inspection_certificate', 'intl_inspection_certificate', 'royalty_statement', 'royalty_statement_pub')";
 
 /**
  * 系列に繋がった文書のうち、その段の代表を1枚。

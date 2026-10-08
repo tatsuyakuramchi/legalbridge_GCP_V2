@@ -128,7 +128,7 @@ const CONTRACT_DOCUMENT_SQL = `(
      AND COALESCE(d.manual_inputs->>'documentKind', '') NOT IN ('発注書', '発注請書', '検収書', '通知書'))
   OR t.template_key NOT IN ('purchase_order', 'intl_purchase_order', 'inspection_certificate',
                             'intl_inspection_certificate', 'delivery_note', 'acceptance_certificate',
-                            'royalty_statement'))`;
+                            'royalty_statement', 'royalty_statement_pub'))`;
 
 /** 契約に繋がっていない契約文書の共通の条件（d・t・v を使う）。 */
 const UNLINKED_WHERE = `d.agreement_id IS NULL

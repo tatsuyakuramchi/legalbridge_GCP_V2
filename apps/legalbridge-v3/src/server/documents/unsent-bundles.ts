@@ -17,7 +17,7 @@ import { translate } from "../core/errors.js";
 export const BUNDLE_TEMPLATE_KEYS = [
   "pub_master_individual", "pub_master_corporate", "license_master",
   "pub_license_terms_v3", "pub_license_terms_v3_annex", "individual_license_terms_v3", "individual_license_terms_v4",
-  "royalty_statement"
+  "royalty_statement", "royalty_statement_pub"
 ];
 
 export type UnsentKind = "master" | "terms" | "statement" | "other";
@@ -36,7 +36,7 @@ export function kindOfTemplate(templateKey: string | null): UnsentKind {
   const k = String(templateKey ?? "");
   if (/master/.test(k)) return "master";
   if (/terms/.test(k)) return "terms";
-  if (k === "royalty_statement") return "statement";
+  if (k === "royalty_statement" || k === "royalty_statement_pub") return "statement";
   return "other";
 }
 

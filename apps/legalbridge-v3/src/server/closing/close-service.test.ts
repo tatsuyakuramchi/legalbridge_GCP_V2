@@ -238,3 +238,89 @@ test("予定と違う額にしたのに理由が無ければ、何も作らず�
   await assert.rejects(() => service.run([100], "tester", { overrides: { 100: { amount: 1 } } }),
     /理由を入れてください/);
 });
+
+// ---------------------------------------------------------------------------
+// 料率（売上報告ベース）の計算書は計算書の道で締める
+// ---------------------------------------------------------------------------
+
+const royaltyRaw = (over: Record<string, unknown> = {}) => raw({
+  kind: "license", pricing_model: "revenue_rate", planned_amount: 0,
+  label: "2025年3月〜2026年8月", due_on: "2026-08-31", pay_on: "2026-10-31",
+  condition_name: "作品A｜電子出版", event_id: 51, event_amount: 600000, ...over
+});
+/** 回 100（条件 7・取り分なし）に実績 51・52、回 200（条件 8・共著 2 人で直接払い）に実績 61。 */
+const royaltyDb = (rows: Array<Record<string, unknown>>) => db(rows, {
+  "WHERE schedule_id = ANY($1::bigint[]) AND status = 'active' AND document_id IS NULL": [
+    { id: 51, schedule_id: 100 }, { id: 52, schedule_id: 100 }, { id: 61, schedule_id: 200 }],
+  "'distribution' AS distribution": [{ distribution: "direct" }]
+});
+
+const fakeIssuer = () => {
+  const issued: Array<Record<string, any>> = [];
+  return {
+    issued,
+    // 条件 7 は報告売上 600,000 × 15%、条件 8 は 100,000 × 10%（受取人を選べばその半分）。
+    previewBundle: async (entries: Array<{ conditionId: number; payeePartyId?: number | null }>) =>
+      entries.map((e) => ({ fee: { actual_ex_tax: e.conditionId === 7 ? 90000 : e.payeePartyId ? 5000 : 10000 } })),
+    issue: async (input: Record<string, any>) => {
+      issued.push(input);
+      return { document: { id: 900 + issued.length, documentNo: `ARC-ROY-2026-${1100 + issued.length}` } };
+    }
+  };
+};
+const fakePayments = () => {
+  const made: number[] = [];
+  return { made, createFromStatementDocument: async (documentId: number) => {
+    made.push(documentId);
+    return { paymentId: 700 + made.length, paymentNo: `PAY-${700 + made.length}` };
+  } };
+};
+
+test("料率の回：試算は報告売上ではなく料率を掛けた額。共著（直接払い）は受取人ごとに 1 枚", async () => {
+  const rows = [royaltyRaw(), royaltyRaw({ schedule_id: 200, condition_id: 8, condition_name: "作品B｜電子出版", event_id: 61 })];
+  const fake = royaltyDb(rows);
+  const shares = fake.query.bind(fake);
+  // 取り分：条件 8 だけ 2 人。
+  (fake as any).query = async (text: string, params: unknown[] = []) => text.includes("WITH series AS")
+    ? { rows: Number(params[0]) === 8
+        ? [{ party_id: 31, party_name: "共著者甲", party_kind: "individual", share_ppm: 500000, sort_order: 0, note: null },
+           { party_id: 32, party_name: "共著者乙", party_kind: "individual", share_ppm: 500000, sort_order: 1, note: null }]
+        : [], rowCount: 0 }
+    : shares(text, params);
+  const service = new ClosingCloseService(fake, now).useStatements(fakeIssuer() as any);
+  const view = await service.preview([100, 200], { bundle: "party" });
+  assert.deepEqual(view.targets.map((t) => t.amount), [90000, 10000], "報告売上ではなく許諾料");
+  assert.equal(view.summary.documents, 3, "相手先 1 枚＋共著者 2 人で 2 枚");
+  assert.deepEqual(view.documents.map((d) => [d.party?.name, d.amount]).sort(),
+    [["共著者乙", 5000], ["共著者甲", 5000], ["受託者名", 90000]].sort());
+  assert.equal(view.summary.payments, 3);
+});
+
+test("料率の回：締めると計算書の道で発行し、支払は計算書から立てる（検収書の道を通らない）", async () => {
+  const rows = [royaltyRaw()];
+  const issuer = fakeIssuer();
+  const payments = fakePayments();
+  const service = new ClosingCloseService(royaltyDb(rows), now, undefined, undefined,
+    { createDraft: async () => { throw new Error("検収書の道を通った"); } } as any, payments as any).useStatements(issuer as any);
+  const result = await service.run([100], "tester");
+  assert.equal(result.ok, 1, JSON.stringify(result.outcomes));
+  assert.equal(issuer.issued.length, 1);
+  assert.deepEqual(issuer.issued[0].entries, [{ conditionId: 7, eventIds: [51, 52], payeePartyId: null }],
+    "回に付いた、まだ文書の無い実績を全部載せる");
+  assert.equal(issuer.issued[0].issuedOn, "2026-08-31", "決定日は締め日");
+  assert.deepEqual(payments.made, [901]);
+  assert.equal(result.outcomes[0].documentNo, "ARC-ROY-2026-1101");
+  assert.equal(result.outcomes[0].paymentNo, "PAY-701");
+  assert.equal(result.outcomes[0].reached, "payment");
+});
+
+test("料率の回で計算書はあるが支払が無い：支払は計算書から立てる（報告売上を支払にしない）", async () => {
+  const payments = fakePayments();
+  const service = new ClosingCloseService(royaltyDb([royaltyRaw({ document_id: 950, document_no: "ARC-ROY-2026-1050" })]), now,
+    undefined, undefined, undefined,
+    { ...payments, createFromInspection: async () => { throw new Error("検収書の道で支払を立てた"); } } as any)
+    .useStatements(fakeIssuer() as any);
+  const result = await service.run([100], "tester");
+  assert.equal(result.ok, 1, JSON.stringify(result.outcomes));
+  assert.deepEqual(payments.made, [950]);
+});

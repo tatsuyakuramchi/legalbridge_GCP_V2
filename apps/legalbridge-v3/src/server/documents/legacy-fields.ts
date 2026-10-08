@@ -9,6 +9,7 @@
  *   ・使わない側の分岐の欄（showWhen で隠れるはず）も要求する
  * ということが起きていた。検収書1枚に8項目という数字はこれが原因。
  */
+import { isRoyaltyStatementKey } from "./settlement-docs.js";
 
 export interface ShowWhenCondition {
   field: string;
@@ -87,7 +88,7 @@ const ROYALTY_COMPUTED_FIELDS = new Set([
 export function isRoyaltyComputedFieldHidden(
   templateKey: string, fieldName: string, _values: Record<string, unknown>
 ): boolean {
-  if (templateKey !== "royalty_statement") return false;
+  if (!isRoyaltyStatementKey(templateKey)) return false;
   // 試算があるかどうかに依らず隠す。V3 の計算書は必ず条件と実績から出るので、
   // 試算がまだ無い段階（ひな形を選んだ直後）でも、人が入れる欄ではない。
   return ROYALTY_COMPUTED_FIELDS.has(fieldName);
