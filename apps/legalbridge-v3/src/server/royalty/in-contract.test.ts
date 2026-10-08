@@ -89,3 +89,14 @@ test("共著の受取人宛ての計算書は、受取人宛ての条件書と�
   const none = await inContractRef(db, 7, { payeePartyId: 99 });
   assert.equal(none.number, "", "受取人の条件書が無ければ番号を出さない（別の人の番号は出さない）");
 });
+
+test("受取人が条件の相手先そのもの（代表も取り分を持つ）なら、宛名の無い条件書と条件の基本契約を出す", async () => {
+  const docs = [
+    { id: 10, document_no: "ARC-PUBT-2026-1010", status: "issued", issued_at: "2026-09-20", label: "出版条件書", payee_party_id: 31 },
+    { id: 9, document_no: "ARC-PUBT-2026-1006", status: "issued", issued_at: "2026-09-18", label: "出版条件書", payee_party_id: null }
+  ];
+  const db = fake({ a_id: 1, a_no: "ATT-2026-00069", a_title: "基本契約", a_kind: "master", a_status: "executed" }, docs);
+  const self = await inContractRef(db, 7, { payeePartyId: 5 });
+  assert.equal(self.number, "ARC-PUBT-2026-1006", "宛名の無い条件書は相手先宛て");
+  assert.equal(self.masterNumber, "ATT-2026-00069");
+});

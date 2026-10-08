@@ -8,14 +8,18 @@ import { useReadOnly } from "./read-only.js";
  * 条件書の無い条件を相手先ごとに集めて一覧にし、選んだ相手先に文書セットを
  * 相手先ごとに決定する。試算で必須の欄の不足を見てから決定する。
  * 1 相手先の失敗で他を止めない（結果に理由が残る）。
+ * 共著の受取人（取り分を直接払う条件の、相手先以外の人）も 1 行に出る。受取人宛ての
+ * 基本契約＋条件書を作る（計算書は受取人宛てに出るので、その番号が計算書に載る）。
  */
 interface Party {
+  key: string; role: "party" | "payee"; representatives?: string[];
   partyId: number; partyName: string; partyKind: string | null; email: string | null;
   master: { id: number; agreementNo: string | null; title: string } | null;
   conditions: Array<{ id: number; conditionNo: string | null; workTitle: string | null; usageType: string | null; hasTerms: boolean }>;
   missingTerms: number; missingWorks: number;
 }
 interface Outcome {
+  key: string; role: "party" | "payee";
   partyId: number; partyName: string; status: "ok" | "missing" | "error" | "nothing"; problems: string[];
   plan: { master: "existing" | "create"; masterTemplateKey: string | null; termsTemplateKey: string; conditionIds: number[] } | null;
   result?: { agreement: { agreementNo: string | null; created: boolean } | null;
@@ -27,7 +31,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 export function MissingContracts({ onOpenDocument }: { onOpenDocument?: (id: number) => void }) {
   const readOnly = useReadOnly();
   const [parties, setParties] = useState<Party[] | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [signedOn, setSignedOn] = useState(today());
   const [preview, setPreview] = useState<Outcome[] | null>(null);
   const [done, setDone] = useState<{ outcomes: Outcome[]; issued: number } | null>(null);
@@ -42,25 +46,25 @@ export function MissingContracts({ onOpenDocument }: { onOpenDocument?: (id: num
   }
   useEffect(() => { void load(); }, []);
 
-  const ids = [...selected];
+  const keys = [...selected];
   async function tryIt() {
     setBusy("試算しています"); setError(null); setDone(null);
-    try { setPreview((await api.post<{ outcomes: Outcome[] }>("/document-sets/missing/preview", { partyIds: ids, signedOn })).outcomes); }
+    try { setPreview((await api.post<{ outcomes: Outcome[] }>("/document-sets/missing/preview", { keys, signedOn })).outcomes); }
     catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setPreview(null); }
     finally { setBusy(null); }
   }
   async function run() {
-    const okIds = (preview ?? []).filter((o) => o.status === "ok").map((o) => o.partyId);
-    if (!okIds.length) return;
-    if (!window.confirm(`${okIds.length} 件の相手先に基本契約と条件書を決定します。番号が振られ、合意が立ちます。よいですか？`)) return;
+    const okKeys = (preview ?? []).filter((o) => o.status === "ok").map((o) => o.key);
+    if (!okKeys.length) return;
+    if (!window.confirm(`${okKeys.length} 件の相手先・受取人に基本契約と条件書を決定します。番号が振られ、合意が立ちます。よいですか？`)) return;
     setBusy("決定しています"); setError(null);
     try {
-      const r = await api.post<{ outcomes: Outcome[]; issued: number }>("/document-sets/missing/run", { partyIds: okIds, signedOn });
+      const r = await api.post<{ outcomes: Outcome[]; issued: number }>("/document-sets/missing/run", { keys: okKeys, signedOn });
       setDone(r); setPreview(null); await load();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(null); }
   }
-  const toggleAll = (on: boolean) => setSelected(on ? new Set((parties ?? []).map((p) => p.partyId)) : new Set());
+  const toggleAll = (on: boolean) => setSelected(on ? new Set((parties ?? []).map((p) => p.key)) : new Set());
 
   return (
     <div className="panel">
@@ -73,7 +77,7 @@ export function MissingContracts({ onOpenDocument }: { onOpenDocument?: (id: num
           <label className="field"><span>締結日（両方の文書）</span>
             <input type="date" value={signedOn} onChange={(e) => { setSignedOn(e.target.value); setPreview(null); }} />
           </label>
-          <button className="btn btn-sm" disabled={!!busy || !ids.length} onClick={() => void tryIt()}>選んだ {ids.length} 件を試算</button>
+          <button className="btn btn-sm" disabled={!!busy || !keys.length} onClick={() => void tryIt()}>選んだ {keys.length} 件を試算</button>
           {preview && !readOnly && (
             <button className="btn btn-sm primary" disabled={!!busy || !preview.some((o) => o.status === "ok")} onClick={() => void run()}>
               作れる {preview.filter((o) => o.status === "ok").length} 件を決定
@@ -85,6 +89,8 @@ export function MissingContracts({ onOpenDocument }: { onOpenDocument?: (id: num
         <div className="faint">
           基本契約が無い相手先は出版許諾契約書（個人／法人）を基本契約として作ります。条件書は作品が 12 点を超えると別紙形式。
           決定した条件書は基本契約の下の個別契約になります。送るのは文書の画面か「まとめて送る」から。
+          「共著の受取人」は取り分を直接払う条件の、相手先以外の取り分の人です。受取人宛ての基本契約・条件書を作ります
+          （条件は代表との契約のまま）。計算書は受取人宛てに出るので、その番号が載ります。
         </div>
         {error && <div className="alert">{error}</div>}
         {done && (
@@ -99,8 +105,8 @@ export function MissingContracts({ onOpenDocument }: { onOpenDocument?: (id: num
               <thead><tr><th>相手先</th><th>判定</th><th>基本契約</th><th>条件書</th><th>理由・結果</th></tr></thead>
               <tbody>
                 {(preview ?? done!.outcomes).map((o) => (
-                  <tr key={o.partyId}>
-                    <td>{o.partyName}</td>
+                  <tr key={o.key}>
+                    <td>{o.partyName}{o.role === "payee" && <> <span className="tag">共著の受取人</span></>}</td>
                     <td><span className={`tag ${o.status === "ok" ? "ok" : o.status === "nothing" ? "" : "warn"}`}>{STATUS[o.status]}</span></td>
                     <td className="faint">{o.plan ? (o.plan.master === "existing" ? "既存を使う" : `作る（${o.plan.masterTemplateKey}）`) : "—"}</td>
                     <td className="faint">{o.plan ? `${o.plan.termsTemplateKey}（条件 ${o.plan.conditionIds.length} 本）` : "—"}</td>
@@ -133,10 +139,15 @@ export function MissingContracts({ onOpenDocument }: { onOpenDocument?: (id: num
                 const missing = p.conditions.filter((c) => !c.hasTerms);
                 const works = [...new Set(missing.map((c) => c.workTitle ?? c.conditionNo ?? `#${c.id}`))];
                 return (
-                  <tr key={p.partyId}>
-                    <td><input type="checkbox" checked={selected.has(p.partyId)}
-                      onChange={(e) => { const n = new Set(selected); if (e.target.checked) n.add(p.partyId); else n.delete(p.partyId); setSelected(n); setPreview(null); }} /></td>
-                    <td>{p.partyName}</td>
+                  <tr key={p.key}>
+                    <td><input type="checkbox" checked={selected.has(p.key)}
+                      onChange={(e) => { const n = new Set(selected); if (e.target.checked) n.add(p.key); else n.delete(p.key); setSelected(n); setPreview(null); }} /></td>
+                    <td>
+                      {p.partyName}
+                      {p.role === "payee" && (
+                        <div><span className="tag">共著の受取人</span>{p.representatives?.length ? <span className="faint"> 代表 {p.representatives.join("・")}</span> : null}</div>
+                      )}
+                    </td>
                     <td className="faint">{p.partyKind === "individual" ? "個人" : p.partyKind === "corporate" ? "法人" : "—"}</td>
                     <td>{p.email ? <span className="faint">{p.email}</span> : <span className="tag warn">未登録</span>}</td>
                     <td>{p.master ? <span className="faint">{p.master.agreementNo ?? p.master.title}</span> : <span className="tag">なし → 作る</span>}</td>

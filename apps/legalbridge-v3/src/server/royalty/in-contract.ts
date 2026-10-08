@@ -79,8 +79,11 @@ export async function inContractRef(
   // 個別契約。選んだ番号 → 決定済みの条件書 → 条件が載っている基本契約以外の契約。
   let individual: Part | null = null;
   const chosen = options.termsNo?.trim();
-  const payee = options.payeePartyId ?? null;
-  const addressed = (t: { payeePartyId?: number | null }) => (t.payeePartyId ?? null) === payee;
+  // 受取人が条件の相手先そのもの（相手先も取り分を持つ）なら、相手先宛ての計算書と同じに読む。
+  const payee = options.payeePartyId && options.payeePartyId !== cc.counterpartyId ? options.payeePartyId : null;
+  // 宛名の無い条件書は条件の相手先宛て。
+  const addressed = (t: { payeePartyId?: number | null }) =>
+    (t.payeePartyId ?? cc.counterpartyId) === (payee ?? cc.counterpartyId);
   const terms = chosen
     ? cc.terms.find((t) => t.no === chosen) ?? null
     : cc.terms.find((t) => t.status === "issued" && addressed(t))
