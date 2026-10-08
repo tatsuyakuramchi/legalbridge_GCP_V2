@@ -1002,6 +1002,7 @@ export class DocumentIssueService {
       requestId: input.requestId ?? null,
       ownerStaffId,
       payeePartyId: refs.payeePartyId ?? null,
+      partyId: refs.partyId ?? null,
       eventIds: input.eventIds ?? [],
       royalty: input.royalty ?? null,
       issuedOn,
@@ -1060,10 +1061,15 @@ export interface ChosenRefs {
   parentPoNo?: string | null; termsNo?: string | null;
   /** 共著の取り分（A-068）。計算書の受取人（manual_inputs._payeePartyId）。宛名・口座・源泉がこの人になる。 */
   payeePartyId?: number | null;
+  /**
+   * 条件も契約も無い文書（まだ作っていない基本契約の基本契約書）の試算で、相手先
+   * （manual_inputs._partyId）。契約が決まれば契約の相手先が使われる。
+   */
+  partyId?: number | null;
 }
 
 export function chosenRefs(manual: Record<string, unknown> | null | undefined): ChosenRefs {
   const text = (v: unknown) => { const t = String(v ?? "").trim(); return t || null; };
   return { parentPoNo: text(manual?._parentPoNo), termsNo: text(manual?._termsNo),
-           payeePartyId: int(manual?._payeePartyId) };
+           payeePartyId: int(manual?._payeePartyId), partyId: int(manual?._partyId) };
 }

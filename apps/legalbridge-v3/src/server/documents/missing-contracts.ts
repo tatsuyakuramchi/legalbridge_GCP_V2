@@ -223,8 +223,10 @@ export class MissingContractsService {
         const problems: string[] = [];
         try {
           if (plan.master === "create") {
+            // 基本契約はまだ無いので、相手先（受取人の行は受取人）を渡して宛名・住所を引かせる。
+            // 渡さないと相手先の欄が全部空に見え、全員が「必須の欄が空」になる。
             const r = await this.deps.preview({ templateKey: plan.masterTemplateKey!, conditionIds: [], matterId: null,
-                                                agreementId: null, manualInputs: { 締結日: signedOn } });
+                                                agreementId: null, manualInputs: { 締結日: signedOn, _partyId: party.partyId } });
             if (r.missing.length) problems.push(`${r.templateLabel ?? plan.masterTemplateKey}：${r.missing.map((m) => m.label ?? m.name).join("・")}`);
           }
           // 受取人宛ては受取人の基本契約を親に渡す（相手先の条件書は合意を付けない）。
