@@ -6,20 +6,35 @@ import { DocumentSendService } from "./send-service.js";
 const ev = (action: string, at: string, detail: Record<string, unknown> = {}, actor = "kuramochi") =>
   ({ occurred_at: at, action, actor, detail });
 
-const build = (events: Array<Record<string, unknown>>, agreement: string | null = "negotiating") =>
+const build = (events: Array<Record<string, unknown>>, agreement: string | null = "negotiating",
+               templateKey = "individual_license_terms_v4") =>
   new FakeDatabase((t) => {
     if (t.includes("FROM documents d LEFT JOIN agreements")) {
-      return [{ id: 5, status: "issued", agreement_id: agreement ? 8 : null, agreement_status: agreement }];
+      return [{ id: 5, status: "issued", agreement_id: agreement ? 8 : null, agreement_status: agreement,
+                template_key: templateKey }];
     }
     if (t.includes("FROM audit_events")) return events;
     return undefined;
   });
 
-test("何も送っていなければ、次は CloudSign（確認メールは任意なので飛ばせる）", async () => {
+test("何も送っていなければ、まず内容確認のメール（任意なので飛ばして CloudSign へも行ける）", async () => {
   const t = await new DocumentSendService(build([])).timeline(5);
   assert.deepEqual(t.steps.map((s) => s.done), [false, false, false, false]);
-  assert.equal(t.current?.key, "cloudsign");
+  assert.equal(t.current?.key, "mail");
   assert.equal(t.steps[0].optional, true);
+  assert.equal(t.steps[3].optional, false, "条件書は締結まで");
+});
+
+test("発注書（合意に繋がらない）には締結の段を求めない。署名依頼を送れば完了", async () => {
+  const fresh = await new DocumentSendService(build([], null, "purchase_order")).timeline(5);
+  assert.equal(fresh.steps[3].optional, true);
+  assert.match(fresh.steps[3].detail, /締結の記録は持ちません/);
+  assert.equal(fresh.current?.key, "mail");
+  const sent = await new DocumentSendService(build([
+    { occurred_at: "2026-10-01T00:00:00Z", action: "cloudsign.send", actor: "k", detail: { recipient: "a@x", externalId: "c1" } }
+  ], null, "purchase_order")).timeline(5);
+  assert.equal(sent.current, null, "締結を待たない");
+  assert.equal(sent.steps[2].done, true);
 });
 
 test("送信・確認・署名依頼の記録から段が埋まる", async () => {

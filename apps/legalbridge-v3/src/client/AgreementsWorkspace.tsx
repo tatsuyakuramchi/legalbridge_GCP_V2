@@ -6,6 +6,9 @@ import { Relations, type EntityKind } from "./Relations.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { ServiceLinesForm } from "./ServiceLinesForm.js";
+import { LicenseSetForm } from "./LicenseSetForm.js";
+import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { templateKeyFor } from "./FlowBar.js";
 import { useReadOnly } from "./read-only.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
@@ -112,6 +115,12 @@ export function AgreementsWorkspace(
   const [creating, setCreating] = useState<CreatePreset | null>(createPreset ?? null);
   const [terminating, setTerminating] = useState(false);
   const [addingCondition, setAddingCondition] = useState(false);
+  /**
+   * 条件明細の登録の形。取引を進めると同じ種類別のフォーム（業務委託の明細・許諾セット・
+   * 出版セット）を出す。以前はここだけ汎用の 7 項目フォームで、同じ作業なのに形が違っていた。
+   * null は契約の種類からの既定（業務委託 → 明細、許諾 IN → 許諾セット、それ以外 → 1 本ずつ）。
+   */
+  const [condForm, setCondForm] = useState<"service" | "license" | "publishing" | "one" | null>(null);
   /** 登録した契約を開いたら、続けて条件明細の登録欄を出す（「登録して、条件明細の登録へ」）。 */
   const nextCondition = useRef(false);
   const bump = () => setVersion((v) => v + 1);
@@ -125,7 +134,7 @@ export function AgreementsWorkspace(
 
   useEffect(() => {
     if (!selected) { setDetail(null); return; }
-    setTerminating(false);
+    setTerminating(false); setCondForm(null);
     setAddingCondition(nextCondition.current); nextCondition.current = false;
     api.get<Detail>(`/agreements/${selected}`)
       .then(setDetail).catch((e: ApiError) => setError(e.message));
@@ -180,7 +189,8 @@ export function AgreementsWorkspace(
       )}
 
       <div className="stack">
-        <div className="panel">
+        {/* 取引から来て登録しているあいだは、全社の契約の一覧を出さない（登録が済めば取引へ戻る）。 */}
+        {!(creating && onCreated) && <div className="panel">
           <div className="panel-hd">
             <h2>契約</h2>
             <ListSearch value={keyword} onChange={setKeyword}
@@ -224,7 +234,7 @@ export function AgreementsWorkspace(
               </tbody>
             </table>
           </div>
-        </div>
+        </div>}
 
         {detail && a && (
           <>
@@ -290,26 +300,57 @@ export function AgreementsWorkspace(
                     onDone={(msg) => { setTerminating(false); setNotice(msg); bump(); }} />
                 )}
 
-                {addingCondition && (
-                  <ConditionCreateForm
-                    title={`${a.agreementNo ?? a.title} の条件明細を登録`}
-                    preset={{ counterpartyId: String(a.counterparty.id), agreementId: String(a.id),
-                              direction: a.direction,
-                              kind: a.domain === "license" ? "license" : "service" }}
-                    presetLabels={{ counterpartyId: a.counterparty.name,
-                                    agreementId: `${a.agreementNo ?? ""} ${a.title}`.trim() }}
-                    onDone={(made) => {
-                      setAddingCondition(false);
-                      // 次は文書。登録した条件を選んだ状態で文書の画面へ進む（戻る先はこの契約）。
-                      if (onCompose) {
-                        onCompose([made.id], { id: a.id, label: a.agreementNo ?? a.title },
-                                  templateKeyFor(a.direction, a.domain === "license" ? "license" : "service"));
-                        return;
-                      }
-                      bump(); setNotice("条件明細を登録しました");
-                    }}
-                    onCancel={() => setAddingCondition(false)} />
-                )}
+                {addingCondition && (() => {
+                  const label = `${a.agreementNo ?? ""} ${a.title}`.trim();
+                  const preset = { counterpartyId: String(a.counterparty.id), agreementId: String(a.id) };
+                  // 既定の形。契約の種類（domain）から。種類が無い旧い契約は、載っている条件の種類か件名から推す。
+                  const kinds = detail.conditions.map((c) => c.kind);
+                  const looksService = a.domain === "service"
+                    || (!a.domain && (kinds.some((k) => k === "service" || k === "expense" || k === "fee") || /業務委託/.test(a.title)));
+                  const looksLicenseIn = a.direction === "in"
+                    && (a.domain === "license" || (!a.domain && kinds.some((k) => k === "license")));
+                  const form = condForm ?? (looksService ? "service" : looksLicenseIn ? "license" : "one");
+                  // 次は文書。登録した条件を選んだ状態で文書の画面へ進む（戻る先はこの契約）。
+                  const made = (ids: number[], templateKey: string | null) => {
+                    setAddingCondition(false);
+                    if (onCompose && ids.length) { onCompose(ids, { id: a.id, label: a.agreementNo ?? a.title }, templateKey); return; }
+                    bump(); setNotice("条件明細を登録しました");
+                  };
+                  const cancel = () => setAddingCondition(false);
+                  return (
+                    <div className="stack" style={{ gap: 8 }}>
+                      <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+                        <span className="faint">登録の形：</span>
+                        {([["service", "業務委託の明細（1 行＝条件 1 本）"], ["license", "許諾セット（ゲーム）"],
+                           ["publishing", "出版セット（紙・電子）"], ["one", "1 本ずつ"]] as const).map(([v, text]) => (
+                          <button key={v} type="button" className="chip" aria-pressed={form === v} onClick={() => setCondForm(v)}>{text}</button>
+                        ))}
+                        <span className="faint">取引を進めると同じフォームです。登録すると、その条件で文書を作る画面へ進みます</span>
+                      </div>
+                      {form === "service" && (
+                        <ServiceLinesForm preset={preset} counterpartyName={a.counterparty.name}
+                          onDone={(r) => made(r.conditions.map((c) => c.id), "purchase_order")} onCancel={cancel} />
+                      )}
+                      {form === "license" && (
+                        <LicenseSetForm preset={preset} presetLabels={{ counterpartyId: a.counterparty.name, agreementId: label }}
+                          onDone={(r) => made(r.conditions.map((c) => c.id), "individual_license_terms_v4")} onCancel={cancel} />
+                      )}
+                      {form === "publishing" && (
+                        <PubConditionSetForm preset={preset}
+                          onDone={(r) => made([r.print, r.digital, r.translationPrint, r.translationDigital].flatMap((c) => (c ? [c.id] : [])), null)}
+                          onCancel={cancel} />
+                      )}
+                      {form === "one" && (
+                        <ConditionCreateForm
+                          title={`${a.agreementNo ?? a.title} の条件明細を登録`}
+                          preset={{ ...preset, direction: a.direction, kind: a.domain === "license" ? "license" : "service" }}
+                          presetLabels={{ counterpartyId: a.counterparty.name, agreementId: label }}
+                          onDone={(c) => made([c.id], templateKeyFor(a.direction, a.domain === "license" ? "license" : "service"))}
+                          onCancel={cancel} />
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 

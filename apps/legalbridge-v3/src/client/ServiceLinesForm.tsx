@@ -146,6 +146,16 @@ export function ServiceLinesForm(
     && serviceLines.every((l) => l.name.trim() && num(l.unitPrice) >= 0)
     && (!hasContractor || licMode === "none" || contractorWithoutWork.length === 0)
     && (payMode !== "periodic" || (periodFrom && periodTo));
+  /** 登録ボタンが押せない理由。ボタンの横に出す。 */
+  const missing = [
+    !partyId ? "受託者" : null,
+    title.trim() === "" ? "件名" : null,
+    serviceLines.length === 0 ? "委託料の行" : null,
+    ...lines.flatMap((l, i) => l.kind !== "service" ? []
+      : [!l.name.trim() ? `${i + 1} 行目の品目名` : null, String(l.unitPrice ?? "").trim() === "" ? `${i + 1} 行目の単価` : null]),
+    hasContractor && licMode !== "none" && contractorWithoutWork.length > 0 ? "受注者帰属の行の作品" : null,
+    payMode === "periodic" && !(periodFrom && periodTo) ? "定期払いの期間（開始・終了）" : null
+  ].filter((m): m is string => Boolean(m));
 
   /**
    * 同じ相手・同じ品目（名前と種類、行に作品があれば作品も）の生きた条件が既にある行。
@@ -316,9 +326,13 @@ export function ServiceLinesForm(
           </div>
         )}
         <div style={{ overflowX: "auto" }}>
-          <table className="table" style={{ minWidth: 1260 }}>
+          <table className="table" style={{ minWidth: 1200 }}>
             <thead><tr>
-              <th>#</th><th>種類</th><th>品目（条件名）</th><th>作品</th><th>仕様・成果物</th><th>数量</th><th>単位</th><th>単価（税抜）</th><th>金額</th><th>納期</th><th>契約形式</th><th>帰属</th><th>税</th><th></th>
+              {/* 数量・単価・金額を品目のすぐ右に置く。作品・仕様の後ろに置くと、ふつうの幅では
+                  単価の列が画面の外に出て、入れ忘れたまま登録ボタンが押せない理由が分からなかった。 */}
+              <th style={{ width: 28 }}>#</th><th style={{ width: 56 }}>種類</th><th style={{ minWidth: 200 }}>品目（条件名）</th>
+              <th style={{ width: 70 }}>数量</th><th style={{ width: 60 }}>単位</th><th style={{ width: 120 }}>単価（税抜）</th><th style={{ width: 100 }}>金額</th>
+              <th>作品</th><th>仕様・成果物</th><th style={{ width: 140 }}>納期</th><th>契約形式</th><th>帰属</th><th>税</th><th></th>
             </tr></thead>
             <tbody>
               {lines.map((l, i) => (
@@ -326,6 +340,15 @@ export function ServiceLinesForm(
                   <td>{i + 1}</td>
                   <td>{l.kind === "service" ? "委託料" : l.kind === "expense" ? "実費" : "手数料"}</td>
                   <td style={{ minWidth: 200 }}>{cell(l, "name", { placeholder: "TOP ページ デザイン費用" })}</td>
+                  {l.kind === "service" ? (<>
+                    <td style={{ width: 70 }}>{cell(l, "quantity", { style: { textAlign: "right" } })}</td>
+                    <td style={{ width: 60 }}>{cell(l, "unit")}</td>
+                    <td style={{ width: 110 }}>{cell(l, "unitPrice", { style: { textAlign: "right" }, placeholder: "150000" })}</td>
+                  </>) : (<>
+                    <td colSpan={2} className="faint">—</td>
+                    <td style={{ width: 110 }}>{cell(l, "unitPrice", { style: { textAlign: "right" }, placeholder: l.kind === "expense" ? "税込上限" : "金額" })}</td>
+                  </>)}
+                  <td className="num" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{yen(amountOf(l))}</td>
                   <td style={{ minWidth: 170 }}>
                     {l.pickingWork ? (
                       <SearchSelect value="" search={searchWorks} placeholder="作品名・コードで探す" autoFocus
@@ -349,15 +372,6 @@ export function ServiceLinesForm(
                     )}
                   </td>
                   <td style={{ minWidth: 200 }}>{cell(l, "spec")}</td>
-                  {l.kind === "service" ? (<>
-                    <td style={{ width: 70 }}>{cell(l, "quantity", { style: { textAlign: "right" } })}</td>
-                    <td style={{ width: 60 }}>{cell(l, "unit")}</td>
-                    <td style={{ width: 110 }}>{cell(l, "unitPrice", { style: { textAlign: "right" }, placeholder: "150000" })}</td>
-                  </>) : (<>
-                    <td colSpan={2} className="faint">—</td>
-                    <td style={{ width: 110 }}>{cell(l, "unitPrice", { style: { textAlign: "right" }, placeholder: l.kind === "expense" ? "税込上限" : "金額" })}</td>
-                  </>)}
-                  <td className="num" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{yen(amountOf(l))}</td>
                   <td style={{ width: 140 }}>{cell(l, "deliveryDue", { type: "date" })}</td>
                   {l.kind === "service" ? (<>
                     <td><select value={l.contractForm} onChange={(e) => update(l.key, { contractForm: e.target.value })}>
@@ -449,11 +463,13 @@ export function ServiceLinesForm(
             </div>
           </div>
         )}
-        <div className="row">
+        <div className="row" style={{ flexWrap: "wrap" }}>
           <button className="btn primary" disabled={!ready || busy} onClick={() => void submit()}>
             {busy ? "登録しています…" : `条件明細 ${lines.length} 本を登録する`}
           </button>
           <button className="btn" onClick={onCancel}>やめる</button>
+          {/* 押せない理由。無いと、押しても何も起きないように見える（基礎情報の段階と同じ出し方）。 */}
+          {!ready && missing.length > 0 && <span className="tag warn">あと：{missing.join("・")}</span>}
         </div>
       </div>
     </div>

@@ -199,6 +199,8 @@ function TradeFlow(
         if (!agreementId) {
           const live = d.agreements.find((x) => x.live) ?? d.agreements[0];
           if (live) setAgreementId(String(live.id));
+          // 相手先の契約が 1 本だけなら、それを選んでおく（選ばせる必要がない）。
+          else if (a.agreements.length === 1 && !noAgreement) setAgreementId(String(a.agreements[0].id));
         }
       }
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -351,7 +353,15 @@ function TradeFlow(
                     ))}
                   </div>
                 )}
-                <div className="row"><button className="btn primary" onClick={() => setStage(2)}>次へ：{stages[2].name}</button></div>
+                {/* 契約があるのに選んでいないまま進めない。何も選ばずに進めると、選ぶ必要が
+                    あるのか無くてもよいのか分からないまま、基本契約の無い発注書ができる。 */}
+                <div className="row">
+                  <button className="btn primary" disabled={agreements.length > 0 && !agreementId && !noAgreement}
+                          onClick={() => setStage(2)}>次へ：{stages[2].name}</button>
+                  {agreements.length > 0 && !agreementId && !noAgreement && (
+                    <span className="tag warn">あと：基本契約を選ぶか「基本契約なし」を押してください</span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -414,14 +424,24 @@ function TradeFlow(
               <div className="panel-hd"><h2>{stages[3].name}</h2><span className="faint">条件 {mine.length} 本から作る</span></div>
               <div className="panel-bd stack">
                 {!mine.length && <div className="note warn">先に{stages[2].name}を登録してください（文書は条件から作ります）</div>}
-                {SET_PATTERNS.has(p) && party && (
-                  <div className="note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <button className="btn primary" disabled={!mine.length} onClick={() => setSetOpen(true)}>
-                      {MASTER[p].label}と{p === "service" ? "発注書" : "条件書"}をまとめて作る
-                    </button>
-                    <span className="faint">1 つのフォームで、基本契約・{p === "service" ? "発注書・追加の発注書" : "条件書・追加の条件書"}をスイッチで選んで作り、まとめて送ります</span>
-                  </div>
-                )}
+                {/* 締結済みの基本契約を選んでいるなら、基本契約書をもう 1 通作る必要はない。
+                    「まとめて作る」を主役に見せると、基本契約書を二重に作りかねないので脇に置く。 */}
+                {SET_PATTERNS.has(p) && party && (() => {
+                  const chosen = agreements.find((x) => String(x.id) === agreementId);
+                  const hasMaster = chosen?.status === "executed";
+                  return (
+                    <div className="note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <button className={`btn${hasMaster ? " btn-sm" : " primary"}`} disabled={!mine.length} onClick={() => setSetOpen(true)}>
+                        {MASTER[p].label}と{p === "service" ? "発注書" : "条件書"}をまとめて作る
+                      </button>
+                      <span className="faint">
+                        {hasMaster
+                          ? `基本契約 ${chosen?.agreementNo ?? ""} は締結済みなので、ふつうは下の「${p === "service" ? "発注書" : "条件書"}を作る」だけでよい。基本契約書も作り直すときだけ`
+                          : `1 つのフォームで、基本契約・${p === "service" ? "発注書・追加の発注書" : "条件書・追加の条件書"}をスイッチで選んで作り、まとめて送ります`}
+                      </span>
+                    </div>
+                  );
+                })()}
                 <div className="row" style={{ flexWrap: "wrap" }}>
                   {creatable.map((d) => (
                     <button key={d.key} className="btn primary" disabled={!mine.length}
@@ -443,7 +463,10 @@ function TradeFlow(
                     ))}
                   </div>
                 )}
-                <div className="row"><button className="btn" disabled={!issued.length} onClick={() => setStage(4)}>次へ：{stages[4].name}</button></div>
+                <div className="row">
+                  <button className="btn" disabled={!issued.length} onClick={() => setStage(4)}>次へ：{stages[4].name}</button>
+                  {!issued.length && <span className="faint">決定した{stages[3].name}ができると進めます</span>}
+                </div>
               </div>
             </div>
           )}
@@ -482,13 +505,19 @@ function TradeFlow(
                   </div>
                 ))}
                 <span className="faint">文書の「送る」で、内容確認メール → CloudSign（署名者・CC は取引先の署名者と案件の担当者から入る）→ 締結 と進みます。</span>
-                <div className="note ok">
-                  {p === "service"
-                    ? "ここでこの発注の進行は完了です。納品の報告が入ると支払文書処理の画面にその行（条件明細）が並び、そこで検収書を作って支払を立てます。"
-                    : isOut(p)
-                      ? "ここでこの取引の進行は完了です。相手からの売上報告と計算書の照合は、作品の画面の台帳（受け取る側）で締めごとに行います。"
-                      : "ここでこの取引の進行は完了です。許諾料の計算書は締めが来てから、作品の画面の台帳で作ります。"}
-                </div>
+                {/* 「完了」は送ってから。送る前に出すと、送ったつもりになる。 */}
+                {sent.length > 0 ? (
+                  <div className="note ok">
+                    {sent.length < issued.length ? `送った ${sent.length} 枚／決定 ${issued.length} 枚。残りも送ると、` : ""}
+                    {p === "service"
+                      ? "ここでこの発注の進行は完了です。納品の報告が入ると支払文書処理の画面にその行（条件明細）が並び、そこで検収書を作って支払を立てます。"
+                      : isOut(p)
+                        ? "ここでこの取引の進行は完了です。相手からの売上報告と計算書の照合は、作品の画面の台帳（受け取る側）で締めごとに行います。"
+                        : "ここでこの取引の進行は完了です。許諾料の計算書は締めが来てから、作品の画面の台帳で作ります。"}
+                  </div>
+                ) : issued.length > 0 ? (
+                  <div className="note">「開いて送る」で相手に送ると、この{p === "service" ? "発注" : "取引"}の進行はここで完了です。</div>
+                ) : null}
               </div>
             </div>
           )}
