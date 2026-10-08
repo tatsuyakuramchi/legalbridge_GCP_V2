@@ -324,7 +324,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
 /** ホーム。数字はすべて条件を起点に導出する。 */
 export function HomeWorkspace(
   { onGo, intakeCount = 0, dailyCount = 0 }: {
-    onGo: (view: "matters" | "money" | "ops" | "drift" | "intake" | "daily", tab?: OpsTab) => void;
+    onGo: (view: "matters" | "money" | "ops" | "drift" | "intake" | "daily" | "trade", tab?: OpsTab) => void;
     /** 受付箱の未処理＋返信あり、デイリータスクの終わっていない作業（左の桁と同じ数）。 */
     intakeCount?: number; dailyCount?: number;
   }
@@ -355,13 +355,17 @@ export function HomeWorkspace(
         <p>条件を起点に、期限・消化・整合の三つだけを見る。画面ごとの集計差は生じない。</p>
       </header>
 
-      {/* 初めての人が「どこから始めるか」を探さなくて済むように、順番を 1 行で。 */}
+      {/* 初めての人が「どこから始めるか」を探さなくて済むように、入口を 1 つに。
+          左の「取引を進める」と同じ語で、同じ順番を書く（「案件」から始める案内と二重にしない）。 */}
       <div className="note">
-        初めての取引はここから：<b>案件を登録</b> → 相手先 → 契約 → 条件明細 → 文書 → 支払
-        <button className="btn btn-sm primary" style={{ marginLeft: 10 }} onClick={() => onGo("matters")}>
-          案件を登録する
+        初めての取引はここから：<b>取引を進める</b> で 基礎情報 → 基本契約 → 条件明細 → 文書 → 送信 の順に 1 枚で進めます
+        <button className="btn btn-sm primary" style={{ marginLeft: 10 }} onClick={() => onGo("trade")}>
+          取引を進める
         </button>
-        <span className="faint" style={{ marginLeft: 8 }}>案件の中の工程表が、次にやることを順に出します</span>
+        <button className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => onGo("matters")}>
+          案件だけ登録する
+        </button>
+        <span className="faint" style={{ marginLeft: 8 }}>案件の中の工程表でも、次にやることを順に出します</span>
       </div>
 
       {summary && (

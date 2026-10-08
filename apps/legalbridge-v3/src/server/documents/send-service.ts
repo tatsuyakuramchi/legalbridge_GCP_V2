@@ -1,5 +1,6 @@
 import { inTransaction, int, str, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { TERMS_TEMPLATE_KEYS } from "../agreements/auto.js";
 import { recordAudit } from "../core/audit.js";
 import { recordCommunication } from "../matters/communication-service.js";
 
@@ -48,8 +49,11 @@ export class DocumentSendService {
   async timeline(documentId: number): Promise<SendTimeline> {
     try {
       const head = await this.database.query(
-        `SELECT d.id, d.status, d.agreement_id, a.status AS agreement_status, a.updated_at AS agreement_at
+        `SELECT d.id, d.status, d.agreement_id, a.status AS agreement_status, a.updated_at AS agreement_at,
+                t.template_key
            FROM documents d LEFT JOIN agreements a ON a.id = d.agreement_id
+           LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+           LEFT JOIN document_templates t ON t.id = tv.template_id
           WHERE d.id = $1`, [documentId]);
       const doc = head.rows[0] as Record<string, any> | undefined;
       if (!doc) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
@@ -74,6 +78,10 @@ export class DocumentSendService {
       const drafted = last("cloudsign.draft");
       const applied = [...events].reverse().find((e) => e.action === "cloudsign.applied" && e.detail.applied === true) ?? null;
       const executed = String(doc.agreement_status ?? "") === "executed";
+      // 締結の段があるのは、合意そのもの（条件書）か、合意に繋いだ文書だけ。発注書・検収書・
+      // 計算書は契約の下の個別取引なので、締結の記録は持たない（送るところまでで完了）。
+      const isTerms = TERMS_TEMPLATE_KEYS.has(String(doc.template_key ?? ""));
+      const needsExecution = isTerms || Boolean(doc.agreement_id);
 
       const steps: SendStep[] = [
         { key: "mail", name: "内容確認のメール", done: mail !== null, at: mail?.at ?? null, optional: true,
@@ -93,15 +101,22 @@ export class DocumentSendService {
               ? `CloudSign に下書きあり（#${String(drafted.detail.externalId ?? "")}）。CloudSign の画面で中身を見て送り、送ったらここで「送った」と記録する`
               : "署名者を入れると CloudSign に下書きができる。送信は CloudSign の画面から。送ったら手で記録する" },
         { key: "executed", name: "締結", done: executed, at: executed ? (applied?.at ?? (doc.agreement_at ? new Date(String(doc.agreement_at)).toISOString() : null)) : null,
+          optional: !needsExecution,
           detail: executed
             ? applied?.detail.manual === true ? `合意が締結済み（${applied.actor} が手で記録）` : "合意が締結済み"
             : doc.agreement_id
               ? "CloudSign から結果が届くと、合意が締結済みになる"
-              : "この文書は合意に繋がっていないので、締結は記録されない（つながり から合意を付ける）" }
+              : isTerms
+                ? "この文書は合意に繋がっていないので、締結は記録されない（つながり から合意を付ける）"
+                : "発注書・検収書・計算書は契約そのものではないので、締結の記録は持ちません。署名依頼（または送付）まで送れば完了です" }
       ];
-      // 任意の段は飛ばせる。次にやるのは「必須で済んでいない最初」。
-      const current = steps.find((s) => !s.done && !s.optional)
-        ?? (steps.every((s) => s.done || s.optional) && !steps[3].done ? steps[3] : null);
+      // 次にやる段。何も送っていなければ、まず内容確認のメール（任意だが、順番どおりに案内する。
+      // 以前は CloudSign を「いま」にしていたので、メールを先に送るつもりの人が戸惑った）。
+      // 何か 1 つでも進んでいれば「必須で済んでいない最初」。締結は合意に繋がる文書だけ。
+      const nothingYet = !mail && !confirmed && !sign && !drafted;
+      const current = nothingYet ? steps[0]
+        : steps.find((s) => !s.done && !s.optional)
+          ?? (steps.every((s) => s.done || s.optional) && needsExecution && !steps[3].done ? steps[3] : null);
       return { steps, current: steps[3].done ? null : current, events, hasAgreement: Boolean(doc.agreement_id) };
     } catch (error) { throw translate(error); }
   }

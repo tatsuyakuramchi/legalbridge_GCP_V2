@@ -775,8 +775,15 @@ export function DocumentsWorkspace(
    * 「やめる」で黙って捨てないための目印。
    */
   const [savedAt, setSavedAt] = useState<string>("");
+  /**
+   * 人がフォームを触ったか。新しく作るときは保存の基準（savedAt）が無いので、初期値のまま
+   * でも「保存していない変更があります」と出て、やめるときに確認まで出ていた。触るまでは出さない。
+   * 下書きを開いているときは保存した中身との比較で見る。
+   */
+  const [touched, setTouched] = useState(false);
   const snapshot = () => JSON.stringify({ templateKey, picked, pickedEvents, inputs });
-  const dirty = (composing || draft) && Boolean(templateKey) && snapshot() !== savedAt;
+  const dirty = (composing || draft) && Boolean(templateKey)
+    && (draft || savedAt ? snapshot() !== savedAt : touched);
 
   /**
    * 下書きとして保存する。番号は振らない。あとで開き直して続きができる。
@@ -884,6 +891,7 @@ export function DocumentsWorkspace(
       // 日付と金額だけ落として、手で打った文字は次にも使う。
       setManual(keep); setLines({}); setPickedFields(new Set());
       setDraft(null); setPickedEvents([]); setStmt(null); setStmtPeriod(""); setRevise(null); setPayeePartyId(null);
+      setTouched(false);
       await reload();
       // 決定した文書は直せない。作成のフォームを開いたままにすると、決定した
       // ものを直せるように見える（直すと失敗する）。フォームを閉じ、決定した
@@ -1060,7 +1068,7 @@ export function DocumentsWorkspace(
 
   /** 下書きから降りる。作りかけの下書きは残るので、あとで開き直せる。 */
   function closeDraft() {
-    setDraft(null); setComposing(false); setRendered(null); setSavedAt(""); setRevise(null);
+    setDraft(null); setComposing(false); setRendered(null); setSavedAt(""); setRevise(null); setTouched(false);
     setManual({}); setLines({}); setPickedFields(new Set()); setPickedEvents([]);
     // ひな形は変わらないので既定の読み込みは走らない。ここで戻しておかないと、
     // 下書きを閉じたあとだけ前回の値が出ない画面になる。
@@ -1153,11 +1161,14 @@ export function DocumentsWorkspace(
             <span className="faint">番号が振られ、中身は直せなくなりました。下に決定した文書を開いています（送付・支払・無効化はそこから）</span>
           </div>
           <div className="row">
-            <button className="btn primary btn-sm" onClick={() => {
-              // 一覧と詳細は作成中は出ないので、閉じてから開く。
-              setComposing(false); setDraft(null); setBulk(false);
-              setSelected(issued.id); setIssued(null);
-            }}>決定した文書のページへ</button>
+            {/* 流れの途中では、決定した文書がこのすぐ下に開いている。押す意味の無いボタンは出さない。 */}
+            {!flow && (
+              <button className="btn primary btn-sm" onClick={() => {
+                // 一覧と詳細は作成中は出ないので、閉じてから開く。
+                setComposing(false); setDraft(null); setBulk(false);
+                setSelected(issued.id); setIssued(null);
+              }}>決定した文書のページへ</button>
+            )}
             {onBack && <button className="btn btn-sm" onClick={onBack.go}>← {onBack.label} の台帳へ戻る</button>}
             {issued.again && (
               <button className="btn btn-sm" onClick={() => { setIssued(null); setComposing(true); }}>
@@ -1229,7 +1240,7 @@ export function DocumentsWorkspace(
           <button className="chip" aria-pressed={composePane === "preview"}
                   onClick={() => setComposePane("preview")}>プレビューと点検</button>
         </div>
-        <div className={`compose pane-${composePane}`} ref={form}>
+        <div className={`compose pane-${composePane}`} ref={form} onChangeCapture={() => setTouched(true)}>
           {/* 左：何から作るか → 区分ごとの入力。右：プレビューと点検（付いてくる）。 */}
           <div className="stack compose-main">
           <div className="panel">
