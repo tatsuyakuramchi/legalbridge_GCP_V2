@@ -37,12 +37,59 @@ const STATUS: Record<Status, { label: string; tag: string }> = {
   out_of_range: { label: "範囲外", tag: "" }
 };
 
+/** 実績になる（いま登録できる・もう登録済み）行。システムの印税はこの行の分だけ。 */
+const counted = (g: Group) => g.status === "ok" || g.status === "duplicate";
+/** Excel と合わない行：実績になる行で額が違う／実績にならないのに Excel は印税を出している。 */
+const differs = (g: Group) => g.status !== "out_of_range" && (counted(g)
+  ? (g.royaltyInFile ?? 0) !== (g.royalty ?? 0)
+  : (g.royaltyInFile ?? 0) !== 0);
+
+/**
+ * Excel の印税との突き合わせ。範囲内の行で、Excel の印税列の合計とシステムの印税（登録できる・
+ * 登録済みの行）の合計を比べ、差を理由ごとに分ける。
+ *   端数    … 実績 1 件が Excel の複数行をまとめたときの切り捨ての差（行数未満）
+ *   額の違い … 料率・価格が Excel と違う（1 件の差が行数以上）
+ *   入らない … 作品未決定・条件なし・印税なし・0 円 の行に Excel が印税を出している
+ */
+function reconcile(groups: Group[]) {
+  const scope = groups.filter((g) => g.status !== "out_of_range");
+  const total = (xs: Group[], f: (g: Group) => number) => xs.reduce((a, g) => a + f(g), 0);
+  const excel = total(scope, (g) => g.royaltyInFile ?? 0);
+  const system = total(scope.filter(counted), (g) => g.royalty ?? 0);
+  const amountDiff = scope.filter((g) => counted(g) && differs(g));
+  const rounding = amountDiff.filter((g) => Math.abs((g.royaltyInFile ?? 0) - (g.royalty ?? 0)) < Math.max(1, g.lines));
+  const changed = amountDiff.filter((g) => !rounding.includes(g));
+  const diffOf = (xs: Group[]) => total(xs, (g) => (g.royaltyInFile ?? 0) - (g.royalty ?? 0));
+  const notCounted = (["unresolved", "no_condition", "no_royalty", "zero"] as const).map((status) => {
+    const xs = scope.filter((g) => g.status === status && (g.royaltyInFile ?? 0) !== 0);
+    return { status, count: xs.length, excel: total(xs, (g) => g.royaltyInFile ?? 0) };
+  }).filter((x) => x.count > 0);
+  const outside = groups.filter((g) => g.status === "out_of_range");
+  // 著者ごと（Excel の著者名。事業部の支払一覧の行と同じ単位）。
+  const byAuthor = new Map<string, { author: string; excel: number; system: number; rows: number }>();
+  for (const g of scope) {
+    const author = g.authors?.trim() || "（著者名なし）";
+    const a = byAuthor.get(author) ?? { author, excel: 0, system: 0, rows: 0 };
+    a.excel += g.royaltyInFile ?? 0;
+    a.system += counted(g) ? g.royalty ?? 0 : 0;
+    a.rows += differs(g) ? 1 : 0;
+    byAuthor.set(author, a);
+  }
+  const authors = [...byAuthor.values()].filter((a) => a.excel !== a.system)
+    .sort((a, b) => Math.abs(b.excel - b.system) - Math.abs(a.excel - a.system));
+  return { excel, system, rounding: { count: rounding.length, diff: diffOf(rounding) },
+           changed: { count: changed.length, diff: diffOf(changed) }, notCounted,
+           outside: { count: outside.length, excel: total(outside, (g) => g.royaltyInFile ?? 0) }, authors };
+}
+
 export function EbookSalesImport() {
   const readOnly = useReadOnly();
   const [file, setFile] = useState<File | null>(null);
   const [read, setRead] = useState<ReadResult | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [filter, setFilter] = useState<Status | "all">("all");
+  const [filter, setFilter] = useState<Status | "all" | "diff">("all");
+  /** 突き合わせの著者で絞る（Excel の著者名）。 */
+  const [author, setAuthor] = useState<string | null>(null);
   const [month, setMonth] = useState<string>("all");
   /** 登録する販売月の範囲（両端を含む）。外の行は「範囲外」で登録しない（支払済みの月を二重に払わない）。 */
   const [fromMonth, setFromMonth] = useState("");
@@ -86,8 +133,11 @@ export function EbookSalesImport() {
   }
 
   const shown = useMemo(() => (preview?.groups ?? [])
-    .filter((g) => filter === "all" || g.status === filter)
-    .filter((g) => month === "all" || g.month === month), [preview, filter, month]);
+    .filter((g) => filter === "all" || (filter === "diff" ? differs(g) : g.status === filter))
+    .filter((g) => !author || (g.authors?.trim() || "（著者名なし）") === author)
+    .filter((g) => month === "all" || g.month === month), [preview, filter, month, author]);
+  const recon = useMemo(() => reconcile((preview?.groups ?? []).filter((g) => month === "all" || g.month === month)),
+    [preview, month]);
   const okTotal = (preview?.groups ?? []).filter((g) => g.status === "ok" && (month === "all" || g.month === month));
   const sum = (xs: Group[], f: (g: Group) => number | null) => xs.reduce((a, g) => a + (f(g) ?? 0), 0);
 
@@ -127,11 +177,50 @@ export function EbookSalesImport() {
                   {s === "all" ? `すべて ${preview.groups.length}` : `${STATUS[s].label} ${preview.counts[s]}`}
                 </button>
               ))}
+              <button className="chip" aria-pressed={filter === "diff"} onClick={() => setFilter("diff")}
+                      title="実績になる行で額が Excel と違う行と、実績にならないのに Excel が印税を出している行">
+                Excel と差 {preview.groups.filter(differs).length}
+              </button>
+              {author && <button className="chip" aria-pressed onClick={() => setAuthor(null)}>著者 {author} ×</button>}
               <select value={month} onChange={(e) => setMonth(e.target.value)} style={{ marginLeft: "auto" }}>
                 <option value="all">全部の月</option>
                 {preview.months.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
+            <details className="stack" open={recon.excel !== recon.system}>
+              <summary>
+                Excel との突き合わせ（範囲内）：Excel の印税 {money(recon.excel)}・システム {money(recon.system)}・
+                差 <b className={recon.excel !== recon.system ? "warn" : ""}>{money(recon.excel - recon.system)}</b>
+                <span className="faint">（Excel − システム。システムは登録できる・登録済みの行）</span>
+              </summary>
+              <ul style={{ margin: "4px 0" }}>
+                <li>端数（Excel の複数行を 1 件にまとめた切り捨ての差）：{recon.rounding.count} 件・{money(recon.rounding.diff)}</li>
+                <li>額の違い（料率・価格が Excel と違う）：{recon.changed.count} 件・{money(recon.changed.diff)}</li>
+                {recon.notCounted.map((x) => (
+                  <li key={x.status}>実績にならない行（{STATUS[x.status].label}）に Excel の印税：{x.count} 件・{money(x.excel)}</li>
+                ))}
+                {recon.outside.count > 0 && (
+                  <li className="faint">範囲外（比べていない）：{recon.outside.count} 件・Excel の印税 {money(recon.outside.excel)}</li>
+                )}
+              </ul>
+              {recon.authors.length > 0 && (
+                <div className="tablewrap">
+                  <table>
+                    <thead><tr><th>著者（Excel）</th><th className="num">Excel の印税</th><th className="num">システム</th>
+                      <th className="num">差</th><th className="num">差のある行</th></tr></thead>
+                    <tbody>
+                      {recon.authors.map((a) => (
+                        <tr key={a.author}>
+                          <td><a href="#" onClick={(e) => { e.preventDefault(); setAuthor(a.author); setFilter("diff"); }}>{a.author}</a></td>
+                          <td className="num">{money(a.excel)}</td><td className="num">{money(a.system)}</td>
+                          <td className="num">{money(a.excel - a.system)}</td><td className="num">{a.rows}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </details>
             <div className="tablewrap">
               <table>
                 <thead>
