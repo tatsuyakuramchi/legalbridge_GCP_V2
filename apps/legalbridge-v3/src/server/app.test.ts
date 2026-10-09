@@ -50,3 +50,25 @@ test("経路の番号が数でなければ 400 で、どの欄が悪いかを言
     server.close();
   }
 });
+
+test("送付の一覧（/documents/unsent-bundles）は /documents/:id に取られない", async () => {
+  const { createRoutes, errorHandler } = await import("./routes.js");
+  const express = (await import("express")).default;
+  const app = express();
+  app.use(express.json());
+  // 役割の確かめを通すため、admin として入る（本物は認証の層が res.locals に入れる）。
+  app.use((_req, res, next) => { res.locals.currentUser = { email: "t@example.test", role: "admin" } as never; next(); });
+  app.use("/api/v3", createRoutes({ query: async () => ({ rows: [] }) } as never));
+  app.use(errorHandler);
+  const server = app.listen(0);
+  const port = (server.address() as { port: number }).port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/v3/documents/unsent-bundles`);
+    const body = await res.json() as { bundles?: unknown[]; error?: string };
+    assert.doesNotMatch(String(body.error ?? ""), /id は番号で指定してください/);
+    assert.equal(res.status, 200, JSON.stringify(body));
+    assert.deepEqual(body.bundles, []);
+  } finally {
+    server.close();
+  }
+});

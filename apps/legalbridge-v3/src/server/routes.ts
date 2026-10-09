@@ -3332,6 +3332,14 @@ export function createRoutes(database: Transactable) {
       res.json(await batches.sendAll(Number(req.params.id), input, actor(res)));
     }));
 
+  // 相手先ごとの未送付の文書（基本契約書・条件書・計算書）。1 通・1 封筒で送る一覧（docs/royalty-shares.md §5.6）。
+  // /documents/:id より先に登録する。後ろに置いていたので :id に取られ、送付の画面が
+  // 「id は番号で指定してください（受け取った値：unsent-bundles）」で開けなかった。
+  const unsentBundles = new UnsentBundlesService(database);
+  router.get("/documents/unsent-bundles", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await unsentBundles.list());
+  }));
+
   router.get("/documents/:id", asyncRoute(async (req, res) => {
     const detail = await documents.find(Number(req.params.id));
     if (!detail) return res.status(404).json({ error: "文書が見つかりません" });
@@ -3795,11 +3803,6 @@ export function createRoutes(database: Transactable) {
     masterTemplateKey: z.string().trim().max(60).nullable().optional(),
     termsTemplateKey: z.string().trim().max(60).nullable().optional()
   }).refine((x) => (x.keys?.length ?? 0) + (x.partyIds?.length ?? 0) > 0, { message: "相手先を 1 件以上選んでください" });
-  // 相手先ごとの未送付の文書（基本契約書・条件書・計算書）。1 通・1 封筒で送る一覧（docs/royalty-shares.md §5.6）。
-  const unsentBundles = new UnsentBundlesService(database);
-  router.get("/documents/unsent-bundles", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
-    res.json(await unsentBundles.list());
-  }));
   router.get("/document-sets/missing", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
     res.json(await missingContractsFor(actor(res)).list());
   }));
