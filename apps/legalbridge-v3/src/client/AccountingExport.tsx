@@ -48,6 +48,8 @@ export function AccountingExport() {
   const [includeExported, setIncludeExported] = useState(false);
   /** 全部まとめての xlsx を、支払先ごとに 1 行・支払内容 1 組にする（作品ごとの組を並べない）。 */
   const [merge, setMerge] = useState(true);
+  /** 全部まとめての社内担当（空なら全員）。束の担当者の名前で絞る。 */
+  const [owner, setOwner] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
@@ -81,11 +83,14 @@ export function AccountingExport() {
   /** 全部の束をまとめて出力済みにする。経理に渡したあとで押す。 */
   async function markAll() {
     if (!result) return;
-    if (!window.confirm(`${result.count} 件を出力済みにします。次の集計から外れます。経理に渡したあとで押してください。よいですか？`)) return;
+    const groups = result.groups.filter((g) => !owner || g.owner === owner);
+    const ids = groups.flatMap((g) => g.rows.map((r) => r.paymentId));
+    if (!ids.length) return;
+    if (!window.confirm(`${owner ? `${owner} の ` : ""}${ids.length} 件を出力済みにします。次の集計から外れます。経理に渡したあとで押してください。よいですか？`)) return;
     setBusy("all"); setError(null);
     try {
       await api.post("/exports/accounting/mark", {
-        paymentIds: result.groups.flatMap((g) => g.rows.map((r) => r.paymentId)), batchKey: `${from}_${to}`
+        paymentIds: ids, batchKey: `${from}_${to}${owner ? `_${owner}` : ""}`
       });
       load();
     } catch (e) { setError((e as ApiError).message); }
@@ -143,24 +148,34 @@ export function AccountingExport() {
           {result && result.count > 0 && (
             <div className="row" style={{ gap: 6, marginTop: 9, flexWrap: "wrap", alignItems: "center" }}>
               <strong>全部まとめて</strong>
+              <label className="row" style={{ gap: 4 }} title="社内担当で絞る。選んだ担当者の分だけを 1 つにまとめる">
+                <span className="faint">担当者</span>
+                <select value={owner} onChange={(e) => setOwner(e.target.value)}>
+                  <option value="">全員</option>
+                  {[...new Set(result.groups.map((g) => g.owner))].sort((a, b) => a.localeCompare(b, "ja")).map((o) => (
+                    <option key={o} value={o}>{o}（{result.groups.filter((g) => g.owner === o).reduce((n, g) => n + g.count, 0)} 件）</option>
+                  ))}
+                </select>
+              </label>
               <label className="row" style={{ gap: 4 }} title="作品ごとの支払内容の組を並べず、支払先ごとに 1 行・支払内容 1 列（例「利用許諾料（12作品分）」）にまとめる">
                 <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} />
                 <span>支払先ごとに 1 行（支払内容を 1 列にまとめる。下の束ごとのボタンにも効きます）</span>
               </label>
-              <a className="btn primary" href={`/api/v3/exports/accounting/combined?${query()}&format=zip&merge=${merge ? 1 : 0}`}
+              <a className="btn primary" href={`/api/v3/exports/accounting/combined?${query()}${owner ? `&owner=${encodeURIComponent(owner)}` : ""}&format=zip&merge=${merge ? 1 : 0}`}
                  title="V1 の xlsx（種別 × 個人／法人 × 支払日）と、全部の PDF を 1 つの zip に">
                 ↓ 1 つの zip（xlsx ＋ 全部の PDF）
               </a>
-              <a className="btn" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=sheets&merge=${merge ? 1 : 0}`}
+              <a className="btn" href={`/api/v3/exports/accounting/combined?${query()}${owner ? `&owner=${encodeURIComponent(owner)}` : ""}&format=xlsx&layout=sheets&merge=${merge ? 1 : 0}`}
                  title="1 つの xlsx。種別 × 個人／法人ごとにシートを分ける">
                 ↓ xlsx 1 ファイル（シート分け）
               </a>
-              <a className="btn ghost" href={`/api/v3/exports/accounting/combined?${query()}&format=xlsx&layout=one&merge=${merge ? 1 : 0}`}
+              <a className="btn ghost" href={`/api/v3/exports/accounting/combined?${query()}${owner ? `&owner=${encodeURIComponent(owner)}` : ""}&format=xlsx&layout=one&merge=${merge ? 1 : 0}`}
                  title="1 つの xlsx の 1 シートに全部（種別 → 個人／法人 → 支払日の順）">
                 ↓ xlsx 1 シートに全部
               </a>
               <button className="btn ghost" disabled={busy === "all"} onClick={() => void markAll()}>
-                {busy === "all" ? "記録中…" : `全部（${result.count} 件）を出力済みにする`}
+                {busy === "all" ? "記録中…"
+                  : `${owner ? `${owner} の分` : "全部"}（${result.groups.filter((g) => !owner || g.owner === owner).reduce((n, g) => n + g.count, 0)} 件）を出力済みにする`}
               </button>
               <span className="faint">下の束ごとのボタンは、担当者・支払日ごとに分けて出したいときに</span>
             </div>
