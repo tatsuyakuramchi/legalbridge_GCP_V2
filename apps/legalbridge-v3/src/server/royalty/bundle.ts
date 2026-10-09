@@ -167,7 +167,10 @@ export function bundleTotals(previews: CalculationPreview[]): BundleTotals {
     throw new DomainError("VALIDATION",
       `通貨の違う条件は1枚にまとめられません（${currencies.join("・")}）`);
   }
-  const parties = [...new Set(previews.map((p) => p.condition.counterpartyId).filter((x) => x !== null))];
+  // 宛先で見る。共著の取り分の計算書は受取人宛てで、受取人が自分の条件（相手先＝自分）と
+  // 共著者の条件（相手先＝共著者）の両方に取り分を持つと、条件の相手先は混ざるが宛先は 1 人。
+  // 相手先で見ていたので、互いに受取人になっている共著者 2 人の計算書が出なかった（2026-10）。
+  const parties = [...new Set(previews.map((p) => p.payee?.partyId ?? p.condition.counterpartyId).filter((x) => x !== null))];
   if (parties.length > 1) {
     throw new DomainError("VALIDATION", "相手先の違う条件は1枚にまとめられません");
   }
