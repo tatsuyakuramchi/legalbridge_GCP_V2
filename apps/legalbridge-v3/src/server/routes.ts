@@ -91,7 +91,7 @@ import { filename, toCsv, withBom } from "./exports/csv.js";
 import { AccountingExportLedger, AccountingExportRepository } from "./exports/accounting-repository.js";
 import {
   ACCOUNTING_COLUMNS, BREAKDOWN_COLUMNS, totalRow, sheetRows,
-  V1_ACCOUNTING_HEADERS, v1AccountingCells, v1FileStem, v1SheetName
+  V1_ACCOUNTING_HEADERS, v1AccountingCells, v1FileStem, v1SheetName, mergeByPayee
 } from "./exports/accounting.js";
 import { buildXlsx } from "./exports/xlsx.js";
 import { buildAccountingBundle, combinedAccountingSheets } from "./exports/accounting-bundle.js";
@@ -1158,7 +1158,9 @@ export function createRoutes(database: Transactable) {
     groupKey: z.string().min(1).max(400),
     category: z.enum(["検収書", "利用許諾料計算書"]),
     entity: z.enum(["個人", "法人"]),
-    withPdf: z.enum(["1", "0"]).optional().default("1")
+    withPdf: z.enum(["1", "0"]).optional().default("1"),
+    // 支払先ごとに 1 行、支払内容を 1 組（締めの回の名前）にまとめる。画面の「支払先ごとに 1 行」の印。
+    merge: z.enum(["1", "0"]).optional().default("0")
   });
   router.get("/exports/accounting/v1", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
@@ -1172,9 +1174,10 @@ export function createRoutes(database: Transactable) {
     }
 
     const stem = v1FileStem(query.category, query.entity, group.paymentDate);
+    // xlsx の行だけ支払先ごとにまとめる。PDF は元の支払（書類）ごとに全部入れる。
     const xlsx = buildXlsx([{
       name: v1SheetName(query.category, query.entity),
-      rows: [V1_ACCOUNTING_HEADERS, ...sheetRows(rows).map(v1AccountingCells)]
+      rows: [V1_ACCOUNTING_HEADERS, ...sheetRows(query.merge === "1" ? mergeByPayee(rows) : rows).map(v1AccountingCells)]
     }]);
     const disposition = (name: string) =>
       `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
@@ -1226,24 +1229,29 @@ export function createRoutes(database: Transactable) {
     layout: z.enum(["sheets", "one"]).optional().default("sheets"),
     withPdf: z.enum(["1", "0"]).optional().default("1"),
     // 支払先ごとに 1 行、支払内容を 1 組にまとめる（作品ごとの組を並べない）。mergeByPayee を見よ。
-    merge: z.enum(["1", "0"]).optional().default("0")
+    merge: z.enum(["1", "0"]).optional().default("0"),
+    // 社内担当で絞る（束の担当者の名前。「(担当者未設定)」も選べる）。空なら全員。
+    owner: z.string().trim().max(200).optional()
   });
   router.get("/exports/accounting/combined", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
     const query = combinedSchema.parse(req.query);
     const result = await accounting.build(query);
-    const rows = result.groups.flatMap((g) => g.rows);
-    if (!rows.length) return res.status(404).json({ error: "この期間に出す支払はありません" });
+    const rows = result.groups.filter((g) => !query.owner || g.owner === query.owner).flatMap((g) => g.rows);
+    if (!rows.length) {
+      return res.status(404).json({ error: query.owner ? `この期間に ${query.owner} の支払はありません` : "この期間に出す支払はありません" });
+    }
     const disposition = (name: string) =>
       `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
     res.setHeader("cache-control", "no-store");
     if (query.format === "xlsx") {
       res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("content-disposition", disposition(`経理提出用_${query.from}_${query.to}.xlsx`));
+      res.setHeader("content-disposition", disposition(`経理提出用_${query.owner ? `${query.owner}_` : ""}${query.from}_${query.to}.xlsx`));
       return res.send(buildXlsx(combinedAccountingSheets(rows, query.layout, { merge: query.merge === "1" })));
     }
     const bundle = await buildAccountingBundle(rows, { pdf: async (id) => await pdfs.ensure(id) },
-      { withPdf: query.withPdf !== "0", stem: `経理提出用_${query.from}_${query.to}`, merge: query.merge === "1" });
+      { withPdf: query.withPdf !== "0", stem: `経理提出用_${query.owner ? `${query.owner}_` : ""}${query.from}_${query.to}`,
+        merge: query.merge === "1" });
     res.setHeader("content-type", "application/zip");
     res.setHeader("content-disposition", disposition(bundle.name));
     res.setHeader("x-pdf-failures", String(bundle.missing.length));
