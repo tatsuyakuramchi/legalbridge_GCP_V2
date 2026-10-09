@@ -27,7 +27,7 @@ import { MatterEvents } from "./MatterEvents.js";
 import { MatterPayments } from "./MatterPayments.js";
 import { MatterGraph } from "./MatterGraph.js";
 import { Relations, type EntityKind } from "./Relations.js";
-import { AxisPanel, ContinuePanel, FamilyPanel, MatterKindTags, StatusPanel,
+import { AxisPanel, ContinuePanel, MatterTitle, FamilyPanel, MatterKindTags, StatusPanel,
          searchMatters, searchWorks, treeOrder } from "./MatterAxis.js";
 import { BUSINESS_LINES } from "../server/matters/title.js";
 
@@ -511,7 +511,7 @@ export function MattersWorkspace(
                       )}
                     </div>
                   )}
-                  <div className="title">{detail.title}</div>
+                  <MatterTitle key={`${detail.id}:${detail.title}`} detail={detail} onChanged={relink} onError={setError} />
                   <MatterFlow matterId={detail.id} reloadKey={linkVersion}
                           onGo={(t) => goTab(t)}
                           onRegisterAgreement={onRegisterAgreement && detail.counterparty

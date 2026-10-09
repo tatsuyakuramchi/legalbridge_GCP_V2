@@ -41,6 +41,11 @@ export interface TradeCtx {
   stage?: number;
   agreementId?: number | null;
   noAgreement?: boolean;
+  /**
+   * デイリータスクから来た。デイリータスクの文書は案件にしない前提なので、
+   * 「新しく案件を立てる」は出さず、案件なしで進める（案件にするならタスクの「案件に移す」）。
+   */
+  fromTask?: boolean;
 }
 
 const PATTERNS: Array<{ value: TradePattern; group: string; label: string; detail: string }> = [
@@ -312,9 +317,9 @@ function TradeFlow(
 
         <div className="stack">
           {stage === 0 && (
-            <BasicsStage pattern={p} detail={detail}
+            <BasicsStage pattern={p} detail={detail} fromTask={Boolean(ctx.fromTask)}
               onCreated={(id) => { onCtx({ pattern: p, matterId: id, stage: 1 }); setStage(1); setNotice("案件を立てました。文書の担当者・メールの宛先はこの案件から入ります"); }}
-              onUse={(next) => { onCtx({ ...next, stage: 1 }); setStage(1); }}
+              onUse={(next) => { onCtx({ ...next, fromTask: ctx.fromTask, stage: 1 }); setStage(1); }}
               onError={setError} />
           )}
 
@@ -529,8 +534,10 @@ function TradeFlow(
 
 /** 段階 0：基礎情報。案件を立てる。 */
 function BasicsStage(
-  { pattern, detail, onCreated, onUse, onError }: {
+  { pattern, detail, fromTask, onCreated, onUse, onError }: {
     pattern: TradePattern; detail: TradeContext | null;
+    /** デイリータスクから来た（案件を立てない）。 */
+    fromTask: boolean;
     onCreated: (matterId: number) => void;
     /** 既にある案件で進める／案件を立てずに進める。 */
     onUse: (ctx: TradeCtx) => void;
@@ -541,7 +548,9 @@ function BasicsStage(
    * 案件の扱い。new＝新しく立てる / existing＝既にある案件で進める / none＝立てずに進める
    * （取引先と作品だけで、基本契約 → 許諾条件 → 条件書 と進める。あとから案件に繋げられる）。
    */
-  const [mode, setMode] = useState<"new" | "existing" | "none">("new");
+  // デイリータスクから来たときは案件を立てない。既定を「案件なし」にし、「新しく立てる」は出さない
+  // （既定のまま進めると、作業ごとに案件が増えていた）。
+  const [mode, setMode] = useState<"new" | "existing" | "none">(fromTask ? "none" : "new");
   const [existing, setExisting] = useState("");
   const [staff, setStaff] = useState<Staff[]>([]);
   const [partyId, setPartyId] = useState("");
@@ -604,7 +613,7 @@ function BasicsStage(
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <b>案件</b>
           <span className="chips" role="group" aria-label="案件の扱い">
-            <button type="button" className="chip" aria-pressed={mode === "new"} onClick={() => setMode("new")}>新しく案件を立てる</button>
+            {!fromTask && <button type="button" className="chip" aria-pressed={mode === "new"} onClick={() => setMode("new")}>新しく案件を立てる</button>}
             <button type="button" className="chip" aria-pressed={mode === "existing"} onClick={() => setMode("existing")}>既にある案件を使う</button>
             <button type="button" className="chip" aria-pressed={mode === "none"} onClick={() => setMode("none")}>案件なしで進める</button>
           </span>
@@ -612,7 +621,7 @@ function BasicsStage(
             new: "案件が器になり、担当者・依頼者が文書とメールに入ります",
             existing: "その案件の取引先・作品・条件明細・文書で続きから進めます",
             none: "取引先と作品だけで進めます（担当者・依頼者は文書の画面で入れます）"
-          }[mode]}</span>
+          }[mode]}{fromTask ? "。デイリータスクの文書は案件にしません（案件にするならタスクの「案件に移す」から）" : ""}</span>
         </div>
         {mode === "existing" ? (
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>

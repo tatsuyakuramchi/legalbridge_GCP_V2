@@ -379,7 +379,7 @@ export function App() {
             onGo={(ctx, target) => {
               setTaskCtx(ctx); setConditionId(undefined);
               if (target.kind === "trade") {
-                setTradeCtx({ pattern: target.pattern, matterId: null }); setFocus(null); setView("trade");
+                setTradeCtx({ pattern: target.pattern, matterId: null, fromTask: true }); setFocus(null); setView("trade");
               } else if (target.kind === "ledger") {
                 setLedgerParty(target.partyId); setFocus({ view: "works", id: target.workId }); setView("works");
               } else if (target.kind === "work") {

@@ -1,6 +1,6 @@
 import { inTransaction, dateStr, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { termHistory } from "../agreements/term-history.js";
-import { type BusinessLine, composeMatterTitle } from "./title.js";
+import { type BusinessLine, composeMatterTitle, isUrlTitle, URL_TITLE_MESSAGE } from "./title.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
@@ -77,6 +77,7 @@ export class MatterWriteService {
     if (input.kind === "single" && !manualTitle) {
       throw new DomainError("VALIDATION", "その他案件は件名を入れてください");
     }
+    if (isUrlTitle(manualTitle)) throw new DomainError("VALIDATION", URL_TITLE_MESSAGE);
     // 相手先と担当者。契約の当て・契約チェック・期限の通知はここに依存する。
     if (input.kind !== "single" && !input.counterpartyId) {
       throw new DomainError("VALIDATION", "相手先を選んでください（作品案件は最初の相手先 1 社）");
@@ -249,6 +250,7 @@ export class MatterWriteService {
         let manual = cur.title_manual === true;
         if (patch.title !== undefined) {
           const t = String(patch.title ?? "").trim();
+          if (isUrlTitle(t)) throw new DomainError("VALIDATION", URL_TITLE_MESSAGE);
           if (t) { title = t; manual = true; } else { manual = false; }
         }
         if (!manual) {
