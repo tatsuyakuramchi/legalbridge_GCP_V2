@@ -40,6 +40,8 @@ export interface AllocationLine {
   quantity: number | null;
   unitAmount: number | null;
   occurredOn: string | null;
+  /** 実績が付いている締めの回の名前（「2025年7月〜2026年6月」）。回の無い実績は null。 */
+  roundLabel?: string | null;
 }
 
 export interface AccountingSource {
@@ -135,6 +137,8 @@ export interface AccountingRow {
   entity: AccountingEntity;
   documentId: number | null;
   documentNo: string | null;
+  /** 支払に載った実績の締めの回の名前（重複なし・並びは出てきた順）。支払先ごとにまとめるときの支払内容。 */
+  roundLabels?: string[];
 }
 
 /** V1 の種別。ファイル名とシート名の頭に付く。 */
@@ -310,7 +314,8 @@ export function buildAccountingRow(source: AccountingSource): AccountingRow {
     category: categoryOf(source.document?.templateKey, source.conditionKinds),
     entity: source.party.kind === "individual" ? "個人" : "法人",
     documentId: source.document?.id ?? null,
-    documentNo: source.document?.number ?? null
+    documentNo: source.document?.number ?? null,
+    roundLabels: [...new Set(source.lines.map((l) => l.roundLabel ?? "").filter(Boolean))]
   };
 }
 
@@ -546,9 +551,13 @@ export function mergeByPayee(rows: AccountingRow[]): AccountingRow[] {
     const sum = (pick: (r: AccountingRow) => number) => list.reduce((n, r) => n + pick(r), 0);
     const slotTotal = slots.reduce((n, s) => n + (Number(s.amount) || 0), 0);
     const amount = slots.some((s) => s.amount !== "") ? slotTotal : sum((r) => r.subtotal + r.taxIncluded);
-    const content = head.category === "利用許諾料計算書"
-      ? `利用許諾料（${Math.max(slots.length, 1)}作品分）`
-      : `${slots[0]?.content || head.title}${slots.length > 1 ? ` ほか${slots.length - 1}件` : ""}`;
+    // 支払内容の名前は締めの回（利用期間）の名前。回が分からない支払だけ従来の書き方。
+    const rounds = [...new Set(list.flatMap((r) => r.roundLabels ?? []))];
+    const content = rounds.length
+      ? rounds.join("・")
+      : head.category === "利用許諾料計算書"
+        ? `利用許諾料（${Math.max(slots.length, 1)}作品分）`
+        : `${slots[0]?.content || head.title}${slots.length > 1 ? ` ほか${slots.length - 1}件` : ""}`;
     const dates = slots.map((s) => s.deliveryDate).filter(Boolean).sort();
     const titles = [...new Set(list.map((r) => r.title).filter(Boolean))];
     return {
@@ -562,7 +571,8 @@ export function mergeByPayee(rows: AccountingRow[]): AccountingRow[] {
       afterTax: sum((r) => r.afterTax), netTransfer: sum((r) => r.netTransfer),
       taxable10: sum((r) => r.taxable10), reduced8: sum((r) => r.reduced8), exempt: sum((r) => r.exempt),
       taxIncluded: sum((r) => r.taxIncluded), withholdingExpected: sum((r) => r.withholdingExpected),
-      flags: [...new Set(list.flatMap((r) => r.flags))]
+      flags: [...new Set(list.flatMap((r) => r.flags))],
+      roundLabels: rounds
     };
   });
 }

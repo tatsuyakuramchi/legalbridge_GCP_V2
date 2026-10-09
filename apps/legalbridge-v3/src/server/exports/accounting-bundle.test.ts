@@ -90,6 +90,9 @@ test("支払先ごとにまとめる：同じ支払先の支払を 1 行に足�
   assert.ok(w.slots.slice(1).every((s) => !s.content && s.amount === ""), "2 組目以降は空");
   assert.deepEqual([w.subtotal, w.consumptionTax, w.withholdingTax, w.netTransfer], [11000, 1100, 1122, 10978]);
   assert.equal(w.title, "キズナバレット 利用許諾料のご報告 ほか1件");
+  // 締めの回が分かれば、支払内容の名前は回の名前（利用期間）。
+  const withRound = mergeByPayee(rows.map((r) => ({ ...r, roundLabels: ["2025年7月〜2026年6月"] })));
+  assert.equal(withRound.find((r) => r.vendorName === "脇屋彰太")!.slots[0].content, "2025年7月〜2026年6月");
 
   const sheet = combinedAccountingSheets(rows, "sheets", { merge: true })[0];
   assert.equal(sheet.rows.length, 1 + 2, "続きの行が無く、支払先ごとに 1 行");

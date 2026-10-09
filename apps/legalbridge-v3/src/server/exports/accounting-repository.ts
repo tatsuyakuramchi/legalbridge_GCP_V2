@@ -174,10 +174,12 @@ const DOCUMENT_BY_AUDIT_SQL = `
 const LINES_SQL = `
   SELECT al.payment_id, al.amount, c.condition_no, c.name, c.tax_category, c.kind,
          c.currency, c.unit_amount,
-         e.quantity, e.occurred_on
+         e.quantity, e.occurred_on, sc.label AS round_label
     FROM payment_allocations al
     JOIN conditions c ON c.id = al.condition_id
     LEFT JOIN condition_events e ON e.id = al.event_id
+    -- 締めの回の名前（支払先ごとにまとめるときの支払内容）。
+    LEFT JOIN condition_schedules sc ON sc.id = e.schedule_id
    WHERE al.payment_id = ANY($1::bigint[])
    ORDER BY al.payment_id, c.condition_no NULLS LAST, al.id`;
 
@@ -383,7 +385,8 @@ export class AccountingExportRepository {
           quantity: l.quantity === null || l.quantity === undefined ? null : Number(l.quantity),
           unitAmount: l.unit_amount === null || l.unit_amount === undefined
             ? null : major(l.unit_amount, l.currency),
-          occurredOn: dateStr(l.occurred_on)
+          occurredOn: dateStr(l.occurred_on),
+          roundLabel: l.round_label ? String(l.round_label) : null
         });
         byPayment.set(id, list);
       }

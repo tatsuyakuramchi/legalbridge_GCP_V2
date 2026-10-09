@@ -119,3 +119,19 @@ test("計算書の支払内容：対象契約（イン側の契約）を入金�
   assert.equal(statementGroupLabel({ contractTitle: "Asmodee Asia Limited　英語版" }, [{ productName: "" }]),
                "Asmodee Asia Limited・英語版");
 });
+
+test("支払に載った実績の締めの回の名前を持つ（支払先ごとにまとめるときの支払内容）", async () => {
+  const repo = new AccountingExportRepository(db({
+    "FROM payment_allocations al\n    JOIN conditions c": [
+      { payment_id: 41, amount: 1000000, condition_no: "CL-1", name: "電子出版", tax_category: "taxable", kind: "license",
+        currency: "JPY", unit_amount: null, quantity: null, occurred_on: "2026-06-30", round_label: "2025年7月〜2026年6月" },
+      { payment_id: 41, amount: 352760, condition_no: "CL-2", name: "紙出版", tax_category: "taxable", kind: "license",
+        currency: "JPY", unit_amount: null, quantity: null, occurred_on: "2026-06-30", round_label: "2025年7月〜2026年6月" }
+    ]
+  }));
+  const out = await repo.build({ from: "2026-10-01", to: "2026-10-31" });
+  assert.deepEqual(out.groups[0]!.rows[0]!.roundLabels, ["2025年7月〜2026年6月"]);
+  const db2 = db();
+  await new AccountingExportRepository(db2).build({ from: "2026-10-01", to: "2026-10-31" });
+  assert.match(db2.find("FROM payment_allocations al\n    JOIN conditions c")!.text, /LEFT JOIN condition_schedules sc ON sc\.id = e\.schedule_id/);
+});
