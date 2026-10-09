@@ -110,7 +110,7 @@ button,input,select{font:inherit;color:inherit}
 .panel-hd{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid var(--line)}
 .panel-hd h2{margin:0;font-size:12.5px}
 .panel-bd{padding:14px}
-.title{font-size:15px;font-weight:700}
+.title{font-size:15px;font-weight:700;overflow-wrap:anywhere}
 
 .tablewrap{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:12px}

@@ -1,5 +1,6 @@
 import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { isUrlTitle, URL_TITLE_MESSAGE } from "../matters/title.js";
 import { recordAudit } from "../core/audit.js";
 import { openMatter, resolveCounterparty } from "../integrations/intake-service.js";
 import { connectRequestToMatter } from "../intake/request-service.js";
@@ -116,6 +117,8 @@ export class TaskWriteService {
         requestId = Number(row.id);
 
         const title = String(input.title ?? task.title).trim() || String(task.title);
+        // 作業の件名が URL のまま（リンクを貼って依頼された）だと、案件名も URL になる。
+        if (input.mode === "new" && isUrlTitle(title)) throw new DomainError("VALIDATION", URL_TITLE_MESSAGE);
         let matterId: number;
         let matterNo: string | null;
         let createdMatter = false;

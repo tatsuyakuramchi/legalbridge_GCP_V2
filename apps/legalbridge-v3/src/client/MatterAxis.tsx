@@ -72,6 +72,55 @@ export function MatterKindTags({ m }: { m: MatterSummary }) {
   );
 }
 
+/**
+ * 見出しの件名。その場で直せる。
+ * 件名の変更は軸の欄（「変更」→「件名を手で付ける」）にもあるが、見出しに URL のような
+ * 読めない件名が出ていても、直す口が下の欄に隠れていて見つけにくかった。
+ * 空で保存すると、軸のある案件は軸から組み直す（その他案件は件名が必須）。
+ */
+export function MatterTitle(
+  { detail, onChanged, onError }:
+  { detail: MatterDetail; onChanged: () => void; onError: (m: string | null) => void }
+) {
+  const readOnly = useReadOnly();
+  const [edit, setEdit] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [title, setTitle] = useState(detail.title);
+  const single = detail.kind === "single";
+
+  async function save() {
+    setBusy(true); onError(null);
+    try {
+      // 空は null（サーバが軸から組み直す）。
+      await api.patch(`/matters/${detail.id}/axis`, { title: title.trim() || null });
+      setEdit(false); onChanged();
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  if (edit) {
+    return (
+      <div className="stack" style={{ gap: 4 }}>
+        <div className="row">
+          <input className="inline-input" value={title} autoFocus onChange={(e) => setTitle(e.target.value)}
+                 onKeyDown={(e) => { if (e.key === "Enter" && (title.trim() || !single)) void save(); }}
+                 style={{ flex: 1, minWidth: 260 }} />
+          <button className="btn btn-sm primary" disabled={busy || (single && !title.trim())} onClick={() => void save()}>保存</button>
+          <button className="btn btn-sm" onClick={() => setEdit(false)}>やめる</button>
+        </div>
+        <span className="faint">{single ? "その他案件は件名を人が付ける" : "空で保存すると、軸（作品・業務）から自動で付け直す"}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="row" style={{ alignItems: "flex-start" }}>
+      <div className="title" style={{ flex: 1, minWidth: 0 }}>{detail.title}</div>
+      <button className="btn btn-sm" disabled={readOnly}
+              onClick={() => { setTitle(detail.title); setEdit(true); }}>件名を直す</button>
+    </div>
+  );
+}
+
 const PRODUCTION_LABEL = (v: boolean | null) =>
   v === true ? "あり（制作委託 → 許諾）" : v === false ? "なし（許諾のみ）" : "未決定";
 

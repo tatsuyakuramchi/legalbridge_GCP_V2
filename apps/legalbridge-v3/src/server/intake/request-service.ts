@@ -1,5 +1,6 @@
 import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { isUrlTitle, URL_TITLE_MESSAGE } from "../matters/title.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import type { MatterKind } from "../matters/write-service.js";
@@ -377,6 +378,7 @@ export class IntakeRequestService {
         const row = await this.lockOpen(client, id);
         requester = row.requester_slack_id ?? null;
         const title = String(input.title ?? row.title).trim() || String(row.title);
+        if (input.mode === "new" && isUrlTitle(title)) throw new DomainError("VALIDATION", URL_TITLE_MESSAGE);
         // 検収書の依頼で、発注書が案件に入っているなら、その案件へ繋ぐほかは受けない。
         const pay = paymentOf(row);
         if (pay.purpose === "inspection") {

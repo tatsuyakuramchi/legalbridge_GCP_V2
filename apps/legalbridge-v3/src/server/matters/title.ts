@@ -32,6 +32,16 @@ export const BUSINESS_LINE_VALUES = BUSINESS_LINES.map((b) => b.value) as [Busin
 export const BUSINESS_LINE_LABEL: Record<BusinessLine, string> =
   Object.fromEntries(BUSINESS_LINES.map((b) => [b.value, b.label])) as Record<BusinessLine, string>;
 
+/**
+ * 件名が URL そのものか。ブラウザの「リンクをコピー」で取った URL（#:~:text=…）が
+ * 件名に入り、一覧と見出しが読めない長い英数字になっていた。件名は人が読む名前なので受けない。
+ */
+export function isUrlTitle(title: unknown): boolean {
+  return /^\s*https?:\/\//i.test(String(title ?? ""));
+}
+
+export const URL_TITLE_MESSAGE = "件名に URL は入れられません。作品名・業務名など、何の案件か読める名前を入れてください";
+
 export interface TitleAxis {
   kind: MatterKind;
   workTitle?: string | null;
