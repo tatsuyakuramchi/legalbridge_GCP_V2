@@ -145,6 +145,11 @@ export interface CloseOutcome {
   /** どこまで進んだか。落ちたときにどこで止まったかが読める。 */
   reached: "event" | "document" | "payment";
   error: string | null;
+  /**
+   * この回から出た決済文書の全部。共著の取り分の回は受取人ごとに計算書が出るので 1 枚とは限らない
+   * （documentId は最初の 1 枚だけ。それを開くと別の受取人の計算書が開いていた）。
+   */
+  documents?: Array<{ id: number; documentNo: string | null; payee: string | null }>;
 }
 
 export interface CloseResult {
@@ -487,6 +492,8 @@ export class ClosingCloseService {
         for (const r of doc.rows) {
           const o = out.get(r.scheduleId!)!;
           o.documentId ??= made.document.id; o.documentNo = add(o.documentNo, made.document.documentNo);
+          o.documents = [...(o.documents ?? []), { id: made.document.id, documentNo: made.document.documentNo ?? null,
+                                                  payee: doc.payeePartyId ? doc.party?.name ?? null : null }];
           if (o.reached === "event") o.reached = "document";
         }
         const paid = await this.payments.createFromStatementDocument(made.document.id, actor, { dueOn });

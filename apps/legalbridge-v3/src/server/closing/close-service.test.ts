@@ -314,6 +314,22 @@ test("料率の回：締めると計算書の道で発行し、支払は計算�
   assert.equal(result.outcomes[0].reached, "payment");
 });
 
+test("共著の回の結果：回から出た計算書を受取人ごとに全部返す（最初の 1 枚だけにしない）", async () => {
+  const rows = [royaltyRaw({ schedule_id: 200, condition_id: 8, condition_name: "無法断罪RPG｜電子出版", event_id: 61 })];
+  const fake = royaltyDb(rows);
+  const base = fake.query.bind(fake);
+  (fake as any).query = async (text: string, params: unknown[] = []) => text.includes("WITH series AS")
+    ? { rows: [{ party_id: 31, party_name: "岡島大夢", party_kind: "individual", share_ppm: 500000, sort_order: 0, note: null },
+               { party_id: 32, party_name: "八木清太", party_kind: "individual", share_ppm: 500000, sort_order: 1, note: null }], rowCount: 2 }
+    : base(text, params);
+  const service = new ClosingCloseService(fake, now, undefined, undefined, undefined, fakePayments() as any)
+    .useStatements(fakeIssuer() as any);
+  const result = await service.run([200], "tester", { bundle: "party" });
+  assert.equal(result.ok, 1, JSON.stringify(result.outcomes));
+  assert.deepEqual(result.outcomes[0].documents?.map((d) => [d.documentNo, d.payee]),
+    [["ARC-ROY-2026-1101", "岡島大夢"], ["ARC-ROY-2026-1102", "八木清太"]]);
+});
+
 test("料率の回で計算書はあるが支払が無い：支払は計算書から立てる（報告売上を支払にしない）", async () => {
   const payments = fakePayments();
   const service = new ClosingCloseService(royaltyDb([royaltyRaw({ document_id: 950, document_no: "ARC-ROY-2026-1050" })]), now,
