@@ -33,7 +33,8 @@ function preview(over: Record<string, any> = {}): CalculationPreview {
     agConsumedBefore: 0, appliedVersion: null,
     reported: over.reported ?? { salesInput: 4896000 },
     period: over.period ?? "2026上期", occurredOn: null,
-    events: over.events ?? []
+    events: over.events ?? [],
+    payee: over.payee ?? null
   } as CalculationPreview;
 }
 
@@ -106,6 +107,18 @@ test("通貨や相手先の違う条件は1枚にまとめない", () => {
   assert.throws(
     () => bundleTotals([preview(), preview({ condition: { id: 9, counterpartyId: 22 } })]),
     (e: unknown) => e instanceof DomainError && /相手先の違う条件/.test(e.message));
+});
+
+test("共著の受取人宛ては宛先で見る：自分の条件と共著者の条件に取り分を持つ受取人は 1 枚にまとめる", () => {
+  const takazawa = { partyId: 31, name: "高沢良太", sharePpm: 500000 };
+  const totals = bundleTotals([
+    preview({ payee: takazawa }),                                              // 自分が相手先の条件
+    preview({ condition: { id: 9, counterpartyId: 22 }, payee: takazawa })     // 共著者（八木）が相手先の条件
+  ]);
+  assert.equal(totals.netExTax, 612000 * 2);
+  assert.throws(
+    () => bundleTotals([preview({ payee: takazawa }), preview({ condition: { id: 9 }, payee: { ...takazawa, partyId: 32 } })]),
+    (e: unknown) => e instanceof DomainError && /相手先の違う条件/.test(e.message), "受取人が違えば 1 枚にしない");
 });
 
 test("1件も無ければ断る", () => {
