@@ -120,6 +120,8 @@ export interface CloseResult {
     ok: boolean; eventId: number | null; documentId: number | null; documentNo: string | null;
     paymentId: number | null; paymentNo: string | null;
     reached: "event" | "document" | "payment"; error: string | null;
+    /** この回から出た決済文書の全部（共著の取り分の回は受取人ごと）。 */
+    documents?: Array<{ id: number; documentNo: string | null; payee: string | null }>;
   }>;
   skipped: ClosePreview["skipped"];
 }

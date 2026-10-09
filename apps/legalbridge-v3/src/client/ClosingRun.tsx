@@ -189,9 +189,12 @@ function RunResult({ result, onDone, onOpenDocument }: {
   result: CloseResult; onDone: () => void; onOpenDocument?: (id: number) => void;
 }) {
   // できた文書（同じ文書に数回が載るので1枚ずつにする）。次は ③ 送る。
+  // 共著の取り分の回は受取人ごとに計算書が出るので、回の全部の文書を拾う（受取人名も付ける）。
   const docs = [...new Map(result.outcomes
-    .filter((o) => o.documentId !== null)
-    .map((o) => [o.documentId!, o.documentNo ?? `#${o.documentId}`])).entries()];
+    .flatMap((o) => o.documents?.length
+      ? o.documents.map((d) => [d.id, `${d.documentNo ?? `#${d.id}`}${d.payee ? `（${d.payee}）` : ""}`] as const)
+      : o.documentId !== null ? [[o.documentId, o.documentNo ?? `#${o.documentId}`] as const] : []))
+    .entries()];
   const REACHED: Record<string, string> = {
     event: "実績まで", document: "決済文書まで", payment: "支払まで"
   };
@@ -212,7 +215,17 @@ function RunResult({ result, onDone, onOpenDocument }: {
                 <tr key={o.scheduleId} className={o.ok ? "" : "overdue"}>
                   <td>{o.conditionName}</td>
                   <td>{o.seq ? `第${o.seq}回` : "—"}</td>
-                  <td className="code">{o.documentNo ?? "—"}</td>
+                  <td className="code">
+                    {o.documents?.length
+                      ? o.documents.map((d) => (
+                          <div key={d.id}>
+                            {onOpenDocument
+                              ? <a href="#" onClick={(e) => { e.preventDefault(); onOpenDocument(d.id); }}>{d.documentNo ?? `#${d.id}`}</a>
+                              : (d.documentNo ?? `#${d.id}`)}
+                            {d.payee && <span className="faint">（{d.payee}）</span>}
+                          </div>))
+                      : (o.documentNo ?? "—")}
+                  </td>
                   <td className="code">{o.paymentNo ?? "—"}</td>
                   <td>
                     {o.ok
