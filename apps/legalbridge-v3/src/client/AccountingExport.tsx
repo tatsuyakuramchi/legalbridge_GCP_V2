@@ -145,7 +145,7 @@ export function AccountingExport() {
               <strong>全部まとめて</strong>
               <label className="row" style={{ gap: 4 }} title="作品ごとの支払内容の組を並べず、支払先ごとに 1 行・支払内容 1 列（例「利用許諾料（12作品分）」）にまとめる">
                 <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} />
-                <span>支払先ごとに 1 行（支払内容を 1 列にまとめる）</span>
+                <span>支払先ごとに 1 行（支払内容を 1 列にまとめる。下の束ごとのボタンにも効きます）</span>
               </label>
               <a className="btn primary" href={`/api/v3/exports/accounting/combined?${query()}&format=zip&merge=${merge ? 1 : 0}`}
                  title="V1 の xlsx（種別 × 個人／法人 × 支払日）と、全部の PDF を 1 つの zip に">
@@ -238,7 +238,7 @@ export function AccountingExport() {
           <div className="panel-bd row">
             {g.v1Files.map((f) => {
               const href = `/api/v3/exports/accounting/v1?${query()}&groupKey=${encodeURIComponent(g.key)}`
-                + `&category=${encodeURIComponent(f.category)}&entity=${encodeURIComponent(f.entity)}`;
+                + `&category=${encodeURIComponent(f.category)}&entity=${encodeURIComponent(f.entity)}&merge=${merge ? 1 : 0}`;
               return (
                 <span key={`${f.category}-${f.entity}`} className="row" style={{ gap: 4 }}>
                   <a className="btn primary" href={href}>
