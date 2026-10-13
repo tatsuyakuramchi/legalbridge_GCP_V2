@@ -112,6 +112,9 @@ import {
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { WorkbenchPlanService } from "./workbench/plan-service.js";
 import { DealsService } from "./deals/service.js";
+import { periodicLines } from "./conditions/write-service.js";
+import { payDateFromTerms } from "./conditions/payment-terms.js";
+import { SETTLEMENT_CYCLE_MONTHS } from "./conditions/settlement-mode.js";
 import { IntakeRequestService } from "./intake/request-service.js";
 import { DailyTaskRepository, type DailyTab } from "./tasks/repository.js";
 import { TaskWriteService } from "./tasks/write-service.js";
@@ -280,12 +283,40 @@ export function createRoutes(database: Transactable) {
       partyId: z.coerce.number().int().positive().optional(),
       matterId: z.coerce.number().int().positive().optional(),
       workId: z.coerce.number().int().positive().optional(),
+      conditionId: z.coerce.number().int().positive().optional(),
       kind: z.enum(["service", "license"]).optional(),
       q: z.string().trim().max(100).optional()
     }).parse(req.query);
     res.json(await deals.list({ partyId: q.partyId ?? null, matterId: q.matterId ?? null, workId: q.workId ?? null,
-                                kind: q.kind ?? null, q: q.q ?? null }, q.view));
+                                conditionId: q.conditionId ?? null, kind: q.kind ?? null, q: q.q ?? null }, q.view));
   }));
+  /**
+   * 期間で決まる型の回を、周期と契約期間から並べる（A-071）。
+   * 以前は「算定期間を並べる」の画面で周期と開始日を手で選んでいた。型に周期を持たせたので、
+   * 回は型から出す。金額は定額・定期課金なら 1 回あたりの額、料率は 0（報告が来るまで決まらない）。
+   * 既に回があるときは何もしない（延長で足すのは条件の改訂から）。
+   */
+  router.post("/deals/schedule", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { conditionId } = z.object({ conditionId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      const c = await conditions.find(conditionId);
+      if (!c) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
+      if (c.settlementMode !== "term_bound" || !c.settlementCycle) {
+        throw new DomainError("VALIDATION", "回を型から並べられるのは「期間で決まる」型だけです。条件の決済の型を確かめてください");
+      }
+      if (!c.termStart || !c.termEnd) throw new DomainError("VALIDATION", "契約期間（開始・終了）を条件に入れてから並べてください");
+      const existing = await database.query("SELECT count(*)::int AS n FROM condition_schedules WHERE condition_id = $1", [conditionId]);
+      if (Number((existing.rows[0] as { n: number }).n) > 0) {
+        throw new DomainError("CONFLICT", "この条件には既に回が並んでいます。延長で足すときは条件の改訂（期間）から");
+      }
+      const months = SETTLEMENT_CYCLE_MONTHS[c.settlementCycle];
+      const amount = c.pricingModel === "fixed" || c.pricingModel === "subscription" ? (c.flatAmount ?? 0) : 0;
+      const lines = periodicLines(c.termStart, c.termEnd, months, amount, c.name)
+        .map((l) => ({ ...l, payOn: payDateFromTerms(l.dueOn ?? "", c.paymentTerms) }));
+      if (!lines.length) throw new DomainError("VALIDATION", "契約期間から回を組めませんでした（開始日と終了日を確かめてください）");
+      const result = await conditionSchedules.replace(conditionId, lines, actor(res));
+      res.status(201).json({ lines: lines.length, result });
+    }));
   const taskWrites = new TaskWriteService(database,
     (requestId, text, actor) => intakeRequests.notifyRequester(requestId, text, actor));
   const backlogPull = new BacklogPullJob(database, buildBacklogReader(), () => ({
@@ -3988,67 +4019,18 @@ export function createRoutes(database: Transactable) {
         matterId: z.coerce.number().int().positive().nullable().optional(),
         manualInputs: z.record(z.string(), z.unknown()).optional()
       }).parse(req.body ?? {});
-      const conditionId = Number(req.params.id);
-      // 先に試算する。渡さないと本文の金額欄が全部空のまま発行される
-      // （計算書だけが「紙は出るが数字が無い」状態になっていた）。
-      const preview = await royalty.preview({
-        conditionId, period: input.period, occurredOn: input.occurredOn,
-        eventType: input.eventType, reported: input.reported, eventIds: input.eventIds,
-        payeePartyId: input.payeePartyId ?? null
-      });
-      // 取り分のある条件は受取人を決めてから出す（紙の宛名と支払先がその人になる）。
-      if (preview.shares && !preview.payee) {
-        throw new DomainError("VALIDATION",
-          `取り分のある条件です。受取人を選んでください（${preview.shares.map((x) => `${x.name} ${x.sharePpm / 10000}%`).join("・")}）`);
-      }
-      // 実績の束から出したときは、導いた報告値と期間で本文を作る。
-      const computed = royaltyForDocument(preview, preview.reported);
-      // 利用形態の付いた実績は、本文も行ごとに出す。製品名（作品名）・方式・
-      // 許諾地域は行ごとに違い、合計だけの1行では相手に何の計算か伝わらない。
-      const usageEvents = (preview.events ?? []).filter((e) => e.usageType);
-      const manualInputs = {
-        ...(input.manualInputs ?? {}),
-        ...(preview.payee ? { _payeePartyId: preview.payee.partyId } : {}),
-        ...(usageEvents.length
-          ? { statementMode: "multi",
-              rs_bundle_lines: applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {}),
-              rs_bundle_tax: preview.fee.tax_amount,
-              rs_stage_notes: stageNotesOf(preview.events ?? []) }
-          : {})
-      };
-      // 出版（紙・電子）の条件なら出版専用の計算書（作品ごとの要約＋別紙の明細）。本文は焼き付けた
-      // 行から組むので、出版専用にするときは行と税・源泉も焼き付ける。
-      const pubLines = applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {});
-      const templateKey = await statementIssuer.templateFor(input.templateKey, pubLines);
-      if (templateKey === PUB_STATEMENT_KEY && !Array.isArray(manualInputs.rs_bundle_lines)) {
-        Object.assign(manualInputs, {
-          statementMode: "multi", rs_bundle_lines: pubLines, rs_bundle_tax: preview.fee.tax_amount,
-          rs_stage_notes: stageNotesOf(preview.events ?? [])
-        });
-      }
-      if (templateKey === PUB_STATEMENT_KEY) {
-        Object.assign(manualInputs, {
-          rs_bundle_withholding: preview.payment.withholdingTax, rs_bundle_net_transfer: preview.payment.netTransfer
-        });
-      }
-      const draft = await issues.createDraft({
-        templateKey, conditionIds: [conditionId],
-        matterId: input.matterId ?? null, manualInputs
+      // 条件 1 本の計算書も、束ね（/statement-documents）と同じ手順で出す
+      // （royalty/statement-issue.ts）。以前はここに別の実装があり、受領情報の見出しや
+      // 出版専用のひな形への切り替えがこの経路だけ抜けていた。
+      const out = await statementIssuer.issue({
+        templateKey: input.templateKey,
+        entries: [{ conditionId: Number(req.params.id), period: input.period, occurredOn: input.occurredOn,
+                    eventType: input.eventType, reported: input.reported, eventIds: input.eventIds,
+                    payeePartyId: input.payeePartyId ?? null }],
+        matterId: input.matterId ?? null, requestId: null, agreementId: null,
+        manualInputs: input.manualInputs ?? {}, supersedes: [], reason: null
       }, actor(res));
-      let issued;
-      try {
-        issued = await issues.issue(draft.id, actor(res),
-          { royalty: computed, eventIds: input.eventIds ?? [] });
-      } catch (error) {
-        await issues.void(draft.id, "発行できなかったため破棄", actor(res)).catch(() => undefined);
-        throw error;
-      }
-      const statement = await royalty.finalize({
-        conditionId, period: preview.period, occurredOn: preview.occurredOn,
-        eventType: input.eventType, reported: preview.reported, eventIds: input.eventIds,
-        documentId: issued.id, payeePartyId: preview.payee?.partyId ?? null
-      }, actor(res));
-      res.status(201).json({ document: issued, ...statement });
+      res.status(201).json({ document: out.document, statements: out.statements, totals: out.totals, lines: out.lines });
     }));
 
   /**

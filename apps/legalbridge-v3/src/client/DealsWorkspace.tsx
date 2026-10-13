@@ -28,7 +28,7 @@ export interface DealHandoff {
 export function DealsWorkspace(
   { scope, onOpenCondition, onOpenDocument, onIssueDocument, onOpenMatter }: {
     /** 案件・相手先・作品に絞って埋め込むとき。 */
-    scope?: { partyId?: number; matterId?: number; workId?: number };
+    scope?: { partyId?: number; matterId?: number; workId?: number; conditionId?: number };
     onOpenCondition: (id: number) => void;
     onOpenDocument: (id: number) => void;
     /** 決済文書を作る：作業テーブルへ（この回を渡す）。 */
@@ -37,7 +37,8 @@ export function DealsWorkspace(
   }
 ) {
   const readOnly = useReadOnly();
-  const [view, setView] = useState<DealsView>("due");
+  // 条件 1 本を見るときは全部の回（進み具合の履歴として読む）。
+  const [view, setView] = useState<DealsView>(scope?.conditionId ? "all" : "due");
   const [partyId, setPartyId] = useState<number | null>(scope?.partyId ?? null);
   const [partyLabel, setPartyLabel] = useState<string | null>(null);
   const [kind, setKind] = useState<"" | "service" | "license">("");
@@ -55,11 +56,12 @@ export function DealsWorkspace(
     if (partyId) p.set("partyId", String(partyId));
     if (scope?.matterId) p.set("matterId", String(scope.matterId));
     if (scope?.workId) p.set("workId", String(scope.workId));
+    if (scope?.conditionId) p.set("conditionId", String(scope.conditionId));
     if (kind) p.set("kind", kind);
     if (q.trim()) p.set("q", q.trim());
     try { setData(await api.get<DealsList>(`/deals?${p}`)); setError(null); }
     catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-  }, [view, partyId, scope?.matterId, scope?.workId, kind, q]);
+  }, [view, partyId, scope?.matterId, scope?.workId, scope?.conditionId, kind, q]);
   useEffect(() => { void load(); }, [load]);
 
   const rowKey = (r: DealRow) => r.scheduleId ? `s${r.scheduleId}` : r.eventId ? `e${r.eventId}` : `c${r.conditionId}`;
@@ -86,6 +88,9 @@ export function DealsWorkspace(
         setNotice(`${r.conditionName}：${r.direction === "out" ? "入金を確認しました" : "支払済みにしました"}`);
       } else if (action === "revise") {
         onOpenCondition(r.conditionId); setBusy(null); return;
+      } else if (action === "schedule") {
+        const made = await api.post<{ lines: number }>("/deals/schedule", { conditionId: r.conditionId });
+        setNotice(`${r.conditionName}：周期と契約期間から ${made.lines} 回を並べました`);
       }
       await load();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -282,7 +287,7 @@ export function DealsWorkspace(
         </div>
       </div>
 
-      <div className="row" style={{ gap: 24, flexWrap: "wrap" }}>
+      {!scope && <div className="row" style={{ gap: 24, flexWrap: "wrap" }}>
         <div style={{ flex: "1 1 320px" }}>
           <b>「決まり」は条件明細で決めた支払の回数の型</b>
           <div className="faint">一回きり／回数固定（N 回）／期間で決まる（周期 × 契約期間）／回数無制限（製造・増刷のたび。終了後の猶予まで）。残りが無い条件はここに出ず、「条件を改訂する」からだけ回を増やせます。</div>
@@ -291,7 +296,7 @@ export function DealsWorkspace(
           <b>「進み具合」は 4 つの段</b>
           <div className="faint">予定 → 実績 → 決済文書（検収書・計算書）→ 支払。業務委託もライセンスも同じ 4 段で、「次にすること」は段に応じて 1 つだけ出ます。決済文書を作る段だけ作業テーブルに移り、決定すると戻ります。</div>
         </div>
-      </div>
+      </div>}
     </section>
   );
 }
@@ -302,6 +307,12 @@ function ActionButton({ row: r, busy, readOnly, onAct }: { row: DealRow; busy: b
   if (a === "done") return <span className="faint">済み</span>;
   if (a === "wait") return <span className="faint">まだ到来していない</span>;
   if (a === "revise") return <button className="linky" onClick={() => onAct(a)}>条件を改訂する（期間を延ばす・回数を増やす）</button>;
+  if (a === "schedule") return (
+    <span className="stack" style={{ gap: 2, display: "inline-flex" }}>
+      <button className="btn btn-sm" disabled={readOnly || busy} onClick={() => onAct(a)}>{busy ? "…" : "回を並べる（周期と契約期間から）"}</button>
+      <span className="faint">{r.rule.cycle ? `${r.rule.label}。並べたあと、到来した回から進める` : "周期が無い。条件の決済の型で周期を入れる"}</span>
+    </span>
+  );
   const label = a === "record_planned" ? "予定どおりに実績を立てる"
     : a === "record" ? (lic ? "実績を入れる（売上・製造）" : "実績を入れる（納品・検収）")
     : a === "issue" ? `${r.documentLabel}を作る（作業テーブルへ）`

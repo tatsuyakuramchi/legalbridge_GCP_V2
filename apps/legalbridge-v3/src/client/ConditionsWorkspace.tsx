@@ -4,6 +4,7 @@ import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { useReadOnly } from "./read-only.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
+import { DealsWorkspace, type DealHandoff } from "./DealsWorkspace.js";
 import { OutReports } from "./OutReports.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
@@ -54,7 +55,7 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated }:
+  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated, onIssueRound }:
   {
     initialId?: number;
     /**
@@ -67,6 +68,8 @@ export function ConditionsWorkspace(
     /** 決めた文書をそのまま開く。 */
     onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
+    /** 取引管理（この条件の回）から決済文書を作る：作業テーブルへ。 */
+    onIssueRound?: (h: DealHandoff) => void;
     /**
      * 条件を登録したとき。あれば、登録した条件を選んだ状態で文書を作る画面へ進む
      * （条件明細 → 文書 → 送信 を順に）。templateKey は登録した種類から推したひな形。
@@ -766,6 +769,19 @@ export function ConditionsWorkspace(
                             onOpenCondition={(id) => { setResult(null); setSelected(id); }}
                             onOpenWork={onOpen ? (id) => onOpen("work", id) : undefined}
                             onOpenDocument={onOpenDocument} />
+              )}
+
+              {/* この条件の回。予定 → 実績 → 決済文書 → 支払 を取引管理と同じ表で進める。 */}
+              {onIssueRound && (
+                <div className="panel">
+                  <div className="panel-hd"><h2>取引管理（この条件の回）</h2>
+                    <span className="faint">決まり（決済の型）に沿って進める。決済文書は作業テーブルで</span></div>
+                  <div className="panel-bd">
+                    <DealsWorkspace key={`deals${flowVersion}`} scope={{ conditionId: detail.id }}
+                                    onOpenCondition={(id) => { setResult(null); setSelected(id); }}
+                                    onOpenDocument={(id) => onOpenDocument?.(id)} onIssueDocument={onIssueRound} />
+                  </div>
+                </div>
               )}
 
               <ConditionSchedules conditionId={detail.id} reloadKey={flowVersion}

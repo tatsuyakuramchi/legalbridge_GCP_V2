@@ -25,6 +25,7 @@ import { DuplicateConditions } from "./DuplicateConditions.js";
 import { MatterStatement } from "./MatterStatement.js";
 import { MatterEvents } from "./MatterEvents.js";
 import { MatterPayments } from "./MatterPayments.js";
+import { DealsWorkspace, type DealHandoff } from "./DealsWorkspace.js";
 import { MatterGraph } from "./MatterGraph.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { AxisPanel, ContinuePanel, MatterTitle, FamilyPanel, MatterKindTags, StatusPanel,
@@ -37,8 +38,8 @@ import { BUSINESS_LINES } from "../server/matters/title.js";
  * 案件の中身のタブ。既定は「取引先ごと」（束）。条件明細・実績・文書・支払の
  * 種類別の表は「一覧」に畳み、その中で切り替える（横断の一括操作と CSV の置き場）。
  */
-type Tab = "bundles" | "grid" | "conditions" | "events" | "documents" | "payments" | "tasks" | "communications" | "graph";
-const LIST_TABS: Tab[] = ["conditions", "events", "documents", "payments", "grid"];
+type Tab = "bundles" | "grid" | "conditions" | "events" | "documents" | "payments" | "deals" | "tasks" | "communications" | "graph";
+const LIST_TABS: Tab[] = ["conditions", "events", "documents", "payments", "deals", "grid"];
 
 /** 統合の下見。サーバの MatterMergePreview と対。 */
 interface MergePreview {
@@ -83,7 +84,7 @@ const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
 export function MattersWorkspace(
-  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onSettledImport, onFixDrift, onRegisterAgreement, onOpenTrade }: {
+  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onSettledImport, onFixDrift, onRegisterAgreement, onOpenTrade, onIssueRound }: {
     onOpenCondition: (id: number) => void;
     initialId?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -102,6 +103,8 @@ export function MattersWorkspace(
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
     /** 作業テーブルをこの案件で開く（要る文書を決める → 作る・登録する → まとめ）。 */
     onOpenTrade?: (matter: { id: number; kind: string; businessLine: string | null }) => void;
+    /** 取引管理（この案件の回）から決済文書を作る：作業テーブルへ。 */
+    onIssueRound?: (h: DealHandoff) => void;
   }
 ) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
@@ -654,6 +657,8 @@ export function MattersWorkspace(
                            ["events", "実績"],
                            ["documents", `文書 ${shown.documents.length}`],
                            ["payments", `支払 ${shown.payments.length}`],
+                           // 条件 × 回 で 予定 → 実績 → 決済文書 → 支払 を進める（取引管理をこの案件に絞ったもの）。
+                           ["deals", "取引管理"],
                            ["grid", "工程表（表）"]] as const).map(([key, label]) => (
                           <button key={key} className="chip" aria-pressed={tab === key}
                                   onClick={() => goTab(key as Tab)}>{label}</button>
@@ -717,6 +722,11 @@ export function MattersWorkspace(
                   {tab === "payments" && (
                     <MatterPayments detail={shown} onChanged={relink} onOpenDocument={onOpenDocument}
                                     isAdmin={isAdmin} />
+                  )}
+                  {tab === "deals" && onIssueRound && (
+                    <DealsWorkspace scope={{ matterId: detail.id, ...(party ? { partyId: party } : {}) }}
+                                    onOpenCondition={onOpenCondition} onOpenDocument={(id) => onOpenDocument?.(id)}
+                                    onIssueDocument={onIssueRound} />
                   )}
 
                   {tab === "graph" && (

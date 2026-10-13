@@ -67,10 +67,11 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
   // ところなので、紙の話と金の話の継ぎ目に、見出しを付けて置く
   // （見出しが無いと「横断で見る」の続きに読めて、何をする所か分からなかった）。
   { section: "お金の流れ", items: [
-    { view: "closing", label: "支払文書処理" },
     { view: "money", label: "お金" }
   ] },
   { section: "監視・運用", items: [
+    // 月の表・まとめて締める・算定期間を並べる。ふだんの操作は「取引管理」へ寄せた。
+    { view: "closing", label: "支払文書処理（締め・一括）" },
     // 条件を直したあとに取り残された金額・日付を集めて直す。案件をまたぐので
     // 工程表（案件1件）とは別の入口にする。ホームの札「金額の取り残し」と同じ語にする。
     { view: "drift", label: "金額の取り残し" },
@@ -166,6 +167,10 @@ export function App() {
    * （画面を離れると部品の中の状態は消えるので、ここに持つ）。
    */
   const [workbench, setWorkbench] = useState<WorkbenchState | null>(null);
+  /** 取引管理の回から決済文書を作る：作業テーブルへ（この回の実績を渡す）。 */
+  const issueRound = (h: { conditionId: number; conditionName: string; roundLabel: string; scheduleId: number | null; eventId: number | null }) =>
+    startWorkbench({ kind: "round", conditionId: h.conditionId, scheduleId: h.scheduleId, eventId: h.eventId,
+                     label: `${h.conditionName} ${h.roundLabel}` });
   const startWorkbench = (entry: WorkbenchEntry) => {
     setWorkbench((prev) => (prev && sameEntry(prev.entry, entry) ? prev : newWorkbenchState(entry)));
     setFocus(null); setConditionId(undefined);
@@ -425,8 +430,7 @@ export function App() {
           <DealsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenMatter={(id) => openEntity("matter", id)}
             // 決済文書は作業テーブルで作る（この回の実績を渡す）。決定したら取引管理へ戻れる。
-            onIssueDocument={(h) => startWorkbench({ kind: "round", conditionId: h.conditionId, scheduleId: h.scheduleId, eventId: h.eventId,
-                                                     label: `${h.conditionName} ${h.roundLabel}` })} />
+            onIssueDocument={issueRound} />
         )}
         {view === "workbench" && (
           <WorkbenchWorkspace state={workbench} onState={setWorkbench}
@@ -460,6 +464,7 @@ export function App() {
             onRegisterAgreement={startAgreement}
             // 案件の「作業テーブルで文書を作る」。取引の型は作業テーブルが案件の種類と条件から推す。
             onOpenTrade={(m) => startWorkbench({ kind: "matter", matterId: m.id })}
+            onIssueRound={issueRound}
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
         )}
         {view === "conditions" && (
@@ -467,6 +472,7 @@ export function App() {
                                initialId={conditionId} initialSchedule={conditionSchedule}
                                onCompose={startCompose} onOpen={openEntity}
                                onOpenDocument={openDocumentAt}
+                               onIssueRound={issueRound}
                                // 条件を登録したら、その条件で文書を作る画面へ進む（戻る先はその条件）。
                                onCreated={({ conditionIds, templateKey }) =>
                                  startCompose(conditionIds, [], null, templateKey, null, null, null, conditionFlow(conditionIds[0]))} />

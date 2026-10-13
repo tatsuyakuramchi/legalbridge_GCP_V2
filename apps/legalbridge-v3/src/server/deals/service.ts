@@ -67,12 +67,14 @@ export type DealAction =
   | "paid"            // 支払済みにする／入金を確認した
   | "wait"            // まだ到来していない
   | "revise"          // 条件を改訂する（期限切れ・上限到達）
+  | "schedule"        // 回を型から並べる（期間で決まる型で、まだ回が無い）
   | "done";
 
 export interface DealsScope {
   partyId?: number | null;
   matterId?: number | null;
   workId?: number | null;
+  conditionId?: number | null;
   kind?: "service" | "license" | null;
   q?: string | null;
 }
@@ -247,6 +249,7 @@ function narrowBy(scope: DealsScope, args: unknown[]): string {
   const parts: string[] = [];
   if (scope.partyId) { args.push(scope.partyId); parts.push(`c.counterparty_id = $${args.length}`); }
   if (scope.workId) { args.push(scope.workId); parts.push(`c.work_id = $${args.length}`); }
+  if (scope.conditionId) { args.push(scope.conditionId); parts.push(`c.id = $${args.length}`); }
   if (scope.matterId) {
     args.push(scope.matterId);
     parts.push(`EXISTS (SELECT 1 FROM matter_links ml WHERE ml.matter_id = $${args.length}
@@ -294,7 +297,7 @@ export function ruleOf(c: any, x: { planned: number; done: number; today: string
 
 function actionOf(r: PeriodRow, rule: DealRule, rowKind: DealRow["rowKind"], today: string, direction: "in" | "out"): DealAction {
   if (rowKind === "expired") return "revise";
-  if (rowKind === "next") return rule.canOpen ? "record" : "revise";
+  if (rowKind === "next") return !rule.canOpen ? "revise" : rule.mode === "term_bound" && rule.planned === 0 ? "schedule" : "record";
   if (r.step === "event") {
     if (r.closingOn && r.closingOn > today) return "wait";
     return r.pricingModel === "revenue_rate" || rowKind === "unplanned" ? "record"
@@ -308,7 +311,8 @@ function actionOf(r: PeriodRow, rule: DealRule, rowKind: DealRow["rowKind"], tod
 }
 
 function roundLabelOf(r: PeriodRow, rule: DealRule, rowKind: DealRow["rowKind"]): string {
-  if (rowKind === "next") return rule.limit !== null ? `${rule.done + 1} / ${rule.limit}` : `第 ${rule.done + 1} 回（次）`;
+  if (rowKind === "next") return rule.mode === "term_bound" && rule.planned === 0 ? `0 / ${rule.limit ?? "?"}`
+    : rule.limit !== null ? `${rule.done + 1} / ${rule.limit}` : `第 ${rule.done + 1} 回（次）`;
   if (rowKind === "expired") return "—";
   if (rowKind === "unplanned") return r.eventOn ? `実績 ${r.eventOn}` : "予定なし";
   const seq = r.seq ?? 0;
