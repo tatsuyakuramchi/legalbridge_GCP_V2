@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isInProgress, loadWorkbenchState, workbenchProgressLabel } from "./WorkbenchWorkspace.js";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
@@ -511,7 +512,16 @@ function TaskPanel(
                 作った文書はこの作業（{r.requestNo ?? `#${r.id}`}）に自動で繋がり、作業テーブルの③でこの作業を完了にできます。
               </span>
               <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <button className="btn btn-sm primary" onClick={() => onGo?.(ctx, { kind: "workbench" })}>作業テーブルで進める</button>
+                {(() => {
+                  const saved = loadWorkbenchState({ kind: "task", taskId: t.id, requestId: r.id });
+                  const resume = saved && isInProgress(saved);
+                  return (
+                    <button className="btn btn-sm primary" onClick={() => onGo?.(ctx, { kind: "workbench" })}
+                            title={resume ? "途中の作業テーブルを続きから開く" : undefined}>
+                      {resume ? `作業テーブルの続きから（${workbenchProgressLabel(saved)}）` : "作業テーブルで進める"}
+                    </button>
+                  );
+                })()}
                 {detail.conditions.length === 0 && (
                   <span className="faint">条件明細はまだ繋がっていません（作業テーブルの①「条件を足す」で登録できます。基本契約書だけなら無くてよい）</span>
                 )}

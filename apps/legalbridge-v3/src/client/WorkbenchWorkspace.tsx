@@ -40,6 +40,9 @@ export type WorkbenchEntry =
   | { kind: "document"; documentId: number; mode: "revise" | "derive" };
 
 export type BulkMode = "orders" | "settled" | "missing";
+const ENTRY_KIND_LABEL: Record<WorkbenchEntry["kind"], string> = {
+  task: "デイリータスク", matter: "案件", party: "相手先", round: "取引管理", conditions: "条件明細", bulk: "一括", document: "文書"
+};
 const BULK_LABEL: Record<BulkMode, string> = {
   orders: "発注書を CSV でまとめて作る", settled: "検収済みをまとめて入れる（遡及）", missing: "契約書の無い相手先にまとめて起こす"
 };
@@ -83,6 +86,10 @@ export interface WorkbenchState {
   results: Record<string, UnitResult>;
   /** 訂正版の理由（文書から入ったとき）。 */
   reason?: string;
+  /** 文脈の見出し（途中の作業の一覧に出す）。材料を引いたときに入る。 */
+  label?: string;
+  /** 最後に触った時刻（途中の作業の一覧の並び）。 */
+  touchedAt?: string;
 }
 
 export const WORKBENCH_STEPS = ["要る文書を決める", "作る・登録する", "まとめ"];
@@ -131,7 +138,8 @@ export function WorkbenchWorkspace(
   }
 ) {
   const readOnly = useReadOnly();
-  if (!state) return <EntryPicker onPick={(entry) => onState(newWorkbenchState(entry))} />;
+  // 入口から選んだときも、同じ入口の途中の状態があれば続きから。
+  if (!state) return <EntryPicker onPick={(entry) => onState(loadWorkbenchState(entry) ?? newWorkbenchState(entry))} />;
   if (state.entry.kind === "bulk") {
     return <BulkWorkbench entry={state.entry} onMode={(mode) => onState({ ...state, entry: { ...(state.entry as { kind: "bulk"; matterId?: number | null }), kind: "bulk", mode } })}
                           onOpenDocument={onOpenDocument} onOpenMatter={onOpenMatter} onClose={() => onState(null)} />;
@@ -140,6 +148,48 @@ export function WorkbenchWorkspace(
                     onCompose={onCompose} onOpenDraft={onOpenDraft} onOpenDocument={onOpenDocument} onOpenTask={onOpenTask}
                     onOpenMatter={onOpenMatter} onOpenCondition={onOpenCondition} onOpenDeals={onOpenDeals} />;
 }
+
+/**
+ * 途中の作業テーブルを手元（このブラウザ）に残す。
+ *
+ * ①で決めた用意の仕方・②の進み具合は画面の状態でしかなく、別の画面へ移ったり
+ * 読み込み直したりすると最初からになっていた。入口（作業・案件・相手先…）ごとに
+ * 残しておき、同じ入口から入ったら続きから開く。作った文書そのものはサーバにある。
+ */
+const STORE_PREFIX = "lb.workbench.";
+export function loadWorkbenchState(entry: WorkbenchEntry): WorkbenchState | null {
+  try {
+    const raw = localStorage.getItem(STORE_PREFIX + entryKey(entry));
+    if (!raw) return null;
+    const s = JSON.parse(raw) as WorkbenchState;
+    return s && s.entry && s.step ? s : null;
+  } catch { return null; }
+}
+export function saveWorkbenchState(state: WorkbenchState): void {
+  try { localStorage.setItem(STORE_PREFIX + entryKey(state.entry), JSON.stringify({ ...state, touchedAt: new Date().toISOString() })); }
+  catch { /* 保存できない環境（容量・プライベート）では続きを残さないだけ */ }
+}
+export function clearWorkbenchState(entry: WorkbenchEntry): void {
+  try { localStorage.removeItem(STORE_PREFIX + entryKey(entry)); } catch { /* 同上 */ }
+}
+/** 途中の作業テーブル（新しく触った順）。 */
+export function listWorkbenchStates(): WorkbenchState[] {
+  const out: WorkbenchState[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(STORE_PREFIX)) continue;
+      const s = JSON.parse(localStorage.getItem(k) ?? "null") as WorkbenchState | null;
+      if (s && s.entry && s.step) out.push(s);
+    }
+  } catch { /* 読めなければ空 */ }
+  return out.sort((a, b) => String(b.touchedAt ?? "").localeCompare(String(a.touchedAt ?? "")));
+}
+/** 途中かどうか（①で何か決めた・②以降）。 */
+export const isInProgress = (s: WorkbenchState) => s.step !== "pick" || Object.keys(s.modes).length > 0 || s.extras.length > 0;
+const STEP_LABEL: Record<WorkbenchState["step"], string> = { pick: "①要る文書を決める", work: "②作る・登録する", done: "③まとめ" };
+export const workbenchProgressLabel = (s: WorkbenchState) =>
+  s.step === "work" ? `${STEP_LABEL.work} ${Math.min(Object.keys(s.results).length + 1, Math.max(s.units.length, 1))} / ${s.units.length}` : STEP_LABEL[s.step];
 
 const entryKey = (e: WorkbenchEntry) =>
   e.kind === "task" ? `t${e.taskId}` : e.kind === "matter" ? `m${e.matterId}`
@@ -198,8 +248,26 @@ function BulkWorkbench(
 }
 
 function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
+  const [resumable, setResumable] = useState<WorkbenchState[]>(() => listWorkbenchStates().filter(isInProgress));
+  const drop = (s: WorkbenchState) => { clearWorkbenchState(s.entry); setResumable(listWorkbenchStates().filter(isInProgress)); };
   return (
     <section className="stack">
+      {resumable.length > 0 && (
+        <div className="panel">
+          <div className="panel-hd"><h2>途中の作業テーブル</h2><span className="faint">このブラウザで途中まで進めたもの。続きから開く</span></div>
+          <div className="panel-bd stack" style={{ gap: 6 }}>
+            {resumable.slice(0, 20).map((s) => (
+              <div key={entryKey(s.entry)} className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <span className="tag accent">{ENTRY_KIND_LABEL[s.entry.kind]}</span>
+                <b>{s.label ?? entryKey(s.entry)}</b>
+                <span className="faint">{workbenchProgressLabel(s)}{s.touchedAt ? `　${s.touchedAt.slice(0, 16).replace("T", " ")}` : ""}</span>
+                <button className="btn btn-sm primary" onClick={() => onPick(s.entry)}>続きから</button>
+                <button className="linky" onClick={() => drop(s)} title="途中の状態を捨てる（作った文書は残る）">捨てる</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="panel">
         <div className="panel-hd"><h2>作業テーブル</h2><span className="faint">文書を作る・登録する・繋ぐのはここだけ</span></div>
         <div className="panel-bd stack" style={{ gap: 10 }}>
@@ -264,6 +332,7 @@ function Workbench(
     api.get<WorkbenchPlan>(`/workbench/plan?${q}`)
       .then((p) => {
         setPlan(p);
+        const label = [p.ctx.title, p.ctx.partyName ? `相手先：${p.ctx.partyName}` : null].filter(Boolean).join("　");
         // 既定の用意の仕方は、候補の「suggested」。人が選び直した分は残す。
         const modes = { ...state.modes }; const keys = { ...state.templateKeys };
         let extras = state.extras;
@@ -285,8 +354,8 @@ function Workbench(
           : state.units;
         const unitsChanged = units.some((u, i) => u !== state.units[i]);
         if (Object.keys(modes).length !== Object.keys(state.modes).length || Object.keys(keys).length !== Object.keys(state.templateKeys).length
-            || extras !== state.extras || unitsChanged) {
-          onState({ ...state, modes, templateKeys: keys, extras, units });
+            || extras !== state.extras || unitsChanged || label !== state.label) {
+          onState({ ...state, modes, templateKeys: keys, extras, units, label });
         }
         if (p.ctx.partyId) {
           api.get<{ agreements: typeof agreements }>(`/agreements?partyId=${p.ctx.partyId}`).then((a) => setAgreements(a.agreements)).catch(() => undefined);
@@ -299,6 +368,9 @@ function Workbench(
     api.get<{ channels?: typeof channels }>("/integrations").then((r) => setChannels(r.channels ?? [])).catch(() => undefined);
     api.get<{ user?: { role: string } }>("/me").then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => undefined);
   }, []);
+
+  // 途中の状態を手元に残す（同じ入口から入ったら続きから。読み込み直しても消えない）。
+  useEffect(() => { if (state.entry.kind !== "bulk") saveWorkbenchState(state); }, [state]);
 
   // 文書の画面で決定して戻ってきたとき（流れの帯の onIssued が結果を書く）、全部済んでいればまとめへ。
   useEffect(() => {

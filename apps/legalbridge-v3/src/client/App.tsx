@@ -17,7 +17,7 @@ import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
-import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
+import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
@@ -172,7 +172,8 @@ export function App() {
     startWorkbench({ kind: "round", conditionId: h.conditionId, scheduleId: h.scheduleId, eventId: h.eventId,
                      label: `${h.conditionName} ${h.roundLabel}` });
   const startWorkbench = (entry: WorkbenchEntry) => {
-    setWorkbench((prev) => (prev && sameEntry(prev.entry, entry) ? prev : newWorkbenchState(entry)));
+    // 同じ入口の途中の状態があれば続きから（画面の状態 → 手元に残したもの → 新規）。
+    setWorkbench((prev) => (prev && sameEntry(prev.entry, entry) ? prev : loadWorkbenchState(entry) ?? newWorkbenchState(entry)));
     setFocus(null); setConditionId(undefined);
     setView("workbench");
   };
