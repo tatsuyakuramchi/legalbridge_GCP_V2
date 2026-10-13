@@ -3,6 +3,7 @@ import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { ClosingRun } from "./ClosingRun.js";
+import { EventEntryForm } from "./EventEntryForm.js";
 import type { DealAction, DealRow, DealsList, DealsView } from "../server/deals/service.js";
 
 /**
@@ -175,8 +176,11 @@ export function DealsWorkspace(
                     onCancel={() => setRunning(false)} />
       )}
       {recording && (
-        <RecordForm row={recording} today={data?.today ?? ""} onClose={() => setRecording(null)}
-                    onDone={(msg) => { setRecording(null); setNotice(msg); void load(); }} />
+        <EventEntryForm key={`${recording.conditionId}-${recording.scheduleId ?? 0}`}
+                        conditionId={recording.conditionId} scheduleId={recording.scheduleId} matterId={recording.matter?.id ?? null}
+                        title={`${recording.conditionName}　${recording.roundLabel}`}
+                        onDone={() => { const r = recording; setRecording(null); setNotice(`${r.conditionName} ${r.roundLabel}：実績を入れました`); void load(); }}
+                        onCancel={() => setRecording(null)} />
       )}
 
       <div className="panel">
@@ -330,67 +334,3 @@ function ActionButton({ row: r, busy, readOnly, onAct }: { row: DealRow; busy: b
 }
 
 /** 実績を入れる（1 行ぶん）。業務委託は納品・検収、ライセンスは売上・製造。 */
-function RecordForm({ row: r, today, onClose, onDone }: { row: DealRow; today: string; onClose: () => void; onDone: (msg: string) => void }) {
-  const lic = r.kind === "license" || r.kind === "product";
-  const royalty = r.pricingModel === "revenue_rate";
-  const [v, setV] = useState({
-    occurredOn: r.closingOn ?? today, quantity: "", amount: r.plannedAmount != null ? String(r.plannedAmount) : "",
-    deductions: "0", deliverable: "", inspectedOn: r.closingOn ?? today, inspectorName: "", note: "",
-    eventType: lic ? (r.usageType === "oem" || r.usageType === "pub_print" ? "manufacturing" : "sales") : "delivery"
-  });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const set = (k: keyof typeof v, value: string) => setV({ ...v, [k]: value });
-  const num = (x: string) => { const n = Number(String(x ?? "").replace(/[,，¥￥\s]/g, "")); return Number.isFinite(n) ? n : 0; };
-  async function save() {
-    setBusy(true); setError(null);
-    try {
-      if (lic || !r.scheduleId) {
-        await api.post(`/conditions/${r.conditionId}/events`, {
-          eventType: v.eventType, occurredOn: v.occurredOn, scheduleId: r.scheduleId,
-          quantity: v.quantity.trim() ? num(v.quantity) : null,
-          grossAmount: royalty ? Math.round(num(v.amount)) : null, deductions: royalty ? Math.round(num(v.deductions)) : 0,
-          amount: royalty ? 0 : Math.round(num(v.amount)), note: v.note.trim() || null
-        });
-      } else {
-        await api.post(`/conditions/${r.conditionId}/schedules/${r.scheduleId}/record`, {
-          occurredOn: v.occurredOn, amount: v.amount.trim() ? Math.round(num(v.amount)) : null,
-          quantity: v.quantity.trim() ? num(v.quantity) : null,
-          deliverable: v.deliverable.trim() || null, inspectedOn: v.inspectedOn || null,
-          inspectorName: v.inspectorName.trim() || null, note: v.note.trim() || null
-        });
-      }
-      onDone(`${r.conditionName} ${r.roundLabel}：実績を入れました`);
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
-  }
-  return (
-    <div className="panel">
-      <div className="panel-hd"><h2>実績を入れる</h2><span>{r.conditionName} <span className="code faint">{r.roundLabel}</span></span>
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>やめる</button></div>
-      <div className="panel-bd stack">
-        {error && <div className="alert">{error}</div>}
-        <div className="form-grid">
-          {lic && (
-            <label className="field"><span>何の実績か</span>
-              <select value={v.eventType} onChange={(e) => set("eventType", e.target.value)}>
-                <option value="sales">売上（報告）</option><option value="manufacturing">製造</option><option value="sublicense_receipt">再許諾の受領</option>
-              </select>
-            </label>
-          )}
-          <label className="field"><span>{lic ? "売上の締め日／製造日" : "納品日"}</span><input type="date" value={v.occurredOn} onChange={(e) => set("occurredOn", e.target.value)} /></label>
-          <label className="field"><span>数量</span><input value={v.quantity} placeholder={lic ? "個数・部数" : "1"} onChange={(e) => set("quantity", e.target.value)} /></label>
-          <label className="field"><span>{royalty ? "売上（税抜）" : "金額（税抜）"}</span><input value={v.amount} onChange={(e) => set("amount", e.target.value)} /></label>
-          {royalty && <label className="field"><span>控除</span><input value={v.deductions} onChange={(e) => set("deductions", e.target.value)} /></label>}
-          {!lic && (<>
-            <label className="field"><span>成果物・摘要</span><input value={v.deliverable} onChange={(e) => set("deliverable", e.target.value)} /></label>
-            <label className="field"><span>検収日</span><input type="date" value={v.inspectedOn} onChange={(e) => set("inspectedOn", e.target.value)} /></label>
-            <label className="field"><span>検収者</span><input value={v.inspectorName} onChange={(e) => set("inspectorName", e.target.value)} /></label>
-          </>)}
-          <label className="field wide"><span>備考</span><input value={v.note} onChange={(e) => set("note", e.target.value)} /></label>
-        </div>
-        <div className="row"><button className="btn primary" disabled={busy} onClick={() => void save()}>{busy ? "保存中…" : "実績を保存する"}</button></div>
-      </div>
-    </div>
-  );
-}

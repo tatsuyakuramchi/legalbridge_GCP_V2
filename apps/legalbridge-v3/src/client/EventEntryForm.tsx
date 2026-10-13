@@ -1,6 +1,130 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
+import { ConditionEvents } from "./ConditionEvents.js";
+
+/**
+ * 実績入力の 1 つの入口。
+ *
+ * 以前は 取引管理の「実績を入れる」（簡易フォーム）・条件明細の「実績を足す」（業務委託は
+ * ServiceEventForm、許諾は汎用フォーム）・支払文書処理の「通しで進める」の行入力 が
+ * 別々の欄と別々の送り方を持っていた。ここで条件の種類から 1 つに決める：
+ *
+ *   業務委託（委託料・実費・手数料） … ServiceEntry（納品日・検収日・数量・金額・成果物・契約形式。
+ *                                     予定との差分と次のアクションまで）
+ *   許諾（ライセンス・製品）         … 条件明細の実績の表（ConditionEvents）を、その回で開いた状態
+ *                                     （利用形態・許諾先・算定の形・入金区分まで、紙に出る項目を全部持つ）
+ *
+ * 支払文書処理の行入力は、同じ送り方（saveRoundEvent）だけを共有する（表の形は残す）。
+ * 許諾料の台帳（RoundReport）は「来るはず」の行に数字を打つ表で、送り先は同じ実績 API。
+ */
+export const SERVICE_KINDS = new Set(["service", "expense", "fee"]);
+
+interface ConditionForEntry {
+  id: number; kind: string; currency: string; status: string; pricingModel: string; direction: string;
+  deliverableOwnership: string | null; ratePpm: number | null; unitAmount: number | null; quantity: number | null;
+  work: { id: number; title: string } | null;
+  matters: Array<{ id: number }>;
+}
+
+export function EventEntryForm(
+  { conditionId, scheduleId, matterId, title, onDone, onCancel }: {
+    conditionId: number;
+    /** どの回の分か（取引管理の行から）。無ければ回と結び付けずに入れる。 */
+    scheduleId?: number | null;
+    matterId?: number | null;
+    /** 見出し（条件名と回）。 */
+    title?: string | null;
+    onDone: () => void;
+    onCancel: () => void;
+  }
+) {
+  const [cond, setCond] = useState<ConditionForEntry | null>(null);
+  const [schedules, setSchedules] = useState<ScheduleLite[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.all([
+      api.get<ConditionForEntry>(`/conditions/${conditionId}`),
+      api.get<{ lines?: ScheduleLite[] }>(`/conditions/${conditionId}/schedules`).catch(() => ({ lines: [] as ScheduleLite[] }))
+    ]).then(([c, s]) => { if (!live) return; setCond(c); setSchedules((s.lines ?? []).filter((l) => !l.eventId)); })
+      .catch((e: ApiError) => { if (live) setError(e.message); });
+    return () => { live = false; };
+  }, [conditionId]);
+
+  const service = cond ? SERVICE_KINDS.has(cond.kind) : false;
+  return (
+    <div className="panel">
+      <div className="panel-hd"><h2>実績を入れる</h2>
+        {title && <span>{title}</span>}
+        {cond && <span className="tag">{service ? "納品・検収" : "売上・製造"}</span>}
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onCancel}>やめる</button></div>
+      <div className="panel-bd stack">
+        {error && <div className="alert">{error}</div>}
+        {!cond && !error && <span className="faint">条件を読み込んでいます…</span>}
+        {cond && service && (
+          <ServiceEntry conditionId={cond.id} kind={cond.kind} currency={cond.currency} schedules={schedules}
+                        initialScheduleId={scheduleId ?? null} matterId={matterId ?? cond.matters[0]?.id ?? null}
+                        onDone={onDone} onCancel={onCancel} />
+        )}
+        {cond && !service && (
+          <ConditionEvents conditionId={cond.id} currency={cond.currency} kind={cond.kind}
+                           pricingModel={cond.pricingModel} deliverableOwnership={cond.deliverableOwnership}
+                           ratePpm={cond.ratePpm} direction={cond.direction}
+                           conditionUnitAmount={cond.unitAmount} conditionQuantity={cond.quantity}
+                           workTitle={cond.work?.title ?? null} workId={cond.work?.id ?? null}
+                           matterId={matterId ?? cond.matters[0]?.id ?? null}
+                           editable={cond.status === "active" || cond.status === "draft"}
+                           openForSchedule={scheduleId ?? null} openOnMount
+                           onChanged={onDone} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 回に入れる実績（支払文書処理の行入力と同じ形）。 */
+export interface RoundDraft {
+  occurredOn: string;        // 納品日／売上の締め日
+  quantity: string;
+  amount: string;            // 税抜。料率の回は売上（税抜）
+  deductions: string;        // 料率の回の控除
+  deliverable: string;
+  inspectedOn: string;
+  inspectorName: string;
+  note: string;
+}
+export const newRoundDraft = (row: { closingOn: string | null; plannedAmount: number | null }, todayIso = today()): RoundDraft => ({
+  occurredOn: row.closingOn ?? todayIso, quantity: "1",
+  amount: row.plannedAmount != null ? String(row.plannedAmount) : "", deductions: "0",
+  deliverable: "", inspectedOn: row.closingOn ?? todayIso, inspectorName: "", note: ""
+});
+const asNum = (v: string) => { const n = Number(String(v ?? "").replace(/[,，¥￥\s]/g, "")); return Number.isFinite(n) ? n : 0; };
+/**
+ * 回の実績を 1 件保存する。料率の回は売上の報告（events）、それ以外は回の記録（schedules/record）。
+ * 送り方はここ 1 か所（取引管理・支払文書処理・条件明細で同じ）。実績の id を返す。
+ */
+export async function saveRoundEvent(
+  row: { conditionId: number; scheduleId: number | null; pricingModel: string }, d: RoundDraft
+): Promise<number> {
+  if (row.pricingModel === "revenue_rate" || row.scheduleId === null) {
+    const made = await api.post<{ id: number }>(`/conditions/${row.conditionId}/events`, {
+      eventType: row.pricingModel === "revenue_rate" ? "sales" : "delivery", occurredOn: d.occurredOn, scheduleId: row.scheduleId,
+      grossAmount: row.pricingModel === "revenue_rate" ? Math.round(asNum(d.amount)) : null,
+      deductions: row.pricingModel === "revenue_rate" ? Math.round(asNum(d.deductions)) : 0,
+      quantity: d.quantity.trim() ? asNum(d.quantity) : null,
+      amount: row.pricingModel === "revenue_rate" ? 0 : Math.round(asNum(d.amount)), note: d.note.trim() || null
+    });
+    return made.id;
+  }
+  const made = await api.post<{ eventId: number }>(`/conditions/${row.conditionId}/schedules/${row.scheduleId}/record`, {
+    occurredOn: d.occurredOn, amount: d.amount.trim() ? Math.round(asNum(d.amount)) : null,
+    quantity: d.quantity.trim() ? asNum(d.quantity) : null,
+    deliverable: d.deliverable.trim() || null, inspectedOn: d.inspectedOn || null,
+    inspectorName: d.inspectorName.trim() || null, note: d.note.trim() || null
+  });
+  return made.eventId;
+}
 
 /**
  * 業務委託の実績を記録する（委託料・実費・手数料）。
@@ -45,7 +169,7 @@ const firstLine = (s: string | null | undefined) =>
 const daysBetween = (a: string, b: string) =>
   Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 
-export function ServiceEventForm(
+export function ServiceEntry(
   { conditionId, kind, currency, schedules, initialScheduleId, matterId, onDone, onCancel }: {
     conditionId: number;
     kind: string;

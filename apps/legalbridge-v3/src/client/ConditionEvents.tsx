@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ServiceEventForm } from "./ServiceEventForm.js";
+import { ServiceEntry } from "./EventEntryForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { AmendPanel } from "./AmendPanel.js";
 import type { AmendField } from "./AmendPanel.js";
@@ -98,9 +98,9 @@ interface PreviewResponse {
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
     ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId, kind,
-    openForSchedule, onOpened, onCompose, onOpenDocument, onChanged, preset }:
+    openForSchedule, onOpened, openOnMount, onCompose, onOpenDocument, onChanged, preset }:
   { conditionId: number; currency: string; editable: boolean;
-    /** 条件の種類。委託料・実費・手数料は業務委託の記録の流れ（ServiceEventForm）を出す。 */
+    /** 条件の種類。委託料・実費・手数料は業務委託の記録の流れ（EventEntryForm の ServiceEntry）を出す。 */
     kind?: string | null;
     matterId?: number | null; reloadKey?: number;
     /** 成果物の帰属先。料率の条件では報酬の呼び方がこれで決まる。 */
@@ -113,6 +113,8 @@ export function ConditionEvents(
      */
     preset?: { usageType?: string | null; outConditionId?: number | null; languages?: string[] } | null;
     onOpened?: () => void;
+    /** 開いた直後に「実績を足す」を開いた状態にする（取引管理の「実績を入れる」から）。 */
+    openOnMount?: boolean;
     /** 計算方式。料率・単価×数量なら実績の束から計算書を出せる。 */
     pricingModel?: string;
     /** 条件の料率（百万分率）。実績の料率の初期値になる。 */
@@ -321,6 +323,11 @@ export function ConditionEvents(
     onOpened?.();
     addForm.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [openForSchedule, schedules.length]);
+  // 取引管理の「実績を入れる」から（回の無い条件）：開いた直後に入力を開く。
+  useEffect(() => {
+    if (openOnMount && !openForSchedule) start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openOnMount]);
 
   // テンプレートは文書を作るときにしか要らないので、開くまで取りに行かない。
   useEffect(() => {
@@ -679,7 +686,7 @@ export function ConditionEvents(
 
       {adding && serviceFlow && (
         <div ref={addForm} className="panel-bd" style={{ borderBottom: "1px solid var(--line)" }}>
-          <ServiceEventForm conditionId={conditionId} kind={kind ?? "service"} currency={currency}
+          <ServiceEntry conditionId={conditionId} kind={kind ?? "service"} currency={currency}
             schedules={schedules} initialScheduleId={v.scheduleId ? Number(v.scheduleId) : null}
             matterId={matterId ?? null}
             onDone={() => { setAdding(false); load(); onChanged(); }}
