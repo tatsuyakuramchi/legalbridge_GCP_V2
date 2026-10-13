@@ -114,9 +114,11 @@ export function DocumentDetail(
     onChanged: () => void;
     onEditDraft: (id: number) => void;
     onIssueDraft: (id: number) => void;
+    /** 訂正版を作る（作業テーブルの①へ）。 */
     onReissue: (id: number, no: string | null) => void;
     /** この文書を下敷きに、別の（または同じ）ひな形で次の下書きを作る。 */
-    onDerive: (id: number, templateKey: string) => void;
+    /** 下敷きにして次を作る（作業テーブルの①へ。どの文書を作るかはそこで決める）。 */
+    onDerive: (id: number) => void;
     onVoid: (id: number, no: string | null) => void;
     onStore: (id: number) => void;
     /** この書類から支払を立てる。検収書と利用許諾計算書だけが対象。 */
@@ -137,12 +139,8 @@ export function DocumentDetail(
   // 連携が全部 off（予備系）でも「送る」は出す。送信の口が無くても、相手の確認と
   // CloudSign の状態は手で記録できるので、閉じてしまうと段が進められない。
   const canSend = doc.status === "issued";
-  // 「下敷きに次を作る」のひな形を選んでいる最中。
-  const [deriving, setDeriving] = useState(false);
   // 「送る」を開いているか。決定済みなら既定で開く（次にやることがこれ）。
   const [sending, setSending] = useState(doc.phase === "decided");
-  const [deriveKey, setDeriveKey] = useState("");
-  const pickable = templates.filter((t) => t.category !== "partial");
   // この版を直している最中の下書き。あるあいだは、もう1枚作らせない
   // （発行できるのは1枚だけなので、残りは行き場が無くなる）。
   const pending = versions.find((v) => v.supersedesId === doc.id && v.status === "draft") ?? null;
@@ -256,8 +254,8 @@ export function DocumentDetail(
                   : <button className="btn" disabled={busy}
                             onClick={() => void onPayment(doc.id)}>支払を立てる</button>
               )}
-              <button className="btn" disabled={busy}
-                      onClick={() => { setDeriving((v) => !v); setDeriveKey(""); }}>
+              <button className="btn" disabled={busy} title="この文書を下敷きに、次の書類（発注書のあとの検収書など）を作業テーブルで作る。この文書は残る"
+                      onClick={() => onDerive(doc.id)}>
                 下敷きに次を作る
               </button>
               <button className="btn" disabled={busy}
@@ -277,40 +275,13 @@ export function DocumentDetail(
             )}
           </div>
 
-          {/* 下敷きに次を作る。発注書から検収書、契約書から覚書。前の文書は退かない。 */}
-          {deriving && doc.status === "issued" && (
-            <div className="note stack" style={{ gap: 8 }}>
-              <div>
-                <b>この文書を下敷きに、次の書類を作ります。</b>
-                <span className="faint">
-                  　条件明細・案件・手入力を引き継いだ下書きができます。この文書はそのまま残ります
-                  （訂正版とは違い、退きません）。
-                </span>
-              </div>
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                {pickable.map((t) => (
-                  <button key={t.templateKey} type="button" className="chip"
-                          aria-pressed={deriveKey === t.templateKey}
-                          onClick={() => setDeriveKey(t.templateKey)}>{t.label}</button>
-                ))}
-              </div>
-              <div className="row">
-                <button className="btn primary" disabled={busy || !deriveKey}
-                        onClick={() => { onDerive(doc.id, deriveKey); setDeriving(false); }}>
-                  {deriveKey ? `${pickable.find((t) => t.templateKey === deriveKey)?.label} の下書きを作る` : "ひな形を選んでください"}
-                </button>
-                <button className="btn" onClick={() => setDeriving(false)}>やめる</button>
-              </div>
-            </div>
-          )}
-
-          {doc.status === "issued" && !doc.imported && !deriving && (
+          {doc.status === "issued" && !doc.imported && (
             <div className="faint">
               {pending
                 ? "この版を直している下書きがあります。まだ有効なのはこの版で、"
                   + "下書きを決定した瞬間に入れ替わります。下書きを捨ててもこの版は残ります。"
-                : "直すなら「訂正版を作る」。条件明細も実績も引き継いだ下書きができ、決定した瞬間にこの版と入れ替わります。"
-                  + "次の書類（発注書のあとの検収書など）なら「下敷きに次を作る」。この版はそのまま残ります。"}
+                : "直すなら「訂正版を作る」。作業テーブルで理由を書くと、条件明細も実績も引き継いだ下書きができ、決定した瞬間にこの版と入れ替わります。"
+                  + "次の書類（発注書のあとの検収書など）なら「下敷きに次を作る」。作業テーブルで何を作るか決めます。この版はそのまま残ります。"}
             </div>
           )}
 

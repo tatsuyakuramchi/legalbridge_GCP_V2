@@ -174,7 +174,7 @@ function Refs(
 const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, openNonce, onOpen, onBack, flow, onOpenWorkbench }: {
+  { start, openDocumentId, openNonce, openAsDraft, onOpen, onBack, flow, onOpenWorkbench, onOpenWorkbenchFor }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /** デイリータスクから来たとき、その元の依頼。作った文書を依頼に繋ぐ。 */
               requestId?: number | null;
@@ -204,6 +204,10 @@ export function DocumentsWorkspace(
     flow?: DocFlow | null;
     /** 「新しく文書を作る」の行き先。文書を作るのは作業テーブル（一括も作業テーブルの一括モード）。 */
     onOpenWorkbench?: (bulk?: "orders" | "settled") => void;
+    /** 訂正版・下敷きは作業テーブルの①で決める。文書と入り方を渡す。 */
+    onOpenWorkbenchFor?: (documentId: number, mode: "revise" | "derive") => void;
+    /** 開く文書を、詳細ではなく「直す」状態（フォーム）で開く（作業テーブルで作った訂正版・下敷きの下書き）。 */
+    openAsDraft?: boolean;
   } = {}
 ) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -374,6 +378,7 @@ export function DocumentsWorkspace(
   useEffect(() => {
     if (!openDocumentId) return;
     setSelected(openDocumentId);
+    if (openAsDraft) void openDraft(openDocumentId);
     // openNonce も見る。一覧へ戻ってから同じ文書を開き直すと ID が変わらず、
     // ここが走らないので一覧のままになっていた。
   }, [openDocumentId, openNonce]);
@@ -1014,24 +1019,6 @@ export function DocumentsWorkspace(
     finally { setBusy(false); }
   }
 
-  /**
-   * 下敷きにして次を作る。発注書から検収書、契約書から覚書、同じ発注のもう1枚。
-   * 前の文書は退かない。できた下書きをそのままフォームに載せる。
-   */
-  async function derive(id: number, templateKey: string) {
-    setBusy(true); setError(null); setIssued(null);
-    try {
-      const r = await api.post<{ id: number }>(`/documents/${id}/derive`, { templateKey });
-      await reload();
-      await openDraft(r.id);
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
-  }
-
-  /**
-   * 下書きを上のフォームに載せる。ひな形・条件・手入力をそのまま引き継ぐ。
-   * 作り直した下書きを直して発行するには、ここを通る。
-   */
   async function openDraft(id: number) {
     setError(null); setIssued(null); setBusy(true);
     try {
@@ -1914,8 +1901,8 @@ export function DocumentsWorkspace(
               onOpen={onOpen} onChanged={() => void reload()}
               onEditDraft={(id) => void openDraft(id)}
               onIssueDraft={(id) => void issueDraft(id)}
-              onReissue={(id, no) => void reissue(id, no)}
-              onDerive={(id, key) => void derive(id, key)}
+              onReissue={(id, no) => (onOpenWorkbenchFor ? onOpenWorkbenchFor(id, "revise") : void reissue(id, no))}
+              onDerive={(id) => (onOpenWorkbenchFor ? onOpenWorkbenchFor(id, "derive") : setError("下敷きにして次を作るのは作業テーブルからです"))}
               onVoid={(id, no) => void voidDocument(id, no)}
               onStore={(id) => void store(id)}
               isAdmin={me?.user?.role === "admin" || me?.user === undefined}

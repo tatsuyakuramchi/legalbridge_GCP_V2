@@ -23,7 +23,7 @@ import { conditionMatches, inferPattern, MAIN_DOCS, MASTER_DOC, SETTLEMENT_DOC, 
  */
 
 export type PrepareMode = "create" | "existing" | "external" | "later" | "skip";
-export type CandidateRole = "master" | "main" | "settlement";
+export type CandidateRole = "master" | "main" | "settlement" | "revise";
 
 export interface ExistingDoc {
   id: number; documentNo: string | null; title: string | null; templateLabel: string | null;
@@ -49,7 +49,16 @@ export interface WorkbenchCandidate {
 }
 
 export interface WorkbenchContext {
-  kind: "task" | "matter" | "party" | "round" | "conditions";
+  kind: "task" | "matter" | "party" | "round" | "conditions" | "document";
+  /**
+   * 文書の画面から来たとき（訂正版を作る・下敷きにして次を作る）。
+   *   revise … この文書を退かせて入れ替える訂正版（理由が要る）
+   *   derive … この文書を下敷きに次の文書（条件・案件・手入力を引き継ぐ。この文書は残る）
+   */
+  source?: { documentId: number; documentNo: string | null; title: string | null; templateKey: string | null;
+             templateLabel: string | null; status: string; mode: "revise" | "derive";
+             /** この版を直している下書きがもうあるなら、その下書き（訂正版を二重に作らせない）。 */
+             pendingDraftId: number | null } | null;
   /** 取引管理の回から来たとき。決済文書に渡す実績と、戻る先。 */
   round?: { conditionId: number; conditionNo: string | null; conditionName: string;
             scheduleId: number | null; eventId: number | null; roundLabel: string | null } | null;
@@ -89,6 +98,9 @@ export interface PlanQuery {
   conditionIds?: number[];
   /** 型を手で決めたとき（相手先だけから入って推せないとき）。 */
   pattern?: WorkbenchPattern | null;
+  /** 文書の画面から（訂正版・下敷き）。 */
+  documentId?: number | null;
+  documentMode?: "revise" | "derive" | null;
 }
 
 const isLive = (a: AgreementRow, today: string) =>
@@ -112,7 +124,36 @@ export class WorkbenchPlanService {
     let conditions: ConditionSummary[] = [];
     let linked: ExistingDoc[] = [];
 
-    if (query.conditionIds?.length) {
+    if (query.documentId) {
+      // 文書の画面から：訂正版を作る／下敷きにして次を作る。文書の条件・案件・相手先がそのまま文脈。
+      const doc = await this.deps.documents.find(query.documentId);
+      if (!doc) throw new DomainError("NOT_FOUND", `文書 ${query.documentId} が見つかりません`);
+      const mode = query.documentMode === "derive" ? "derive" : "revise";
+      if (mode === "revise" && doc.status !== "issued") throw new DomainError("VALIDATION", "訂正版を作れるのは決定済みの文書だけです");
+      if (mode === "revise" && doc.imported) throw new DomainError("VALIDATION", "外で作った文書に訂正版は作れません（登録し直してください）");
+      const ids = doc.conditions.map((c) => c.id);
+      conditions = ids.length ? await this.conditionsById(ids) : [];
+      const matterRow = doc.matterId ? await this.deps.matters.find(doc.matterId) : null;
+      const partyRow = (await this.database.query(
+        "SELECT counterparty_id FROM v_document_display WHERE document_id = $1", [doc.id])).rows[0] as { counterparty_id: unknown } | undefined;
+      const partyId = conditions[0]?.counterparty?.id ?? (partyRow?.counterparty_id ? Number(partyRow.counterparty_id) : null);
+      const party = partyId ? await this.party(partyId) : null;
+      const pending = (await this.database.query(
+        "SELECT id FROM documents WHERE supersedes_id = $1 AND status = 'draft' ORDER BY id DESC LIMIT 1", [doc.id])).rows[0] as { id: unknown } | undefined;
+      const pattern = query.pattern ?? inferPattern(conditions, { kind: matterRow?.kind ?? null, businessLine: matterRow?.businessLine ?? null });
+      ctx = {
+        kind: "document", requestId: null, requestNo: null, taskId: null,
+        matterId: matterRow?.id ?? null, matterNo: matterRow?.matterNo ?? null,
+        title: `${mode === "revise" ? "訂正版" : "下敷きに次を作る"}：${doc.documentNo ?? `#${doc.id}`}${doc.title ? `　${doc.title}` : ""}`,
+        partyId, partyName: party?.name ?? doc.counterparty ?? null, partyKind: party?.kind ?? null,
+        pattern, setDomain: SET_DOMAIN[pattern],
+        workIds: [...new Set(conditions.map((c) => c.work?.id).filter((x): x is number => Boolean(x)))],
+        works: uniqWorks(conditions),
+        source: { documentId: doc.id, documentNo: doc.documentNo, title: doc.title, templateKey: doc.templateKey,
+                  templateLabel: doc.templateLabel, status: doc.status, mode, pendingDraftId: pending ? Number(pending.id) : null }
+      };
+      linked = [toExisting(doc)];
+    } else if (query.conditionIds?.length) {
       // 条件を選んだ状態で来た（条件明細・作品・契約・案件の「文書を作る」）。
       conditions = await this.deps.conditions.findMany(query.conditionIds);
       if (!conditions.length) throw new DomainError("NOT_FOUND", "選んだ条件が見つかりません");
@@ -218,7 +259,7 @@ export class WorkbenchPlanService {
 
     const mine = conditions.filter((c) => conditionMatches(ctx.pattern, c));
     const others = conditions.filter((c) => !mine.includes(c));
-    const candidates = await this.candidates(ctx, today);
+    const candidates = this.fromDocument(ctx, await this.candidates(ctx, today));
     return { ctx, conditions: mine, otherConditions: others, candidates, linkedDocuments: linked };
   }
 
@@ -276,6 +317,46 @@ export class WorkbenchPlanService {
       });
     }
     return out;
+  }
+
+  /**
+   * 文書の画面から来たときの候補。
+   *   訂正版 … 先頭に「この文書の訂正版」（ひな形は元の文書のもの。作る）。ほかの候補は今回は用意しない
+   *   下敷き … 元の文書と同じ種類は「既にある」（元の文書）、決済文書は「作る・いま」（下敷きから作る）。
+   *            基本契約は従来どおり（結んであれば既にある）
+   */
+  private fromDocument(ctx: WorkbenchContext, base: WorkbenchCandidate[]): WorkbenchCandidate[] {
+    const src = ctx.source;
+    if (!src) return base;
+    const tplLabel = src.templateLabel ?? src.templateKey ?? "文書";
+    if (src.mode === "revise") {
+      const revise: WorkbenchCandidate = {
+        id: "revise", role: "revise", templateKey: src.templateKey ?? "", options: [{ key: src.templateKey ?? "", label: tplLabel }],
+        label: `${tplLabel} の訂正版`,
+        why: src.pendingDraftId
+          ? "この版を直している下書きがもうある（二重には作らない。下書きを開いて続ける）"
+          : "条件・実績・手入力を引き継いだ下書きを作り、決定した瞬間にこの版と入れ替わる。理由が要る",
+        needed: "now", suggested: src.pendingDraftId ? "skip" : "create",
+        existing: src.pendingDraftId ? [{ id: src.pendingDraftId, documentNo: null, title: "訂正版の下書き", templateLabel: tplLabel,
+                                          status: "draft", phase: "draft", issuedAt: null, counterparty: ctx.partyName }] : [],
+        agreements: []
+      };
+      return [revise, ...base.map((c) => ({ ...c, suggested: "skip" as PrepareMode, why: `${c.why}（訂正版と一緒に要るときだけ）` }))];
+    }
+    // derive
+    const source: ExistingDoc = { id: src.documentId, documentNo: src.documentNo, title: src.title, templateLabel: src.templateLabel,
+                                  status: src.status, phase: src.status === "issued" ? "decided" : src.status, issuedAt: null, counterparty: ctx.partyName };
+    return base.map((c) => {
+      const same = src.templateKey !== null && c.options.some((o) => o.key === src.templateKey);
+      if (same) {
+        return { ...c, existing: [source, ...c.existing.filter((d) => d.id !== source.id)], suggested: "existing" as PrepareMode,
+                 why: "下敷きにする文書そのもの（もう 1 枚同じ種類を作るなら「ひな形で作る」。下敷きから作る）" };
+      }
+      if (c.role === "settlement") {
+        return { ...c, needed: "now" as const, suggested: "create" as PrepareMode, why: `${src.documentNo ?? "この文書"} を下敷きに作る（条件・案件・手入力を引き継ぐ）` };
+      }
+      return c;
+    });
   }
 
   private async requestIdOfTask(taskId: number): Promise<number> {

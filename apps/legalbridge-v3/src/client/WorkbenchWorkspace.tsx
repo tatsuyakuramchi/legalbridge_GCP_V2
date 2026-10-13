@@ -34,7 +34,9 @@ export type WorkbenchEntry =
   /** 条件明細・作品・契約・案件の「文書を作る」から（選んだ条件で。ひな形が決まっていればそれを既定に）。 */
   | { kind: "conditions"; conditionIds: number[]; eventIds?: number[]; matterId?: number | null; requestId?: number | null; templateKey?: string | null }
   /** 一括モード：CSV から発注書をまとめて作る／検収済みをまとめて入れる／契約書の無い相手先にまとめて起こす。 */
-  | { kind: "bulk"; mode: BulkMode; matterId?: number | null };
+  | { kind: "bulk"; mode: BulkMode; matterId?: number | null }
+  /** 文書の画面から：訂正版を作る（revise）／下敷きにして次を作る（derive）。 */
+  | { kind: "document"; documentId: number; mode: "revise" | "derive" };
 
 export type BulkMode = "orders" | "settled" | "missing";
 const BULK_LABEL: Record<BulkMode, string> = {
@@ -53,6 +55,10 @@ export interface WorkUnit {
   eventIds?: number[];
   /** set のとき：基本契約のひな形と本体のひな形。 */
   masterKey?: string; masterLabel?: string; mainOptions?: Array<{ key: string; label: string }>;
+  /** 訂正版。退かせる元の文書（理由は state.reason）。 */
+  revise?: { documentId: number; documentNo: string | null };
+  /** 下敷きにする文書（条件・案件・手入力を引き継いだ下書きを作ってから文書の画面へ）。 */
+  deriveFrom?: number;
 }
 export interface UnitResult {
   status: "issued" | "draft" | "registered" | "linked";
@@ -74,6 +80,8 @@ export interface WorkbenchState {
   /** ①で「既にある」を選んで繋いだ文書。 */
   linked: Array<{ label: string; documentId: number }>;
   results: Record<string, UnitResult>;
+  /** 訂正版の理由（文書から入ったとき）。 */
+  reason?: string;
 }
 
 export const WORKBENCH_STEPS = ["要る文書を決める", "作る・登録する", "まとめ"];
@@ -105,12 +113,14 @@ const searchAllDocuments = async (q: string): Promise<SearchOption[]> => {
 };
 
 export function WorkbenchWorkspace(
-  { state, onState, onCompose, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition, onOpenDeals }: {
+  { state, onState, onCompose, onOpenDraft, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition, onOpenDeals }: {
     /** null なら入口（相手先を選ぶ）。 */
     state: WorkbenchState | null;
     onState: (next: WorkbenchState | null) => void;
     /** 1 枚だけ作る。文書の画面を流れの帯つきで開く（決定したらこの画面へ戻る）。 */
     onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
+    /** 訂正版・下敷きの下書きを作ったあと、その下書きを文書の画面（流れの帯つき・直す状態）で開く。 */
+    onOpenDraft?: (unit: WorkUnit, documentId: number) => void;
     onOpenDocument: (id: number) => void;
     onOpenTask: (taskId: number) => void;
     onOpenMatter: (matterId: number) => void;
@@ -126,7 +136,7 @@ export function WorkbenchWorkspace(
                           onOpenDocument={onOpenDocument} onOpenMatter={onOpenMatter} onClose={() => onState(null)} />;
   }
   return <Workbench key={entryKey(state.entry)} state={state} onState={onState} readOnly={readOnly}
-                    onCompose={onCompose} onOpenDocument={onOpenDocument} onOpenTask={onOpenTask}
+                    onCompose={onCompose} onOpenDraft={onOpenDraft} onOpenDocument={onOpenDocument} onOpenTask={onOpenTask}
                     onOpenMatter={onOpenMatter} onOpenCondition={onOpenCondition} onOpenDeals={onOpenDeals} />;
 }
 
@@ -135,6 +145,7 @@ const entryKey = (e: WorkbenchEntry) =>
     : e.kind === "round" ? `r${e.conditionId}-${e.scheduleId ?? 0}-${e.eventId ?? 0}`
     : e.kind === "conditions" ? `c${e.conditionIds.join(".")}-${e.matterId ?? 0}-${e.templateKey ?? ""}`
     : e.kind === "bulk" ? `b${e.mode}-${e.matterId ?? 0}`
+    : e.kind === "document" ? `d${e.documentId}-${e.mode}`
     : `p${e.partyId}-${(e.workIds ?? []).join(".")}`;
 
 /**
@@ -211,9 +222,10 @@ function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
 }
 
 function Workbench(
-  { state, onState, readOnly, onCompose, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition, onOpenDeals }: {
+  { state, onState, readOnly, onCompose, onOpenDraft, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition, onOpenDeals }: {
     state: WorkbenchState; onState: (next: WorkbenchState | null) => void; readOnly: boolean;
     onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
+    onOpenDraft?: (unit: WorkUnit, documentId: number) => void;
     onOpenDocument: (id: number) => void; onOpenTask: (taskId: number) => void; onOpenMatter: (matterId: number) => void;
     onOpenCondition: (conditionId: number) => void; onOpenDeals?: () => void;
   }
@@ -240,6 +252,7 @@ function Workbench(
       if (e.matterId) q.set("matterId", String(e.matterId));
       if (e.requestId) q.set("requestId", String(e.requestId));
     }
+    if (e.kind === "document") { q.set("documentId", String(e.documentId)); q.set("documentMode", e.mode); }
     if (e.kind === "round") {
       q.set("conditionId", String(e.conditionId));
       if (e.scheduleId) q.set("scheduleId", String(e.scheduleId));
@@ -310,7 +323,10 @@ function Workbench(
                                        templateKey: key(c.id), conditionIds: c.role === "master" ? [] : conditionIds,
                                        // 決済文書は、その回の実績を渡す（納品日・検収日・数量が本文に入る）。
                                        eventIds: c.role === "settlement"
-                                         ? (ctx?.round?.eventId ? [ctx.round.eventId] : e.kind === "conditions" ? (e.eventIds ?? []) : []) : [] });
+                                         ? (ctx?.round?.eventId ? [ctx.round.eventId] : e.kind === "conditions" ? (e.eventIds ?? []) : []) : [],
+                                       // 文書から入ったとき：訂正版は元の文書を退かせる。下敷きは元の文書から下書きを起こす（基本契約書は除く）。
+                                       ...(c.role === "revise" && ctx?.source ? { revise: { documentId: ctx.source.documentId, documentNo: ctx.source.documentNo } } : {}),
+                                       ...(e.kind === "document" && e.mode === "derive" && c.role !== "master" ? { deriveFrom: e.documentId } : {}) });
       if (m === "external") units.push({ key: c.id, kind: "external", label: c.label });
     }
     for (const t of state.extras) {
@@ -352,9 +368,10 @@ function Workbench(
   const back = () => (e.kind === "task" ? onOpenTask(e.taskId) : e.kind === "matter" ? onOpenMatter(e.matterId)
     : e.kind === "round" ? (onOpenDeals ? onOpenDeals() : onOpenCondition(e.conditionId))
     : e.kind === "conditions" ? (e.matterId ? onOpenMatter(e.matterId) : onOpenCondition(e.conditionIds[0]))
+    : e.kind === "document" ? onOpenDocument(e.documentId)
     : onState(null));
   const backLabel = e.kind === "task" ? "作業に戻る" : e.kind === "matter" ? "案件に戻る" : e.kind === "round" ? "取引管理に戻る"
-    : e.kind === "conditions" ? (e.matterId ? "案件に戻る" : "条件明細に戻る") : "相手先を選び直す";
+    : e.kind === "conditions" ? (e.matterId ? "案件に戻る" : "条件明細に戻る") : e.kind === "document" ? "文書に戻る" : "相手先を選び直す";
 
   return (
     <section className="stack">
@@ -363,7 +380,7 @@ function Workbench(
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <b style={{ fontSize: 12.5 }}>作業テーブル</b>
           {ctx && (<>
-            <span className="tag accent">{ctx.kind === "task" ? "デイリータスク" : ctx.kind === "matter" ? "案件" : ctx.kind === "round" ? "取引管理" : ctx.kind === "conditions" ? "条件明細" : "相手先"}</span>
+            <span className="tag accent">{ctx.kind === "task" ? "デイリータスク" : ctx.kind === "matter" ? "案件" : ctx.kind === "round" ? "取引管理" : ctx.kind === "conditions" ? "条件明細" : ctx.kind === "document" ? "文書" : "相手先"}</span>
             <span><b>{ctx.title}</b></span>
             {ctx.round && <span className="code faint">{ctx.round.conditionNo ?? ""} {ctx.round.roundLabel ?? ""}{ctx.round.eventId ? "・実績あり" : ""}</span>}
             {!ctx.round && (ctx.requestNo ?? ctx.matterNo) && <span className="code faint">{ctx.requestNo ?? ctx.matterNo}</span>}
@@ -401,6 +418,7 @@ function Workbench(
         <WorkStep plan={plan} state={state} agreements={agreements} channels={channels} isAdmin={isAdmin}
                   onDone={done} onBackToPick={() => patch({ step: "pick" })}
                   onComposeUnit={(u) => onCompose(u, { conditionIds: u.conditionIds ?? conditionIds, eventIds: u.eventIds ?? [], matterId, requestId, templateKey: u.templateKey ?? "" })}
+                  onOpenDraft={(u, id) => (onOpenDraft ? onOpenDraft(u, id) : onOpenDocument(id))}
                   onOpenDocument={onOpenDocument} />
       )}
 
@@ -431,6 +449,8 @@ function PickStep(
   const anything = (counts.create ?? 0) + (counts.existing ?? 0) + (counts.external ?? 0) + extrasN > 0;
   const bundle = Boolean(ctx.setDomain) && plan.candidates.some((c) => c.id === "master" && mode(c) === "create")
     && plan.candidates.some((c) => c.id === "main" && mode(c) === "create");
+  /** 訂正版を作るのに理由が無い。 */
+  const reasonMissing = plan.candidates.some((c) => c.role === "revise" && mode(c) === "create") && !(state.reason ?? "").trim();
 
   return (
     <div className="panel">
@@ -466,7 +486,7 @@ function PickStep(
         )}
         {plan.linkedDocuments.length > 0 && (
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-            <span className="faint">この{ctx.kind === "task" ? "作業" : ctx.kind === "round" || ctx.kind === "conditions" ? "条件" : "案件"}に既に繋がっている文書：</span>
+            <span className="faint">{ctx.kind === "document" ? "元の文書：" : `この${ctx.kind === "task" ? "作業" : ctx.kind === "round" || ctx.kind === "conditions" ? "条件" : "案件"}に既に繋がっている文書：`}</span>
             {plan.linkedDocuments.map((d) => (
               <button key={d.id} className="linky" onClick={() => onOpenDocument(d.id)}>
                 <span className="code">{d.documentNo ?? `#${d.id}`}</span> {d.templateLabel ?? d.title ?? ""}
@@ -481,7 +501,8 @@ function PickStep(
 
         {plan.candidates.map((c) => {
           const m = mode(c);
-          const modes: PrepareMode[] = c.role === "settlement" ? ["later", "create", "existing", "external", "skip"] : ["create", "existing", "external", "skip"];
+          const modes: PrepareMode[] = c.role === "revise" ? ["create", "skip"]
+            : c.role === "settlement" ? ["later", "create", "existing", "external", "skip"] : ["create", "existing", "external", "skip"];
           const key = state.templateKeys[c.id] ?? c.templateKey;
           return (
             <div key={c.id} className="stack" style={{ gap: 8, padding: "12px 14px", border: "1px solid var(--line)", borderRadius: 8,
@@ -542,6 +563,13 @@ function PickStep(
               )}
               {m === "external" && <span className="faint">{MODE_HINT.external}。②でファイルを付けて登録します</span>}
               {m === "later" && <span className="faint">{MODE_HINT.later}</span>}
+              {c.role === "revise" && m === "create" && (
+                <label className="field"><span>訂正の理由</span>
+                  <input value={state.reason ?? ""} placeholder="例: 単価の誤り。¥120,000 → ¥125,000" aria-label="訂正の理由"
+                         onChange={(ev) => patch({ reason: ev.target.value })} />
+                  <small className="faint">記録に残ります。決定した瞬間に元の版と入れ替わり、下書きのまま捨てれば元の版が残ります</small>
+                </label>
+              )}
             </div>
           );
         })}
@@ -576,8 +604,9 @@ function PickStep(
         </div>
 
         <div className="row" style={{ gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn primary" disabled={busy || !anything} onClick={onStart}>
-            {anything ? `進める（作る ${(counts.create ?? 0) + extrasN}・登録 ${counts.external ?? 0}・繋ぐ ${counts.existing ?? 0}）` : "文書を選んでください"}
+          <button className="btn primary" disabled={busy || !anything || reasonMissing} onClick={onStart}>
+            {!anything ? "文書を選んでください" : reasonMissing ? "訂正の理由を書いてください"
+              : `進める（作る ${(counts.create ?? 0) + extrasN}・登録 ${counts.external ?? 0}・繋ぐ ${counts.existing ?? 0}）`}
           </button>
           <span className="faint">
             {bundle ? "基本契約書と本体は 1 つのフォームでまとめて作ります。" : ""}
@@ -592,16 +621,39 @@ function PickStep(
 }
 
 function WorkStep(
-  { plan, state, agreements, channels, isAdmin, onDone, onBackToPick, onComposeUnit, onOpenDocument }: {
+  { plan, state, agreements, channels, isAdmin, onDone, onBackToPick, onComposeUnit, onOpenDraft, onOpenDocument }: {
     plan: WorkbenchPlan; state: WorkbenchState;
     agreements: Array<{ id: number; agreementNo: string | null; title: string; status: string; kind: string }>;
     channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>; isAdmin: boolean;
     onDone: (key: string, result: UnitResult) => void; onBackToPick: () => void;
-    onComposeUnit: (u: WorkUnit) => void; onOpenDocument: (id: number) => void;
+    onComposeUnit: (u: WorkUnit) => void; onOpenDraft: (u: WorkUnit, documentId: number) => void; onOpenDocument: (id: number) => void;
   }
 ) {
   const ctx = plan.ctx;
   const current = state.units.find((u) => !state.results[u.key]) ?? null;
+  const [making, setMaking] = useState(false);
+  const [makeError, setMakeError] = useState<string | null>(null);
+  /** 訂正版の下書きを作る（元の版はまだ有効。決定した瞬間に入れ替わる）。 */
+  async function makeRevision(u: WorkUnit) {
+    if (!u.revise) return;
+    setMaking(true); setMakeError(null);
+    try {
+      const r = await api.post<{ id: number }>(`/documents/${u.revise.documentId}/reissue`, { reason: (state.reason ?? "").trim() });
+      onOpenDraft(u, r.id);
+    } catch (x) { setMakeError(x instanceof ApiError ? x.message : String(x)); }
+    finally { setMaking(false); }
+  }
+  /** 下敷きから下書きを作る（元の文書は残る）。 */
+  async function makeDerived(u: WorkUnit) {
+    if (!u.deriveFrom) return;
+    setMaking(true); setMakeError(null);
+    try {
+      const r = await api.post<{ id: number }>(`/documents/${u.deriveFrom}/derive`,
+        { templateKey: u.templateKey ?? null, conditionIds: u.conditionIds?.length ? u.conditionIds : undefined });
+      onOpenDraft(u, r.id);
+    } catch (x) { setMakeError(x instanceof ApiError ? x.message : String(x)); }
+    finally { setMaking(false); }
+  }
   const idx = current ? state.units.indexOf(current) : state.units.length;
   const statusOf = (u: WorkUnit) => {
     const r = state.results[u.key];
@@ -623,7 +675,7 @@ function WorkStep(
           {state.units.map((u) => (
             <div key={u.key} style={{ padding: "8px 10px", borderRadius: 6, border: `1px solid ${u === current ? "var(--accent)" : "var(--line)"}`,
                                        background: u === current ? "var(--accent-soft)" : "var(--surface)" }}>
-              <div className="faint">{u.kind === "set" ? "ひな形で作る（まとめて）" : u.kind === "single" ? "ひな形で作る" : "外の文書を登録"}</div>
+              <div className="faint">{u.kind === "set" ? "ひな形で作る（まとめて）" : u.revise ? "訂正版を作る" : u.deriveFrom ? "下敷きから作る" : u.kind === "single" ? "ひな形で作る" : "外の文書を登録"}</div>
               <b>{u.label}</b>
               <div className="faint" style={{ color: state.results[u.key] ? "var(--ok)" : undefined }}>
                 {statusOf(u)}
@@ -638,7 +690,31 @@ function WorkStep(
       </nav>
 
       <div style={{ flex: "999 1 520px", minWidth: 0 }}>
-        {current?.kind === "single" && (
+        {current?.kind === "single" && (current.revise || current.deriveFrom) && (
+          <div className="panel">
+            <div className="panel-hd"><h2>{current.label}</h2>
+              <span className="tag accent">{current.revise ? "訂正版を作る" : "下敷きから作る"}</span>
+              <span className="faint">{current.revise ? `元の版：${current.revise.documentNo ?? `#${current.revise.documentId}`}` : `下敷き：${ctx.source?.documentNo ?? `#${current.deriveFrom}`}`}</span></div>
+            <div className="panel-bd stack" style={{ gap: 10 }}>
+              <span>
+                {current.revise
+                  ? "条件・実績・手入力を引き継いだ下書きを作って、文書の画面（この作業の帯つき）で直します。決定した瞬間に元の版と入れ替わります。下書きのまま捨てても元の版は残ります。"
+                  : "下敷きの条件・案件・手入力を引き継いだ下書きを作って、文書の画面（この作業の帯つき）で直して決定します。下敷きの文書はそのまま残ります。"}
+              </span>
+              {current.revise && <span className="faint">理由：{(state.reason ?? "").trim() || "（未記入。①で書いてください）"}</span>}
+              {makeError && <div className="alert">{makeError}</div>}
+              <div className="row" style={{ gap: 8 }}>
+                <button className="btn primary" disabled={making || (Boolean(current.revise) && !(state.reason ?? "").trim())}
+                        onClick={() => void (current.revise ? makeRevision(current) : makeDerived(current))}>
+                  {making ? "作っています…" : current.revise ? "訂正版の下書きを作って直す" : "下書きを作って直す"}
+                </button>
+                <button className="btn" onClick={() => onDone(current.key, { status: "draft", documentIds: [] })}>この文書は飛ばして次へ</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {current?.kind === "single" && !current.revise && !current.deriveFrom && (
           <div className="panel">
             <div className="panel-hd"><h2>{current.label}</h2><span className="tag accent">ひな形で作る</span>
               <span className="faint">ひな形はここで決まっている（文書の画面で選び直さない）</span></div>

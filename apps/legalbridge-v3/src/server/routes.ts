@@ -272,14 +272,18 @@ export function createRoutes(database: Transactable) {
       scheduleId: z.coerce.number().int().positive().optional(),
       eventId: z.coerce.number().int().positive().optional(),
       conditionIds: z.string().optional(),
-      pattern: z.enum(["game_in", "game_out", "pub_in", "pub_out", "service", "other"]).optional()
+      pattern: z.enum(["game_in", "game_out", "pub_in", "pub_out", "service", "other"]).optional(),
+      // 文書の画面から（訂正版・下敷き）。
+      documentId: z.coerce.number().int().positive().optional(),
+      documentMode: z.enum(["revise", "derive"]).optional()
     }).parse(req.query);
     res.json(await workbench.plan({
       taskId: q.taskId ?? null, requestId: q.requestId ?? null, matterId: q.matterId ?? null, partyId: q.partyId ?? null,
       conditionId: q.conditionId ?? null, scheduleId: q.scheduleId ?? null, eventId: q.eventId ?? null,
       conditionIds: String(q.conditionIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
       workIds: String(q.workIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
-      pattern: q.pattern ?? null
+      pattern: q.pattern ?? null,
+      documentId: q.documentId ?? null, documentMode: q.documentMode ?? null
     }));
   }));
   // 取引管理：条件明細 × 回 を 1 本の表で（予定 → 実績 → 決済文書 → 支払）。

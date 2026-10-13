@@ -85,6 +85,7 @@ const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
     : a.kind === "round" ? a.conditionId === (b as typeof a).conditionId && a.scheduleId === (b as typeof a).scheduleId && a.eventId === (b as typeof a).eventId
     : a.kind === "conditions" ? a.conditionIds.join(",") === (b as typeof a).conditionIds.join(",") && (a.templateKey ?? null) === ((b as typeof a).templateKey ?? null)
     : a.kind === "bulk" ? a.mode === (b as typeof a).mode && (a.matterId ?? null) === ((b as typeof a).matterId ?? null)
+    : a.kind === "document" ? a.documentId === (b as typeof a).documentId && a.mode === (b as typeof a).mode
     : a.partyId === (b as typeof a).partyId);
 
 export function App() {
@@ -239,7 +240,7 @@ export function App() {
    * 押すたびに増える番号を添えて、同じ文書でも合図が飛ぶようにする。
    */
   const [openDocument, setOpenDocument] =
-    useState<{ id: number; nonce: number } | undefined>();
+    useState<{ id: number; nonce: number; edit?: boolean } | undefined>();
   // 条件は複数受ける。発注書のように1枚で2件以上の条件を載せる書類があるので、
   // 案件から来たときはその案件の条件をまとめて選んだ状態にする。
   // 案件も受ける。案件や条件の画面から作った文書は、その案件に載せる。
@@ -289,13 +290,13 @@ export function App() {
   const startSettledImport = (matterId: number) => startWorkbench({ kind: "bulk", mode: "settled", matterId });
 
   /** 文書の画面へ移って、その文書を開く。流れの途中（取引の「開いて送る」）なら帯を付ける。 */
-  const openDocumentAt = (documentId: number, back: DocBack | null = null, flow: DocFlow | null = null) => {
+  const openDocumentAt = (documentId: number, back: DocBack | null = null, flow: DocFlow | null = null, edit = false) => {
     setDocBack(back);
     setDocFlow(flow);
     setCompose(null);
     setFocus(null);
     setConditionId(undefined);
-    setOpenDocument((prev) => ({ id: documentId, nonce: (prev?.nonce ?? 0) + 1 }));
+    setOpenDocument((prev) => ({ id: documentId, nonce: (prev?.nonce ?? 0) + 1, edit }));
     setView("documents");
   };
 
@@ -418,6 +419,8 @@ export function App() {
             onOpenDeals={() => { setFocus(null); setView("deals"); }}
             onCompose={(unit, a) => startCompose(a.conditionIds, a.eventIds, a.matterId, a.templateKey || null, null, null, a.requestId,
                                                  workbenchFlow(unit.key, unit.label))}
+            // 訂正版・下敷きの下書きは、文書の画面を「直す」状態で開く。決定したらこの単位を済みにする。
+            onOpenDraft={(unit, id) => openDocumentAt(id, null, workbenchFlow(unit.key, unit.label), true)}
             onOpenDocument={(id) => openDocumentAt(id, null, workbench
               ? { title: "作業テーブル", steps: WORKBENCH_STEPS, step: 2, back: { label: "作業テーブル", go: () => { setFocus(null); setView("workbench"); } } }
               : null)}
@@ -463,11 +466,13 @@ export function App() {
             key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}r${compose.supersedesId ?? ""}`
                           : openDocument ? `d${openDocument.id}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument?.id}
-            openNonce={openDocument?.nonce}
+            openNonce={openDocument?.nonce} openAsDraft={openDocument?.edit}
             onBack={docBack ? { label: docBack.label, go: () => goBack(docBack) } : undefined}
             flow={docFlow}
             // 新しく作るのは作業テーブルで（相手先を選んで始める）。一括も作業テーブルの一括モードで。
             onOpenWorkbench={(mode) => { if (mode) startWorkbench({ kind: "bulk", mode }); else { setWorkbench(null); setFocus(null); setView("workbench"); } }}
+            // 訂正版・下敷きは作業テーブルの①で決める（文書の画面はそこへ送るだけ）。
+            onOpenWorkbenchFor={(documentId, mode) => startWorkbench({ kind: "document", documentId, mode })}
             onOpen={openEntity} />
         )}
         {view === "agreements" && (
