@@ -370,7 +370,7 @@ function Workbench(
     : e.kind === "conditions" ? (e.matterId ? onOpenMatter(e.matterId) : onOpenCondition(e.conditionIds[0]))
     : e.kind === "document" ? onOpenDocument(e.documentId)
     : onState(null));
-  const backLabel = e.kind === "task" ? "作業に戻る" : e.kind === "matter" ? "案件に戻る" : e.kind === "round" ? "取引管理に戻る"
+  const backLabel = e.kind === "task" ? "やることの一覧に戻る" : e.kind === "matter" ? "案件に戻る" : e.kind === "round" ? "取引管理に戻る"
     : e.kind === "conditions" ? (e.matterId ? "案件に戻る" : "条件明細に戻る") : e.kind === "document" ? "文書に戻る" : "相手先を選び直す";
 
   return (
@@ -424,6 +424,7 @@ function Workbench(
 
       {plan && state.step === "done" && (
         <DoneStep state={state} ctxNo={ctx?.requestNo ?? ctx?.matterNo ?? null} onOpenDocument={onOpenDocument}
+                  taskId={ctx?.taskId ?? null} readOnly={readOnly}
                   onBack={back} backLabel={backLabel} onRestart={() => onState(newWorkbenchState(state.entry))} />
       )}
     </section>
@@ -767,11 +768,22 @@ function WorkStep(
 }
 
 function DoneStep(
-  { state, ctxNo, onOpenDocument, onBack, backLabel, onRestart }: {
+  { state, ctxNo, taskId, readOnly, onOpenDocument, onBack, backLabel, onRestart }: {
     state: WorkbenchState; ctxNo: string | null; onOpenDocument: (id: number) => void;
+    /** デイリータスクから来たとき。この作業の状態をここで変えて往復を閉じる。 */
+    taskId?: number | null; readOnly?: boolean;
     onBack: () => void; backLabel: string; onRestart: () => void;
   }
 ) {
+  const [taskBusy, setTaskBusy] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
+  async function setTaskStatus(status: "doing" | "blocked" | "done") {
+    if (!taskId) return;
+    setTaskBusy(true); setTaskError(null);
+    try { await api.patch(`/tasks/${taskId}`, { status }); onBack(); }
+    catch (x) { setTaskError(x instanceof ApiError ? x.message : String(x)); }
+    finally { setTaskBusy(false); }
+  }
   const ids = [...state.linked.map((l) => l.documentId), ...Object.values(state.results).flatMap((r) => r.documentIds)];
   const [nos, setNos] = useState<Record<number, { documentNo: string | null; status: string }>>({});
   useEffect(() => {
@@ -813,8 +825,18 @@ function DoneStep(
             ))}
           </tbody>
         </table>
+        {taskId && !readOnly && (
+          <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span className="faint">この作業（デイリータスク）の状態：</span>
+            <button className="btn btn-sm primary" disabled={taskBusy} onClick={() => void setTaskStatus("done")}>完了にして一覧へ</button>
+            <button className="btn btn-sm" disabled={taskBusy} onClick={() => void setTaskStatus("blocked")}>待ちにして一覧へ</button>
+            <button className="btn btn-sm" disabled={taskBusy} onClick={() => void setTaskStatus("doing")}>作業中のまま一覧へ</button>
+            {taskError && <span className="alert">{taskError}</span>}
+            <span className="faint">支払まで済めば自動で完了になるので、送るだけなら「作業中のまま」でよい</span>
+          </div>
+        )}
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          <button className="btn primary" onClick={onBack}>{backLabel}</button>
+          <button className={taskId ? "btn" : "btn primary"} onClick={onBack}>{backLabel}</button>
           <span className="faint">送るときは、文書を開いて「送る」から（メール・CloudSign）。</span>
           <button className="linky" style={{ marginLeft: "auto" }} onClick={onRestart}>もう一度 ① から</button>
         </div>

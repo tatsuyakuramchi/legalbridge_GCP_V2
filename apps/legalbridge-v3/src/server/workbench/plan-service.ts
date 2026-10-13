@@ -63,6 +63,8 @@ export interface WorkbenchContext {
   round?: { conditionId: number; conditionNo: string | null; conditionName: string;
             scheduleId: number | null; eventId: number | null; roundLabel: string | null } | null;
   requestId: number | null; requestNo: string | null; taskId: number | null;
+  /** デイリータスクの目的（inspection / royalty / template / other）。①の既定に効く。 */
+  purpose?: string | null;
   matterId: number | null; matterNo: string | null;
   title: string;
   partyId: number | null; partyName: string | null; partyKind: "corporate" | "individual" | null;
@@ -217,8 +219,12 @@ export class WorkbenchPlanService {
         `SELECT target_id FROM intake_request_links WHERE request_id = $1 AND target_type = 'document'`, [requestId]);
       linked = await this.documentsById((linkedDocs.rows as Array<{ target_id: unknown }>).map((x) => Number(x.target_id)));
       const pattern = query.pattern ?? inferPattern(conditions, { kind: r.kind });
+      const taskRow = query.taskId
+        ? (await this.database.query("SELECT purpose FROM tasks WHERE id = $1", [query.taskId])).rows[0] as { purpose: unknown } | undefined
+        : undefined;
       ctx = {
         kind: "task", requestId, requestNo: r.requestNo, taskId: query.taskId ?? null,
+        purpose: (taskRow?.purpose ?? r.purpose ?? null) as string | null,
         matterId: null, matterNo: null, title: r.title,
         partyId, partyName: party?.name ?? r.counterpartyName ?? null, partyKind: party?.kind ?? null,
         pattern, setDomain: SET_DOMAIN[pattern],
@@ -259,7 +265,7 @@ export class WorkbenchPlanService {
 
     const mine = conditions.filter((c) => conditionMatches(ctx.pattern, c));
     const others = conditions.filter((c) => !mine.includes(c));
-    const candidates = this.fromDocument(ctx, await this.candidates(ctx, today));
+    const candidates = this.fromTask(ctx, this.fromDocument(ctx, await this.candidates(ctx, today)));
     return { ctx, conditions: mine, otherConditions: others, candidates, linkedDocuments: linked };
   }
 
@@ -317,6 +323,31 @@ export class WorkbenchPlanService {
       });
     }
     return out;
+  }
+
+  /**
+   * デイリータスクから来たときの既定。目的（purpose）で、何を「いま作る」かを決める。
+   *   inspection / royalty … 決済文書（検収書・計算書）を「作る・いま」。本体・基本契約は既にあるものを使う
+   *                          （無ければ「今回は用意しない」ではなく「作る」で先に要ると出す）
+   *   other               … 相手方の文書や社内で起こした文書。本体は「外の文書を登録」
+   *   template            … そのまま（本体をひな形で作る）
+   */
+  private fromTask(ctx: WorkbenchContext, base: WorkbenchCandidate[]): WorkbenchCandidate[] {
+    if (ctx.kind !== "task" || !ctx.purpose) return base;
+    const p = ctx.purpose;
+    if (p === "inspection" || p === "royalty") {
+      return base.map((c) => {
+        if (c.role === "settlement") return { ...c, needed: "now" as const, suggested: "create" as PrepareMode, why: `この作業の目的（${p === "inspection" ? "検収書" : "計算書"}）。実績から作る` };
+        if (c.role === "main") return { ...c, suggested: c.existing.length ? "existing" as PrepareMode : "create" as PrepareMode,
+                                        why: c.existing.length ? "既にある（決済文書はこれに基づく）" : `無い。${p === "inspection" ? "検収書" : "計算書"}より先に要る` };
+        if (c.role === "master") return { ...c, suggested: c.existing.length || c.agreements.some((a) => a.live) ? "existing" as PrepareMode : "skip" as PrepareMode };
+        return c;
+      });
+    }
+    if (p === "other") {
+      return base.map((c) => (c.role === "main" ? { ...c, suggested: "external" as PrepareMode, why: "相手方の文書や社内で起こした文書を登録して番号を振る（ひな形で作るなら切り替える）" } : c));
+    }
+    return base;
   }
 
   /**

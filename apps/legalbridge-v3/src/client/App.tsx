@@ -366,7 +366,7 @@ export function App() {
               <b>デイリータスク {taskCtx.requestNo ?? `#${taskCtx.requestId}`}</b>「{taskCtx.title}」の作業中です。
               ここで作った文書はその作業に自動で繋がります。
             </span>
-            <button className="btn btn-sm" onClick={() => { setFocus({ view: "daily", id: taskCtx.taskId }); setView("daily"); }}>作業に戻る</button>
+            <button className="btn btn-sm" onClick={() => { setFocus({ view: "daily", id: taskCtx.taskId }); setView("daily"); }}>やることの一覧に戻る</button>
             <button className="linky" onClick={() => setTaskCtx(null)}>繋がずに作る</button>
           </div>
         )}
@@ -387,24 +387,16 @@ export function App() {
         {view === "daily" && (
           <DailyTasksWorkspace key={`t${focusFor("daily") ?? 0}`} initialId={focusFor("daily")}
             onOpenMatter={(id) => openEntity("matter", id)}
-            onCompose={(ids, templateKey, requestId) => startCompose(ids, [], null, templateKey, null, null, requestId)}
             onOpenDocument={openDocumentAt}
             onOpenLedger={(workId, partyId) => {
               setLedgerParty(partyId); setConditionId(undefined);
               setFocus({ view: "works", id: workId }); setView("works");
             }}
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
-            onGo={(ctx, target) => {
+            // デイリータスクからの行き先は作業テーブル 1 つ（その作業の文脈で開く）。
+            onGo={(ctx) => {
               setTaskCtx(ctx); setConditionId(undefined);
-              if (target.kind === "workbench") {
-                startWorkbench({ kind: "task", taskId: ctx.taskId, requestId: ctx.requestId });
-              } else if (target.kind === "ledger") {
-                setLedgerParty(target.partyId); setFocus({ view: "works", id: target.workId }); setView("works");
-              } else if (target.kind === "work") {
-                setFocus(target.workId ? { view: "works", id: target.workId } : null); setView("works");
-              } else {
-                if (target.conditionId) openCondition(target.conditionId); else { setFocus(null); setView("conditions"); }
-              }
+              startWorkbench({ kind: "task", taskId: ctx.taskId, requestId: ctx.requestId });
             }}
             onCountsChange={(c) => setDailyCount(c.open)} />
         )}

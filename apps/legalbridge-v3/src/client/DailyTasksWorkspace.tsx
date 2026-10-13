@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
@@ -11,9 +11,9 @@ import { DocumentImport } from "./DocumentImport.js";
 /**
  * デイリータスク。docs/v3-request-inbox.md §10（A-064）
  *
- * 受付箱で「軽微」にした依頼の作業テーブル。案件を立てるほどではない検収書・
+ * 受付箱で「軽微」にした依頼の「やることの一覧」。案件を立てるほどではない検収書・
  * 利用許諾計算書・定型文書などを、担当・期日と 未着手／作業中／待ち／完了 の 4 つの
- * 状態で追う。進み具合（受付→作成→送付→支払予定→支払）は文書と支払から自動で出す。
+ * 状態で追う。文書の用意は作業テーブル（WorkbenchWorkspace）でする。ここからの行き先はそれ 1 つ。進み具合（受付→作成→送付→支払予定→支払）は文書と支払から自動で出す。
  * 支払まで済めば自動で完了になる。思ったより大きくなったら「案件に移す」。
  */
 
@@ -21,12 +21,8 @@ type Tab = "open" | "wait" | "late" | "done" | "all";
 
 /** 進めている作業。作品・条件明細の画面へ移るときに App に渡し、そこで作った文書を作業に繋ぐ。 */
 export interface TaskCtx { requestId: number; requestNo: string | null; taskId: number; title: string }
-export type GoTarget =
-  | { kind: "work"; workId: number | null }
-  | { kind: "conditions"; conditionId: number | null }
-  | { kind: "ledger"; workId: number; partyId: number }
-  /** 作業テーブル（要る文書を決める → 作る・登録する → まとめ）。この作業の文脈で開く。 */
-  | { kind: "workbench" };
+/** 作業テーブル（要る文書を決める → 作る・登録する → まとめ）。この作業の文脈で開く。行き先はこれ 1 つ。 */
+export type GoTarget = { kind: "workbench" };
 type Status = "todo" | "doing" | "blocked" | "done";
 const STATUSES: Status[] = ["todo", "doing", "blocked", "done"];
 const STATUS_LABEL: Record<Status, string> = { todo: "未着手", doing: "作業中", blocked: "待ち", done: "完了" };
@@ -83,12 +79,11 @@ const searchDocuments = async (q: string): Promise<SearchOption[]> => {
 };
 
 export function DailyTasksWorkspace(
-  { initialId, onOpenMatter, onCompose, onOpenDocument, onOpenLedger, onOpenRequest, onGo, onCountsChange }: {
+  { initialId, onOpenMatter, onOpenDocument, onOpenLedger, onOpenRequest, onGo, onCountsChange }: {
     /** この作業を選んだ状態で開く。 */
     initialId?: number;
     onOpenMatter?: (matterId: number) => void;
     /** 依頼の条件を載せた状態で文書の画面へ移る（案件なし。作った文書は依頼に繋がる）。 */
-    onCompose?: (conditionIds: number[], templateKey: string | null, requestId: number) => void;
     onOpenDocument?: (documentId: number) => void;
     /** 計算書の依頼を、作品の利用許諾計算（許諾料の台帳）で開く。 */
     onOpenLedger?: (workId: number, partyId: number) => void;
@@ -155,7 +150,8 @@ export function DailyTasksWorkspace(
       <header className="workspace-head">
         <h1>デイリータスク</h1>
         <p>
-          受付箱で「軽微」にした依頼の作業テーブルです。状態は 未着手・作業中・待ち・完了 の 4 つだけ。
+          受付箱で「軽微」にした依頼の、やることの一覧です。何を・誰が・いつまでに・いまどの状態か（未着手・作業中・待ち・完了）。
+          文書を作る・登録するのはここではなく、各作業の「作業テーブルで進める」から。
           進み具合（作成・送付・支払）は文書と支払から自動で出し、支払まで済めば自動で完了になります。
           思ったより大きくなったら「案件に移す」。
         </p>
@@ -251,7 +247,7 @@ export function DailyTasksWorkspace(
               <>
                 <TaskPanel detail={detail} canWrite={canWrite} staff={staff}
                            onChanged={(msg) => reload(msg)} onError={setError}
-                           onCompose={onCompose} onOpenDocument={onOpenDocument} onOpenLedger={onOpenLedger}
+                           onOpenDocument={onOpenDocument} onOpenLedger={onOpenLedger}
                            onOpenRequest={onOpenRequest} onGo={onGo} />
                 <MovePanel detail={detail} canWrite={canWrite} staff={staff}
                            onMoved={(msg, matterId) => { setLastMatter(matterId); reload(msg, false); }}
@@ -310,11 +306,10 @@ export function StatusPicker(
 
 /** 作業の詳細。状態・担当・期日、進み具合、条件・回・文書、依頼者からの返信。 */
 function TaskPanel(
-  { detail, canWrite, staff, onChanged, onError, onCompose, onOpenDocument, onOpenLedger, onOpenRequest, onGo }: {
+  { detail, canWrite, staff, onChanged, onError, onOpenDocument, onOpenLedger, onOpenRequest, onGo }: {
     detail: Detail; canWrite: boolean; staff: Staff[];
     onChanged: (message: string) => void;
     onError: (message: string) => void;
-    onCompose?: (conditionIds: number[], templateKey: string | null, requestId: number) => void;
     onOpenDocument?: (documentId: number) => void;
     onOpenLedger?: (workId: number, partyId: number) => void;
     onOpenRequest?: (requestId: number) => void;
@@ -344,7 +339,6 @@ function TaskPanel(
    * （相手方の契約書・NDA・覚書など）を登録して送る。以前は業務委託とライセンスの入口が
    * 主役に見え、それ以外の文書をどこから登録して送るのか分からなかった。
    */
-  const [docWay, setDocWay] = useState<"template" | "external" | "send" | null>(null);
   const dirty = assignee !== (t.assigneeStaffId ?? "") || dueOn !== (t.dueOn ?? "")
     || title.trim() !== t.title || requesterEmail.trim() !== (r.requesterEmail ?? "");
 
@@ -506,132 +500,25 @@ function TaskPanel(
           </div>
         )}
 
-        {canWrite && onCompose && t.status !== "done" && (() => {
+        {canWrite && t.status !== "done" && (() => {
           const ctx: TaskCtx = { requestId: r.id, requestNo: r.requestNo, taskId: t.id, title: t.title };
-          const workId = detail.conditions.find((c) => c.workId)?.workId ?? detail.ledgers[0]?.workId ?? null;
-          const conditionId = detail.conditions[0]?.id ?? null;
-          const go = (target: GoTarget) => onGo?.(ctx, target);
-          const ledger = detail.ledgers[0];
-          const Step = ({ no, text }: { no: number; text: string }) => (
-            <span className="row" style={{ gap: 6 }}><span className="tag ghost">{no}</span><span>{text}</span></span>
-          );
-          const Route = ({ title, steps, buttons }: { title: string; steps: string[]; buttons: ReactNode }) => (
-            <div className="stack" style={{ gap: 4, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 6, background: "var(--surface)" }}>
-              <b style={{ fontSize: 12.5 }}>{title}</b>
-              <div className="stack" style={{ gap: 2, fontSize: 12 }}>
-                {steps.map((s, i) => <Step key={i} no={i + 1} text={s} />)}
-              </div>
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>{buttons}</div>
-            </div>
-          );
           return (
-            <div className="note stack" style={{ gap: 8 }}>
-              <b>文書を作る（作業の道すじ）</b>
-              {t.purpose === "inspection" && (
-                <Route title="検収書" steps={[
-                  "発注の条件明細（発注書に載った条件）を確認する。無ければ条件明細を登録する",
-                  "その条件で検収書を作る → 決定 → 送る"
-                ]} buttons={<>
-                  {detail.conditions.length > 0
-                    ? <button className="btn btn-sm primary" onClick={() => onCompose(detail.conditions.map((c) => c.id), "inspection_certificate", r.id)}>この条件で検収書を作る</button>
-                    : <button className="btn btn-sm primary" onClick={() => go({ kind: "conditions", conditionId: null })}>条件明細を登録する</button>}
-                  <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId })}>条件明細の画面を開く</button>
-                </>} />
-              )}
-              {t.purpose === "royalty" && (
-                <Route title="利用許諾計算書" steps={[
-                  "作品の画面の台帳（利用許諾計算）で、どの回（締め・製造）かを選ぶ",
-                  "回の実績を入れて試算 → 決定 → 送る"
-                ]} buttons={<>
-                  {ledger && <button className="btn btn-sm primary" onClick={() => go({ kind: "ledger", workId: ledger.workId, partyId: ledger.partyId })}>台帳で計算書を作る</button>}
-                  <button className="btn btn-sm" onClick={() => go({ kind: "work", workId })}>作品の画面を開く</button>
-                </>} />
-              )}
-              {(t.purpose === "template" || t.purpose === "other") && (() => {
-                const way = docWay ?? (t.purpose === "template" ? "template" : "external");
-                return (<>
-                <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                  <span className="faint">どの文書か：</span>
-                  {([["external", "外で作った文書を登録して送る（相手方の契約書・NDA・覚書・Word で作った文書）"],
-                     ["template", "当社のひな形で作る（発注書・条件書・基本契約書・NDA）"],
-                     ["send", "作成済みの文書を送るだけ"]] as const).map(([v, text]) => (
-                    <button key={v} type="button" className="chip" aria-pressed={way === v} onClick={() => setDocWay(v)}>{text}</button>
-                  ))}
-                </div>
-                {way === "template" && (<>
-                {/* 文書を作るのは作業テーブル。要る文書（基本契約書・条件書・発注書・検収書・NDA）を
-                    この作業の相手先と条件から出し、文書ごとに 作る／既にある／外の文書 を決めて進める。 */}
-                <Route title="作業テーブルで作る（基本契約書・条件書・発注書・NDA など）" steps={[
-                  "要る文書と用意の仕方を決める（ひな形で作る／既にある文書を使う／外の文書を登録）",
-                  "1 件ずつ作る・登録する → 決定 → まとめ → 送る"
-                ]} buttons={<>
-                  <button className="btn btn-sm primary" onClick={() => go({ kind: "workbench" })}>作業テーブルで文書を作る</button>
-                  {!conditionId && <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId: null })}>先に条件明細を登録する</button>}
-                  {conditionId && <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId })}>繋いである条件を開く</button>}
-                  <button className="btn btn-sm" onClick={() => go({ kind: "work", workId })}>
-                    {workId ? "作品の画面を開く" : "作品の画面で探す"}
-                  </button>
-                </>} />
-                </>)}
-                {way === "external" && (
-                  /* 外で作った文書。登録（ファイル付き）すると決定済みになり、そのまま「送る」で
-                     CloudSign の署名依頼かメール送付へ進める。法務が Word で作る文書は番号を先に取る。 */
-                  <Route title="外で作った文書を登録して送る（CloudSign で署名依頼・メール送付）" steps={[
-                    "相手方から届いた契約書・NDA・覚書などは、下の「外で作った文書を登録」でファイルを付けて登録する（種別は選べる：秘密保持契約書・覚書・念書・通知書・利用許諾契約書・その他 …）",
-                    "法務が Word などで作る文書は「番号を先に取る」→ 番号を本文に書き込む → その文書の「ファイルを付ける」",
-                    "登録できた文書がそのまま開くので「送る」→ CloudSign で署名依頼（署名者・CC を選んで下書き）か、メールで送付"
-                  ]} buttons={
-                    <DocumentImport requestId={r.id} initialMode="import" onDone={() => onChanged("文書を登録しました")}
-                                    onOpenDocument={onOpenDocument} onRegistered={onOpenDocument} />
-                  } />
-                )}
-                {way === "send" && (
-                  <Route title="作成済みの文書を送る（CloudSign で署名依頼・メール送付）" steps={[
-                    "下で探して繋ぐ → 文書が開くので「送る」（CloudSign の署名者・CC を選んで下書きを作る、またはメール）"
-                  ]} buttons={
-                    <div style={{ flex: 1, minWidth: 320 }}>
-                      <SearchSelect value="" search={searchDocuments} disabled={busy}
-                                    placeholder="作成済みの文書を探して送る：文書番号・件名・取引先名・条件明細"
-                                    onChange={(v) => {
-                                      if (!v) return;
-                                      const id = Number(v);
-                                      void call(async () => {
-                                        await post("documents", { documentId: id });
-                                        onOpenDocument?.(id);
-                                      }, "文書を繋ぎました。「送る」から送ってください");
-                                    }} />
-                    </div>
-                  } />
-                )}
-                </>);
-              })()}
-              {/* 検収書・計算書の作業でも、作成済みの文書を繋いで送る・外で作った文書を登録する道は残す。 */}
-              {(t.purpose === "inspection" || t.purpose === "royalty") && (
-                <Route title="送るだけ・外で作った文書（CloudSign で署名依頼・メール送付）" steps={[
-                  "作成済みの文書を送るなら、下で探して繋ぐ → 開いて「送る」",
-                  "相手方から届いた文書は「外で作った文書を登録」→ 開いて「送る」"
-                ]} buttons={<>
-                  <div style={{ flex: 1, minWidth: 320 }}>
-                    <SearchSelect value="" search={searchDocuments} disabled={busy}
-                                  placeholder="作成済みの文書を探して送る：文書番号・件名・取引先名・条件明細"
-                                  onChange={(v) => {
-                                    if (!v) return;
-                                    const id = Number(v);
-                                    void call(async () => {
-                                      await post("documents", { documentId: id });
-                                      onOpenDocument?.(id);
-                                    }, "文書を繋ぎました。「送る」から送ってください");
-                                  }} />
-                  </div>
-                  <DocumentImport requestId={r.id} onDone={() => onChanged("文書を登録しました")}
-                                  onOpenDocument={onOpenDocument} onRegistered={onOpenDocument} />
-                </>} />
-              )}
-              <span className="faint">
-                どの画面で作っても、ここから移って作った文書はこの作業（{r.requestNo ?? `#${r.id}`}）に自動で繋がります
-                （移った先の画面の上に「作業中」の帯が出ます）。自動で入らなかった文書は下の検索で繋げます。
-                送るときは文書の「送る」からメールの下書きが出ます（宛先・件名・本文はこの作業の依頼者・担当・件名から埋まります）。
+            <div className="note stack" style={{ gap: 6 }}>
+              <b>次にすること</b>
+              <span>
+                文書の用意（ひな形で作る・既にある文書を繋ぐ・外で作った文書を登録する）は作業テーブルでします。
+                目的「{t.purposeLabel}」に合わせて、要る文書と用意の仕方を先に出します。
+                作った文書はこの作業（{r.requestNo ?? `#${r.id}`}）に自動で繋がり、作業テーブルの③でこの作業を完了にできます。
               </span>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <button className="btn btn-sm primary" onClick={() => onGo?.(ctx, { kind: "workbench" })}>作業テーブルで進める</button>
+                {detail.conditions.length === 0 && (
+                  <span className="faint">条件明細はまだ繋がっていません（作業テーブルの①「条件を足す」で登録できます。基本契約書だけなら無くてよい）</span>
+                )}
+                {onOpenDocument && (
+                  <span className="faint">作成済みの文書を送るだけなら、下の「文書」で探して繋ぎ、開いて「送る」。</span>
+                )}
+              </div>
             </div>
           );
         })()}
