@@ -2514,6 +2514,17 @@ UPDATE v3.conditions c
        settlement_cycle = CASE WHEN d.mode = 'term_bound' THEN d.cyc END
   FROM d WHERE d.id = c.id;
 
+-- A-072 相手方の文書番号（documents/cite-no.ts）
+--   相手方から届いた文書（取り込んだ契約書・発注書・覚書）や、当社の文書に相手方が
+--   付けた番号の控え。当社の番号（document_no）とは別に持つ。
+--   個別条件書・発注書・検収書・計算書で番号を引用するとき、文書フォームの
+--   「番号の出し方」（manual_inputs._refNoMode：ours / theirs / both）で
+--   当社番号・相手方番号・両方 を選べる。契約の相手方番号は agreements.counterparty_ref_no。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.documents ADD COLUMN IF NOT EXISTS counterparty_doc_no text;
+COMMENT ON COLUMN v3.documents.counterparty_doc_no IS
+  '相手方が付けた文書番号の控え。当社番号（document_no）とは別。引用するとき 当社／相手方／両方 を選べる。A-072';
+
 COMMIT;
 
 
@@ -2787,6 +2798,10 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 72, '相手方の文書番号（A-072。列 1 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
   UNION ALL
   SELECT 71, '決済の型（A-071。列 4・CHECK 3 で 7 であること）',
          ((SELECT count(*) FROM information_schema.columns

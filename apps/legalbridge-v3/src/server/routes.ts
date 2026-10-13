@@ -76,6 +76,7 @@ import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
+import { citeContractRef, loadCounterpartyNos, refNoModeOf } from "./documents/cite-no.js";
 import { PUB_STATEMENT_KEY, StatementIssuer } from "./royalty/statement-issue.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
@@ -186,10 +187,14 @@ export function createRoutes(database: Transactable) {
     chosen: { agreementId?: number | null; manualInputs?: Record<string, unknown> } = {}
   ) => {
     const termsNo = String(chosen.manualInputs?._termsNo ?? "").trim() || null;
+    // 番号の出し方（当社／相手方／両方。A-072）。
+    const mode = refNoModeOf(chosen.manualInputs?._refNoMode);
+    const nos = mode === "ours" ? new Map<string, string>() : await loadCounterpartyNos(database,
+      { agreementIds: [chosen.agreementId], conditionIds: previews.map((p) => p.condition.id), numbers: [termsNo] });
     const out: ReturnType<typeof bundleLinesFor> = [];
     for (const p of previews) {
-      const ref = await inContractRef(database, p.condition.id,
-        { masterAgreementId: chosen.agreementId ?? null, termsNo, payeePartyId: p.payee?.partyId ?? null });
+      const ref = citeContractRef(mode, nos, await inContractRef(database, p.condition.id,
+        { masterAgreementId: chosen.agreementId ?? null, termsNo, payeePartyId: p.payee?.partyId ?? null }));
       out.push(...withInContract(bundleLinesFor(p), ref));
     }
     return out;
@@ -1188,6 +1193,24 @@ export function createRoutes(database: Transactable) {
     }
     await assignAccountOwner(database, id, staffId, actor(res));
     res.json({ ok: true, staffId });
+  }));
+
+  // 相手方が付けた文書番号の控え（A-072）。当社番号とは別に持ち、引用するときに選べる。
+  // 決定済みの文書にもあとから控えられる（相手方の番号は相手方の文書が届いてから分かる）。
+  router.put("/documents/:id/counterparty-no", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    const { counterpartyDocNo } = z.object({ counterpartyDocNo: z.string().trim().max(120).nullable() }).parse(req.body ?? {});
+    const value = counterpartyDocNo?.trim() || null;
+    const r = await database.query(
+      `UPDATE documents SET counterparty_doc_no = $2 WHERE id = $1
+       RETURNING document_no, (SELECT counterparty_doc_no FROM documents WHERE id = $1) AS before`, [id, value]);
+    if (!r.rows.length) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
+    await recordAudit(database, {
+      actor: actor(res), action: "document.counterparty_no", targetType: "document", targetId: id,
+      detail: { documentNo: (r.rows[0] as { document_no: string | null }).document_no, counterpartyDocNo: value }
+    });
+    res.json({ ok: true, counterpartyDocNo: value });
   }));
 
   // 束ね1つ分の Excel。groupKey は preview の key をそのまま渡す。
@@ -3149,7 +3172,8 @@ export function createRoutes(database: Transactable) {
     receivedOn: z.string().date().optional(),
     note: z.string().trim().max(2000).optional(),
     filename: z.string().trim().max(300).optional(),
-    requestId: z.coerce.number().int().positive().optional()
+    requestId: z.coerce.number().int().positive().optional(),
+    counterpartyDocNo: z.string().trim().max(120).optional()
   });
   router.post("/documents/import",
     requireRole("admin", "legal"), requireWritable,
@@ -3162,6 +3186,7 @@ export function createRoutes(database: Transactable) {
         title: q.title, documentKind: q.documentKind ?? null,
         conditionIds: ids, matterId: q.matterId ?? null, agreementId: q.agreementId ?? null,
         receivedOn: q.receivedOn ?? null, note: q.note ?? null, requestId: q.requestId ?? null,
+        counterpartyDocNo: q.counterpartyDocNo ?? null,
         file: {
           filename: q.filename ?? q.title,
           mimeType: String(req.headers["content-type"] ?? "").split(";")[0].trim(),
@@ -3180,14 +3205,16 @@ export function createRoutes(database: Transactable) {
     conditionIds: z.array(z.coerce.number().int().positive()).max(50).optional(),
     matterId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
-    requestId: z.coerce.number().int().positive().nullable().optional()
+    requestId: z.coerce.number().int().positive().nullable().optional(),
+    counterpartyDocNo: z.string().trim().max(120).nullable().optional()
   });
   router.post("/documents/reserve", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const b = reserveSchema.parse(req.body ?? {});
       res.status(201).json(await documentImports.reserve({
         title: b.title, documentKind: b.documentKind, conditionIds: b.conditionIds ?? [],
-        matterId: b.matterId ?? null, agreementId: b.agreementId ?? null, requestId: b.requestId ?? null
+        matterId: b.matterId ?? null, agreementId: b.agreementId ?? null, requestId: b.requestId ?? null,
+        counterpartyDocNo: b.counterpartyDocNo ?? null
       }, actor(res)));
     }));
   const attachQuerySchema = z.object({

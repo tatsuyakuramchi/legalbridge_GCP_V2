@@ -20,6 +20,7 @@ import { Working } from "./Working.js";
 import { BLANK_INPUT_KEY, blankedNames } from "../server/documents/binding.js";
 import { PUB_TERMS_TEMPLATE_HINT } from "../server/documents/pub-terms.js";
 import type { DocumentRefs } from "../server/agreements/party-map.js";
+import { REF_NO_MODES, refNoModeOf } from "../server/documents/cite-no.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -262,10 +263,24 @@ export function DocumentsWorkspace(
   const [agreementId, setAgreementId] = useState<number | null>(null);
   /** 文書フォームで選ぶ値（基本契約・発注書番号・個別契約番号）。取引先⇔基本契約のマップと同じ引き方。 */
   const [refs, setRefs] = useState<DocumentRefs | null>(null);
+  /** 相手方番号の控えがある引用先（番号の出し方を選ばせるかの判断と、説明に出す）。 */
+  const theirNos = useMemo(() => {
+    const out: Array<{ ours: string; theirs: string }> = [];
+    const seen = new Set<string>();
+    const add = (ours: string | null | undefined, theirs: string | null | undefined) => {
+      if (!ours || !theirs || seen.has(ours)) return;
+      seen.add(ours); out.push({ ours, theirs });
+    };
+    for (const a of refs?.masters ?? []) add(a.agreementNo, a.counterpartyRefNo);
+    for (const d of [...(refs?.linkedOrders ?? []), ...(refs?.purchaseOrders ?? []), ...(refs?.terms ?? [])]) add(d.documentNo, d.counterpartyNo);
+    return out;
+  }, [refs]);
   /** 検収書の「発注番号」。空なら同じ条件から出ている発注書を自動で辿る。manual_inputs._parentPoNo。 */
   const [parentPoNo, setParentPoNo] = useState("");
   /** 計算書の「契約番号」の個別契約。空なら決定済みの条件書を自動で使う。manual_inputs._termsNo。 */
   const [termsNo, setTermsNo] = useState("");
+  /** 引用する番号の出し方（当社／相手方／両方）。manual_inputs._refNoMode。A-072 */
+  const [refNoMode, setRefNoMode] = useState<"ours" | "theirs" | "both">("ours");
   /** 案件が決まっているとき、その案件の条件だけを候補に出す（既定）。 */
   const [scopeToMatter, setScopeToMatter] = useState(true);
   /** 差し替え済み（改訂前）の版も候補に出すか。既定は出さない。 */
@@ -535,9 +550,10 @@ export function DocumentsWorkspace(
   const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}),
                                   ...(parentPoNo ? { _parentPoNo: parentPoNo } : {}),
                                   ...(termsNo ? { _termsNo: termsNo } : {}),
+                                  ...(refNoMode !== "ours" ? { _refNoMode: refNoMode } : {}),
                                   // 訂正版だけ。新規の文書に印は無い。
                                   ...(reviseCtx ? { _showRevision: showRevision ? "1" : "0" } : {}) }),
-                         [manual, lines, ownerStaffId, parentPoNo, termsNo, reviseCtx, showRevision]);
+                         [manual, lines, ownerStaffId, parentPoNo, termsNo, refNoMode, reviseCtx, showRevision]);
 
   // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
   const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
@@ -712,6 +728,7 @@ export function DocumentsWorkspace(
         setLines(carried.arrays);
         if (carried.ownerStaffId) setOwnerStaffId(carried.ownerStaffId);
         if (carried.parentPoNo) setParentPoNo(carried.parentPoNo);
+        setRefNoMode(carried.refNoMode);
         if (carried.termsNo) setTermsNo(carried.termsNo);
       }
     });
@@ -1042,9 +1059,10 @@ export function DocumentsWorkspace(
       setOwnerStaffId(Number(d.manualInputs?._ownerStaffId) > 0 ? Number(d.manualInputs._ownerStaffId) : "");
       setParentPoNo(String(d.manualInputs?._parentPoNo ?? ""));
       setTermsNo(String(d.manualInputs?._termsNo ?? ""));
+      setRefNoMode(refNoModeOf(d.manualInputs?._refNoMode));
       setShowRevision(String(d.manualInputs?._showRevision ?? "1") !== "0");
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
-        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo" || k === "_showRevision") continue;
+        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo" || k === "_refNoMode" || k === "_showRevision") continue;
         if (Array.isArray(v)) arrays[k] = v as Row[];
         else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
@@ -1392,6 +1410,25 @@ export function DocumentsWorkspace(
                     </button>
                   )}
                 </div>
+                {/* 引用する番号の出し方（A-072）。基本契約・発注書・個別契約のどれかに相手方番号の控えが
+                    あるときだけ出す。控えが無ければ当社番号しか出せないので、選ばせない。 */}
+                {picked.length > 0 && partyId && theirNos.length > 0 && (
+                  <label className="field" style={{ marginTop: 6 }}>
+                    <span>番号の出し方</span>
+                    <span className="stack" style={{ gap: 2 }}>
+                      <div className="chips" role="radiogroup" aria-label="番号の出し方">
+                        {REF_NO_MODES.map((m) => (
+                          <button key={m.value} type="button" className="chip" role="radio" aria-checked={refNoMode === m.value}
+                                  aria-pressed={refNoMode === m.value} title={m.hint} onClick={() => setRefNoMode(m.value)}>{m.label}</button>
+                        ))}
+                      </div>
+                      <small className="faint">
+                        引用する番号（基本契約番号・発注書番号・個別契約番号）を、当社の番号で出すか、相手方が付けた番号で出すか、両方並べるか。
+                        控えがあるもの：{theirNos.map((t) => `${t.ours} → ${t.theirs}`).join("、")}。控えの無い番号は当社番号のまま
+                      </small>
+                    </span>
+                  </label>
+                )}
                 {/* 基本契約。発注書の準拠条項と「基本契約名 / 番号」はここから出る。
                     条件に契約が付いていれば黙ってそれを使うが、付いていない条件や
                     別の契約に基づく発注では人が選ぶ。 */}
@@ -1901,10 +1938,10 @@ export function DocumentsWorkspace(
  */
 export function carryOverInputs(manual: Record<string, unknown>): {
   values: Record<string, string>; arrays: Record<string, Row[]>;
-  ownerStaffId: number | null; parentPoNo: string; termsNo: string;
+  ownerStaffId: number | null; parentPoNo: string; termsNo: string; refNoMode: "ours" | "theirs" | "both";
 } {
   const computed = new Set(["statementMode", "rs_bundle_lines", "rs_bundle_tax", "rs_stage_notes",
-                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo", "_showRevision"]);
+                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo", "_refNoMode", "_showRevision"]);
   const values: Record<string, string> = {};
   const arrays: Record<string, Row[]> = {};
   for (const [k, v] of Object.entries(manual)) {
@@ -1915,6 +1952,7 @@ export function carryOverInputs(manual: Record<string, unknown>): {
   return {
     values, arrays,
     ownerStaffId: Number(manual._ownerStaffId) > 0 ? Number(manual._ownerStaffId) : null,
-    parentPoNo: String(manual._parentPoNo ?? ""), termsNo: String(manual._termsNo ?? "")
+    parentPoNo: String(manual._parentPoNo ?? ""), termsNo: String(manual._termsNo ?? ""),
+    refNoMode: refNoModeOf(manual._refNoMode)
   };
 }

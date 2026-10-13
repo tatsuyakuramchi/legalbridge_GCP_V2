@@ -2515,6 +2515,17 @@ UPDATE v3.conditions c
        settlement_cycle = CASE WHEN d.mode = 'term_bound' THEN d.cyc END
   FROM d WHERE d.id = c.id;
 
+-- A-072 相手方の文書番号（documents/cite-no.ts）
+--   相手方から届いた文書（取り込んだ契約書・発注書・覚書）や、当社の文書に相手方が
+--   付けた番号の控え。当社の番号（document_no）とは別に持つ。
+--   個別条件書・発注書・検収書・計算書で番号を引用するとき、文書フォームの
+--   「番号の出し方」（manual_inputs._refNoMode：ours / theirs / both）で
+--   当社番号・相手方番号・両方 を選べる。契約の相手方番号は agreements.counterparty_ref_no。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.documents ADD COLUMN IF NOT EXISTS counterparty_doc_no text;
+COMMENT ON COLUMN v3.documents.counterparty_doc_no IS
+  '相手方が付けた文書番号の控え。当社番号（document_no）とは別。引用するとき 当社／相手方／両方 を選べる。A-072';
+
 COMMIT;
 
 -- 確認
@@ -2849,6 +2860,9 @@ SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' 
      + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass
          AND conname IN ('conditions_settlement_mode_chk', 'conditions_settlement_cycle_chk', 'conditions_settlement_shape_chk')) AS 列とCHECK,
        (SELECT count(*) FROM v3.conditions WHERE settlement_mode IS NULL) AS 型が空の条件;
+\echo '--- 相手方の文書番号（A-072。列 1 であること） ---'
+SELECT count(*) AS 列 FROM information_schema.columns
+ WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no';
 \echo '--- 共著の分配を誰がするか（A-070。列 1・CHECK 1 で 2 であること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions' AND column_name='distribution')
      + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_distribution_chk') AS 列とCHECK;

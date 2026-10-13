@@ -20,6 +20,7 @@ import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix,
          nextRevisionNumber, printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { materializeSettlementRows } from "./settlement-conditions.js";
+import { applyRefNoMode, loadCounterpartyNos, refNoModeOf, type RefNoMode } from "./cite-no.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
 
 export interface DraftInput {
@@ -1018,6 +1019,16 @@ export class DocumentIssueService {
         { masterAgreementId: input.agreementId ?? null, termsNo: refs.termsNo ?? null });
       (context as unknown as Record<string, unknown>).contractRefText = ref.number || null;
     }
+    // 番号の出し方（当社／相手方／両方。A-072）。組み上がった文脈の引用番号を 1 か所で置き換える。
+    const mode = refNoModeOf(refs.refNoMode);
+    if (mode !== "ours") {
+      const ctx = context as unknown as Record<string, any>;
+      const nos = await loadCounterpartyNos(client, {
+        agreementIds: [input.agreementId, ctx.agreement?.id, ctx.masterAgreement?.id],
+        conditionIds: input.conditionIds, numbers: [refs.parentPoNo, refs.termsNo]
+      });
+      applyRefNoMode(ctx, mode, nos);
+    }
     return context as unknown as Record<string, unknown>;
   }
 
@@ -1066,10 +1077,13 @@ export interface ChosenRefs {
    * （manual_inputs._partyId）。契約が決まれば契約の相手先が使われる。
    */
   partyId?: number | null;
+  /** 番号の出し方（manual_inputs._refNoMode）。当社番号／相手方番号／両方。A-072 */
+  refNoMode?: RefNoMode | null;
 }
 
 export function chosenRefs(manual: Record<string, unknown> | null | undefined): ChosenRefs {
   const text = (v: unknown) => { const t = String(v ?? "").trim(); return t || null; };
   return { parentPoNo: text(manual?._parentPoNo), termsNo: text(manual?._termsNo),
-           payeePartyId: int(manual?._payeePartyId), partyId: int(manual?._partyId) };
+           payeePartyId: int(manual?._payeePartyId), partyId: int(manual?._partyId),
+           refNoMode: manual?._refNoMode === undefined ? null : refNoModeOf(manual._refNoMode) };
 }

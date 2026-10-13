@@ -95,12 +95,12 @@ const MODE_HINT: Record<PrepareMode, string> = {
 /** 文書を探す（全体検索。相手先・状態・種類を問わない）。 */
 const searchAllDocuments = async (q: string): Promise<SearchOption[]> => {
   const r = await api.get<{ documents: Array<{ id: number; documentNo: string | null; templateLabel: string | null; title: string | null;
-                                              counterparty: string | null; status: string; phase: string }> }>(
+                                              counterparty: string | null; status: string; phase: string; counterpartyDocNo?: string | null }> }>(
     `/documents?q=${encodeURIComponent(q)}`);
   const phase: Record<string, string> = { draft: "下書き", decided: "決定済み", sent: "送信済み", superseded: "訂正版あり", void: "無効" };
   return r.documents.filter((d) => d.status !== "void").slice(0, 20).map((d) => ({
     value: String(d.id), label: `${d.documentNo ?? `#${d.id}`}　${d.title ?? d.templateLabel ?? ""}`,
-    hint: [d.counterparty, phase[d.phase] ?? d.phase].filter(Boolean).join("・")
+    hint: [d.counterparty, phase[d.phase] ?? d.phase, d.counterpartyDocNo ? `相手方番号 ${d.counterpartyDocNo}` : null].filter(Boolean).join("・")
   }));
 };
 

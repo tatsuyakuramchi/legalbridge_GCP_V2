@@ -84,7 +84,7 @@ export function DocumentImport(
   const [reserved, setReserved] = useState<{ id: number; documentNo: string } | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [v, setV] = useState({
-    title: "", documentKind: defaultKind ?? FALLBACK_KINDS[0].kind, receivedOn: today(), note: ""
+    title: "", documentKind: defaultKind ?? FALLBACK_KINDS[0].kind, receivedOn: today(), note: "", counterpartyDocNo: ""
   });
   const picker = useRef<HTMLInputElement>(null);
 
@@ -107,6 +107,7 @@ export function DocumentImport(
         receivedOn: v.receivedOn, filename: file.name
       });
       if (v.note.trim()) params.set("note", v.note.trim());
+      if (v.counterpartyDocNo.trim()) params.set("counterpartyDocNo", v.counterpartyDocNo.trim());
       if (linkIds.length) params.set("conditionIds", linkIds.join(","));
       if (matterId) params.set("matterId", String(matterId));
       if (agreementId) params.set("agreementId", String(agreementId));
@@ -116,7 +117,7 @@ export function DocumentImport(
         `/documents/import?${params}`, file, file.type || "application/octet-stream");
       setDone(r.documentNo); setReserved(null);
       setMode("closed"); setFile(null);
-      setV({ ...v, title: "", note: "" });
+      setV({ ...v, title: "", note: "", counterpartyDocNo: "" });
       if (picker.current) picker.current.value = "";
       onDone();
       onRegistered?.(r.id);
@@ -130,11 +131,12 @@ export function DocumentImport(
       const r = await api.post<{ id: number; documentNo: string }>("/documents/reserve", {
         title: v.title.trim(), documentKind: v.documentKind,
         conditionIds: linkIds,
-        matterId: matterId ?? null, agreementId: agreementId ?? null, requestId: requestId ?? null
+        matterId: matterId ?? null, agreementId: agreementId ?? null, requestId: requestId ?? null,
+        counterpartyDocNo: v.counterpartyDocNo.trim() || null
       });
       setReserved(r); setDone(null);
       setMode("closed");
-      setV({ ...v, title: "" });
+      setV({ ...v, title: "", counterpartyDocNo: "" });
       onDone();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -190,6 +192,14 @@ export function DocumentImport(
       <small className="faint">番号は ARC-{prefix}-{year}-（連番）になります</small>
     </label>
   );
+  const theirNoField = (
+    <label className="field">
+      <span>相手方の文書番号</span>
+      <input value={v.counterpartyDocNo} placeholder="相手方が付けた番号があれば（例: PO-2026-0123）"
+             onChange={(e) => setV({ ...v, counterpartyDocNo: e.target.value })} />
+      <small className="faint">当社の番号とは別に控えます。個別条件書・発注書・検収書・計算書で引用するとき、当社番号／相手方番号／両方 を選べます</small>
+    </label>
+  );
 
   if (mode === "reserve") {
     return (
@@ -206,6 +216,7 @@ export function DocumentImport(
             <input value={v.title} placeholder="例: 覚書（甲社・納期変更）"
                    onChange={(e) => setV({ ...v, title: e.target.value })} />
           </label>
+          {theirNoField}
         </div>
         {error && <div className="alert">{error}</div>}
         <div className="row">
@@ -252,6 +263,7 @@ export function DocumentImport(
           <input value={v.note} placeholder="どこから受け取ったかなど"
                  onChange={(e) => setV({ ...v, note: e.target.value })} />
         </label>
+        {theirNoField}
       </div>
       {error && <div className="alert">{error}</div>}
       <div className="row">

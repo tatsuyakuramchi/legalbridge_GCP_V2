@@ -20,6 +20,8 @@ export interface DocumentSummary {
   title: string | null;
   /** 外で作られた文書。ひな形が無いので、作り直しも再レンダリングもできない。 */
   imported: boolean;
+  /** 相手方が付けた文書番号の控え（A-072）。無ければ null。 */
+  counterpartyDocNo: string | null;
   counterparty: string | null;
   matterId: number | null;
   matterNo: string | null;
@@ -92,7 +94,7 @@ export interface TemplateSource {
 
 const LIST_SELECT = `
   d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
-  d.supersedes_id, d.batch_id,
+  d.supersedes_id, d.batch_id, d.counterparty_doc_no,
   d.manual_inputs->>'_showRevision' AS show_revision,
   v.title, v.counterparty, v.condition_count, t.template_key,
   m.matter_no,
@@ -152,6 +154,7 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     templateLabel: str(row.template_label),
     title: str(row.title),
     imported: row.imported === true,
+    counterpartyDocNo: str(row.counterparty_doc_no),
     counterparty: str(row.counterparty),
     matterId: int(row.matter_id),
     matterNo: str(row.matter_no),
@@ -214,6 +217,7 @@ export class DocumentRepository {
       // 条件も付いていない取り込み文書は表示名が文書番号に落ちるので、名前で探せなかった。
       // 条件明細の番号・名前でも当てる（デイリータスクで「この条件の文書」を探して繋ぐ）。
       where.push(`(COALESCE(d.document_no,'') ILIKE $${i} OR COALESCE(v.title,'') ILIKE $${i}
+                   OR COALESCE(d.counterparty_doc_no,'') ILIKE $${i}
                    OR COALESCE(d.manual_inputs->>'title','') ILIKE $${i}
                    OR COALESCE(v.counterparty,'') ILIKE $${i}
                    OR EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id

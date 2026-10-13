@@ -4,6 +4,7 @@ import { applyLineLabels, stageNotesOf, type BundleLine } from "../documents/roy
 import type { DocumentIssueService } from "../documents/issue-service.js";
 import { bundleLinesFor, bundleTotals, type BundleTotals } from "./bundle.js";
 import { inContractRef, withInContract } from "./in-contract.js";
+import { citeContractRef, loadCounterpartyNos, refNoModeOf } from "../documents/cite-no.js";
 import type { CalculationInput, CalculationPreview, RoyaltyStatementService } from "./statement-service.js";
 
 /**
@@ -83,10 +84,14 @@ export class StatementIssuer {
     chosen: { agreementId?: number | null; manualInputs?: Record<string, unknown> } = {}
   ): Promise<BundleLine[]> {
     const termsNo = String(chosen.manualInputs?._termsNo ?? "").trim() || null;
+    // 番号の出し方（当社／相手方／両方。A-072）。
+    const mode = refNoModeOf(chosen.manualInputs?._refNoMode);
+    const nos = mode === "ours" ? new Map<string, string>() : await loadCounterpartyNos(this.database,
+      { agreementIds: [chosen.agreementId], conditionIds: previews.map((p) => p.condition.id), numbers: [termsNo] });
     const out: BundleLine[] = [];
     for (const p of previews) {
-      const ref = await inContractRef(this.database, p.condition.id,
-        { masterAgreementId: chosen.agreementId ?? null, termsNo, payeePartyId: p.payee?.partyId ?? null });
+      const ref = citeContractRef(mode, nos, await inContractRef(this.database, p.condition.id,
+        { masterAgreementId: chosen.agreementId ?? null, termsNo, payeePartyId: p.payee?.partyId ?? null }));
       out.push(...withInContract(bundleLinesFor(p), ref));
     }
     return applyLineLabels(out, chosen.manualInputs ?? {});

@@ -389,6 +389,8 @@ export function executedChange(status: string, executedOn: string | null)
 
 export interface RefDocument {
   id: number; documentNo: string; title: string; label: string; issuedOn: string | null;
+  /** 相手方が付けた番号の控え（文書は documents.counterparty_doc_no、単体契約は agreements.counterparty_ref_no）。 */
+  counterpartyNo: string | null;
 }
 
 export interface DocumentRefs {
@@ -400,6 +402,8 @@ export interface DocumentRefs {
     executedOn: string | null; terminatedOn: string | null; primary: boolean;
     /** 文書に出る呼び方「2024年4月1日付◯◯」。 */
     datedTitle: string;
+    /** 相手方が付けた契約番号の控え。 */
+    counterpartyRefNo: string | null;
   }>;
   /** 決定済みの発注書。検収書の「発注番号」に選ぶ。 */
   purchaseOrders: RefDocument[];
@@ -703,7 +707,7 @@ export class PartyAgreementMapService {
     if (!map) return null;
     try {
       const docs = await this.database.query(
-        `SELECT d.id, d.document_no, d.issued_at, v.title,
+        `SELECT d.id, d.document_no, d.issued_at, v.title, d.counterparty_doc_no,
                 t.template_key, COALESCE(t.label, d.manual_inputs->>'documentKind') AS label
            FROM documents d
            JOIN v_document_display v ON v.document_id = d.id
@@ -720,17 +724,26 @@ export class PartyAgreementMapService {
         [map.party.id, TERMS_TEMPLATES, TERMS_IMPORT_KINDS]);
       const rows = (docs.rows as any[]).map((d) => ({
         id: Number(d.id), documentNo: String(d.document_no), title: String(d.title ?? ""),
-        label: String(d.label ?? "文書"), issuedOn: dateStr(d.issued_at),
+        label: String(d.label ?? "文書"), issuedOn: dateStr(d.issued_at), counterpartyNo: str(d.counterparty_doc_no),
         isOrder: d.template_key === "purchase_order" || d.template_key === "intl_purchase_order"
       }));
       const linkedOrders = conditionIds.length ? await this.linkedOrders(conditionIds) : [];
+      // 基本契約の相手方番号の控え（A-072。引用するとき 当社／相手方／両方 を選べる）。
+      const theirNos = new Map<number, string>();
+      const masterIds = map.roots.filter((r) => r.kind === "master").map((r) => r.id);
+      if (masterIds.length) {
+        const t = await this.database.query(
+          "SELECT id, counterparty_ref_no FROM agreements WHERE id = ANY($1::bigint[]) AND counterparty_ref_no IS NOT NULL", [masterIds]);
+        for (const row of t.rows as Array<{ id: number; counterparty_ref_no: string }>) theirNos.set(Number(row.id), String(row.counterparty_ref_no).trim());
+      }
       return {
         party: map.party,
         // 文書の「基本契約」に出せるのは基本契約だけ（単体契約は基本契約なし扱い）。
         masters: map.roots.filter((r) => r.kind === "master").map((r) => ({
           id: r.id, agreementNo: r.agreementNo, title: r.title, kind: r.kind, domain: r.domain,
           direction: r.direction, status: r.status, executedOn: r.executedOn, terminatedOn: r.terminatedOn,
-          primary: r.primary, datedTitle: agreementDatedTitle(r.title, r.executedOn) ?? r.title
+          primary: r.primary, datedTitle: agreementDatedTitle(r.title, r.executedOn) ?? r.title,
+          counterpartyRefNo: theirNos.get(r.id) ?? null
         })),
         purchaseOrders: rows.filter((d) => d.isOrder).map(({ isOrder: _, ...d }) => d),
         terms: rows.filter((d) => !d.isOrder).map(({ isOrder: _, ...d }) => d),
@@ -749,7 +762,7 @@ export class PartyAgreementMapService {
          SELECT y.id, y.condition_no, COALESCE(y.series_id, y.id) AS series
            FROM conditions y WHERE y.id = ANY($1::bigint[])
        )
-       SELECT 'agreement' AS source, a.id, a.agreement_no AS no, a.title,
+       SELECT 'agreement' AS source, a.id, a.agreement_no AS no, a.title, a.counterparty_ref_no AS their_no,
               a.executed_on AS issued_on, array_agg(DISTINCT w.condition_no) AS condition_nos
          FROM wanted w
          JOIN conditions c ON c.id = w.id
@@ -757,9 +770,9 @@ export class PartyAgreementMapService {
         WHERE COALESCE(a.kind, 'master') IN ('standalone', 'document')
           AND a.agreement_no IS NOT NULL
           AND COALESCE(a.status, '') NOT IN ('void', 'superseded')
-        GROUP BY a.id, a.agreement_no, a.title, a.executed_on
+        GROUP BY a.id, a.agreement_no, a.title, a.counterparty_ref_no, a.executed_on
        UNION ALL
-       SELECT 'document' AS source, d.id, d.document_no AS no, v.title,
+       SELECT 'document' AS source, d.id, d.document_no AS no, v.title, d.counterparty_doc_no AS their_no,
               d.issued_at::date AS issued_on, array_agg(DISTINCT w.condition_no) AS condition_nos
          FROM wanted w
          JOIN conditions x ON COALESCE(x.series_id, x.id) = w.series
@@ -772,7 +785,7 @@ export class PartyAgreementMapService {
           AND d.status NOT IN ('void', 'superseded', 'draft')
           AND (t.template_key IN ('purchase_order', 'intl_purchase_order')
                OR COALESCE(d.manual_inputs->>'documentKind', t.label, '') LIKE '%発注%')
-        GROUP BY d.id, d.document_no, v.title, d.issued_at
+        GROUP BY d.id, d.document_no, v.title, d.counterparty_doc_no, d.issued_at
         ORDER BY issued_on DESC NULLS LAST, id DESC`, [conditionIds]);
     const seen = new Set<string>();
     return (r.rows as any[]).flatMap((row) => {
@@ -782,7 +795,7 @@ export class PartyAgreementMapService {
       return [{
         id: Number(row.id), documentNo: no, title: String(row.title ?? ""),
         label: row.source === "agreement" ? "単体契約" : "発注書",
-        issuedOn: dateStr(row.issued_on),
+        issuedOn: dateStr(row.issued_on), counterpartyNo: str(row.their_no),
         source: row.source === "agreement" ? "agreement" as const : "document" as const,
         conditionNos: ((row.condition_nos ?? []) as unknown[]).filter(Boolean).map(String)
       }];

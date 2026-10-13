@@ -5,6 +5,7 @@ import { Relations, type EntityKind } from "./Relations.js";
 import { DocumentEvents } from "./DocumentEvents.js";
 import { DocumentSend } from "./DocumentSend.js";
 import { DocumentAttachFile } from "./DocumentImport.js";
+import { api, ApiError } from "./api.js";
 
 /**
  * 文書1件の詳細。
@@ -28,6 +29,8 @@ export interface DocumentRow {
   supersededById: number | null; supersededByNo: string | null;
   issuedAt: string | null; storageUrl: string | null;
   imported: boolean;
+  /** 相手方が付けた文書番号の控え（A-072）。 */
+  counterpartyDocNo?: string | null;
   /** 人が見る段階。下書き → 決定済み → 送信済み（退いた版・無効はそのまま）。 */
   phase: "draft" | "decided" | "sent" | "superseded" | "void";
   sentAt: string | null;
@@ -53,6 +56,48 @@ const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
 /** 版の連鎖の中から文書番号を引く。番号の無い版は id で呼ぶ。 */
 const byNo = (versions: DocumentRow[], id: number) =>
   versions.find((v) => v.id === id)?.documentNo ?? `#${id}`;
+
+/**
+ * 相手方が付けた文書番号の控え（A-072）。当社の番号とは別に持ち、
+ * 個別条件書・発注書・検収書・計算書で引用するとき 当社／相手方／両方 を選べる。
+ * 相手方の番号は相手方の文書が届いてから分かるので、決定済みの文書にもあとから控えられる。
+ */
+function CounterpartyNo({ doc, busy, onChanged }: { doc: DocumentRow; busy: boolean; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(doc.counterpartyDocNo ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (doc.status === "void") return null;
+  async function save() {
+    setSaving(true); setError(null);
+    try {
+      await api.put(`/documents/${doc.id}/counterparty-no`, { counterpartyDocNo: value.trim() || null });
+      setEditing(false); onChanged();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setSaving(false); }
+  }
+  if (!editing) {
+    return (
+      <span className="row" style={{ gap: 4, alignItems: "center" }} title="相手方が付けた文書番号の控え。引用するとき 当社番号／相手方番号／両方 を選べます">
+        {doc.counterpartyDocNo
+          ? <span className="faint">相手方番号 <b className="code">{doc.counterpartyDocNo}</b></span>
+          : <span className="faint">相手方番号なし</span>}
+        <button type="button" className="linky" disabled={busy} onClick={() => { setValue(doc.counterpartyDocNo ?? ""); setEditing(true); }}>
+          {doc.counterpartyDocNo ? "直す" : "控える"}
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="row" style={{ gap: 4, alignItems: "center" }}>
+      <input value={value} placeholder="相手方の文書番号" aria-label="相手方の文書番号" style={{ width: 180 }}
+             onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void save(); }} />
+      <button type="button" className="btn btn-sm primary" disabled={saving} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button>
+      <button type="button" className="btn btn-sm" disabled={saving} onClick={() => setEditing(false)}>やめる</button>
+      {error && <span className="alert">{error}</span>}
+    </span>
+  );
+}
 
 export function DocumentDetail(
   { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
@@ -120,6 +165,7 @@ export function DocumentDetail(
           <StatusTag kind="document" value={doc.phase} />
           {doc.imported && <span className="tag">取込</span>}
           {doc.imported && doc.status === "draft" && <span className="tag warn">番号のみ・ファイル待ち</span>}
+          <CounterpartyNo doc={doc} busy={busy} onChanged={onChanged} />
         </div>
         <div className="panel-bd stack">
           <div className={`state ${doc.phase}`}>

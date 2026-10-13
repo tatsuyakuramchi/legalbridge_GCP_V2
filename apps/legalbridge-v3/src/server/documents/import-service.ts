@@ -45,6 +45,8 @@ export interface ImportInput {
   /** 受領日・締結日。空なら今日。 */
   receivedOn?: string | null;
   note?: string | null;
+  /** 相手方が付けた文書番号の控え（A-072）。引用するとき 当社／相手方／両方 を選べる。 */
+  counterpartyDocNo?: string | null;
   /** デイリータスクの依頼。付けると依頼に繋がり、作業の進み具合に数えられる。 */
   requestId?: number | null;
   file: { filename: string; mimeType: string; data: Buffer };
@@ -57,6 +59,7 @@ export interface ReserveInput {
   matterId?: number | null;
   agreementId?: number | null;
   requestId?: number | null;
+  counterpartyDocNo?: string | null;
 }
 
 export interface AttachInput {
@@ -148,11 +151,12 @@ export class DocumentImportService {
         const documentNo = await this.assignNumber(client, documentKind);
         const inserted = await client.query(
           `INSERT INTO documents
-             (document_no, template_version_id, matter_id, agreement_id, status, manual_inputs)
-           VALUES ($1, NULL, $2, $3, 'draft', $4::jsonb)
+             (document_no, template_version_id, matter_id, agreement_id, status, manual_inputs, counterparty_doc_no)
+           VALUES ($1, NULL, $2, $3, 'draft', $4::jsonb, $5)
            RETURNING id`,
           [documentNo, input.matterId ?? null, input.agreementId ?? null,
-           JSON.stringify({ title, documentKind, imported: true, reserved: true, reservedBy: actor })]);
+           JSON.stringify({ title, documentKind, imported: true, reserved: true, reservedBy: actor }),
+           String(input.counterpartyDocNo ?? "").trim() || null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
         await this.linkConditions(client, id, conditionIds);
         await this.linkRequest(client, id, input.requestId, actor);
@@ -236,9 +240,9 @@ export class DocumentImportService {
         const inserted = await client.query(
           `INSERT INTO documents
              (document_no, template_version_id, matter_id, agreement_id, status,
-              manual_inputs, storage_url, issued_at, issued_by)
+              manual_inputs, storage_url, issued_at, issued_by, counterparty_doc_no)
            VALUES ($1, NULL, $2, $3, 'issued', $4::jsonb, $5,
-                   COALESCE($6::date, current_date), $7)
+                   COALESCE($6::date, current_date), $7, $8)
            RETURNING id`,
           [documentNo, input.matterId ?? null, input.agreementId ?? null,
            JSON.stringify({
@@ -246,7 +250,8 @@ export class DocumentImportService {
              note: input.note ?? null, filename, mimeType, bytes: data.length,
              imported: true
            }),
-           stored.webViewLink, input.receivedOn ?? null, actor]);
+           stored.webViewLink, input.receivedOn ?? null, actor,
+           String(input.counterpartyDocNo ?? "").trim() || null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await this.linkConditions(client, id, conditionIds);
