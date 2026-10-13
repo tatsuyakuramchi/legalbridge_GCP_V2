@@ -8,10 +8,7 @@ import { WorkCreateForm } from "./WorkCreateForm.js";
 import { CsvImport } from "./CsvImport.js";
 import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
-import { ConditionCreateForm } from "./ConditionCreateForm.js";
-import { PubConditionSetForm } from "./PubConditionSetForm.js";
-import { LicenseSetForm } from "./LicenseSetForm.js";
-import { OutConditionForm } from "./OutConditionForm.js";
+import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { RoyaltyLedger } from "./RoyaltyLedger.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
@@ -170,7 +167,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "publishing" | "license" | "out" | "import_works" | "import_conditions" | null>(null);
+  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "import_works" | "import_conditions" | null>(null);
   /** クレジット表記の履歴（A-031）。重版で変わる著作権表示を適用開始日つきで持つ。 */
   const [credits, setCredits] = useState<Credit[]>([]);
   const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
@@ -1073,51 +1070,13 @@ export function WorksWorkspace(
                   無効化済みも
                 </label>
                 {editable && creating === null && (
-                  <button className="btn btn-sm primary" onClick={() => setCreating("condition")}>条件を登録</button>
-                )}
-                {editable && creating === null && (
-                  <button className="btn btn-sm" onClick={() => setCreating("license")}
-                          title="この作品の自社製造・再許諾・他社販売の条件を1回で作る">
-                    許諾セット（ゲーム）
-                  </button>
-                )}
-                {editable && creating === null && (
-                  <button className="btn btn-sm" onClick={() => setCreating("publishing")}
-                          title="この作品の紙・電子の条件を1回で作る。出版条件書はこの2本を1行に畳んで出す">
-                    出版セット（紙・電子）
-                  </button>
-                )}
-                {editable && creating === null && (
-                  <button className="btn btn-sm" onClick={() => setCreating("out")}
-                          title="この作品を再許諾・他社販売する相手先（OUT 条件）を作る">
-                    許諾先（OUT）を登録
-                  </button>
+                  <button className="btn btn-sm primary" onClick={() => setCreating("condition")}
+                          title="取引の種類（ゲーム IN・出版 IN・OUT・業務委託・1 本だけ）を選んで登録する">条件を登録</button>
                 )}
               </div>
               {creating === "condition" && (
                 <div className="panel-bd">
-                  <ConditionCreateForm preset={{ workId: String(work.id) }}
-                    onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
-                    onCancel={() => setCreating(null)} />
-                </div>
-              )}
-              {creating === "publishing" && (
-                <div className="panel-bd">
-                  <PubConditionSetForm preset={{ workId: String(work.id) }}
-                    onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
-                    onCancel={() => setCreating(null)} />
-                </div>
-              )}
-              {creating === "out" && (
-                <div className="panel-bd">
-                  <OutConditionForm preset={{ workId: String(work.id) }} presetLabels={{ workId: work.title }}
-                    onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
-                    onCancel={() => setCreating(null)} />
-                </div>
-              )}
-              {creating === "license" && (
-                <div className="panel-bd">
-                  <LicenseSetForm preset={{ workId: String(work.id) }}
+                  <ConditionEntryForm preset={{ workId: work.id, workTitle: work.title }}
                     onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
                     onCancel={() => setCreating(null)} />
                 </div>

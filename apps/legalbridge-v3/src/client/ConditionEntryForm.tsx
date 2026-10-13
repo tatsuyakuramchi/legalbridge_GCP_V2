@@ -4,14 +4,15 @@ import { LicenseSetForm } from "./LicenseSetForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { ServiceLinesForm } from "./ServiceLinesForm.js";
+import type { WorkOption } from "./WorkChooser.js";
 
 /**
  * 条件明細を登録する 1 つの入口。
  *
  * 以前は 許諾セット（ゲーム）・出版セット・許諾先（OUT）・業務委託の明細・1 本だけ の
  * 4〜5 個のボタンが、条件明細・契約・作品・案件・取引の画面に別々に並んでいた。
- * ここで「取引の種類」を選んでから、同じフォームに進む。開くのは条件明細の画面と、
- * 作業テーブルの「条件を足す」から。
+ * ここで「取引の種類」を選んでから、同じフォームに進む。開くのは 条件明細・契約・作品・
+ * 案件（繋ぐ／取引先ごと）の画面と、作業テーブルの「条件を足す」。どこから開いても同じ形。
  *
  * 登録したら、その条件で作る文書のひな形を添えて返す（作業テーブルの①がそれを既定にする）。
  */
@@ -28,8 +29,19 @@ export const ENTRY_KINDS: Array<{ value: ConditionEntryKind; label: string; hint
 export function ConditionEntryForm(
   { initialKind, preset, onDone, onCancel }: {
     initialKind?: ConditionEntryKind | null;
-    /** 分かっている値（相手先・作品）。作業テーブルから足すときに渡す。 */
-    preset?: { counterpartyId?: number | null; counterpartyName?: string | null; workId?: number | null; workTitle?: string | null };
+    /** 分かっている値（相手先・作品・契約・案件）。開いた画面が知っていることは人に打たせない。 */
+    preset?: {
+      counterpartyId?: number | null; counterpartyName?: string | null;
+      workId?: number | null; workTitle?: string | null;
+      /** 契約の画面から：この契約に載せる。 */
+      agreementId?: number | null; agreementLabel?: string | null;
+      /** 案件の画面から：作った条件を案件に繋ぐ（セット系のフォームはサーバが繋ぐ）。 */
+      matterId?: number | null;
+      /** 「1 本だけ」の既定（方向・種類・通貨）。 */
+      direction?: string | null; kind?: string | null; currency?: string | null;
+      /** 業務委託の明細の行で選べる作品（案件の作品など）。 */
+      workOptions?: WorkOption[];
+    };
     onDone: (created: { conditionIds: number[]; templateKey: string | null }) => void;
     onCancel: () => void;
   }
@@ -37,9 +49,11 @@ export function ConditionEntryForm(
   const [kind, setKind] = useState<ConditionEntryKind | null>(initialKind ?? null);
   const common = {
     counterpartyId: preset?.counterpartyId ? String(preset.counterpartyId) : undefined,
-    workId: preset?.workId ? String(preset.workId) : undefined
+    workId: preset?.workId ? String(preset.workId) : undefined,
+    agreementId: preset?.agreementId ? String(preset.agreementId) : undefined,
+    matterId: preset?.matterId ? String(preset.matterId) : undefined
   };
-  const labels = { counterpartyId: preset?.counterpartyName ?? null, workId: preset?.workTitle ?? null };
+  const labels = { counterpartyId: preset?.counterpartyName ?? null, workId: preset?.workTitle ?? null, agreementId: preset?.agreementLabel ?? null };
   const done = (ids: number[], key: string | null) => onDone({ conditionIds: ids.filter((x) => Number.isFinite(x)), templateKey: key });
 
   return (
@@ -67,15 +81,18 @@ export function ConditionEntryForm(
                              onCancel={onCancel} />
       )}
       {kind === "out" && (
-        <OutConditionForm preset={common} presetLabels={labels}
+        <OutConditionForm preset={{ ...common, ...(preset?.currency ? { currency: preset.currency } : {}) }} presetLabels={labels}
                           onDone={(r) => done([r.id], "pub_license_terms_v3")} onCancel={onCancel} />
       )}
       {kind === "service" && (
         <ServiceLinesForm preset={common} counterpartyName={preset?.counterpartyName ?? null} workTitle={preset?.workTitle ?? null}
+                          workOptions={preset?.workOptions}
                           onDone={(r) => done(r.conditions.map((c) => c.id), "purchase_order")} onCancel={onCancel} />
       )}
       {kind === "one" && (
-        <ConditionCreateForm preset={common} presetLabels={labels}
+        <ConditionCreateForm presetLabels={labels}
+                             preset={{ ...common, ...(preset?.direction ? { direction: preset.direction } : {}),
+                                       ...(preset?.kind ? { kind: preset.kind } : {}), ...(preset?.currency ? { currency: preset.currency } : {}) }}
                              onDone={(r: { id: number }) => done([r.id], null)} onCancel={onCancel} />
       )}
     </div>

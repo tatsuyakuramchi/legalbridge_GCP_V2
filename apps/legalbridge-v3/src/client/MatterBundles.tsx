@@ -5,7 +5,7 @@ import { useReadOnly } from "./read-only.js";
 import { SignSwitch, SignTag } from "./SignState.js";
 import { SendMany } from "./SendMany.js";
 import { exportDocumentsZip, type ExportProgress } from "./exportZip.js";
-import { LicenseSetForm } from "./LicenseSetForm.js";
+import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { OrderLinker } from "./OrderLinker.js";
 import type { GridDocument, GridParty, GridRow } from "../server/matters/grid.js";
 import type { MatterDetail } from "../server/core/model.js";
@@ -422,13 +422,12 @@ export function MatterBundles(
           onCancel={() => setLinkingOrder(null)} />
       )}
       {licenseFor && licenseFor.workId && licenseFor.counterparty && (
-        <LicenseSetForm
-          preset={{ counterpartyId: String(licenseFor.counterparty.id), workId: String(licenseFor.workId),
-                    matterId: String(matterId) }}
-          presetLabels={{ counterpartyId: licenseFor.counterparty.name }}
-          onDone={(created) => {
+        <ConditionEntryForm initialKind="game_in"
+          preset={{ counterpartyId: licenseFor.counterparty.id, counterpartyName: licenseFor.counterparty.name,
+                    workId: licenseFor.workId, matterId }}
+          onDone={({ conditionIds }) => {
             setLicenseFor(null);
-            setNotice(`利用許諾条件を ${created.conditions.length} 本作りました（${licenseFor.name}）。発注書を作り直すと利用許諾条件の表に出ます`);
+            setNotice(`利用許諾条件を ${conditionIds.length} 本作りました（${licenseFor.name}）。発注書を作り直すと利用許諾条件の表に出ます`);
             setBump((n) => n + 1);
           }}
           onCancel={() => setLicenseFor(null)} />
