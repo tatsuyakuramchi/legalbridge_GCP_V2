@@ -51,9 +51,17 @@ test("取り込みは手元に無い列を黙って捨てない", () => {
 });
 
 test("ページを分けても取りこぼさない並び順になっている", () => {
-  // OFFSET でページを分けるので、全体で決まった並びが要る。
-  assert.match(exportSql(), /ORDER BY tbl, data\s*\n\s*OFFSET/,
-    "並び順が決まっていないとページの境目で取りこぼす");
+  // ページは大きさ（バイトの累計）で切る。累計の並びが決まっていないと、ページの境目で
+  // 同じ行が二度出たり落ちたりする。累計も取り出しも tbl, data の順で並べること。
+  const sql = exportSql();
+  assert.match(sql, /sum\(bytes\) OVER \(ORDER BY tbl, data ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\)/,
+    "累計の並び順が決まっていないとページの境目で取りこぼす");
+  assert.match(sql, /WHERE page = 0\s*\n\s*ORDER BY tbl, data;/,
+    "取り出しがページ番号で絞って tbl, data で並べていない");
+  // OFFSET のページ割り（行数で切る）には戻さない。Studio の結果の大きさの上限で欠ける。
+  assert.doesNotMatch(sql, /\bOFFSET\b/, "行数で切る OFFSET のページ割りは Studio の上限で欠ける");
+  // PDF の作り置きは出さない（1 行が数 MB）。
+  assert.match(sql, /t\.tablename <> 'document_pdfs'/);
 });
 
 test("取り込みは取り出した CSV 以外を名指しで断る", () => {

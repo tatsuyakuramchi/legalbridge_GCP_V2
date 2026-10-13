@@ -10,6 +10,7 @@ import { SettledImport } from "./SettledImport.js";
 import { MissingContracts } from "./MissingContracts.js";
 import type { DocFlow } from "./FlowBar.js";
 import type { PrepareMode, WorkbenchCandidate, WorkbenchPlan } from "../server/workbench/plan-service.js";
+import type { ConditionSummary } from "../server/core/model.js";
 import { MASTER_DOC, PATTERN_LABEL, type WorkbenchPattern } from "../server/workbench/catalog.js";
 
 /**
@@ -277,9 +278,15 @@ function Workbench(
         if (first && want && !p.candidates.some((c) => c.options.some((o) => o.key === want)) && !extras.includes(want)) {
           extras = [...extras, want];
         }
+        // ②で条件を足したとき：条件の無かった単位（本体・決済文書）に、繋いだ条件を載せる。
+        const condIds = p.conditions.map((c) => c.id);
+        const units = state.step === "work" && condIds.length
+          ? state.units.map((u) => (u.kind === "single" && u.key !== "master" && !(u.conditionIds?.length) ? { ...u, conditionIds: condIds } : u))
+          : state.units;
+        const unitsChanged = units.some((u, i) => u !== state.units[i]);
         if (Object.keys(modes).length !== Object.keys(state.modes).length || Object.keys(keys).length !== Object.keys(state.templateKeys).length
-            || extras !== state.extras) {
-          onState({ ...state, modes, templateKeys: keys, extras });
+            || extras !== state.extras || unitsChanged) {
+          onState({ ...state, modes, templateKeys: keys, extras, units });
         }
         if (p.ctx.partyId) {
           api.get<{ agreements: typeof agreements }>(`/agreements?partyId=${p.ctx.partyId}`).then((a) => setAgreements(a.agreements)).catch(() => undefined);
@@ -337,6 +344,23 @@ function Workbench(
       if (m === "external") units.push({ key: `x:${t}`, kind: "external", label: tpl?.label ?? t });
     }
     return units;
+  }
+
+  /**
+   * 条件を作業に繋ぐ（①②の「条件を足す」「この相手先の条件から繋ぐ」）。
+   * デイリータスクなら依頼に、案件なら案件に（セット系のフォームはサーバが繋ぐので 1 本だけのとき）、
+   * 条件明細の入口なら選んだ条件に足す。繋いだら材料を引き直す（②の単位にも載る）。
+   */
+  async function linkConditions(ids: number[], templateKey: string | null) {
+    if (!ids.length) return;
+    setBusy(true); setError(null);
+    try {
+      if (e.kind === "task") await api.post(`/intake/${e.requestId}/conditions`, { conditionIds: ids });
+      else if (e.kind === "matter" && templateKey === null) await api.post(`/matters/${e.matterId}/conditions`, { conditionIds: ids });
+      else if (e.kind === "conditions") onState({ ...state, entry: { ...e, conditionIds: [...new Set([...e.conditionIds, ...ids])] } });
+      setReload((n) => n + 1);
+    } catch (x) { setError(x instanceof ApiError ? x.message : String(x)); }
+    finally { setBusy(false); }
   }
 
   /** ① → ②。既にある文書は、ここで作業・案件に繋ぐ。 */
@@ -407,11 +431,8 @@ function Workbench(
       {plan && state.step === "pick" && (
         <PickStep plan={plan} state={state} patch={patch} templates={templates} agreements={agreements}
                   busy={busy || readOnly} onStart={() => void start()} onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition}
-                  onConditionsAdded={(ids) => {
-                    // 足した条件も本体の文書に載せる（条件明細の入口なら選んだ条件に足す）。
-                    if (e.kind === "conditions") onState({ ...state, entry: { ...e, conditionIds: [...new Set([...e.conditionIds, ...ids])] } });
-                    setReload((n) => n + 1);
-                  }} />
+                  onConditionsAdded={(ids, templateKey) => void linkConditions(ids, templateKey)}
+                  onLinkExisting={(ids) => void linkConditions(ids, null)} />
       )}
 
       {plan && state.step === "work" && (
@@ -419,7 +440,9 @@ function Workbench(
                   onDone={done} onBackToPick={() => patch({ step: "pick" })}
                   onComposeUnit={(u) => onCompose(u, { conditionIds: u.conditionIds ?? conditionIds, eventIds: u.eventIds ?? [], matterId, requestId, templateKey: u.templateKey ?? "" })}
                   onOpenDraft={(u, id) => (onOpenDraft ? onOpenDraft(u, id) : onOpenDocument(id))}
-                  onOpenDocument={onOpenDocument} />
+                  onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition} busy={busy || readOnly}
+                  onConditionsAdded={(ids, templateKey) => void linkConditions(ids, templateKey)}
+                  onLinkExisting={(ids) => void linkConditions(ids, null)} />
       )}
 
       {plan && state.step === "done" && (
@@ -431,17 +454,108 @@ function Workbench(
   );
 }
 
+/**
+ * 作業に繋いである条件明細と、繋ぐ手段。①と、②で条件の無い単位に出す。
+ *   条件を足す              … この相手先の条件をここで登録する（ConditionEntryForm）
+ *   この相手先の条件から繋ぐ … 既にある条件明細（文書がまだ無いものなど）を選んで繋ぐ
+ */
+function ConditionsPanel(
+  { plan, busy, onOpenCondition, onConditionsAdded, onLinkExisting }: {
+    plan: WorkbenchPlan; busy: boolean; onOpenCondition: (id: number) => void;
+    onConditionsAdded: (ids: number[], templateKey: string | null) => void;
+    onLinkExisting: (ids: number[]) => void;
+  }
+) {
+  const ctx = plan.ctx;
+  const [mode, setMode] = useState<"none" | "add" | "pick">("none");
+  const [others, setOthers] = useState<ConditionSummary[] | null>(null);
+  const [checked, setChecked] = useState<number[]>([]);
+  const [q, setQ] = useState("");
+  const linkedIds = new Set([...plan.conditions, ...plan.otherConditions].map((c) => c.id));
+  const canLink = ctx.kind === "task" || ctx.kind === "matter" || ctx.kind === "conditions";
+  useEffect(() => {
+    if (mode !== "pick") return;
+    const p = new URLSearchParams({ limit: "200" });
+    if (ctx.partyId) p.set("counterpartyId", String(ctx.partyId));
+    if (q.trim()) p.set("q", q.trim());
+    api.get<{ conditions: ConditionSummary[] }>(`/conditions?${p}`)
+      .then((r) => setOthers(r.conditions.filter((c) => !linkedIds.has(c.id))))
+      .catch(() => setOthers([]));
+  }, [mode, q, ctx.partyId, plan]);
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span className="faint">本体の文書に載せる条件明細：</span>
+        {plan.conditions.length === 0 && <span className="tag warn">まだ無い（基本契約書だけなら無くてよい）</span>}
+        {plan.conditions.map((c) => (
+          <button key={c.id} className="linky" onClick={() => onOpenCondition(c.id)}>
+            <span className="code">{c.conditionNo ?? `#${c.id}`}</span> {c.name}
+          </button>
+        ))}
+        {plan.otherConditions.length > 0 && (
+          <span className="faint">（型に合わない条件 {plan.otherConditions.length} 件は載せない：{plan.otherConditions.map((c) => c.name).join("・")}）</span>
+        )}
+        {mode === "none" && (<>
+          <button className="btn btn-sm" disabled={busy} onClick={() => setMode("add")} title="この相手先の条件明細をここで登録して、本体の文書に載せる">条件を足す</button>
+          {canLink && (
+            <button className="btn btn-sm" disabled={busy} onClick={() => { setChecked([]); setMode("pick"); }}
+                    title="既にある条件明細（まだ文書の無いものなど）をこの作業に繋ぐ">
+              {ctx.partyName ? `${ctx.partyName} の条件明細から繋ぐ` : "既にある条件明細から繋ぐ"}
+            </button>
+          )}
+        </>)}
+      </div>
+      {mode === "add" && (
+        <ConditionEntryForm preset={{ counterpartyId: ctx.partyId, counterpartyName: ctx.partyName, workId: ctx.workIds[0] ?? null, workTitle: ctx.works[0]?.title ?? null,
+                                      matterId: ctx.matterId }}
+                            onDone={({ conditionIds, templateKey }) => { setMode("none"); onConditionsAdded(conditionIds, templateKey); }}
+                            onCancel={() => setMode("none")} />
+      )}
+      {mode === "pick" && (
+        <div className="stack" style={{ gap: 6, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 6 }}>
+          <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <b>既にある条件明細を繋ぐ</b>
+            <input type="search" value={q} placeholder="条件番号・名称・作品で絞る" style={{ minWidth: 220 }} onChange={(ev) => setQ(ev.target.value)} />
+            <span className="faint">{ctx.partyId ? "この相手先の条件" : "全部の条件"}（繋いであるものは出ません）</span>
+          </div>
+          {others === null && <span className="faint">読み込み中…</span>}
+          {others && others.length === 0 && <span className="faint">繋げる条件がありません。「条件を足す」で登録してください。</span>}
+          {others && others.length > 0 && (
+            <div className="stack" style={{ gap: 2, maxHeight: 260, overflow: "auto" }}>
+              {others.map((c) => (
+                <label key={c.id} className="row" style={{ gap: 6, alignItems: "center" }}>
+                  <input type="checkbox" checked={checked.includes(c.id)}
+                         onChange={(ev) => setChecked((prev) => (ev.target.checked ? [...prev, c.id] : prev.filter((x) => x !== c.id)))} />
+                  <span className="code">{c.conditionNo ?? `#${c.id}`}</span>
+                  <span>{c.name}</span>
+                  <span className="faint">{c.direction === "in" ? "IN" : "OUT"}・{c.kind}{c.work ? `・${c.work.title}` : ""}{c.counterparty && !ctx.partyId ? `・${c.counterparty.name}` : ""}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn btn-sm primary" disabled={busy || !checked.length} onClick={() => { onLinkExisting(checked); setMode("none"); }}>
+              {checked.length ? `${checked.length} 本を繋ぐ` : "条件を選んでください"}
+            </button>
+            <button className="btn btn-sm" onClick={() => setMode("none")}>やめる</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PickStep(
-  { plan, state, patch, templates, agreements, busy, onStart, onOpenDocument, onOpenCondition, onConditionsAdded }: {
+  { plan, state, patch, templates, agreements, busy, onStart, onOpenDocument, onOpenCondition, onConditionsAdded, onLinkExisting }: {
     plan: WorkbenchPlan; state: WorkbenchState; patch: (next: Partial<WorkbenchState>) => void;
     templates: Array<{ templateKey: string; label: string; category: string | null }>;
     agreements: Array<{ id: number; agreementNo: string | null; title: string; status: string; kind: string }>;
     busy: boolean; onStart: () => void; onOpenDocument: (id: number) => void; onOpenCondition: (id: number) => void;
-    onConditionsAdded: (ids: number[]) => void;
+    onConditionsAdded: (ids: number[], templateKey: string | null) => void;
+    onLinkExisting: (ids: number[]) => void;
   }
 ) {
   const ctx = plan.ctx;
-  const [adding, setAdding] = useState(false);
   const mode = (c: WorkbenchCandidate) => state.modes[c.id] ?? c.suggested;
   const setMode = (id: string, m: PrepareMode) => patch({ modes: { ...state.modes, [id]: m } });
   const [addKey, setAddKey] = useState("");
@@ -466,25 +580,9 @@ function PickStep(
         </span>
       </div>
       <div className="panel-bd stack" style={{ gap: 12 }}>
-        {/* 繋いである条件 */}
-        <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <span className="faint">本体の文書に載せる条件明細：</span>
-          {plan.conditions.length === 0 && <span className="tag warn">まだ無い。条件明細を登録してから作る（基本契約だけなら無くてよい）</span>}
-          {plan.conditions.map((c) => (
-            <button key={c.id} className="linky" onClick={() => onOpenCondition(c.id)}>
-              <span className="code">{c.conditionNo ?? `#${c.id}`}</span> {c.name}
-            </button>
-          ))}
-          {plan.otherConditions.length > 0 && (
-            <span className="faint">（型に合わない条件 {plan.otherConditions.length} 件は載せない：{plan.otherConditions.map((c) => c.name).join("・")}）</span>
-          )}
-          {!adding && <button className="btn btn-sm" onClick={() => setAdding(true)} title="この相手先の条件明細をここで登録して、本体の文書に載せる">条件を足す</button>}
-        </div>
-        {adding && (
-          <ConditionEntryForm preset={{ counterpartyId: ctx.partyId, counterpartyName: ctx.partyName, workId: ctx.workIds[0] ?? null, workTitle: ctx.works[0]?.title ?? null }}
-                              onDone={({ conditionIds }) => { setAdding(false); onConditionsAdded(conditionIds); }}
-                              onCancel={() => setAdding(false)} />
-        )}
+        {/* 繋いである条件。無ければここで登録するか、この相手先の既存の条件から繋ぐ */}
+        <ConditionsPanel plan={plan} busy={busy} onOpenCondition={onOpenCondition}
+                         onConditionsAdded={onConditionsAdded} onLinkExisting={onLinkExisting} />
         {plan.linkedDocuments.length > 0 && (
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
             <span className="faint">{ctx.kind === "document" ? "元の文書：" : `この${ctx.kind === "task" ? "作業" : ctx.kind === "round" || ctx.kind === "conditions" ? "条件" : "案件"}に既に繋がっている文書：`}</span>
@@ -622,12 +720,15 @@ function PickStep(
 }
 
 function WorkStep(
-  { plan, state, agreements, channels, isAdmin, onDone, onBackToPick, onComposeUnit, onOpenDraft, onOpenDocument }: {
+  { plan, state, agreements, channels, isAdmin, onDone, onBackToPick, onComposeUnit, onOpenDraft, onOpenDocument,
+    onOpenCondition, busy, onConditionsAdded, onLinkExisting }: {
     plan: WorkbenchPlan; state: WorkbenchState;
     agreements: Array<{ id: number; agreementNo: string | null; title: string; status: string; kind: string }>;
     channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>; isAdmin: boolean;
     onDone: (key: string, result: UnitResult) => void; onBackToPick: () => void;
     onComposeUnit: (u: WorkUnit) => void; onOpenDraft: (u: WorkUnit, documentId: number) => void; onOpenDocument: (id: number) => void;
+    onOpenCondition: (id: number) => void; busy: boolean;
+    onConditionsAdded: (ids: number[], templateKey: string | null) => void; onLinkExisting: (ids: number[]) => void;
   }
 ) {
   const ctx = plan.ctx;
@@ -725,11 +826,16 @@ function WorkStep(
                 下書きのまま戻ってもよい（「下書き」として残り、あとで続きから作れます）。
               </span>
               <div className="row" style={{ gap: 8 }}>
-                <button className="btn primary" onClick={() => onComposeUnit(current)}>文書の画面で作る</button>
+                <button className="btn primary" disabled={current.key !== "master" && (current.conditionIds?.length ?? 0) === 0}
+                        onClick={() => onComposeUnit(current)}>文書の画面で作る</button>
                 <button className="btn" onClick={() => onDone(current.key, { status: "draft", documentIds: [] })}>この文書は飛ばして次へ</button>
               </div>
               {current.key !== "master" && (current.conditionIds?.length ?? 0) === 0 && (
-                <div className="note warn">条件明細が繋がっていません。本体の文書は条件から作るので、先に条件明細を登録して繋いでください（基本契約書は条件なしで作れます）。</div>
+                <div className="note warn stack" style={{ gap: 8 }}>
+                  <span>条件明細が繋がっていません。本体の文書は条件から作るので、ここで登録するか、この相手先の既存の条件を繋いでください（基本契約書は条件なしで作れます）。</span>
+                  <ConditionsPanel plan={plan} busy={busy} onOpenCondition={onOpenCondition}
+                                   onConditionsAdded={onConditionsAdded} onLinkExisting={onLinkExisting} />
+                </div>
               )}
             </div>
           </div>

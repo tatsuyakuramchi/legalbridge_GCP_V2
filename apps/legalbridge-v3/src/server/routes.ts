@@ -1043,6 +1043,12 @@ export function createRoutes(database: Transactable) {
       if (!input.documentId && !input.documentNo) throw new DomainError("VALIDATION", "文書番号を入れてください");
       res.json(await intakeRequests.linkDocument(Number(req.params.id), input, actor(res)));
     }));
+  // 条件明細を依頼に繋ぐ（作業テーブルから。登録した条件・この相手先の既存の条件）。
+  router.post("/intake/:id/conditions", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(100) }).parse(req.body ?? {});
+      res.json(await intakeRequests.linkConditions(Number(req.params.id), input.conditionIds, actor(res)));
+    }));
   router.delete("/intake/:id/documents/:documentId", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await intakeRequests.unlinkDocument(
