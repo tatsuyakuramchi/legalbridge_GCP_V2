@@ -173,7 +173,7 @@ function Refs(
 const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, openNonce, onOpen, onBack, flow }: {
+  { start, openDocumentId, openNonce, onOpen, onBack, flow, onOpenWorkbench }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /** デイリータスクから来たとき、その元の依頼。作った文書を依頼に繋ぐ。 */
               requestId?: number | null;
@@ -201,6 +201,8 @@ export function DocumentsWorkspace(
      * 一覧は出さない（この 1 枚を作って送る画面にする）。左の「文書」から開いたときは無い。
      */
     flow?: DocFlow | null;
+    /** 「新しく文書を作る」の行き先。文書を作るのは作業テーブル。 */
+    onOpenWorkbench?: () => void;
   } = {}
 ) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -1194,8 +1196,9 @@ export function DocumentsWorkspace(
       <div className="stack">
         {!flow && !composing && !draft && !bulk && (
           <div className="row">
-            <button className="btn primary" onClick={() => setComposing(true)}>
-              新しく文書を作る
+            <button className="btn primary" onClick={() => (onOpenWorkbench ? onOpenWorkbench() : setComposing(true))}
+                    title="文書を作る・登録する・繋ぐのは作業テーブルで">
+              新しく文書を作る（作業テーブルへ）
             </button>
             {/* 何がまとまるのか分からない名前だった。CSV から作れるのは
                 発注書だけなので、そう書く。 */}

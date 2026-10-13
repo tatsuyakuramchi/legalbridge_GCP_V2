@@ -49,7 +49,7 @@ export interface WorkbenchCandidate {
 }
 
 export interface WorkbenchContext {
-  kind: "task" | "matter" | "party" | "round";
+  kind: "task" | "matter" | "party" | "round" | "conditions";
   /** 取引管理の回から来たとき。決済文書に渡す実績と、戻る先。 */
   round?: { conditionId: number; conditionNo: string | null; conditionName: string;
             scheduleId: number | null; eventId: number | null; roundLabel: string | null } | null;
@@ -85,6 +85,8 @@ export interface PlanQuery {
   conditionId?: number | null;
   scheduleId?: number | null;
   eventId?: number | null;
+  /** 条件明細・作品・契約・案件の「文書を作る」から（選んだ条件で）。 */
+  conditionIds?: number[];
   /** 型を手で決めたとき（相手先だけから入って推せないとき）。 */
   pattern?: WorkbenchPattern | null;
 }
@@ -110,7 +112,30 @@ export class WorkbenchPlanService {
     let conditions: ConditionSummary[] = [];
     let linked: ExistingDoc[] = [];
 
-    if (query.conditionId) {
+    if (query.conditionIds?.length) {
+      // 条件を選んだ状態で来た（条件明細・作品・契約・案件の「文書を作る」）。
+      conditions = await this.deps.conditions.findMany(query.conditionIds);
+      if (!conditions.length) throw new DomainError("NOT_FOUND", "選んだ条件が見つかりません");
+      const first = conditions[0];
+      const matterRow = query.matterId
+        ? await this.deps.matters.find(query.matterId)
+        : null;
+      const req = query.requestId ? (await this.deps.intake.find(query.requestId)).request : null;
+      const pattern = query.pattern ?? inferPattern(conditions, { kind: matterRow?.kind ?? req?.kind ?? null, businessLine: matterRow?.businessLine ?? null });
+      ctx = {
+        kind: "conditions", requestId: req?.id ?? null, requestNo: req?.requestNo ?? null, taskId: null,
+        matterId: matterRow?.id ?? null, matterNo: matterRow?.matterNo ?? null,
+        title: matterRow?.title ?? (conditions.length === 1 ? first.name : `${first.name} ほか ${conditions.length - 1} 件`),
+        partyId: first.counterparty?.id ?? null, partyName: first.counterparty?.name ?? null, partyKind: first.counterparty?.kind ?? null,
+        pattern, setDomain: SET_DOMAIN[pattern],
+        workIds: [...new Set(conditions.map((c) => c.work?.id).filter((x): x is number => Boolean(x)))],
+        works: uniqWorks(conditions)
+      };
+      const linkedDocs = await this.database.query(
+        `SELECT DISTINCT d.id FROM document_conditions dc JOIN documents d ON d.id = dc.document_id
+          WHERE dc.condition_id = ANY($1::bigint[]) AND d.status <> 'void' ORDER BY d.id DESC LIMIT 20`, [query.conditionIds]);
+      linked = await this.documentsById((linkedDocs.rows as Array<{ id: unknown }>).map((x) => Number(x.id)));
+    } else if (query.conditionId) {
       // 取引管理の回：条件 1 本。決済文書（検収書・計算書）を「要る・いま」で出し、
       // 前提（発注書・基本契約）が無ければ先に要るものとして上に並べる。
       const [cond] = await this.deps.conditions.findMany([query.conditionId]);

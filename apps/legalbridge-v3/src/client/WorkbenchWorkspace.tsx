@@ -26,7 +26,9 @@ export type WorkbenchEntry =
   | { kind: "matter"; matterId: number }
   | { kind: "party"; partyId: number; workIds?: number[] }
   /** 取引管理の回から（決済文書を作る。実績を渡す）。 */
-  | { kind: "round"; conditionId: number; scheduleId: number | null; eventId: number | null; label: string };
+  | { kind: "round"; conditionId: number; scheduleId: number | null; eventId: number | null; label: string }
+  /** 条件明細・作品・契約・案件の「文書を作る」から（選んだ条件で。ひな形が決まっていればそれを既定に）。 */
+  | { kind: "conditions"; conditionIds: number[]; eventIds?: number[]; matterId?: number | null; requestId?: number | null; templateKey?: string | null };
 
 export type UnitKind = "set" | "single" | "external";
 export interface WorkUnit {
@@ -116,6 +118,7 @@ export function WorkbenchWorkspace(
 const entryKey = (e: WorkbenchEntry) =>
   e.kind === "task" ? `t${e.taskId}` : e.kind === "matter" ? `m${e.matterId}`
     : e.kind === "round" ? `r${e.conditionId}-${e.scheduleId ?? 0}-${e.eventId ?? 0}`
+    : e.kind === "conditions" ? `c${e.conditionIds.join(".")}-${e.matterId ?? 0}-${e.templateKey ?? ""}`
     : `p${e.partyId}-${(e.workIds ?? []).join(".")}`;
 
 function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
@@ -158,6 +161,11 @@ function Workbench(
     if (e.kind === "task") q.set("taskId", String(e.taskId));
     if (e.kind === "matter") q.set("matterId", String(e.matterId));
     if (e.kind === "party") { q.set("partyId", String(e.partyId)); if (e.workIds?.length) q.set("workIds", e.workIds.join(",")); }
+    if (e.kind === "conditions") {
+      q.set("conditionIds", e.conditionIds.join(","));
+      if (e.matterId) q.set("matterId", String(e.matterId));
+      if (e.requestId) q.set("requestId", String(e.requestId));
+    }
     if (e.kind === "round") {
       q.set("conditionId", String(e.conditionId));
       if (e.scheduleId) q.set("scheduleId", String(e.scheduleId));
@@ -170,9 +178,21 @@ function Workbench(
         setPlan(p);
         // 既定の用意の仕方は、候補の「suggested」。人が選び直した分は残す。
         const modes = { ...state.modes }; const keys = { ...state.templateKeys };
-        for (const c of p.candidates) { modes[c.id] ??= c.suggested; keys[c.id] ??= c.templateKey; }
-        if (Object.keys(modes).length !== Object.keys(state.modes).length || Object.keys(keys).length !== Object.keys(state.templateKeys).length) {
-          onState({ ...state, modes, templateKeys: keys });
+        let extras = state.extras;
+        const want = e.kind === "conditions" ? e.templateKey ?? null : null;
+        const first = Object.keys(state.modes).length === 0;
+        for (const c of p.candidates) {
+          const hit = want !== null && c.options.some((o) => o.key === want);
+          // ひな形を決めて来たときは、その文書だけ「作る」。ほかは既にあるものを使うか、今回は用意しない。
+          modes[c.id] ??= first && want ? (hit ? "create" : c.suggested === "existing" ? "existing" : c.role === "settlement" ? "later" : "skip") : c.suggested;
+          keys[c.id] ??= hit ? want! : c.templateKey;
+        }
+        if (first && want && !p.candidates.some((c) => c.options.some((o) => o.key === want)) && !extras.includes(want)) {
+          extras = [...extras, want];
+        }
+        if (Object.keys(modes).length !== Object.keys(state.modes).length || Object.keys(keys).length !== Object.keys(state.templateKeys).length
+            || extras !== state.extras) {
+          onState({ ...state, modes, templateKeys: keys, extras });
         }
         if (p.ctx.partyId) {
           api.get<{ agreements: typeof agreements }>(`/agreements?partyId=${p.ctx.partyId}`).then((a) => setAgreements(a.agreements)).catch(() => undefined);
@@ -215,13 +235,15 @@ function Workbench(
       if (m === "create") units.push({ key: c.id, kind: "single", label: c.options.find((o) => o.key === key(c.id))?.label ?? c.label,
                                        templateKey: key(c.id), conditionIds: c.role === "master" ? [] : conditionIds,
                                        // 決済文書は、その回の実績を渡す（納品日・検収日・数量が本文に入る）。
-                                       eventIds: c.role === "settlement" && ctx?.round?.eventId ? [ctx.round.eventId] : [] });
+                                       eventIds: c.role === "settlement"
+                                         ? (ctx?.round?.eventId ? [ctx.round.eventId] : e.kind === "conditions" ? (e.eventIds ?? []) : []) : [] });
       if (m === "external") units.push({ key: c.id, kind: "external", label: c.label });
     }
     for (const t of state.extras) {
       const tpl = templates.find((x) => x.templateKey === t);
       const m = state.modes[`x:${t}`] ?? "create";
-      if (m === "create") units.push({ key: `x:${t}`, kind: "single", label: tpl?.label ?? t, templateKey: t, conditionIds });
+      if (m === "create") units.push({ key: `x:${t}`, kind: "single", label: tpl?.label ?? t, templateKey: t, conditionIds,
+                                       eventIds: e.kind === "conditions" ? (e.eventIds ?? []) : [] });
       if (m === "external") units.push({ key: `x:${t}`, kind: "external", label: tpl?.label ?? t });
     }
     return units;
@@ -254,8 +276,11 @@ function Workbench(
   };
 
   const back = () => (e.kind === "task" ? onOpenTask(e.taskId) : e.kind === "matter" ? onOpenMatter(e.matterId)
-    : e.kind === "round" ? (onOpenDeals ? onOpenDeals() : onOpenCondition(e.conditionId)) : onState(null));
-  const backLabel = e.kind === "task" ? "作業に戻る" : e.kind === "matter" ? "案件に戻る" : e.kind === "round" ? "取引管理に戻る" : "相手先を選び直す";
+    : e.kind === "round" ? (onOpenDeals ? onOpenDeals() : onOpenCondition(e.conditionId))
+    : e.kind === "conditions" ? (e.matterId ? onOpenMatter(e.matterId) : onOpenCondition(e.conditionIds[0]))
+    : onState(null));
+  const backLabel = e.kind === "task" ? "作業に戻る" : e.kind === "matter" ? "案件に戻る" : e.kind === "round" ? "取引管理に戻る"
+    : e.kind === "conditions" ? (e.matterId ? "案件に戻る" : "条件明細に戻る") : "相手先を選び直す";
 
   return (
     <section className="stack">
@@ -264,7 +289,7 @@ function Workbench(
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <b style={{ fontSize: 12.5 }}>作業テーブル</b>
           {ctx && (<>
-            <span className="tag accent">{ctx.kind === "task" ? "デイリータスク" : ctx.kind === "matter" ? "案件" : ctx.kind === "round" ? "取引管理" : "相手先"}</span>
+            <span className="tag accent">{ctx.kind === "task" ? "デイリータスク" : ctx.kind === "matter" ? "案件" : ctx.kind === "round" ? "取引管理" : ctx.kind === "conditions" ? "条件明細" : "相手先"}</span>
             <span><b>{ctx.title}</b></span>
             {ctx.round && <span className="code faint">{ctx.round.conditionNo ?? ""} {ctx.round.roundLabel ?? ""}{ctx.round.eventId ? "・実績あり" : ""}</span>}
             {!ctx.round && (ctx.requestNo ?? ctx.matterNo) && <span className="code faint">{ctx.requestNo ?? ctx.matterNo}</span>}
@@ -354,7 +379,7 @@ function PickStep(
         </div>
         {plan.linkedDocuments.length > 0 && (
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-            <span className="faint">この{ctx.kind === "task" ? "作業" : ctx.kind === "round" ? "条件" : "案件"}に既に繋がっている文書：</span>
+            <span className="faint">この{ctx.kind === "task" ? "作業" : ctx.kind === "round" || ctx.kind === "conditions" ? "条件" : "案件"}に既に繋がっている文書：</span>
             {plan.linkedDocuments.map((d) => (
               <button key={d.id} className="linky" onClick={() => onOpenDocument(d.id)}>
                 <span className="code">{d.documentNo ?? `#${d.id}`}</span> {d.templateLabel ?? d.title ?? ""}

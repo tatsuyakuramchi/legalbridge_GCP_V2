@@ -266,11 +266,13 @@ export function createRoutes(database: Transactable) {
       conditionId: z.coerce.number().int().positive().optional(),
       scheduleId: z.coerce.number().int().positive().optional(),
       eventId: z.coerce.number().int().positive().optional(),
+      conditionIds: z.string().optional(),
       pattern: z.enum(["game_in", "game_out", "pub_in", "pub_out", "service", "other"]).optional()
     }).parse(req.query);
     res.json(await workbench.plan({
       taskId: q.taskId ?? null, requestId: q.requestId ?? null, matterId: q.matterId ?? null, partyId: q.partyId ?? null,
       conditionId: q.conditionId ?? null, scheduleId: q.scheduleId ?? null, eventId: q.eventId ?? null,
+      conditionIds: String(q.conditionIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
       workIds: String(q.workIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
       pattern: q.pattern ?? null
     }));
