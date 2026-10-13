@@ -29,11 +29,13 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const EXTRA_REASON = { split: "著作物を分ける（追加イラスト等）", work: "別の作品（複数のゲーム・出版物）" } as const;
 
 export function DocumentSet({
-  domain, matterId, partyId, partyName, masterKey, masterLabel, termsOptions, conditions, agreements,
+  domain, matterId, partyId, partyName, payeePartyId = null, masterKey, masterLabel, termsOptions, conditions, agreements,
   channels, isAdmin, onIssued, onOpenDocument, onClose
 }: {
   domain: "license" | "service";
   matterId: number | null; partyId: number; partyName: string | null;
+  /** 共著の受取人宛てに出すとき、その受取人。partyId が受取人のときに渡す。 */
+  payeePartyId?: number | null;
   masterKey: string; masterLabel: string;
   /** 本体・追加に使えるひな形（条件書の一覧形式／別紙形式、発注書など）。最初が既定。 */
   termsOptions: Array<{ key: string; label: string }>;
@@ -134,7 +136,7 @@ export function DocumentSet({
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ agreement: { agreementNo: string | null } | null; documents: Issued[]; error?: string }>("/document-sets", {
-        domain, counterpartyId: partyId, matterId,
+        domain, counterpartyId: partyId, matterId, payeePartyId,
         master: masterMode === "none" ? null
           : masterMode === "existing" ? { existingAgreementId: existingId }
           : { templateKey: masterKey, title: masterTitle, manualInputs: inputsFor("master") },

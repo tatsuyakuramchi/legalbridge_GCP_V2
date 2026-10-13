@@ -2564,9 +2564,11 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = eventDocSchema.parse(req.body ?? {});
       const conditionId = Number(req.params.id);
+      // 実績を渡さないと、検収書の納品日・検収日・明細が条件の総額 1 行になる。
       const draft = await issues.createDraft({
         templateKey: input.templateKey, conditionIds: [conditionId],
-        matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
+        matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {},
+        eventIds: input.eventIds
       }, actor(res));
       // 発行は必須項目が埋まっていないと弾かれる。下書きを残すと、
       // 押し直すたびに使われない行が積もるので、その場で捨てる。
@@ -3776,7 +3778,9 @@ export function createRoutes(database: Transactable) {
           title: z.string().trim().max(200).nullable().optional(),
           manualInputs: z.record(z.string(), z.unknown()).default({})
         }).nullable().optional(),
-        docs: z.array(setDocSchema).max(10).default([])
+        docs: z.array(setDocSchema).max(10).default([]),
+        /** 共著の受取人宛て。落とすと条件書が代表宛てになり、受取人の基本契約の下に置かれない。 */
+        payeePartyId: z.coerce.number().int().positive().nullable().optional()
       }).parse(req.body ?? {});
       const who = actor(res);
       res.json(await issueDocumentSet({
@@ -3789,7 +3793,7 @@ export function createRoutes(database: Transactable) {
         issue: (id) => issueOne(id, [], who) as unknown as Promise<{ documentNo?: string | null }>,
         createAgreement: (x) => agreements.create(x, who)
       }, { domain: input.domain, counterpartyId: input.counterpartyId, matterId: input.matterId ?? null,
-           master: input.master ?? null, docs: input.docs }, who));
+           master: input.master ?? null, docs: input.docs, payeePartyId: input.payeePartyId ?? null }, who));
     }));
 
   // 契約書の無い相手先（出版）を一覧し、基本契約＋出版条件書をまとめて起こす（docs/royalty-shares.md §5.5）。

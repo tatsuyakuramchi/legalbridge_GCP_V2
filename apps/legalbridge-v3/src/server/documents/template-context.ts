@@ -78,7 +78,7 @@ export function lineFieldsFor(templateKey: string): string[] {
   // 条件書は「明細」ではなく2つの表（取引形態・構成要素）。画面は名前で
   // 専用の編集欄に振り分ける。
   if (isLicenseTermsTemplate(templateKey)) {
-    return ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_special_extras"];
+    return ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_calc_base_rows", "v3_special_extras"];
   }
   // 出版の条件書は「対象著作物の一覧」1つ。作品1点が1行で、紙・電子の条件が畳まれる。
   if (isPubTermsTemplate(templateKey)) return [PUB_TITLES_FIELD];

@@ -533,7 +533,7 @@ function TaskPanel(
                   "その条件で検収書を作る → 決定 → 送る"
                 ]} buttons={<>
                   {detail.conditions.length > 0
-                    ? <button className="btn btn-sm primary" onClick={() => onCompose(detail.conditions.map((c) => c.id), null, r.id)}>この条件で検収書を作る</button>
+                    ? <button className="btn btn-sm primary" onClick={() => onCompose(detail.conditions.map((c) => c.id), "inspection_certificate", r.id)}>この条件で検収書を作る</button>
                     : <button className="btn btn-sm primary" onClick={() => go({ kind: "conditions", conditionId: null })}>条件明細を登録する</button>}
                   <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId })}>条件明細の画面を開く</button>
                 </>} />

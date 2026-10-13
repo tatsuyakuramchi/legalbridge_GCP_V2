@@ -224,7 +224,13 @@ export function ConditionsWorkspace(
     if (!stmtOpen || templates.length) return;
     api.get<{ templates: Array<{ templateKey: string; label: string; category: string | null }> }>(
       "/document-templates")
-      .then((r) => { setTemplates(r.templates); setStmtTemplate(r.templates[0]?.templateKey ?? ""); })
+      .then((r) => {
+        // ここで作るのは計算書だけ。全ひな形を並べると先頭（別の文書）が既定になる。
+        const statements = r.templates.filter((t) => /statement|royalty/.test(t.templateKey));
+        const list = statements.length ? statements : r.templates;
+        setTemplates(list);
+        setStmtTemplate((list.find((t) => t.templateKey === "royalty_statement") ?? list[0])?.templateKey ?? "");
+      })
       .catch((e: ApiError) => setError(e.message));
   }, [stmtOpen]);
 
