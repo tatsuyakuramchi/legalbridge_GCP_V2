@@ -24,7 +24,9 @@ import { MASTER_DOC, PATTERN_LABEL, type WorkbenchPattern } from "../server/work
 export type WorkbenchEntry =
   | { kind: "task"; taskId: number; requestId: number }
   | { kind: "matter"; matterId: number }
-  | { kind: "party"; partyId: number; workIds?: number[] };
+  | { kind: "party"; partyId: number; workIds?: number[] }
+  /** 取引管理の回から（決済文書を作る。実績を渡す）。 */
+  | { kind: "round"; conditionId: number; scheduleId: number | null; eventId: number | null; label: string };
 
 export type UnitKind = "set" | "single" | "external";
 export interface WorkUnit {
@@ -34,6 +36,8 @@ export interface WorkUnit {
   /** single のとき。 */
   templateKey?: string;
   conditionIds?: number[];
+  /** 決済文書に渡す実績（取引管理の回から）。 */
+  eventIds?: number[];
   /** set のとき：基本契約のひな形と本体のひな形。 */
   masterKey?: string; masterLabel?: string; mainOptions?: Array<{ key: string; label: string }>;
 }
@@ -88,27 +92,31 @@ const searchAllDocuments = async (q: string): Promise<SearchOption[]> => {
 };
 
 export function WorkbenchWorkspace(
-  { state, onState, onCompose, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition }: {
+  { state, onState, onCompose, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition, onOpenDeals }: {
     /** null なら入口（相手先を選ぶ）。 */
     state: WorkbenchState | null;
     onState: (next: WorkbenchState | null) => void;
     /** 1 枚だけ作る。文書の画面を流れの帯つきで開く（決定したらこの画面へ戻る）。 */
-    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
+    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
     onOpenDocument: (id: number) => void;
     onOpenTask: (taskId: number) => void;
     onOpenMatter: (matterId: number) => void;
     onOpenCondition: (conditionId: number) => void;
+    /** 取引管理の回から来たとき、戻る先。 */
+    onOpenDeals?: () => void;
   }
 ) {
   const readOnly = useReadOnly();
   if (!state) return <EntryPicker onPick={(entry) => onState(newWorkbenchState(entry))} />;
   return <Workbench key={entryKey(state.entry)} state={state} onState={onState} readOnly={readOnly}
                     onCompose={onCompose} onOpenDocument={onOpenDocument} onOpenTask={onOpenTask}
-                    onOpenMatter={onOpenMatter} onOpenCondition={onOpenCondition} />;
+                    onOpenMatter={onOpenMatter} onOpenCondition={onOpenCondition} onOpenDeals={onOpenDeals} />;
 }
 
 const entryKey = (e: WorkbenchEntry) =>
-  e.kind === "task" ? `t${e.taskId}` : e.kind === "matter" ? `m${e.matterId}` : `p${e.partyId}-${(e.workIds ?? []).join(".")}`;
+  e.kind === "task" ? `t${e.taskId}` : e.kind === "matter" ? `m${e.matterId}`
+    : e.kind === "round" ? `r${e.conditionId}-${e.scheduleId ?? 0}-${e.eventId ?? 0}`
+    : `p${e.partyId}-${(e.workIds ?? []).join(".")}`;
 
 function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
   return (
@@ -128,11 +136,11 @@ function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
 }
 
 function Workbench(
-  { state, onState, readOnly, onCompose, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition }: {
+  { state, onState, readOnly, onCompose, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition, onOpenDeals }: {
     state: WorkbenchState; onState: (next: WorkbenchState | null) => void; readOnly: boolean;
-    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
+    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
     onOpenDocument: (id: number) => void; onOpenTask: (taskId: number) => void; onOpenMatter: (matterId: number) => void;
-    onOpenCondition: (conditionId: number) => void;
+    onOpenCondition: (conditionId: number) => void; onOpenDeals?: () => void;
   }
 ) {
   const [plan, setPlan] = useState<WorkbenchPlan | null>(null);
@@ -150,6 +158,11 @@ function Workbench(
     if (e.kind === "task") q.set("taskId", String(e.taskId));
     if (e.kind === "matter") q.set("matterId", String(e.matterId));
     if (e.kind === "party") { q.set("partyId", String(e.partyId)); if (e.workIds?.length) q.set("workIds", e.workIds.join(",")); }
+    if (e.kind === "round") {
+      q.set("conditionId", String(e.conditionId));
+      if (e.scheduleId) q.set("scheduleId", String(e.scheduleId));
+      if (e.eventId) q.set("eventId", String(e.eventId));
+    }
     if (state.pattern) q.set("pattern", state.pattern);
     setError(null);
     api.get<WorkbenchPlan>(`/workbench/plan?${q}`)
@@ -200,7 +213,9 @@ function Workbench(
       if (bundle && (c.id === "master" || c.id === "main")) continue;
       const m = mode(c.id);
       if (m === "create") units.push({ key: c.id, kind: "single", label: c.options.find((o) => o.key === key(c.id))?.label ?? c.label,
-                                       templateKey: key(c.id), conditionIds: c.role === "master" ? [] : conditionIds });
+                                       templateKey: key(c.id), conditionIds: c.role === "master" ? [] : conditionIds,
+                                       // 決済文書は、その回の実績を渡す（納品日・検収日・数量が本文に入る）。
+                                       eventIds: c.role === "settlement" && ctx?.round?.eventId ? [ctx.round.eventId] : [] });
       if (m === "external") units.push({ key: c.id, kind: "external", label: c.label });
     }
     for (const t of state.extras) {
@@ -238,8 +253,9 @@ function Workbench(
     onState({ ...state, results, step: left.length ? "work" : "done" });
   };
 
-  const back = () => (e.kind === "task" ? onOpenTask(e.taskId) : e.kind === "matter" ? onOpenMatter(e.matterId) : onState(null));
-  const backLabel = e.kind === "task" ? "作業に戻る" : e.kind === "matter" ? "案件に戻る" : "相手先を選び直す";
+  const back = () => (e.kind === "task" ? onOpenTask(e.taskId) : e.kind === "matter" ? onOpenMatter(e.matterId)
+    : e.kind === "round" ? (onOpenDeals ? onOpenDeals() : onOpenCondition(e.conditionId)) : onState(null));
+  const backLabel = e.kind === "task" ? "作業に戻る" : e.kind === "matter" ? "案件に戻る" : e.kind === "round" ? "取引管理に戻る" : "相手先を選び直す";
 
   return (
     <section className="stack">
@@ -248,9 +264,10 @@ function Workbench(
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <b style={{ fontSize: 12.5 }}>作業テーブル</b>
           {ctx && (<>
-            <span className="tag accent">{ctx.kind === "task" ? "デイリータスク" : ctx.kind === "matter" ? "案件" : "相手先"}</span>
+            <span className="tag accent">{ctx.kind === "task" ? "デイリータスク" : ctx.kind === "matter" ? "案件" : ctx.kind === "round" ? "取引管理" : "相手先"}</span>
             <span><b>{ctx.title}</b></span>
-            {(ctx.requestNo ?? ctx.matterNo) && <span className="code faint">{ctx.requestNo ?? ctx.matterNo}</span>}
+            {ctx.round && <span className="code faint">{ctx.round.conditionNo ?? ""} {ctx.round.roundLabel ?? ""}{ctx.round.eventId ? "・実績あり" : ""}</span>}
+            {!ctx.round && (ctx.requestNo ?? ctx.matterNo) && <span className="code faint">{ctx.requestNo ?? ctx.matterNo}</span>}
             {ctx.partyName && <span className="faint">相手先：{ctx.partyName}</span>}
           </>)}
           <div className="pipe" style={{ flex: "1 1 280px" }}>
@@ -279,7 +296,7 @@ function Workbench(
       {plan && state.step === "work" && (
         <WorkStep plan={plan} state={state} agreements={agreements} channels={channels} isAdmin={isAdmin}
                   onDone={done} onBackToPick={() => patch({ step: "pick" })}
-                  onComposeUnit={(u) => onCompose(u, { conditionIds: u.conditionIds ?? conditionIds, matterId, requestId, templateKey: u.templateKey ?? "" })}
+                  onComposeUnit={(u) => onCompose(u, { conditionIds: u.conditionIds ?? conditionIds, eventIds: u.eventIds ?? [], matterId, requestId, templateKey: u.templateKey ?? "" })}
                   onOpenDocument={onOpenDocument} />
       )}
 
@@ -337,7 +354,7 @@ function PickStep(
         </div>
         {plan.linkedDocuments.length > 0 && (
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-            <span className="faint">この{ctx.kind === "task" ? "作業" : "案件"}に既に繋がっている文書：</span>
+            <span className="faint">この{ctx.kind === "task" ? "作業" : ctx.kind === "round" ? "条件" : "案件"}に既に繋がっている文書：</span>
             {plan.linkedDocuments.map((d) => (
               <button key={d.id} className="linky" onClick={() => onOpenDocument(d.id)}>
                 <span className="code">{d.documentNo ?? `#${d.id}`}</span> {d.templateLabel ?? d.title ?? ""}

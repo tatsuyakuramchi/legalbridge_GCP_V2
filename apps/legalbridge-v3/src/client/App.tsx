@@ -19,11 +19,12 @@ import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { TradeWorkspace, type TradeCtx } from "./TradeWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
+import { DealsWorkspace } from "./DealsWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "trade" | "workbench" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "trade" | "workbench" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -38,10 +39,15 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     // 軽微ならデイリータスク、大きければ案件。どちらも作業テーブルは tasks。
     { view: "intake", label: "受付箱" },
     { view: "daily", label: "デイリータスク" },
-    { view: "matters", label: "案件" },
+    { view: "matters", label: "案件" }
+  ] },
+  // 文書は作業テーブル、お金は取引管理。どちらも「決める台帳（条件・作品・契約）」とは別の、進める画面。
+  { section: "作業", items: [
     // 文書を作る・登録する・繋ぐのはこの 1 枚だけ。デイリータスク・案件からも同じ画面に入る。
     // 以前の「取引を進める」（基礎情報 → 契約 → 条件 → 文書 → 送信）はここに一本化した。
-    { view: "workbench", label: "作業テーブル" }
+    { view: "workbench", label: "作業テーブル" },
+    // 条件明細 × 回 で 予定 → 実績 → 決済文書 → 支払 を進める。決済文書は作業テーブルへ渡す。
+    { view: "deals", label: "取引管理" }
   ] },
   { section: "横断で見る", items: [
     // 契約が器で、条件はその明細。並びもその順にする。
@@ -76,6 +82,7 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
 const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
   a.kind === b.kind && (a.kind === "task" ? a.taskId === (b as typeof a).taskId
     : a.kind === "matter" ? a.matterId === (b as typeof a).matterId
+    : a.kind === "round" ? a.conditionId === (b as typeof a).conditionId && a.scheduleId === (b as typeof a).scheduleId && a.eventId === (b as typeof a).eventId
     : a.partyId === (b as typeof a).partyId);
 
 export function App() {
@@ -414,9 +421,17 @@ export function App() {
             }}
             onCountsChange={(c) => setDailyCount(c.open)} />
         )}
+        {view === "deals" && (
+          <DealsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+            onOpenMatter={(id) => openEntity("matter", id)}
+            // 決済文書は作業テーブルで作る（この回の実績を渡す）。決定したら取引管理へ戻れる。
+            onIssueDocument={(h) => startWorkbench({ kind: "round", conditionId: h.conditionId, scheduleId: h.scheduleId, eventId: h.eventId,
+                                                     label: `${h.conditionName} ${h.roundLabel}` })} />
+        )}
         {view === "workbench" && (
           <WorkbenchWorkspace state={workbench} onState={setWorkbench}
-            onCompose={(unit, a) => startCompose(a.conditionIds, [], a.matterId, a.templateKey || null, null, null, a.requestId,
+            onOpenDeals={() => { setFocus(null); setView("deals"); }}
+            onCompose={(unit, a) => startCompose(a.conditionIds, a.eventIds, a.matterId, a.templateKey || null, null, null, a.requestId,
                                                  workbenchFlow(unit.key, unit.label))}
             onOpenDocument={(id) => openDocumentAt(id, null, workbench
               ? { title: "作業テーブル", steps: WORKBENCH_STEPS, step: 2, back: { label: "作業テーブル", go: () => { setFocus(null); setView("workbench"); } } }

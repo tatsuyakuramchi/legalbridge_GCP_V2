@@ -49,7 +49,10 @@ export interface WorkbenchCandidate {
 }
 
 export interface WorkbenchContext {
-  kind: "task" | "matter" | "party";
+  kind: "task" | "matter" | "party" | "round";
+  /** 取引管理の回から来たとき。決済文書に渡す実績と、戻る先。 */
+  round?: { conditionId: number; conditionNo: string | null; conditionName: string;
+            scheduleId: number | null; eventId: number | null; roundLabel: string | null } | null;
   requestId: number | null; requestNo: string | null; taskId: number | null;
   matterId: number | null; matterNo: string | null;
   title: string;
@@ -78,6 +81,10 @@ export interface PlanQuery {
   matterId?: number | null;
   partyId?: number | null;
   workIds?: number[];
+  /** 取引管理の回から（決済文書を作る）。 */
+  conditionId?: number | null;
+  scheduleId?: number | null;
+  eventId?: number | null;
   /** 型を手で決めたとき（相手先だけから入って推せないとき）。 */
   pattern?: WorkbenchPattern | null;
 }
@@ -103,7 +110,36 @@ export class WorkbenchPlanService {
     let conditions: ConditionSummary[] = [];
     let linked: ExistingDoc[] = [];
 
-    if (query.taskId || query.requestId) {
+    if (query.conditionId) {
+      // 取引管理の回：条件 1 本。決済文書（検収書・計算書）を「要る・いま」で出し、
+      // 前提（発注書・基本契約）が無ければ先に要るものとして上に並べる。
+      const [cond] = await this.deps.conditions.findMany([query.conditionId]);
+      if (!cond) throw new DomainError("NOT_FOUND", `条件 ${query.conditionId} が見つかりません`);
+      conditions = [cond];
+      const sched = query.scheduleId
+        ? (await this.database.query("SELECT seq, label FROM condition_schedules WHERE id = $1", [query.scheduleId])).rows[0] as { seq: unknown; label: unknown } | undefined
+        : undefined;
+      const matterRow = (await this.database.query(
+        `SELECT mm.id, mm.matter_no FROM matter_links ml JOIN matters mm ON mm.id = ml.matter_id
+          WHERE ml.target_type = 'condition' AND ml.target_ref = $1::text ORDER BY mm.id DESC LIMIT 1`, [query.conditionId])).rows[0] as
+        { id: unknown; matter_no: unknown } | undefined;
+      const pattern = query.pattern ?? inferPattern(conditions);
+      ctx = {
+        kind: "round", requestId: null, requestNo: null, taskId: null,
+        matterId: matterRow ? Number(matterRow.id) : null, matterNo: matterRow ? String(matterRow.matter_no ?? "") : null,
+        title: cond.name,
+        partyId: cond.counterparty?.id ?? null, partyName: cond.counterparty?.name ?? null, partyKind: cond.counterparty?.kind ?? null,
+        pattern, setDomain: SET_DOMAIN[pattern],
+        workIds: cond.work ? [cond.work.id] : [], works: cond.work ? [{ id: cond.work.id, title: cond.work.title }] : [],
+        round: { conditionId: cond.id, conditionNo: cond.conditionNo, conditionName: cond.name,
+                 scheduleId: query.scheduleId ?? null, eventId: query.eventId ?? null,
+                 roundLabel: sched ? (sched.label ? String(sched.label) : `第 ${sched.seq} 回`) : null }
+      };
+      const linkedDocs = await this.database.query(
+        `SELECT DISTINCT d.id FROM document_conditions dc JOIN documents d ON d.id = dc.document_id
+          WHERE dc.condition_id = $1 AND d.status <> 'void' ORDER BY d.id DESC LIMIT 20`, [query.conditionId]);
+      linked = await this.documentsById((linkedDocs.rows as Array<{ id: unknown }>).map((x) => Number(x.id)));
+    } else if (query.taskId || query.requestId) {
       const requestId = query.requestId ?? await this.requestIdOfTask(Number(query.taskId));
       const d = await this.deps.intake.find(requestId);
       const r = d.request;
@@ -187,22 +223,31 @@ export class WorkbenchPlanService {
     }
 
     const mains = MAIN_DOCS[p];
+    // 回から来たとき：本体の文書（発注書・条件書）がこの条件に既にあるかを見る。
+    const roundMain = ctx.round
+      ? partyDocs.filter((d) => d.templateKey && mains.some((m) => m.key === d.templateKey)
+                               && d.conditions.some((c) => c.id === ctx.round!.conditionId)).map(toExisting)
+      : [];
     if (mains.length) {
-      const existing = byKeys(mains.map((m) => m.key));
+      const existing = ctx.round ? roundMain : byKeys(mains.map((m) => m.key));
       const label = p === "service" ? "発注書" : p === "pub_in" ? "出版許諾契約書" : isLicenseTerms(p) ? "条件書" : mains[0].label;
       out.push({
         id: "main", role: "main", templateKey: mains[0].key, options: mains, label,
-        why: p === "service" ? "条件明細から明細を作る" : "条件明細から取引形態・料率を載せる",
-        needed: "now", suggested: "create", existing, agreements: []
+        why: ctx.round
+          ? (existing.length ? "この条件の分は決定済み" : `無い。${SETTLEMENT_DOC[p]?.label ?? "決済文書"}より先に要る`)
+          : p === "service" ? "条件明細から明細を作る" : "条件明細から取引形態・料率を載せる",
+        needed: "now", suggested: ctx.round ? (existing.length ? "existing" : "create") : "create", existing, agreements: []
       });
     }
 
     const settlement = SETTLEMENT_DOC[p];
     if (settlement) {
+      const now = Boolean(ctx.round);
       out.push({
         id: "settlement", role: "settlement", templateKey: settlement.key, options: [settlement], label: settlement.label,
-        why: p === "service" ? "納品のあとに作る（実績から）" : "締めごとに作る（実績から）",
-        needed: "later", suggested: "later", existing: [], agreements: []
+        why: now ? (ctx.round?.roundLabel ? `この回（${ctx.round.roundLabel}）の決済文書。実績から作る` : "この回の決済文書。実績から作る")
+          : p === "service" ? "納品のあとに作る（実績から）" : "締めごとに作る（実績から）",
+        needed: now ? "now" : "later", suggested: now ? "create" : "later", existing: [], agreements: []
       });
     }
     return out;

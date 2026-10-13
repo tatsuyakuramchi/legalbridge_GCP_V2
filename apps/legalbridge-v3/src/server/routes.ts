@@ -111,6 +111,7 @@ import {
 } from "./integrations/factory.js";
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { WorkbenchPlanService } from "./workbench/plan-service.js";
+import { DealsService } from "./deals/service.js";
 import { IntakeRequestService } from "./intake/request-service.js";
 import { DailyTaskRepository, type DailyTab } from "./tasks/repository.js";
 import { TaskWriteService } from "./tasks/write-service.js";
@@ -258,13 +259,32 @@ export function createRoutes(database: Transactable) {
       matterId: z.coerce.number().int().positive().optional(),
       partyId: z.coerce.number().int().positive().optional(),
       workIds: z.string().optional(),
+      // 取引管理の回から（決済文書を作る）。
+      conditionId: z.coerce.number().int().positive().optional(),
+      scheduleId: z.coerce.number().int().positive().optional(),
+      eventId: z.coerce.number().int().positive().optional(),
       pattern: z.enum(["game_in", "game_out", "pub_in", "pub_out", "service", "other"]).optional()
     }).parse(req.query);
     res.json(await workbench.plan({
       taskId: q.taskId ?? null, requestId: q.requestId ?? null, matterId: q.matterId ?? null, partyId: q.partyId ?? null,
+      conditionId: q.conditionId ?? null, scheduleId: q.scheduleId ?? null, eventId: q.eventId ?? null,
       workIds: String(q.workIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
       pattern: q.pattern ?? null
     }));
+  }));
+  // 取引管理：条件明細 × 回 を 1 本の表で（予定 → 実績 → 決済文書 → 支払）。
+  const deals = new DealsService(database);
+  router.get("/deals", asyncRoute(async (req, res) => {
+    const q = z.object({
+      view: z.enum(["due", "late", "pay", "all"]).default("due"),
+      partyId: z.coerce.number().int().positive().optional(),
+      matterId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      kind: z.enum(["service", "license"]).optional(),
+      q: z.string().trim().max(100).optional()
+    }).parse(req.query);
+    res.json(await deals.list({ partyId: q.partyId ?? null, matterId: q.matterId ?? null, workId: q.workId ?? null,
+                                kind: q.kind ?? null, q: q.q ?? null }, q.view));
   }));
   const taskWrites = new TaskWriteService(database,
     (requestId, text, actor) => intakeRequests.notifyRequester(requestId, text, actor));
