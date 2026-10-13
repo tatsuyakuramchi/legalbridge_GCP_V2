@@ -409,6 +409,10 @@ function Workbench(
             {ctx.round && <span className="code faint">{ctx.round.conditionNo ?? ""} {ctx.round.roundLabel ?? ""}{ctx.round.eventId ? "・実績あり" : ""}</span>}
             {!ctx.round && (ctx.requestNo ?? ctx.matterNo) && <span className="code faint">{ctx.requestNo ?? ctx.matterNo}</span>}
             {ctx.partyName && <span className="faint">相手先：{ctx.partyName}</span>}
+            {ctx.requestId && (
+              <a className="btn btn-sm" href={`/api/v3/intake/${ctx.requestId}/view`} target="_blank" rel="noopener"
+                 title="もともとの依頼（件名・本文・相手先・期日・やり取り）を別タブで開く">元の依頼を別タブで見る ↗</a>
+            )}
           </>)}
           <div className="pipe" style={{ flex: "1 1 280px" }}>
             {WORKBENCH_STEPS.map((name, i) => {
@@ -505,8 +509,19 @@ function ConditionsPanel(
           )}
         </>)}
       </div>
+      {mode === "add" && ctx.requestId && (
+        <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="faint">依頼の内容（見積の行・金額・納期）を見ながら入れるなら：</span>
+          <a className="btn btn-sm" href={`/api/v3/intake/${ctx.requestId}/view`} target="_blank" rel="noopener">元の依頼を別タブで見る ↗</a>
+        </div>
+      )}
+      {mode === "add" && ctx.partyName && !ctx.partyId && (
+        <div className="note warn">
+          依頼の相手先「{ctx.partyName}」は取引先の台帳に繋がっていません。下のフォームの相手先の欄で探して選んでください（台帳に無ければ、先に取引先を登録します）。
+        </div>
+      )}
       {mode === "add" && (
-        <ConditionEntryForm preset={{ counterpartyId: ctx.partyId, counterpartyName: ctx.partyName, workId: ctx.workIds[0] ?? null, workTitle: ctx.works[0]?.title ?? null,
+        <ConditionEntryForm preset={{ counterpartyId: ctx.partyId, counterpartyName: ctx.partyId ? ctx.partyName : null, workId: ctx.workIds[0] ?? null, workTitle: ctx.works[0]?.title ?? null,
                                       matterId: ctx.matterId }}
                             onDone={({ conditionIds, templateKey }) => { setMode("none"); onConditionsAdded(conditionIds, templateKey); }}
                             onCancel={() => setMode("none")} />

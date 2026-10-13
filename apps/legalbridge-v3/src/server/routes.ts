@@ -111,6 +111,7 @@ import {
   buildAdapters, buildBacklogReader, buildDispatch, buildMailSource, buildSlackViews
 } from "./integrations/factory.js";
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
+import { intakeViewHtml } from "./intake/view-page.js";
 import { WorkbenchPlanService } from "./workbench/plan-service.js";
 import { DealsService } from "./deals/service.js";
 import { periodicLines } from "./conditions/write-service.js";
@@ -991,6 +992,11 @@ export function createRoutes(database: Transactable) {
   }));
   router.get("/intake/:id", asyncRoute(async (req, res) => {
     res.json(await intakeRepo.find(Number(req.params.id)));
+  }));
+  // 依頼の原票を別タブで見る（読むだけの 1 枚）。作業テーブルで条件明細を登録しながら見比べる。
+  router.get("/intake/:id/view", asyncRoute(async (req, res) => {
+    const d = await intakeRepo.find(Number(req.params.id));
+    res.type("html").send(intakeViewHtml({ request: d.request, replies: d.replies, conditions: d.conditions }));
   }));
   const intakeKind = z.enum(["work", "outsourcing", "single"]);
   const intakeDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional();
