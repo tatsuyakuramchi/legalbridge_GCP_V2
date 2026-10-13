@@ -119,6 +119,8 @@ export function MattersWorkspace(
   const goTab = (t: Tab) => { setTab(t); if (LIST_TABS.includes(t)) setListTab(t); };
   /** 実績タブで開いている条件。条件明細タブの「実績」から来たときはその条件。 */
   const [eventCondition, setEventCondition] = useState<number | null>(null);
+  /** 工程表から取引管理を開いたとき、その条件で絞る。 */
+  const [dealsCondition, setDealsCondition] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<"matter" | "task" | null>(null);
   const [staff, setStaff] = useState<
@@ -690,8 +692,8 @@ export function MattersWorkspace(
                       onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
                       onCompose={(conditionIds, eventIds, mid, templateKey) =>
                         onCompose?.(conditionIds, eventIds, mid ?? detail.id, templateKey)}
-                      onRecordEvent={(id) => { setEventCondition(id); goTab("events"); }}
-                      onOpenPayments={() => goTab("payments")}
+                      // 回の操作（実績・決済文書・支払）は取引管理で。工程表はその条件で取引管理を開くだけ。
+                      onOpenDeals={(id) => { setDealsCondition(id); goTab("deals"); }}
                       onFixDrift={onFixDrift && (() => onFixDrift(detail.id))} />
                   )}
 
@@ -724,9 +726,18 @@ export function MattersWorkspace(
                                     isAdmin={isAdmin} />
                   )}
                   {tab === "deals" && onIssueRound && (
-                    <DealsWorkspace scope={{ matterId: detail.id, ...(party ? { partyId: party } : {}) }}
-                                    onOpenCondition={onOpenCondition} onOpenDocument={(id) => onOpenDocument?.(id)}
-                                    onIssueDocument={onIssueRound} />
+                    <div className="stack">
+                      {dealsCondition !== null && (
+                        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                          <span className="faint">工程表の 1 行（条件 #{dealsCondition}）で絞っています</span>
+                          <button className="linky" onClick={() => setDealsCondition(null)}>案件全体にする</button>
+                        </div>
+                      )}
+                      <DealsWorkspace key={dealsCondition ?? 0}
+                                      scope={{ matterId: detail.id, ...(party ? { partyId: party } : {}), ...(dealsCondition !== null ? { conditionId: dealsCondition } : {}) }}
+                                      onOpenCondition={onOpenCondition} onOpenDocument={(id) => onOpenDocument?.(id)}
+                                      onIssueDocument={onIssueRound} />
+                    </div>
                   )}
 
                   {tab === "graph" && (
