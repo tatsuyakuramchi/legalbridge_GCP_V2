@@ -128,7 +128,7 @@ export function ConditionsWorkspace(
     api.get<DetailResponse>(`/conditions/${selected}`)
       .then(setDetail)
       .catch((e: ApiError) => setError(e.message));
-    setStmtOpen(false); setStmtDone(null); setStmtPeriod(""); setStmtOn("");
+    setStmtOn("");
   }, [selected]);
 
   // 予定・実績・文書は繋がっているので、どれか1つが動いたら全部引き直す。
@@ -211,51 +211,8 @@ export function ConditionsWorkspace(
     if (selected) setDetail(await api.get<DetailResponse>(`/conditions/${selected}`));
   }
 
-  // 計算書の発行。試算とは別物で、こちらは実績が立ち AG も進む。
-  const [stmtOpen, setStmtOpen] = useState(false);
-  const [stmtTemplate, setStmtTemplate] = useState("");
-  const [stmtPeriod, setStmtPeriod] = useState("");
+  /** ロイヤリティ試算の対象日（契約変更をまたぐときの版の選び分け）。 */
   const [stmtOn, setStmtOn] = useState("");
-  const [stmtBusy, setStmtBusy] = useState(false);
-  const [stmtDone, setStmtDone] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<
-    Array<{ templateKey: string; label: string; category: string | null }>>([]);
-
-  useEffect(() => {
-    if (!stmtOpen || templates.length) return;
-    api.get<{ templates: Array<{ templateKey: string; label: string; category: string | null }> }>(
-      "/document-templates")
-      .then((r) => {
-        // ここで作るのは計算書だけ。全ひな形を並べると先頭（別の文書）が既定になる。
-        const statements = r.templates.filter((t) => /statement|royalty/.test(t.templateKey));
-        const list = statements.length ? statements : r.templates;
-        setTemplates(list);
-        setStmtTemplate((list.find((t) => t.templateKey === "royalty_statement") ?? list[0])?.templateKey ?? "");
-      })
-      .catch((e: ApiError) => setError(e.message));
-  }, [stmtOpen]);
-
-  /**
-   * 条件から計算書を出す。文書を先に発行してから結び付ける手順は実務の順番と
-   * 逆だったので、下書き→発行→確定をサーバ側で1本にしてある。
-   */
-  async function issueStatement() {
-    if (!detail) return;
-    setStmtBusy(true); setError(null);
-    try {
-      const r = await api.post<{ document: { documentNo: string } }>(
-        `/conditions/${detail.id}/statement-documents`,
-        {
-          templateKey: stmtTemplate, period: stmtPeriod.trim(),
-          occurredOn: stmtOn || null,
-          reported: { salesInput: Number(sales.replace(/[^0-9]/g, "")) || 0 }
-        });
-      setStmtDone(r.document.documentNo);
-      setStmtOpen(false);
-      await refreshFlow();
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setStmtBusy(false); }
-  }
 
   // ロイヤリティの試算。保存しないので何度でも押せる。
   async function previewRoyalty() {
@@ -645,79 +602,19 @@ export function ConditionsWorkspace(
                     </div>
                     <div className="row">
                       <button className="btn" onClick={previewRoyalty} disabled={!sales}>試算する</button>
-                      {royalty && !stmtOpen && (
-                        <button className="btn primary" onClick={() => { setStmtOpen(true); setStmtDone(null); }}>
-                          この内容で計算書を出す
-                        </button>
-                      )}
                     </div>
 
-                    {stmtDone && (
-                      <div className="note ok">
-                        計算書 <span className="code">{stmtDone}</span> を決定しました。
-                        金額は決定のときに計算し直しています（試算の値は使いません）。
-                      </div>
-                    )}
-
-                    {stmtOpen && (
-                      <div className="stack" style={{ gap: 8 }}>
-                        <div className="form-grid">
-                          <label className="field">
-                            <span>ひな形</span>
-                            <select value={stmtTemplate} onChange={(e) => setStmtTemplate(e.target.value)}>
-                              {templates.map((t) => (
-                                <option key={t.templateKey} value={t.templateKey}>
-                                  {t.category ? `${t.category}／${t.label}` : t.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="field">
-                            <span>対象期間</span>
-                            <input value={stmtPeriod} placeholder="2026Q2 / 2026-06"
-                                   onChange={(e) => setStmtPeriod(e.target.value)} />
-                          </label>
-                          <label className="field">
-                            <span>発生日</span>
-                            <input type="date" value={stmtOn}
-                                   onChange={(e) => setStmtOn(e.target.value)} />
-                          </label>
-                        </div>
-                        <div className="row">
-                          <button className="btn primary btn-sm"
-                                  disabled={stmtBusy || !stmtTemplate || !stmtPeriod.trim()}
-                                  onClick={() => void issueStatement()}>決定して確定する</button>
-                          <button className="btn btn-sm" onClick={() => setStmtOpen(false)}>やめる</button>
-                          <span className="faint">実績が1件立ち、AGの消化もここで進みます</span>
-                        </div>
-                      </div>
-                    )}
-                    {royalty?.appliedVersion?.switched && (
-                      <div className="note warn">
-                        契約変更の適用開始日をまたぐので、
-                        <b>{royalty.appliedVersion.effectiveFrom} から適用の
-                        {royalty.appliedVersion.conditionNo ?? `#${royalty.appliedVersion.id}`}</b>
-                        で計算しました。対象日を変えると版も変わります。
-                      </div>
-                    )}
-
                     {royalty && (
-                      <table>
-                        <tbody>
-                          <tr><td>グロス</td><td className="num">{money(royalty.fee.gross_ex_tax, detail.currency)}</td>
-                              <td className="faint">{royalty.fee.formula_breakdown}</td></tr>
-                          <tr><td>MG下限の上乗せ</td><td className="num">{money(royalty.fee.mg_topup_this_time, detail.currency)}</td>
-                              <td className="faint">{royalty.fee.mg_floor_applied ? "下限が適用された" : "—"}</td></tr>
-                          <tr><td>AG相殺</td><td className="num">{money(royalty.fee.ag_offset_this_time, detail.currency)}</td>
-                              <td className="faint">消化済み {money(royalty.agConsumedBefore, detail.currency)} ／ 残 {money(royalty.fee.ag_remaining_after, detail.currency)}</td></tr>
-                          <tr><td><b>税抜実額</b></td><td className="num"><b>{money(royalty.fee.actual_ex_tax, detail.currency)}</b></td>
-                              <td className="faint">消費税 {money(royalty.fee.tax_amount, detail.currency)}</td></tr>
-                          {royalty.payment.withholdingEnabled && (
-                            <tr><td>源泉</td><td className="num">{money(royalty.payment.withholdingTax, detail.currency)}</td>
-                                <td className="faint">振込 {money(royalty.payment.netTransfer, detail.currency)}</td></tr>
-                          )}
-                        </tbody>
-                      </table>
+                      <div className="note">
+                        計算書は作業テーブルで作ります（実績を選んで作るので、紙の金額と実績が結ばれます）。
+                        まだ実績が無ければ、下の取引管理の回で「実績を入れる」→「計算書を作る（作業テーブルへ）」。
+                        {onCompose && detail.status !== "void" && detail.status !== "superseded" && (
+                          <>　<button className="btn btn-sm primary"
+                                      onClick={() => onCompose([detail.id], [], detail.matters[0]?.id ?? null, "royalty_statement")}>
+                            作業テーブルで計算書を作る
+                          </button></>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
