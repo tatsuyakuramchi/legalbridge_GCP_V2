@@ -817,3 +817,12 @@ table.report tr.work td .row .btn { margin-left: auto; }
 .flow-bar{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);
   border-radius:8px;padding:10px 12px;margin-bottom:12px}
 .flow-bar .pipe-step{flex:1 0 96px;padding:6px 9px}
+
+/* 業務委託の明細：「仕様・成果物」。セルは 1 行の textarea＋「広げる」、長文は表の下の大きな欄で書く。 */
+.spec-cell{display:flex;gap:4px;align-items:flex-start}
+.spec-cell textarea{flex:1;min-width:0;resize:none;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+  border:1px solid var(--line-strong);border-radius:5px;padding:4px 6px;font:inherit;font-size:12px;background:var(--surface);height:28px}
+.spec-cell .btn{white-space:nowrap}
+.spec-editor{border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;background:var(--sunken)}
+.spec-editor textarea{width:100%;min-height:280px;resize:vertical;border:1px solid var(--line-strong);border-radius:5px;
+  padding:8px 10px;font:inherit;font-size:13px;line-height:1.6;background:var(--surface)}
