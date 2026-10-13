@@ -84,6 +84,7 @@ const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
     : a.kind === "matter" ? a.matterId === (b as typeof a).matterId
     : a.kind === "round" ? a.conditionId === (b as typeof a).conditionId && a.scheduleId === (b as typeof a).scheduleId && a.eventId === (b as typeof a).eventId
     : a.kind === "conditions" ? a.conditionIds.join(",") === (b as typeof a).conditionIds.join(",") && (a.templateKey ?? null) === ((b as typeof a).templateKey ?? null)
+    : a.kind === "bulk" ? a.mode === (b as typeof a).mode && (a.matterId ?? null) === ((b as typeof a).matterId ?? null)
     : a.partyId === (b as typeof a).partyId);
 
 export function App() {
@@ -283,21 +284,9 @@ export function App() {
    * 入口が文書の画面の中にしか無く、案件から来た人は画面を移ってから
    * 案件をもう一度選び直す必要があった（同じ案件を2回選ばせていた）。
    */
-  const startBulkOrders = (matterId: number) => {
-    setCompose({ conditionIds: [], eventIds: [], matterId, bulk: true });
-    setDocFlow(null);
-    setFocus(null);
-    setOpenDocument(undefined);
-    setView("documents");
-  };
+  const startBulkOrders = (matterId: number) => startWorkbench({ kind: "bulk", mode: "orders", matterId });
   /** 案件から「検収済みをまとめて入れる」へ。案件を入れた状態で開く。 */
-  const startSettledImport = (matterId: number) => {
-    setCompose({ conditionIds: [], eventIds: [], matterId, settled: true });
-    setDocFlow(null);
-    setFocus(null);
-    setOpenDocument(undefined);
-    setView("documents");
-  };
+  const startSettledImport = (matterId: number) => startWorkbench({ kind: "bulk", mode: "settled", matterId });
 
   /** 文書の画面へ移って、その文書を開く。流れの途中（取引の「開いて送る」）なら帯を付ける。 */
   const openDocumentAt = (documentId: number, back: DocBack | null = null, flow: DocFlow | null = null) => {
@@ -477,8 +466,8 @@ export function App() {
             openNonce={openDocument?.nonce}
             onBack={docBack ? { label: docBack.label, go: () => goBack(docBack) } : undefined}
             flow={docFlow}
-            // 新しく作るのは作業テーブルで（相手先を選んで始める）。
-            onOpenWorkbench={() => { setWorkbench(null); setFocus(null); setView("workbench"); }}
+            // 新しく作るのは作業テーブルで（相手先を選んで始める）。一括も作業テーブルの一括モードで。
+            onOpenWorkbench={(mode) => { if (mode) startWorkbench({ kind: "bulk", mode }); else { setWorkbench(null); setFocus(null); setView("workbench"); } }}
             onOpen={openEntity} />
         )}
         {view === "agreements" && (

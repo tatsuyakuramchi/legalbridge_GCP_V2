@@ -201,8 +201,8 @@ export function DocumentsWorkspace(
      * 一覧は出さない（この 1 枚を作って送る画面にする）。左の「文書」から開いたときは無い。
      */
     flow?: DocFlow | null;
-    /** 「新しく文書を作る」の行き先。文書を作るのは作業テーブル。 */
-    onOpenWorkbench?: () => void;
+    /** 「新しく文書を作る」の行き先。文書を作るのは作業テーブル（一括も作業テーブルの一括モード）。 */
+    onOpenWorkbench?: (bulk?: "orders" | "settled") => void;
   } = {}
 ) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -1202,12 +1202,12 @@ export function DocumentsWorkspace(
             </button>
             {/* 何がまとまるのか分からない名前だった。CSV から作れるのは
                 発注書だけなので、そう書く。 */}
-            <button className="btn" onClick={() => { setBulk(true); setSettled(false); }}>
+            <button className="btn" onClick={() => (onOpenWorkbench ? onOpenWorkbench("orders") : (setBulk(true), setSettled(false)))}>
               ↑ 発注書をまとめて作る
             </button>
             {/* 上は「これから出す紙」、こちらは「もう終わった取引」。
                 同じ CSV の口でも作るものが違うので、入口から分ける。 */}
-            <button className="btn" onClick={() => { setSettled(true); setBulk(false); }}>
+            <button className="btn" onClick={() => (onOpenWorkbench ? onOpenWorkbench("settled") : (setSettled(true), setBulk(false)))}>
               ↑ 検収済みをまとめて入れる
             </button>
             <span className="faint">

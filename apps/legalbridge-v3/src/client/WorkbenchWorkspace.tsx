@@ -5,6 +5,9 @@ import { SearchSelect, searchParties, type SearchOption } from "./SearchSelect.j
 import { DocumentSet } from "./DocumentSet.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
+import { BulkOrders } from "./BulkOrders.js";
+import { SettledImport } from "./SettledImport.js";
+import { MissingContracts } from "./MissingContracts.js";
 import type { DocFlow } from "./FlowBar.js";
 import type { PrepareMode, WorkbenchCandidate, WorkbenchPlan } from "../server/workbench/plan-service.js";
 import { MASTER_DOC, PATTERN_LABEL, type WorkbenchPattern } from "../server/workbench/catalog.js";
@@ -29,7 +32,14 @@ export type WorkbenchEntry =
   /** 取引管理の回から（決済文書を作る。実績を渡す）。 */
   | { kind: "round"; conditionId: number; scheduleId: number | null; eventId: number | null; label: string }
   /** 条件明細・作品・契約・案件の「文書を作る」から（選んだ条件で。ひな形が決まっていればそれを既定に）。 */
-  | { kind: "conditions"; conditionIds: number[]; eventIds?: number[]; matterId?: number | null; requestId?: number | null; templateKey?: string | null };
+  | { kind: "conditions"; conditionIds: number[]; eventIds?: number[]; matterId?: number | null; requestId?: number | null; templateKey?: string | null }
+  /** 一括モード：CSV から発注書をまとめて作る／検収済みをまとめて入れる／契約書の無い相手先にまとめて起こす。 */
+  | { kind: "bulk"; mode: BulkMode; matterId?: number | null };
+
+export type BulkMode = "orders" | "settled" | "missing";
+const BULK_LABEL: Record<BulkMode, string> = {
+  orders: "発注書を CSV でまとめて作る", settled: "検収済みをまとめて入れる（遡及）", missing: "契約書の無い相手先にまとめて起こす"
+};
 
 export type UnitKind = "set" | "single" | "external";
 export interface WorkUnit {
@@ -111,6 +121,10 @@ export function WorkbenchWorkspace(
 ) {
   const readOnly = useReadOnly();
   if (!state) return <EntryPicker onPick={(entry) => onState(newWorkbenchState(entry))} />;
+  if (state.entry.kind === "bulk") {
+    return <BulkWorkbench entry={state.entry} onMode={(mode) => onState({ ...state, entry: { ...(state.entry as { kind: "bulk"; matterId?: number | null }), kind: "bulk", mode } })}
+                          onOpenDocument={onOpenDocument} onOpenMatter={onOpenMatter} onClose={() => onState(null)} />;
+  }
   return <Workbench key={entryKey(state.entry)} state={state} onState={onState} readOnly={readOnly}
                     onCompose={onCompose} onOpenDocument={onOpenDocument} onOpenTask={onOpenTask}
                     onOpenMatter={onOpenMatter} onOpenCondition={onOpenCondition} onOpenDeals={onOpenDeals} />;
@@ -120,7 +134,56 @@ const entryKey = (e: WorkbenchEntry) =>
   e.kind === "task" ? `t${e.taskId}` : e.kind === "matter" ? `m${e.matterId}`
     : e.kind === "round" ? `r${e.conditionId}-${e.scheduleId ?? 0}-${e.eventId ?? 0}`
     : e.kind === "conditions" ? `c${e.conditionIds.join(".")}-${e.matterId ?? 0}-${e.templateKey ?? ""}`
+    : e.kind === "bulk" ? `b${e.mode}-${e.matterId ?? 0}`
     : `p${e.partyId}-${(e.workIds ?? []).join(".")}`;
+
+/**
+ * 一括モード。CSV・一覧から文書をまとめて作る・入れる。
+ * 以前は発注書の CSV と検収済みの取込が文書の画面の中、契約書の無い相手先が運用の中にあり、
+ * 入口が 3 か所に分かれていた。作業テーブルの枠に並べ、どれも同じ場所から入る。
+ */
+function BulkWorkbench(
+  { entry, onMode, onOpenDocument, onOpenMatter, onClose }: {
+    entry: { kind: "bulk"; mode: BulkMode; matterId?: number | null };
+    onMode: (mode: BulkMode) => void; onOpenDocument: (id: number) => void; onOpenMatter: (id: number) => void; onClose: () => void;
+  }
+) {
+  const [templates, setTemplates] = useState<Array<{ templateKey: string; label: string }>>([]);
+  useEffect(() => {
+    api.get<{ templates: typeof templates }>("/document-templates").then((r) => setTemplates(r.templates)).catch(() => undefined);
+  }, []);
+  return (
+    <section className="stack">
+      <div className="flow-bar">
+        <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <b style={{ fontSize: 12.5 }}>作業テーブル</b>
+          <span className="tag accent">一括</span>
+          <span className="chips">
+            {(Object.keys(BULK_LABEL) as BulkMode[]).map((m) => (
+              <button key={m} type="button" className="chip" aria-pressed={entry.mode === m} onClick={() => onMode(m)}>{BULK_LABEL[m]}</button>
+            ))}
+          </span>
+          {entry.matterId ? <button className="btn btn-sm" onClick={() => onOpenMatter(entry.matterId!)}>← 案件に戻る</button>
+            : <button className="btn btn-sm" onClick={onClose}>← 1 件ずつに戻る</button>}
+        </div>
+        <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
+          {entry.mode === "orders" ? "CSV の行ごとに 条件・予定・下書き を作り、束で決定して送る。ひな形は発注書"
+            : entry.mode === "settled" ? "もう終わった取引を CSV から 条件 → 発注書 → 実績 → 検収書 → 支払 まで一度に入れる（遡及）"
+            : "基本契約書が無い相手先を一覧し、基本契約＋出版条件書を相手先ごとにまとめて起こす"}
+        </div>
+      </div>
+      {entry.mode === "orders" && (
+        <BulkOrders key={`o${entry.matterId ?? 0}`} templates={templates} initialMatterId={entry.matterId ?? null}
+                    onOpenDocument={onOpenDocument} onClose={onClose} onCreated={() => undefined} />
+      )}
+      {entry.mode === "settled" && (
+        <SettledImport key={`s${entry.matterId ?? 0}`} initialMatterId={entry.matterId ?? null}
+                       onOpenDocument={onOpenDocument} onClose={onClose} onCreated={() => undefined} />
+      )}
+      {entry.mode === "missing" && <MissingContracts onOpenDocument={onOpenDocument} />}
+    </section>
+  );
+}
 
 function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
   return (
@@ -133,6 +196,14 @@ function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
             <SearchSelect value="" search={searchParties} placeholder="相手先を探す（名前・コード）"
                           onChange={(v) => { if (v) onPick({ kind: "party", partyId: Number(v) }); }} />
           </div>
+        </div>
+      </div>
+      <div className="panel">
+        <div className="panel-hd"><h2>一括で</h2><span className="faint">CSV や一覧から、まとめて作る・入れる</span></div>
+        <div className="panel-bd row" style={{ gap: 8, flexWrap: "wrap" }}>
+          {(Object.keys(BULK_LABEL) as BulkMode[]).map((m) => (
+            <button key={m} className="btn" onClick={() => onPick({ kind: "bulk", mode: m })}>{BULK_LABEL[m]}</button>
+          ))}
         </div>
       </div>
     </section>
