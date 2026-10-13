@@ -115,6 +115,15 @@ export interface ConditionDetail extends ConditionSummary {
   /** 契約形式（請負・委任など）。紙に書く語。支払条件とは別。 */
   contractForm: string | null;
   cycle: string | null;
+  /**
+   * 決済の型（A-071）。この取引は何回払うものか。
+   * once=一回きり / fixed_count=回数固定（settlementCount 回）/ term_bound=期間で決まる（settlementCycle ごと）/
+   * open=回数無制限（終了後 settlementGraceDays、空は 60 日まで）。空は未設定（移行前）。
+   */
+  settlementMode: "once" | "fixed_count" | "term_bound" | "open" | null;
+  settlementCount: number | null;
+  settlementCycle: "month" | "quarter" | "half_year" | "year" | null;
+  settlementGraceDays: number | null;
   notes: string | null;
   /** 仕様・成果物。書類の明細の「仕様・成果物」に出る。 */
   spec: string | null;

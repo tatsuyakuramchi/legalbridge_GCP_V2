@@ -6,6 +6,7 @@ import type {
 } from "../core/model.js";
 import { loadShares } from "../royalty/shares.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./settlement.js";
+import { isSettlementCycle, isSettlementMode } from "./settlement-mode.js";
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
@@ -140,6 +141,7 @@ export class ConditionRepository {
               c.distribution,
               c.target_party_id, tp.name AS target_party_name,
               c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
+              c.settlement_mode, c.settlement_count, c.settlement_cycle, c.settlement_grace_days,
               c.spec, c.deliverable_ownership, c.order_no,
               pc.condition_no AS parent_condition_no,
               wp.name AS work_part_name
@@ -183,6 +185,10 @@ export class ConditionRepository {
       paymentTerms: str(row.payment_terms),
       contractForm: str(row.contract_form),
       cycle: str(row.cycle),
+      settlementMode: isSettlementMode(row.settlement_mode) ? row.settlement_mode : null,
+      settlementCount: int(row.settlement_count),
+      settlementCycle: isSettlementCycle(row.settlement_cycle) ? row.settlement_cycle : null,
+      settlementGraceDays: int(row.settlement_grace_days),
       notes: str(row.notes),
       spec: str(row.spec),
       orderNo: str(row.order_no),

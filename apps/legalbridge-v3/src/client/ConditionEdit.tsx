@@ -7,7 +7,8 @@ import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
-import { minorUnitHint } from "./ConditionCreateForm.js";
+import { minorUnitHint, SETTLEMENT_CYCLE_OPTIONS, SETTLEMENT_MODE_OPTIONS } from "./ConditionCreateForm.js";
+import { SETTLEMENT_GRACE_DAYS_DEFAULT } from "../server/conditions/settlement-mode.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
 
 /**
@@ -96,6 +97,10 @@ export function ConditionEdit(
     licenseFeeBasis: detail.licenseFeeBasis ?? "separate",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
+    settlementMode: detail.settlementMode ?? "",
+    settlementCount: detail.settlementCount === null ? "" : String(detail.settlementCount),
+    settlementCycle: detail.settlementCycle ?? "",
+    settlementGraceDays: detail.settlementGraceDays === null ? "" : String(detail.settlementGraceDays),
     contractForm: detail.contractForm ?? "",
     spec: detail.spec ?? "",
     orderNo: detail.orderNo ?? "",
@@ -171,6 +176,17 @@ export function ConditionEdit(
       ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
+
+    // 決済の型（A-071）。4 つで 1 組なので、どれか変わったら 4 つとも送る（型に要らない値はサーバが捨てる）。
+    const sMode = v.settlementMode || null;
+    const sCount = v.settlementCount.trim() === "" ? null : Math.round(Number(v.settlementCount));
+    const sCycle = v.settlementCycle || null;
+    const sGrace = v.settlementGraceDays.trim() === "" ? null : Math.round(Number(v.settlementGraceDays));
+    if (sMode !== detail.settlementMode || sCount !== detail.settlementCount
+        || sCycle !== detail.settlementCycle || sGrace !== detail.settlementGraceDays) {
+      patch.settlementMode = sMode; patch.settlementCount = sCount;
+      patch.settlementCycle = sCycle; patch.settlementGraceDays = sGrace;
+    }
 
     // 自動更新（A-039）。更新しないなら単位と止めた日は空に戻す。
     const autoRenew = v.autoRenew === "1";
@@ -533,6 +549,32 @@ export function ConditionEdit(
               予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ。契約形式（請負）はひとつ上の欄へ
             </small>
           </label>
+          <label className="field">
+            <span>決済の型（支払の回数）</span>
+            <select value={v.settlementMode} onChange={(e) => set("settlementMode", e.target.value)}>
+              <option value="">未設定（予定明細から推す）</option>
+              {SETTLEMENT_MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <small className="faint">
+              {SETTLEMENT_MODE_OPTIONS.find((o) => o.value === v.settlementMode)?.hint
+                ?? "この取引は何回払うものか。予定明細はこの決まりの中で回る"}
+            </small>
+          </label>
+          {v.settlementMode === "fixed_count" && field("settlementCount", "回数", {
+            type: "number", placeholder: "3", hint: "2 回以上。増やすときは改訂で" })}
+          {v.settlementMode === "term_bound" && (
+            <label className="field">
+              <span>周期</span>
+              <select value={v.settlementCycle} onChange={(e) => set("settlementCycle", e.target.value)}>
+                <option value="">—</option>
+                {SETTLEMENT_CYCLE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <small className="faint">契約期間 ÷ 周期 が回数になる。期間を延ばせば回が増える</small>
+            </label>
+          )}
+          {(v.settlementMode === "open" || v.settlementMode === "term_bound") && field("settlementGraceDays", "終了後の猶予（日）", {
+            type: "number", placeholder: String(SETTLEMENT_GRACE_DAYS_DEFAULT),
+            hint: `終了日の後いつまで回を立ててよいか。空なら ${SETTLEMENT_GRACE_DAYS_DEFAULT} 日` })}
           {field("spec", "仕様・成果物", { type: "textarea",
             placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
             hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}

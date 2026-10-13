@@ -1773,6 +1773,13 @@ export function createRoutes(database: Transactable) {
    * 自動更新（A-039）。期間そのものは termStart / termEnd。
    * 更新した回数は持たない（終了日・単位・基準日から数える）。
    */
+  // 決済の型（A-071）。要る値の組み合わせはサービス側（normalizeSettlementRule）で確かめる。
+  const settlementRuleFields = {
+    settlementMode: z.enum(["once", "fixed_count", "term_bound", "open"]).nullable().optional(),
+    settlementCount: z.coerce.number().int().min(1).max(1000).nullable().optional(),
+    settlementCycle: z.enum(["month", "quarter", "half_year", "year"]).nullable().optional(),
+    settlementGraceDays: z.coerce.number().int().min(0).max(3650).nullable().optional()
+  };
   const renewalFields = {
     autoRenew: z.boolean().nullable().optional(),
     renewMonths: z.coerce.number().int().min(1).max(120).nullable().optional(),
@@ -1814,6 +1821,7 @@ export function createRoutes(database: Transactable) {
     // 契約形式（請負・委任など）。支払条件とは別の欄。
     contractForm: z.string().trim().max(60).nullable().optional(),
     cycle: z.string().trim().max(60).nullable().optional(),
+    ...settlementRuleFields,
     notes: z.string().trim().max(4000).nullable().optional(),
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
@@ -2043,6 +2051,7 @@ export function createRoutes(database: Transactable) {
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
     orderNo: z.string().trim().max(60).nullable().optional(),
     usageType: usageTypeSchema,
+    ...settlementRuleFields,
     // 直接編集のときだけ通る（サービス側で確かめる）。
     kind: z.enum(["license", "product", "service", "expense", "fee"]).optional(),
     pricingModel: z.enum(["fixed", "unit_rate", "revenue_rate", "subscription", "none"]).optional()

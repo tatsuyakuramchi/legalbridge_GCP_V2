@@ -25,6 +25,7 @@ import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
+import { settlementRuleLabel } from "../server/conditions/settlement-mode.js";
 
 type DetailResponse = ConditionDetail & {
   envelopeCheck: { envelope: RightsEnvelope; check: EnvelopeCheck } | null;
@@ -566,6 +567,9 @@ export function ConditionsWorkspace(
                       ({ taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税", included: "税込（海外・内税）" } as Record<string, string>)[detail.taxCategory]
                     }</dd>
                     {detail.paymentTerms && (<><dt>支払条件</dt><dd>{detail.paymentTerms}</dd></>)}
+                    <dt>決済の型</dt><dd>{settlementRuleLabel({
+                      mode: detail.settlementMode, count: detail.settlementCount,
+                      cycle: detail.settlementCycle, graceDays: detail.settlementGraceDays })}</dd>
                     {detail.spec && (<><dt>仕様・成果物</dt><dd style={{ whiteSpace: "pre-wrap" }}>{detail.spec}</dd></>)}
                     {detail.deliverableOwnership && (<><dt>帰属先</dt>
                       <dd>{detail.deliverableOwnership === "orderer" ? "発注者（譲渡型）" : "受注者（利用許諾型）"}</dd></>)}

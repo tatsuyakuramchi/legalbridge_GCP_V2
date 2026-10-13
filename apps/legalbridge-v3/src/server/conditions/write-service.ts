@@ -13,6 +13,7 @@ import { conditionNameFor } from "./naming.js";
 import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
          type ConditionUsageType } from "../core/condition-usage.js";
 import { validateShareInput } from "../royalty/shares.js";
+import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
 export interface PublishingTerms {
@@ -300,6 +301,11 @@ export interface ConditionInput {
   /** 契約形式（請負・委任など）。支払条件とは別のもの。 */
   contractForm?: string | null;
   cycle?: string | null;
+  /** 決済の型（A-071）。settlement-mode.ts。型に要る値だけ保存する。 */
+  settlementMode?: SettlementMode | null;
+  settlementCount?: number | null;
+  settlementCycle?: SettlementCycle | null;
+  settlementGraceDays?: number | null;
   notes?: string | null;
   /** 仕様・成果物。発注書・検収書の明細の「仕様・成果物」に出る。 */
   spec?: string | null;
@@ -357,6 +363,11 @@ export interface EconomicsPatch {
   pricingModel?: "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
   /** 対象の許諾先（A-063）。 */
   targetPartyId?: number | null;
+  /** 決済の型（A-071）。型を送るときは要る値（回数・周期）も一緒に送る。 */
+  settlementMode?: SettlementMode | null;
+  settlementCount?: number | null;
+  settlementCycle?: SettlementCycle | null;
+  settlementGraceDays?: number | null;
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
@@ -371,7 +382,9 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   autoRenew: "auto_renew", renewMonths: "renew_months", renewStoppedOn: "renew_stopped_on",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
   usageType: "usage_type",
-  targetPartyId: "target_party_id"
+  targetPartyId: "target_party_id",
+  settlementMode: "settlement_mode", settlementCount: "settlement_count",
+  settlementCycle: "settlement_cycle", settlementGraceDays: "settlement_grace_days"
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
@@ -387,7 +400,9 @@ const COPY_COLUMNS = [
   // 計算書の出し方（A-059）。改訂しても時限式・イベント式は変わらない。
   "statement_timing",
   // 対象の許諾先（A-063）。
-  "target_party_id"
+  "target_party_id",
+  // 決済の型（A-071）。回数を増やす・期間を延ばすのは改訂で行うので、版をまたいで引き継ぐ。
+  "settlement_mode", "settlement_count", "settlement_cycle", "settlement_grace_days"
 ];
 
 /**
@@ -794,6 +809,8 @@ export class ConditionWriteService {
     const name = String(input.name ?? "").trim();
     const pricing = input.pricingModel ?? "none";
     const flatAmount = flatAmountOf(input);
+    // 決済の型（A-071）。型に要る値だけ保存する。空なら未設定（004 の移行規則で埋まる）。
+    const settlement = normalizeSettlementRule(input);
     {
         const party = await client.query(
           "SELECT id, name FROM parties WHERE id = $1", [input.counterpartyId]);
@@ -825,10 +842,11 @@ export class ConditionWriteService {
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type,
                                    auto_renew, renew_months, renew_stopped_on, license_fee_basis,
-                                   target_party_id, statement_timing, unit_label)
+                                   target_party_id, statement_timing, unit_label,
+                                   settlement_mode, settlement_count, settlement_cycle, settlement_grace_days)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
-                   $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
+                   $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -844,7 +862,8 @@ export class ConditionWriteService {
            input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null,
            input.licenseFeeBasis ?? "separate",
            input.targetPartyId ?? null, input.statementTiming ?? null,
-           String(input.unitLabel ?? "").trim() || null]);
+           String(input.unitLabel ?? "").trim() || null,
+           settlement.mode, settlement.count, settlement.cycle, settlement.graceDays]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 
@@ -962,6 +981,12 @@ export class ConditionWriteService {
     id: number, patch: EconomicsPatch, actor: string, effectiveFrom?: string | null,
     options: { inPlace?: boolean } = {}
   ): Promise<WriteResult> {
+    // 決済の型（A-071）は 4 列で 1 組。型が来たら要る値だけに整えて 4 列とも書く。
+    if (patch.settlementMode !== undefined) {
+      const rule = normalizeSettlementRule(patch);
+      patch = { ...patch, settlementMode: rule.mode, settlementCount: rule.count,
+                settlementCycle: rule.cycle, settlementGraceDays: rule.graceDays };
+    }
     const entries = (Object.keys(patch) as Array<keyof EconomicsPatch>)
       .filter((key) => patch[key] !== undefined)
       .map((key) => ({ column: ECONOMICS_COLUMNS[key], value: patch[key] as unknown }));

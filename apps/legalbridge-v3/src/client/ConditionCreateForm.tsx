@@ -9,6 +9,18 @@ import { minorPerMajor } from "../server/royalty/economics.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
+import { SETTLEMENT_CYCLES, SETTLEMENT_CYCLE_LABEL, SETTLEMENT_GRACE_DAYS_DEFAULT, SETTLEMENT_MODES, SETTLEMENT_MODE_LABEL }
+  from "../server/conditions/settlement-mode.js";
+
+/** 決済の型の選択肢。見出しに短い説明を添える（どれを選ぶかで回数の決まりが変わる）。 */
+export const SETTLEMENT_MODE_OPTIONS = SETTLEMENT_MODES.map((value) => ({
+  value, label: SETTLEMENT_MODE_LABEL[value],
+  hint: value === "once" ? "1 回で終わる（成果物ありの業務委託・買い切り）"
+    : value === "fixed_count" ? "N 回と決まっている（着手・中間・納品、分割払い）"
+    : value === "term_bound" ? "契約期間 × 周期で回数が決まる（顧問・保守、時限式の許諾料）"
+    : "出来事のたびに回る（製造・増刷の許諾料）。終了後の猶予まで"
+}));
+export const SETTLEMENT_CYCLE_OPTIONS = SETTLEMENT_CYCLES.map((value) => ({ value, label: SETTLEMENT_CYCLE_LABEL[value] }));
 
 /**
  * 金額の欄の補足。通貨で単位が変わる。
@@ -235,6 +247,21 @@ export function ConditionCreateForm(
         { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など",
           suggestions: [...PAYMENT_TERMS_PRESETS_JA, ...PAYMENT_TERMS_PRESETS_EN],
           hint: "予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ" },
+        // 決済の型（A-071）。この取引は何回払うものか。予定明細はこの決まりの中で回る。
+        { name: "settlementMode", label: "決済の型（支払の回数）", type: "select",
+          options: SETTLEMENT_MODE_OPTIONS,
+          hint: "空なら予定明細から推す（1 行＝一回きり、複数行＝回数固定、定期＝期間で決まる）" },
+        { name: "settlementCount", label: "回数", type: "number", required: true, placeholder: "3",
+          visibleWhen: (v) => v.settlementMode === "fixed_count",
+          hint: "2 回以上。1 回なら「一回きり」にする。増やすときは条件の改訂で" },
+        { name: "settlementCycle", label: "周期", type: "select", required: true,
+          options: SETTLEMENT_CYCLE_OPTIONS,
+          visibleWhen: (v) => v.settlementMode === "term_bound",
+          hint: "契約期間 ÷ 周期 が回数になる。期間を延ばせば回が増える" },
+        { name: "settlementGraceDays", label: "終了後の猶予（日）", type: "number",
+          placeholder: String(SETTLEMENT_GRACE_DAYS_DEFAULT),
+          visibleWhen: (v) => v.settlementMode === "open" || v.settlementMode === "term_bound",
+          hint: `終了日の後いつまで回を立ててよいか。空なら ${SETTLEMENT_GRACE_DAYS_DEFAULT} 日` },
         // 発注書・検収書の明細はここから出る。備考を仕様代わりにしない。
         { name: "spec", label: "仕様・成果物", type: "textarea",
           placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
@@ -320,6 +347,8 @@ export function ConditionCreateForm(
           sublicenseConsent: isSublicensingUsage(v.usageType) ? text(v.sublicenseConsent) : undefined,
           licenseFeeBasis: v.kind === "license" ? (text(v.licenseFeeBasis) ?? undefined) : undefined,
           paymentTerms: text(v.paymentTerms), notes: text(v.notes),
+          settlementMode: text(v.settlementMode), settlementCount: int(v.settlementCount),
+          settlementCycle: text(v.settlementCycle), settlementGraceDays: int(v.settlementGraceDays),
           spec: text(v.spec), deliverableOwnership: text(v.deliverableOwnership),
           scopes: scopes.length ? scopes : undefined
         };

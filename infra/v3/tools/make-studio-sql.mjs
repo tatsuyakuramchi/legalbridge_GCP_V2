@@ -303,6 +303,14 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 71, '決済の型（A-071。列 4・CHECK 3 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions'
+              AND column_name IN ('settlement_mode', 'settlement_count', 'settlement_cycle', 'settlement_grace_days'))
+          + (SELECT count(*) FROM pg_constraint
+              WHERE conrelid='v3.conditions'::regclass
+                AND conname IN ('conditions_settlement_mode_chk', 'conditions_settlement_cycle_chk', 'conditions_settlement_shape_chk')))::text
+  UNION ALL
   SELECT 70, '共著の分配を誰がするか（A-070。列 1・CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name='distribution')

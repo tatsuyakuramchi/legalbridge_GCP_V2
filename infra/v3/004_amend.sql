@@ -2439,6 +2439,82 @@ END $a070$;
 COMMENT ON COLUMN v3.conditions.distribution IS
   '共著の分配を誰がするか。direct=当社が受取人ごとに払う（既定）/ representative=代表（相手先）が分配。A-070';
 
+-- ---------------------------------------------------------------------
+-- A-071 決済の型（conditions/settlement-mode.ts）
+--   条件明細が「この取引は何回払うものか」を持つ。予定明細（condition_schedules）は
+--   1 行＝1 回の置き場で、何回あってよいかの決まりが無かった。
+--     once        … 一回きり（成果物ありの業務委託、買い切り）
+--     fixed_count … 回数固定。settlement_count 回（分割払い）
+--     term_bound  … 期間で決まる。契約期間 ÷ settlement_cycle（顧問・保守、時限式の許諾料）
+--     open        … 回数無制限。出来事のたび（製造・増刷）。終了後 settlement_grace_days（空は 60）まで
+--   既存の条件は下の規則で埋める（空のものだけ。人が直した値は触らない）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_mode       text;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_count      integer;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_cycle      text;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_grace_days integer;
+DO $a071$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_settlement_mode_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_settlement_mode_chk
+      CHECK (settlement_mode IS NULL OR settlement_mode IN ('once', 'fixed_count', 'term_bound', 'open'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_settlement_cycle_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_settlement_cycle_chk
+      CHECK (settlement_cycle IS NULL OR settlement_cycle IN ('month', 'quarter', 'half_year', 'year'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_settlement_shape_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_settlement_shape_chk
+      CHECK ((settlement_mode IS DISTINCT FROM 'fixed_count' OR (settlement_count IS NOT NULL AND settlement_count >= 2))
+         AND (settlement_mode IS DISTINCT FROM 'term_bound' OR settlement_cycle IS NOT NULL)
+         AND (settlement_grace_days IS NULL OR settlement_grace_days BETWEEN 0 AND 3650));
+  END IF;
+END $a071$;
+COMMENT ON COLUMN v3.conditions.settlement_mode IS
+  '決済の型。once=一回きり / fixed_count=回数固定 / term_bound=期間で決まる / open=回数無制限。A-071';
+COMMENT ON COLUMN v3.conditions.settlement_count IS '回数固定のときの回数。A-071';
+COMMENT ON COLUMN v3.conditions.settlement_cycle IS '期間で決まるときの周期。month / quarter / half_year / year。A-071';
+COMMENT ON COLUMN v3.conditions.settlement_grace_days IS
+  '終了日の後いつまで回を立ててよいか（日）。空は 60。回数無制限と期間で決まる型に効く。A-071';
+
+-- 既存の条件を埋める（settlement_mode が空のものだけ）。
+--   1. イベント式か、紙出版・OEM の許諾 → open
+--   2. 時限式か、定期の予定明細がある → term_bound（周期は cycle の文字から。読めなければ 許諾=四半期 / 他=毎月）
+--   3. 予定明細が 2 行以上 → fixed_count（行数）
+--   4. それ以外 → once
+WITH s AS (
+  SELECT condition_id, count(*) AS n, count(*) FILTER (WHERE trigger_kind = 'periodic') AS periodic_n
+    FROM v3.condition_schedules GROUP BY condition_id
+), d AS (
+  SELECT c.id,
+         CASE
+           WHEN c.statement_timing = 'event'
+             OR (c.kind IN ('license', 'product') AND c.usage_type IN ('pub_print', 'oem')) THEN 'open'
+           WHEN c.statement_timing = 'periodic' OR COALESCE(s.periodic_n, 0) > 0 THEN 'term_bound'
+           WHEN COALESCE(s.n, 0) >= 2 THEN 'fixed_count'
+           ELSE 'once'
+         END AS mode,
+         COALESCE(s.n, 0)::int AS n,
+         CASE
+           WHEN c.cycle ~* '四半期|quarter|3[かヶカ]月' THEN 'quarter'
+           WHEN c.cycle ~* '半年|半期|6[かヶカ]月|half' THEN 'half_year'
+           WHEN c.cycle ~* '年|annual|year' THEN 'year'
+           WHEN c.cycle ~* '月|month' THEN 'month'
+           WHEN c.kind IN ('license', 'product') THEN 'quarter'
+           ELSE 'month'
+         END AS cyc
+    FROM v3.conditions c LEFT JOIN s ON s.condition_id = c.id
+   WHERE c.settlement_mode IS NULL
+)
+UPDATE v3.conditions c
+   SET settlement_mode  = d.mode,
+       settlement_count = CASE WHEN d.mode = 'fixed_count' THEN d.n END,
+       settlement_cycle = CASE WHEN d.mode = 'term_bound' THEN d.cyc END
+  FROM d WHERE d.id = c.id;
+
 COMMIT;
 
 -- 確認
@@ -2767,6 +2843,12 @@ SELECT count(*) AS 表 FROM information_schema.tables
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='conditions' AND column_name='target_party_id';
 
+\echo '--- 決済の型（A-071。列 4・CHECK 3 で 7 であること。空の条件は 0 件） ---'
+SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
+         AND column_name IN ('settlement_mode', 'settlement_count', 'settlement_cycle', 'settlement_grace_days'))
+     + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass
+         AND conname IN ('conditions_settlement_mode_chk', 'conditions_settlement_cycle_chk', 'conditions_settlement_shape_chk')) AS 列とCHECK,
+       (SELECT count(*) FROM v3.conditions WHERE settlement_mode IS NULL) AS 型が空の条件;
 \echo '--- 共著の分配を誰がするか（A-070。列 1・CHECK 1 で 2 であること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions' AND column_name='distribution')
      + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_distribution_chk') AS 列とCHECK;
