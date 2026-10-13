@@ -100,7 +100,7 @@ export function MattersWorkspace(
     onFixDrift?: (matterId: number) => void;
     /** 契約の画面へ、この案件の相手先を入れた状態で登録を開く。 */
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
-    /** 「取引を進める」画面をこの案件で開く（基本契約 → 条件 → 文書 → 送信）。 */
+    /** 作業テーブルをこの案件で開く（要る文書を決める → 作る・登録する → まとめ）。 */
     onOpenTrade?: (matter: { id: number; kind: string; businessLine: string | null }) => void;
   }
 ) {
@@ -446,9 +446,9 @@ export function MattersWorkspace(
                   {!detail.mergedIntoId && !merging && (<>
                     {onOpenTrade && detail.kind !== "single" && (
                       <button className="btn btn-sm primary" style={{ marginLeft: "auto" }}
-                              title="基本契約 → 条件 → 文書 → 送信 を 1 枚で進める"
+                              title="要る文書を決める → 作る・登録する → まとめ を 1 枚で進める"
                               onClick={() => onOpenTrade({ id: detail.id, kind: detail.kind, businessLine: detail.businessLine })}>
-                        取引を進める
+                        作業テーブルで文書を作る
                       </button>
                     )}
                     <button className="btn btn-sm" style={onOpenTrade && detail.kind !== "single" ? undefined : { marginLeft: "auto" }}

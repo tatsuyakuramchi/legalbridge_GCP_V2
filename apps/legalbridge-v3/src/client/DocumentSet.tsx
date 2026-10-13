@@ -43,7 +43,8 @@ export function DocumentSet({
   agreements: SetAgreement[];
   channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
   isAdmin: boolean;
-  onIssued: () => void;
+  /** 決定したとき（作った文書の一覧つき）と、送ったとき（引数なし）。 */
+  onIssued: (result?: { documents: Array<{ role: string; templateKey: string; id: number; documentNo: string | null }>; agreementNo: string | null }) => void;
   onOpenDocument: (id: number) => void;
   onClose: () => void;
 }) {
@@ -143,7 +144,7 @@ export function DocumentSet({
         docs: active.map((d) => ({ templateKey: d.templateKey, conditionIds: d.conditionIds, role: d.role, manualInputs: inputsFor(d.uid) }))
       });
       setResult({ documents: r.documents, agreementNo: r.agreement?.agreementNo ?? null, error: r.error });
-      onIssued();
+      onIssued({ documents: r.documents, agreementNo: r.agreement?.agreementNo ?? null });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }

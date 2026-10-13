@@ -92,6 +92,16 @@ export interface ConditionListQuery {
 export class ConditionRepository {
   constructor(private readonly database: Transactable) {}
 
+  /** id の並びで一覧の形を返す（作業テーブルが、依頼に繋いだ条件をそのまま出すため）。 */
+  async findMany(ids: number[]): Promise<ConditionSummary[]> {
+    if (!ids.length) return [];
+    try {
+      const r = await this.database.query(
+        `SELECT ${SUMMARY_COLUMNS} ${SUMMARY_JOINS} WHERE c.id = ANY($1::bigint[]) ORDER BY c.id`, [ids]);
+      return r.rows.map(mapSummary);
+    } catch (error) { throw translate(error); }
+  }
+
   async list(query: ConditionListQuery = {}): Promise<ConditionSummary[]> {
     const where: string[] = query.includeVoid ? ["true"] : ["c.status <> 'void'"];
     const params: unknown[] = [];

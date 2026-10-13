@@ -25,8 +25,8 @@ export type GoTarget =
   | { kind: "work"; workId: number | null }
   | { kind: "conditions"; conditionId: number | null }
   | { kind: "ledger"; workId: number; partyId: number }
-  /** 「取引を進める」画面（基礎情報 → 契約 → 条件 → 文書 → 送信）。 */
-  | { kind: "trade"; pattern: "game_in" | "game_out" | "pub_in" | "pub_out" | "service" };
+  /** 作業テーブル（要る文書を決める → 作る・登録する → まとめ）。この作業の文脈で開く。 */
+  | { kind: "workbench" };
 type Status = "todo" | "doing" | "blocked" | "done";
 const STATUSES: Status[] = ["todo", "doing", "blocked", "done"];
 const STATUS_LABEL: Record<Status, string> = { todo: "未着手", doing: "作業中", blocked: "待ち", done: "完了" };
@@ -559,29 +559,19 @@ function TaskPanel(
                   ))}
                 </div>
                 {way === "template" && (<>
-                {/* 条件から作る文書は、作品があるかで入口が変わる。作品があれば作品の画面
-                    （許諾条件も委託の条件も作品にぶら下がる）、無ければ条件明細の画面。 */}
-                <Route title="作品がある ライセンス・業務委託（利用許諾条件書・基本契約書・発注書）" steps={[
-                  workId ? "作品の画面で条件（許諾セット・業務セット）を登録する" : "作品の画面で作品を探す（無ければ登録する）→ 条件（許諾セット・業務セット）を登録する",
-                  "作品の画面の条件から 条件書・契約書・発注書を作る → 決定 → 送る"
+                {/* 文書を作るのは作業テーブル。要る文書（基本契約書・条件書・発注書・検収書・NDA）を
+                    この作業の相手先と条件から出し、文書ごとに 作る／既にある／外の文書 を決めて進める。 */}
+                <Route title="作業テーブルで作る（基本契約書・条件書・発注書・NDA など）" steps={[
+                  "要る文書と用意の仕方を決める（ひな形で作る／既にある文書を使う／外の文書を登録）",
+                  "1 件ずつ作る・登録する → 決定 → まとめ → 送る"
                 ]} buttons={<>
-                  <button className="btn btn-sm primary" onClick={() => go({ kind: "trade", pattern: "game_in" })}>取引を進める（IN：権利を取得）</button>
-                  <button className="btn btn-sm primary" onClick={() => go({ kind: "trade", pattern: "game_out" })}>取引を進める（OUT：許諾）</button>
+                  <button className="btn btn-sm primary" onClick={() => go({ kind: "workbench" })}>作業テーブルで文書を作る</button>
+                  {!conditionId && <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId: null })}>先に条件明細を登録する</button>}
+                  {conditionId && <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId })}>繋いである条件を開く</button>}
                   <button className="btn btn-sm" onClick={() => go({ kind: "work", workId })}>
                     {workId ? "作品の画面を開く" : "作品の画面で探す"}
                   </button>
                 </>} />
-                <Route title="作品が無い 業務委託（発注書・検収書）" steps={[
-                  "条件明細の画面で業務セット（委託料・実費・手数料）か条件を 1 本登録する",
-                  "条件明細の画面から 発注書・検収書を作る → 決定 → 送る"
-                ]} buttons={<>
-                  <button className="btn btn-sm primary" onClick={() => go({ kind: "trade", pattern: "service" })}>取引を進める（業務委託の発注）</button>
-                  <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId: null })}>条件明細を登録する</button>
-                  {conditionId && <button className="btn btn-sm" onClick={() => go({ kind: "conditions", conditionId })}>繋いである条件を開く</button>}
-                </>} />
-                <Route title="条件の無い定型文書（当社ひな形の NDA など）" steps={["文書の画面でひな形を選んで作る → 決定 → 送る"]} buttons={
-                  <button className={`btn btn-sm${t.purpose === "template" ? " primary" : ""}`} onClick={() => onCompose([], null, r.id)}>文書の画面で作る</button>
-                } />
                 </>)}
                 {way === "external" && (
                   /* 外で作った文書。登録（ファイル付き）すると決定済みになり、そのまま「送る」で

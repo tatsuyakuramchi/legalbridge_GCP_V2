@@ -110,6 +110,7 @@ import {
   buildAdapters, buildBacklogReader, buildDispatch, buildMailSource, buildSlackViews
 } from "./integrations/factory.js";
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
+import { WorkbenchPlanService } from "./workbench/plan-service.js";
 import { IntakeRequestService } from "./intake/request-service.js";
 import { DailyTaskRepository, type DailyTab } from "./tasks/repository.js";
 import { TaskWriteService } from "./tasks/write-service.js";
@@ -248,6 +249,23 @@ export function createRoutes(database: Transactable) {
   });
   // 作業テーブル（デイリータスク・案件の中の作業。A-064）。
   const dailyTasks = new DailyTaskRepository(database, intakeRepo);
+  // 作業テーブル（文書を作る・登録する・繋ぐ 1 枚の画面）の材料。
+  const workbench = new WorkbenchPlanService(database, { matters, conditions, documents, agreements, intake: intakeRepo });
+  router.get("/workbench/plan", asyncRoute(async (req, res) => {
+    const q = z.object({
+      taskId: z.coerce.number().int().positive().optional(),
+      requestId: z.coerce.number().int().positive().optional(),
+      matterId: z.coerce.number().int().positive().optional(),
+      partyId: z.coerce.number().int().positive().optional(),
+      workIds: z.string().optional(),
+      pattern: z.enum(["game_in", "game_out", "pub_in", "pub_out", "service", "other"]).optional()
+    }).parse(req.query);
+    res.json(await workbench.plan({
+      taskId: q.taskId ?? null, requestId: q.requestId ?? null, matterId: q.matterId ?? null, partyId: q.partyId ?? null,
+      workIds: String(q.workIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
+      pattern: q.pattern ?? null
+    }));
+  }));
   const taskWrites = new TaskWriteService(database,
     (requestId, text, actor) => intakeRequests.notifyRequester(requestId, text, actor));
   const backlogPull = new BacklogPullJob(database, buildBacklogReader(), () => ({
