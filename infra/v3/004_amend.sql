@@ -26,16 +26,19 @@ SET LOCAL search_path = v3, public;
 DO $amend_matter_links$
 DECLARE
   con   text;
+  -- 'work' は案件の 2 つ目以降の作品（matters/write-service.ts。Studio 用は 156）。
+  -- 156 だけにあって 004 に無かったので、本番から取り出した行が手元の定義で落ちていた。
   wanted constant text[] := ARRAY[
     'backlog_issue', 'document', 'agreement', 'condition', 'payment',
-    'slack_thread', 'email_thread'];
+    'slack_thread', 'email_thread', 'work'];
 BEGIN
-  -- 既に email_thread を通す制約なら何もしない。
+  -- 既に email_thread と work を通す制約なら何もしない。
   IF EXISTS (
     SELECT 1 FROM pg_constraint c
      WHERE c.conrelid = 'v3.matter_links'::regclass
        AND c.contype = 'c'
        AND pg_get_constraintdef(c.oid) LIKE '%email_thread%'
+       AND pg_get_constraintdef(c.oid) ~ '\mwork\M'
   ) THEN
     RAISE NOTICE 'A-001: 適用済み';
   ELSE
@@ -51,7 +54,7 @@ BEGIN
     EXECUTE format(
       'ALTER TABLE v3.matter_links ADD CONSTRAINT matter_links_target_type_check
          CHECK (target_type = ANY (%L::text[]))', wanted);
-    RAISE NOTICE 'A-001: matter_links.target_type に email_thread を足した';
+    RAISE NOTICE 'A-001: matter_links.target_type に email_thread と work を足した';
   END IF;
 END
 $amend_matter_links$;
