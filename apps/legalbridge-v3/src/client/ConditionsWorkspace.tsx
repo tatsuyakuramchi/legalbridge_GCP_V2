@@ -15,12 +15,9 @@ import { ConditionContracts } from "./ConditionContracts.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
-import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { templateKeyFor } from "./FlowBar.js";
 import { OutConditionForm } from "./OutConditionForm.js";
-import { PubConditionSetForm } from "./PubConditionSetForm.js";
-import { LicenseSetForm } from "./LicenseSetForm.js";
-import { ServiceLinesForm } from "./ServiceLinesForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
@@ -89,7 +86,7 @@ export function ConditionsWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
   const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
-  const [creating, setCreating] = useState<false | "one" | "publishing" | "license" | "service">(false);
+  const [creating, setCreating] = useState<"entry" | false>(false);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
   /** イン条件（再許諾・他社販売）から許諾先（OUT）を作る欄。 */
@@ -301,7 +298,8 @@ export function ConditionsWorkspace(
       </div>
 
       <div className="row" style={{ marginBottom: 10 }}>
-        {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("one")}>条件を登録</button>}
+        {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("entry")}
+                              title="取引の種類（ゲーム IN・出版 IN・OUT・業務委託・1 本だけ）を選んでから登録する">条件を登録</button>}
         {/* 一括修正（CSV の「登録済みに当てる」）は、今なにが入っているかを
             手元に出せないと直しようがない。絞り込んだぶんをそのまま書き出す。
             許諾（作品・取引モデル・料率）と業務委託など（金額・納期・仕様）は
@@ -320,46 +318,11 @@ export function ConditionsWorkspace(
             ↓ 書き出す（業務委託など）
           </a>
         )}
-        {!creating && (
-          <button className="btn btn-sm" onClick={() => setCreating("license")}
-                  title="作品1点ぶんの自社製造・再許諾・他社販売の条件を1回で作る。個別利用許諾条件書はこの N 本を表に畳んで出す">
-            許諾セットを登録（ゲーム）
-          </button>
-        )}
-        {!creating && (
-          <button className="btn btn-sm" onClick={() => setCreating("publishing")}
-                  title="作品1点ぶんの紙・電子の条件を1回で作る。出版条件書はこの2本を1行に畳んで出す">
-            出版セットを登録（紙・電子）
-          </button>
-        )}
-        {!creating && (
-          <button className="btn btn-sm" onClick={() => setCreating("service")}
-                  title="業務委託の委託料に実費・手数料を組にして1回で作る。発注書はこの組を1枚に載せる">
-            業務委託の明細を登録（業務委託）
-          </button>
-        )}
       </div>
 
-      {creating === "one" && (
-        <ConditionCreateForm
-          onDone={(r: { id: number }) => void created([r.id], null)}
-          onCancel={() => setCreating(false)} />
-      )}
-      {creating === "publishing" && (
-        <PubConditionSetForm
-          onDone={(r) => void created([r.print, r.digital, r.translationPrint, r.translationDigital]
-                                        .flatMap((c) => (c ? [c.id] : [])), null)}
-          onCancel={() => setCreating(false)} />
-      )}
-      {creating === "service" && (
-        <ServiceLinesForm
-          onDone={(r) => void created(r.conditions.map((c) => c.id), "purchase_order")}
-          onCancel={() => setCreating(false)} />
-      )}
-      {creating === "license" && (
-        <LicenseSetForm
-          onDone={(r) => void created(r.conditions.map((c) => c.id), "individual_license_terms_v4")}
-          onCancel={() => setCreating(false)} />
+      {creating === "entry" && (
+        <ConditionEntryForm onDone={({ conditionIds, templateKey }) => void created(conditionIds, templateKey)}
+                            onCancel={() => setCreating(false)} />
       )}
 
       {error && <div className="alert">{error}</div>}

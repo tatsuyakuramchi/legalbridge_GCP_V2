@@ -121,6 +121,9 @@ export interface LicenseSetInput {
   sublicenseConsentDefault?: "covered" | "required" | null;
   /** 計算書の出し方（periodic=締めごと / event=製造ごと）。束で 1 つ。 */
   statementTiming?: "periodic" | "event" | null;
+  /** 決済の型（A-071）。束で 1 つ。出し方はここから決まる。 */
+  settlementMode?: SettlementMode | null;
+  settlementCycle?: SettlementCycle | null;
   notes?: string | null;
   scopes?: ConditionScope[];
   rows: LicenseSetRow[];
@@ -566,6 +569,8 @@ export class ConditionWriteService {
       paymentTerms: row.paymentTerms ?? input.paymentTerms ?? null,
       sublicensable: input.sublicensable ?? null,
       statementTiming: input.statementTiming ?? null,
+      settlementMode: input.settlementMode ?? null,
+      settlementCycle: input.settlementMode === "term_bound" ? (input.settlementCycle ?? "quarter") : null,
       notes: input.notes ?? null,
       scopes,
       usageType: row.usageType,

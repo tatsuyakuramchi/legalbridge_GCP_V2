@@ -27,8 +27,14 @@ import { roundRoyalty } from "./rounding.js";
 export type Timing = "periodic" | "event";
 export type Bundle = "per_work" | "per_party";
 
-/** 出し方の既定。紙出版は刷ごと（イベント式）、それ以外は締めで回る（時限式）。 */
-export function timingOf(explicit: unknown, usageType: unknown): Timing {
+/**
+ * 出し方。条件の決済の型（A-071）があればそこから決める：回数無制限（出来事のたび）＝イベント式、
+ * それ以外（一回きり・回数固定・期間で決まる）＝時限式。型が無い条件だけ、旧 statement_timing →
+ * 利用形態（紙出版は刷ごと）の順で推す。
+ */
+export function timingOf(explicit: unknown, usageType: unknown, settlementMode?: unknown): Timing {
+  if (settlementMode === "open") return "event";
+  if (settlementMode === "once" || settlementMode === "fixed_count" || settlementMode === "term_bound") return "periodic";
   if (explicit === "periodic" || explicit === "event") return explicit;
   return usageType === "pub_print" ? "event" : "periodic";
 }
@@ -455,7 +461,7 @@ export class RoyaltyLedgerService {
       const cr = await q.query(
         `SELECT c.id, c.condition_no, c.name, c.usage_type, c.work_id, w.title AS work_title,
                 c.agreement_id, a.agreement_no, c.pricing_model, c.rate_ppm, c.unit_amount,
-                c.mg_amount, c.ag_amount, c.currency, c.payment_terms, c.statement_timing,
+                c.mg_amount, c.ag_amount, c.currency, c.payment_terms, c.statement_timing, c.settlement_mode,
                 c.target_party_id, tp.name AS target_party_name,
                 COALESCE(c.series_id, c.id) AS series
            FROM conditions c
@@ -567,7 +573,8 @@ export class RoyaltyLedgerService {
         pricingModel: String(c.pricing_model), ratePpm: int(c.rate_ppm), unitAmount: int(c.unit_amount),
         mgAmount: int(c.mg_amount), agAmount: int(c.ag_amount), currency: String(c.currency ?? "JPY"),
         paymentTerms: str(c.payment_terms),
-        timing: timingOf(c.statement_timing, c.usage_type), timingExplicit: Boolean(c.statement_timing),
+        timing: timingOf(c.statement_timing, c.usage_type, c.settlement_mode),
+        timingExplicit: Boolean(c.statement_timing) || Boolean(c.settlement_mode),
         schedules: schedules.filter((s) => s.conditionId === Number(c.id)).length,
         targetPartyId: int(c.target_party_id), targetPartyName: str(c.target_party_name)
       }));
@@ -943,12 +950,22 @@ export class RoyaltyLedgerService {
     } catch (error) { throw translate(error); }
   }
 
-  /** 計算書の出し方（時限式／イベント式）。null で既定（利用形態から）に戻す。 */
+  /**
+   * 計算書の出し方（時限式／イベント式）。出し方は決済の型（A-071）から決まるので、
+   * ここで変えると型も書き換える：イベント式＝回数無制限、時限式＝期間で決まる（周期は無ければ四半期）。
+   * null は旧 statement_timing を消すだけ（型はそのまま）。
+   */
   async setTiming(conditionId: number, timing: Timing | null, actor: string) {
     try {
       return await inTransaction(this.database, async (client) => {
         const r = await client.query(
-          `UPDATE conditions SET statement_timing = $2, updated_at = now() WHERE id = $1 RETURNING id`,
+          `UPDATE conditions
+              SET statement_timing = $2,
+                  settlement_mode = CASE WHEN $2 = 'event' THEN 'open' WHEN $2 = 'periodic' THEN 'term_bound' ELSE settlement_mode END,
+                  settlement_count = CASE WHEN $2 IS NULL THEN settlement_count END,
+                  settlement_cycle = CASE WHEN $2 = 'periodic' THEN COALESCE(settlement_cycle, 'quarter') WHEN $2 = 'event' THEN NULL ELSE settlement_cycle END,
+                  updated_at = now()
+            WHERE id = $1 RETURNING id`,
           [conditionId, timing]);
         if (!r.rows[0]) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
         await recordAudit(client, { actor, action: "royalty.timing", targetType: "condition",

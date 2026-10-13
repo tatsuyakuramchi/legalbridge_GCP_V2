@@ -155,7 +155,8 @@ export function LicenseTermsMatrix(
               <b>取引形態</b>
               <span className="faint">
                 この条件書で許諾するものだけ選びます（{used.length}／{dealRows.length}）。
-                加算型は構成要素の料率の合計が実効料率、非加算型は実効料率をここに入れます
+                料率・MG・AG は条件明細の値をそのまま出します（文書だけ直せない。直すときは条件の改訂で）。
+                載せる形態・地域・言語・数量はここで整えます
               </span>
             </div>
             {dealRows.map((deal, index) => (
@@ -188,8 +189,7 @@ export function LicenseTermsMatrix(
                   {!deal.addon && (
                     <label className="field">
                       <span>実効料率（%）</span>
-                      <input type="number" value={text(deal.fixedRate)}
-                             onChange={(e) => setDeal(index, { fixedRate: e.target.value })} />
+                      <input type="number" value={text(deal.fixedRate)} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                     </label>
                   )}
                   <label className="field">
@@ -209,13 +209,11 @@ export function LicenseTermsMatrix(
                   </label>
                   <label className="field">
                     <span>AG</span>
-                    <input type="number" value={text(deal.ag)}
-                           onChange={(e) => setDeal(index, { ag: e.target.value })} />
+                    <input type="number" value={text(deal.ag)} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                   </label>
                   <label className="field">
                     <span>MG</span>
-                    <input type="number" value={text(deal.mg)}
-                           onChange={(e) => setDeal(index, { mg: e.target.value })} />
+                    <input type="number" value={text(deal.mg)} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                   </label>
                   <label className="field">
                     <span>通貨</span>
@@ -292,8 +290,7 @@ export function LicenseTermsMatrix(
                       {addons.map((d) => (
                         <td key={String(d.id)} className="num">
                           <input type="number" style={{ width: 70 }}
-                                 value={text(rates(row)[String(d.id)])}
-                                 onChange={(e) => setRate(index, d.id, e.target.value)} />
+                                 value={text(rates(row)[String(d.id)])} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                         </td>
                       ))}
                       <td>

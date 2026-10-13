@@ -1981,6 +1981,9 @@ export function createRoutes(database: Transactable) {
     sublicensable: z.boolean().nullable().optional(),
     sublicenseConsentDefault: z.enum(["covered", "required"]).nullable().optional(),
     statementTiming: z.enum(["periodic", "event"]).nullable().optional(),
+    // 決済の型（A-071）。束で 1 つ。
+    settlementMode: z.enum(["once", "fixed_count", "term_bound", "open"]).nullable().optional(),
+    settlementCycle: z.enum(["month", "quarter", "half_year", "year"]).nullable().optional(),
     rows: z.array(z.object({
       usageType: z.enum(
         CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),

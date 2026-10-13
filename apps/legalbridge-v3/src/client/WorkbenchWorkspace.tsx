@@ -4,6 +4,7 @@ import { useReadOnly } from "./read-only.js";
 import { SearchSelect, searchParties, type SearchOption } from "./SearchSelect.js";
 import { DocumentSet } from "./DocumentSet.js";
 import { DocumentImport } from "./DocumentImport.js";
+import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import type { DocFlow } from "./FlowBar.js";
 import type { PrepareMode, WorkbenchCandidate, WorkbenchPlan } from "../server/workbench/plan-service.js";
 import { MASTER_DOC, PATTERN_LABEL, type WorkbenchPattern } from "../server/workbench/catalog.js";
@@ -153,6 +154,8 @@ function Workbench(
   const [agreements, setAgreements] = useState<Array<{ id: number; agreementNo: string | null; title: string; status: string; kind: string }>>([]);
   const [channels, setChannels] = useState<Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  /** 条件を足したあとに材料を引き直す合図。 */
+  const [reload, setReload] = useState(0);
   const patch = (next: Partial<WorkbenchState>) => onState({ ...state, ...next });
 
   const e = state.entry;
@@ -199,7 +202,7 @@ function Workbench(
         }
       })
       .catch((x: ApiError) => setError(x.message));
-  }, [entryKey(e), state.pattern]);
+  }, [entryKey(e), state.pattern, reload]);
   useEffect(() => {
     api.get<{ templates: typeof templates }>("/document-templates").then((r) => setTemplates(r.templates)).catch(() => undefined);
     api.get<{ channels?: typeof channels }>("/integrations").then((r) => setChannels(r.channels ?? [])).catch(() => undefined);
@@ -315,7 +318,12 @@ function Workbench(
 
       {plan && state.step === "pick" && (
         <PickStep plan={plan} state={state} patch={patch} templates={templates} agreements={agreements}
-                  busy={busy || readOnly} onStart={() => void start()} onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition} />
+                  busy={busy || readOnly} onStart={() => void start()} onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition}
+                  onConditionsAdded={(ids) => {
+                    // 足した条件も本体の文書に載せる（条件明細の入口なら選んだ条件に足す）。
+                    if (e.kind === "conditions") onState({ ...state, entry: { ...e, conditionIds: [...new Set([...e.conditionIds, ...ids])] } });
+                    setReload((n) => n + 1);
+                  }} />
       )}
 
       {plan && state.step === "work" && (
@@ -334,14 +342,16 @@ function Workbench(
 }
 
 function PickStep(
-  { plan, state, patch, templates, agreements, busy, onStart, onOpenDocument, onOpenCondition }: {
+  { plan, state, patch, templates, agreements, busy, onStart, onOpenDocument, onOpenCondition, onConditionsAdded }: {
     plan: WorkbenchPlan; state: WorkbenchState; patch: (next: Partial<WorkbenchState>) => void;
     templates: Array<{ templateKey: string; label: string; category: string | null }>;
     agreements: Array<{ id: number; agreementNo: string | null; title: string; status: string; kind: string }>;
     busy: boolean; onStart: () => void; onOpenDocument: (id: number) => void; onOpenCondition: (id: number) => void;
+    onConditionsAdded: (ids: number[]) => void;
   }
 ) {
   const ctx = plan.ctx;
+  const [adding, setAdding] = useState(false);
   const mode = (c: WorkbenchCandidate) => state.modes[c.id] ?? c.suggested;
   const setMode = (id: string, m: PrepareMode) => patch({ modes: { ...state.modes, [id]: m } });
   const [addKey, setAddKey] = useState("");
@@ -376,7 +386,13 @@ function PickStep(
           {plan.otherConditions.length > 0 && (
             <span className="faint">（型に合わない条件 {plan.otherConditions.length} 件は載せない：{plan.otherConditions.map((c) => c.name).join("・")}）</span>
           )}
+          {!adding && <button className="btn btn-sm" onClick={() => setAdding(true)} title="この相手先の条件明細をここで登録して、本体の文書に載せる">条件を足す</button>}
         </div>
+        {adding && (
+          <ConditionEntryForm preset={{ counterpartyId: ctx.partyId, counterpartyName: ctx.partyName, workId: ctx.workIds[0] ?? null, workTitle: ctx.works[0]?.title ?? null }}
+                              onDone={({ conditionIds }) => { setAdding(false); onConditionsAdded(conditionIds); }}
+                              onCancel={() => setAdding(false)} />
+        )}
         {plan.linkedDocuments.length > 0 && (
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
             <span className="faint">この{ctx.kind === "task" ? "作業" : ctx.kind === "round" || ctx.kind === "conditions" ? "条件" : "案件"}に既に繋がっている文書：</span>
