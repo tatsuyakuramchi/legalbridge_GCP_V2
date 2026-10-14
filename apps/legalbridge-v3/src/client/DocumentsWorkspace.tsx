@@ -745,15 +745,26 @@ export function DocumentsWorkspace(
   // **手入力では取り直さない。** 取り直すと入力欄が作り直されて、日本語の
   // 変換中に確定させられる（一文字打つたびに勝手に確定する）。項目の一覧は
   // ひな形と条件と実績だけで決まるので、打っている間は動かさなくてよい。
+  //
+  // ただし、選び直しで自動の値が変わるもの（当社担当者・発注書番号・個別契約番号・番号の出し方・
+  // 受取人）は渡す。渡さないと、当社担当者を替えても「発注元（自社）」の担当者名・部署・電話・
+  // メールが前の人のままに見えた（紙は替わっているのに、項目の一覧が古い）。
+  const chosenJson = JSON.stringify({
+    ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}),
+    ...(parentPoNo ? { _parentPoNo: parentPoNo } : {}),
+    ...(termsNo ? { _termsNo: termsNo } : {}),
+    ...(refNoMode !== "ours" ? { _refNoMode: refNoMode } : {}),
+    ...(payeePartyId ? { _payeePartyId: payeePartyId } : {})
+  });
   useEffect(() => {
     if (!templateKey) { setSpec(null); setRendered(null); return; }
     let live = true;
     api.post<PreviewResponse>("/documents/preview",
-      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {}, agreementId, matterId, requestId, documentId: draft?.id ?? null })
+      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: JSON.parse(chosenJson), agreementId, matterId, requestId, documentId: draft?.id ?? null })
       .then((r) => { if (live) { setSpec(r); setSpecKey(templateKey); } })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id, chosenJson]);
 
   // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
   useEffect(() => {
