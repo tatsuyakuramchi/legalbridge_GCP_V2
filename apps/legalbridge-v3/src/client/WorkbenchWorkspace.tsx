@@ -86,6 +86,10 @@ export interface WorkbenchState {
   results: Record<string, UnitResult>;
   /** 訂正版の理由（文書から入ったとき）。 */
   reason?: string;
+  /** 「既にある文書を使う」で別の案件の文書を選んだとき、どう繋ぐか（参照／付け替え）。候補ごと。 */
+  linkMode?: Record<string, "reference" | "move">;
+  /** 繋ごうとして止まった文書（別の案件に付いている）。①でどうするかを選ばせる。 */
+  conflicts?: Record<string, { documentId: number; message: string }>;
   /** 文脈の見出し（途中の作業の一覧に出す）。材料を引いたときに入る。 */
   label?: string;
   /** 最後に触った時刻（途中の作業の一覧の並び）。 */
@@ -436,21 +440,43 @@ function Workbench(
   }
 
   /** ① → ②。既にある文書は、ここで作業・案件に繋ぐ。 */
-  async function start() {
+  async function start(override: Partial<WorkbenchState> = {}) {
     if (!plan) return;
+    // ①の 3 択（参照／付け替え）から呼ばれるときは、その選択を重ねてから進める（state の更新を待たない）。
+    const cur = { ...state, ...override };
     setBusy(true); setError(null);
     try {
       const linked: WorkbenchState["linked"] = [];
+      const conflicts: NonNullable<WorkbenchState["conflicts"]> = {};
       for (const c of plan.candidates) {
-        if ((state.modes[c.id] ?? c.suggested) !== "existing") continue;
-        const pick = state.existingPick[c.id] ?? c.existing[0]?.id ?? null;
+        if ((cur.modes[c.id] ?? c.suggested) !== "existing") continue;
+        const pick = cur.existingPick[c.id] ?? c.existing[0]?.id ?? null;
+        if (c.role === "master") {
+          // 基本契約書は案件に付けない（業務委託の基本契約は案件をまたぐ）。契約の記録に繋ぐだけ。
+          const agreementId = c.agreements.find((a) => a.live)?.id ?? c.agreements[0]?.id ?? null;
+          if (pick && agreementId) {
+            try { await api.post(`/agreements/${agreementId}/documents`, { documentId: pick }); }
+            catch (x) { if (!(x instanceof ApiError && x.code === "CONFLICT")) throw x; }
+          }
+          if (pick) linked.push({ label: c.label, documentId: pick });
+          continue;
+        }
         if (!pick) continue;
         if (requestId) await api.post(`/intake/${requestId}/documents`, { documentId: pick });
-        else if (matterId) await api.post(`/matters/${matterId}/documents`, { documentId: pick });
+        else if (matterId) {
+          try {
+            await api.post(`/matters/${matterId}/documents`, { documentId: pick, mode: cur.linkMode?.[c.id] ?? "attach" });
+          } catch (x) {
+            // 別の案件に付いている文書。止めずに、①で 参照／付け替え／選び直す を選ばせる。
+            if (x instanceof ApiError && x.code === "CONFLICT") { conflicts[c.id] = { documentId: pick, message: x.message }; continue; }
+            throw x;
+          }
+        }
         linked.push({ label: c.label, documentId: pick });
       }
+      if (Object.keys(conflicts).length) { onState({ ...cur, conflicts }); return; }
       const units = buildUnits();
-      onState({ ...state, units, linked, step: units.length ? "work" : "done" });
+      onState({ ...cur, units, linked, conflicts: {}, step: units.length ? "work" : "done" });
     } catch (x) { setError(x instanceof ApiError ? x.message : String(x)); }
     finally { setBusy(false); }
   }
@@ -506,7 +532,7 @@ function Workbench(
 
       {plan && state.step === "pick" && (
         <PickStep plan={plan} state={state} patch={patch} templates={templates} agreements={agreements}
-                  busy={busy || readOnly} onStart={() => void start()} onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition}
+                  busy={busy || readOnly} onStart={(o) => void start(o)} onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition}
                   onConditionsAdded={(ids, templateKey) => void linkConditions(ids, templateKey)}
                   onLinkExisting={(ids) => void linkConditions(ids, null)} />
       )}
@@ -637,7 +663,7 @@ function PickStep(
     plan: WorkbenchPlan; state: WorkbenchState; patch: (next: Partial<WorkbenchState>) => void;
     templates: Array<{ templateKey: string; label: string; category: string | null }>;
     agreements: Array<{ id: number; agreementNo: string | null; title: string; status: string; kind: string }>;
-    busy: boolean; onStart: () => void; onOpenDocument: (id: number) => void; onOpenCondition: (id: number) => void;
+    busy: boolean; onStart: (override?: Partial<WorkbenchState>) => void; onOpenDocument: (id: number) => void; onOpenCondition: (id: number) => void;
     onConditionsAdded: (ids: number[], templateKey: string | null) => void;
     onLinkExisting: (ids: number[]) => void;
   }
@@ -744,6 +770,30 @@ function PickStep(
                       <span className="tag warn">候補に無い文書 #{state.existingPick[c.id]} を選んでいます（相手先が違わないか確かめてください）</span>
                     )}
                   </div>
+                  {c.role === "master" && (
+                    <span className="faint">基本契約書は案件に付けません（業務委託の基本契約は案件をまたぐ）。契約の記録に繋ぐだけで、どの案件の発注書からも参照できます。</span>
+                  )}
+                  {state.conflicts?.[c.id] && (
+                    <div className="note warn stack" style={{ gap: 6 }}>
+                      <span>{state.conflicts[c.id].message}</span>
+                      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <button className="btn btn-sm primary" disabled={busy}
+                                title="文書は元の案件に残し、この案件の文書タブに「参照」として出す"
+                                onClick={() => onStart({ linkMode: { ...state.linkMode, [c.id]: "reference" }, conflicts: {} })}>
+                          参照として繋ぐ（元の案件に残す）
+                        </button>
+                        <button className="btn btn-sm" disabled={busy}
+                                onClick={() => { if (!window.confirm("この文書を元の案件から外して、この案件に付け替えます。よいですか？")) return;
+                                                 onStart({ linkMode: { ...state.linkMode, [c.id]: "move" }, conflicts: {} }); }}>
+                          この案件に付け替える（元の案件から外す）
+                        </button>
+                        <button className="btn btn-sm" disabled={busy}
+                                onClick={() => patch({ existingPick: { ...state.existingPick, [c.id]: null }, conflicts: {} })}>
+                          選び直す
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <span className="faint">{MODE_HINT.existing}</span>
                 </div>
               )}
@@ -790,7 +840,7 @@ function PickStep(
         </div>
 
         <div className="row" style={{ gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn primary" disabled={busy || !anything || reasonMissing} onClick={onStart}>
+          <button className="btn primary" disabled={busy || !anything || reasonMissing} onClick={() => onStart()}>
             {!anything ? "文書を選んでください" : reasonMissing ? "訂正の理由を書いてください"
               : `進める（作る ${(counts.create ?? 0) + extrasN}・登録 ${counts.external ?? 0}・繋ぐ ${counts.existing ?? 0}）`}
           </button>

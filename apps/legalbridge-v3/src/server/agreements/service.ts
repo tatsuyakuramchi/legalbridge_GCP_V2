@@ -304,6 +304,32 @@ export class AgreementService {
   }
 
   /** 締結を記録する。文書からでも契約からでもできる（外で結んだ契約には文書が無い）。 */
+  /**
+   * 文書を契約の記録に繋ぐ（documents.agreement_id）。基本契約書を「既にある文書を使う」で
+   * 選んだとき、案件には付けずにここへ繋ぐ（業務委託の基本契約は案件をまたぐ）。
+   * 別の契約に繋がっている文書は止める。
+   */
+  async attachDocument(id: number, documentId: number, actor: string): Promise<{ attached: boolean; documentId: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const a = (await client.query("SELECT id, agreement_no FROM agreements WHERE id = $1", [id])).rows[0] as { id: number; agreement_no: string | null } | undefined;
+        if (!a) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
+        const d = (await client.query("SELECT id, document_no, agreement_id FROM documents WHERE id = $1", [documentId])).rows[0] as
+          { id: number; document_no: string | null; agreement_id: number | null } | undefined;
+        if (!d) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (d.agreement_id && Number(d.agreement_id) !== id) {
+          throw new DomainError("CONFLICT", `文書 ${d.document_no ?? `#${d.id}`} は別の契約（#${d.agreement_id}）に繋がっています`);
+        }
+        if (!d.agreement_id) {
+          await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1", [documentId, id]);
+          await recordAudit(client, { actor, action: "agreement.attach_document", targetType: "agreement", targetId: id,
+                                      detail: { documentId, documentNo: d.document_no, agreementNo: a.agreement_no } });
+        }
+        return { attached: true, documentId };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async execute(id: number, input: { on?: string | null; note?: string | null }, actor: string): Promise<void> {
     try {
       await inTransaction(this.database, async (client) => {

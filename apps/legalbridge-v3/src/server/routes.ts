@@ -802,12 +802,19 @@ export function createRoutes(database: Transactable) {
         Number(req.params.matterId), Number(req.params.id), actor(res)));
     }));
 
-  const attachDocSchema = z.object({ documentId: z.number().int().positive() });
+  // mode：attach（この案件の文書に。他の案件に付いていれば CONFLICT）／reference（参照。元の案件に残す）／move（付け替え）
+  const attachDocSchema = z.object({ documentId: z.number().int().positive(), mode: z.enum(["attach", "reference", "move"]).optional() });
   router.post("/matters/:id/documents",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { documentId } = attachDocSchema.parse(req.body ?? {});
-      res.json(await matterLinks.attachDocument(Number(req.params.id), documentId, actor(res)));
+      const { documentId, mode } = attachDocSchema.parse(req.body ?? {});
+      res.json(await matterLinks.attachDocument(Number(req.params.id), documentId, actor(res), mode ?? "attach"));
+    }));
+  // 文書を契約の記録に繋ぐ（基本契約書を「既にある文書」として使うとき。案件には付けない）。
+  router.post("/agreements/:id/documents", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { documentId } = z.object({ documentId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await agreements.attachDocument(Number(req.params.id), documentId, actor(res)));
     }));
 
   router.delete("/matters/:id/documents/:documentId",

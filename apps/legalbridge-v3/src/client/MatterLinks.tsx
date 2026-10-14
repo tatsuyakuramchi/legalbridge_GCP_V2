@@ -825,6 +825,14 @@ export function MatterDocuments(
                     はみ出し、取引先が1文字ずつに潰れる。 */}
                 <td className="code" style={{ whiteSpace: "nowrap" }}>
                   {d.documentNo ?? "（下書き）"}
+                  {/* 参照：別の案件の文書を参照として繋いだもの／条件の基本契約の文書（契約の記録から辿る）。この案件には付いていない。 */}
+                  {d.reference && (
+                    <div><span className="tag" title={d.reference === "agreement"
+                      ? `条件が載っている基本契約（${d.agreementNo ?? "契約の記録"}）の文書。案件には付かず、同じ相手先のどの案件からも参照できます`
+                      : "別の案件の文書を参照として繋いだもの。文書は元の案件に付いたまま"}>
+                      {d.reference === "agreement" ? "基本契約（参照）" : "参照"}
+                    </span></div>
+                  )}
                 </td>
                 <td style={{ minWidth: "8em" }}>
                   {d.templateLabel ?? "—"}
@@ -859,8 +867,10 @@ export function MatterDocuments(
                         aria-pressed={csDoc?.id === d.id}
                         onClick={() => { setCsNotice(null); setCsDoc(csDoc?.id === d.id ? null : d); }}>署名</button>
                     )}
-                    <button className="btn btn-sm" disabled={busy}
-                      onClick={() => void detach(d.id, d.documentNo ?? `#${d.id}`)}>外す</button>
+                    {d.reference !== "agreement" && (
+                      <button className="btn btn-sm" disabled={busy}
+                        onClick={() => void detach(d.id, d.documentNo ?? `#${d.id}`)}>{d.reference === "link" ? "参照を外す" : "外す"}</button>
+                    )}
                   </span>
                 </td>
               </tr>

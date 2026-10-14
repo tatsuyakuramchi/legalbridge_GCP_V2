@@ -299,7 +299,12 @@ export interface MatterDetail extends MatterSummary {
                      /** 最後に送った日時と口（gmail / cloudsign）。 */
                      sentAt: string | null; sentVia: string | null;
                      /** 繋がっている合意の状態。executed なら締結済み。 */
-                     agreementStatus: string | null }>;
+                     agreementStatus: string | null;
+                     /** 文書が付いている案件。この案件と違えば「参照」（別の案件の文書・契約の記録から辿った基本契約書）。 */
+                     matterId: number | null;
+                     agreementNo: string | null;
+                     /** 参照の文書。link＝別の案件の文書を参照として繋いだ／agreement＝条件の基本契約の文書。この案件の文書なら null。 */
+                     reference?: "link" | "agreement" | null }>;
   payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number;
                     currency: string; dueOn: string | null; status: string;
                     /** 管理者が直せる欄（A-041）。 */
