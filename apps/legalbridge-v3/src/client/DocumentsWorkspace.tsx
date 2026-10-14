@@ -432,12 +432,15 @@ export function DocumentsWorkspace(
       setDocuments(list);
       setConditions(c.conditions);
       setIntegrations(i);
-      if (!templateKey) {
-        const wanted = start?.templateKey
-          && t.templates.some((x) => x.templateKey === start.templateKey)
-          ? start.templateKey : null;
-        if (wanted ?? t.templates[0]) setTemplateKey(wanted ?? t.templates[0].templateKey);
-      }
+      // ひな形の既定。開き直した下書き（openDraft）が先にひな形を入れていることがあるので、
+      // この関数が持つ古い templateKey ではなく、いまの値を見て空のときだけ入れる。
+      // 以前は訂正版の下書きを開いた直後にここが走り、発注書の下書きなのにひな形が
+      // 一覧の先頭（支払通知書）に替わっていた（下書きはひな形を変えられないので直せない）。
+      const wanted = start?.templateKey
+        && t.templates.some((x) => x.templateKey === start.templateKey)
+        ? start.templateKey : null;
+      const fallback = wanted ?? t.templates[0]?.templateKey ?? "";
+      if (fallback) setTemplateKey((cur) => cur || fallback);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
