@@ -67,7 +67,7 @@ DECLARE
   td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .item-name { font-weight: 600; }
   .item-spec { font-size: 8pt; color: #555; margin-top: 1px; }
-  .spec-body { margin-top: 3px; padding: 3px 6px; background: #fafaf8; font-size: 8.5pt; white-space: pre-line; color: #333; }
+  tr.spec-row td { border-top: 0; background: #fafaf8; font-size: 8.5pt; white-space: pre-line; padding: 4px 8px 6px; }
   table.totals { width: auto; min-width: 46%; margin: 6px 0 0 auto; font-size: 8.5pt; }
   table.totals th { text-align: left; font-weight: 400; border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 10px 2px 2px; white-space: nowrap; }
   table.totals td { border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 2px 2px 16px; min-width: 9em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -150,8 +150,8 @@ DECLARE
   <tbody>
     {{#each delivery_line_items}}
     <tr>
-      <td class="center">{{index1 @index}}</td>
-      <td><div class="item-name">{{item_name}}</div>{{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}{{#if has_spec_body}}<div class="spec-body">{{spec_body}}</div>{{/if}}</td>
+      <td class="center"{{#if has_spec_body}} rowspan="2"{{/if}}>{{index1 @index}}</td>
+      <td><div class="item-name">{{item_name}}</div>{{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}</td>
       <td class="center">{{#if order_no}}{{order_no}}{{else}}{{../parent_po_number}}{{/if}}</td>
       <td class="center">{{#if term_start}}{{formatDateCompact term_start}}〜{{formatDateCompact term_end}}{{else}}{{#if delivery_date}}{{formatDateCompact delivery_date}}{{else}}—{{/if}}{{/if}}</td>
       <td class="num">{{#if sc_hours_text}}{{sc_hours_text}}{{else}}{{#if quantity}}{{quantity}}{{else}}—{{/if}}{{/if}}</td>

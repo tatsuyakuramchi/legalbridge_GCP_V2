@@ -81,7 +81,7 @@ DECLARE
   .item-name { font-weight: 600; }
   .item-spec { font-size: 8pt; color: #555; margin-top: 1px; }
   .item-change { font-size: 8pt; color: #92400e; margin-top: 1px; }
-  .spec-body { margin-top: 3px; padding: 3px 6px; background: #fafaf8; font-size: 8.5pt; white-space: pre-line; color: #333; }
+  tr.spec-row td { border-top: 0; background: #fafaf8; font-size: 8.5pt; white-space: pre-line; padding: 4px 8px 6px; }
   table.totals { width: auto; min-width: 46%; margin: 6px 0 0 auto; font-size: 8.5pt; }
   table.totals th { text-align: left; font-weight: 400; background: transparent; border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 10px 2px 2px; white-space: nowrap; width: auto; }
   table.totals td { border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 2px 2px 16px; min-width: 9em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; width: auto; }
@@ -169,14 +169,13 @@ $q$;
   <tbody>
     {{#each delivery_line_items}}
     <tr>
-      <td class="center">{{index1 @index}}</td>
+      <td class="center"{{#if has_spec_body}} rowspan="2"{{/if}}>{{index1 @index}}</td>
       <td>
         <div class="item-name">{{item_name}}</div>
         {{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}
         {{#if reward_label}}<div class="item-spec">{{reward_label}}{{#if rate_pct}}　料率 {{rate_pct}}%{{/if}}{{#if formula_text}}　{{formula_text}}{{/if}}</div>{{/if}}
         {{#if payment_terms}}<div class="item-spec">契約種別: {{payment_terms}}{{#if deliverable_ownership}}　帰属: {{deliverable_ownership}}{{/if}}</div>{{else}}{{#if deliverable_ownership}}<div class="item-spec">帰属: {{deliverable_ownership}}</div>{{/if}}{{/if}}
         {{#if hasChange}}<div class="item-change">金額変更: {{changeLabel}}{{#if changeNote}}（{{changeNote}}）{{/if}}</div>{{/if}}
-        {{#if has_spec_body}}<div class="spec-body">{{spec_body}}</div>{{/if}}
       </td>
       <td class="center">{{#if order_no}}{{order_no}}{{else}}{{../parent_po_number}}{{/if}}</td>
       <td class="center">{{#if term_start}}{{formatDateCompact term_start}}〜{{formatDateCompact term_end}}{{else}}{{#if delivery_date}}{{formatDateCompact delivery_date}}{{else}}—{{/if}}{{/if}}</td>
@@ -184,6 +183,9 @@ $q$;
       <td class="num">{{#if sc_unit_text}}{{sc_unit_text}}{{else}}{{#if unit_price}}{{formatCurrency unit_price}}{{else}}—{{/if}}{{/if}}</td>
       <td class="num">{{formatCurrency (or inspected_amount_ex_tax amount_ex_tax)}}</td>
     </tr>
+    {{#if has_spec_body}}
+    <tr class="spec-row"><td colspan="6">{{spec_body}}</td></tr>
+    {{/if}}
     {{/each}}
     {{#each other_fees}}
     <tr>

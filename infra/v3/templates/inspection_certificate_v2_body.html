@@ -67,14 +67,13 @@
   <tbody>
     {{#each delivery_line_items}}
     <tr>
-      <td class="center">{{index1 @index}}</td>
+      <td class="center"{{#if has_spec_body}} rowspan="2"{{/if}}>{{index1 @index}}</td>
       <td>
         <div class="item-name">{{item_name}}</div>
         {{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}
         {{#if reward_label}}<div class="item-spec">{{reward_label}}{{#if rate_pct}}　料率 {{rate_pct}}%{{/if}}{{#if formula_text}}　{{formula_text}}{{/if}}</div>{{/if}}
         {{#if payment_terms}}<div class="item-spec">契約種別: {{payment_terms}}{{#if deliverable_ownership}}　帰属: {{deliverable_ownership}}{{/if}}</div>{{else}}{{#if deliverable_ownership}}<div class="item-spec">帰属: {{deliverable_ownership}}</div>{{/if}}{{/if}}
         {{#if hasChange}}<div class="item-change">金額変更: {{changeLabel}}{{#if changeNote}}（{{changeNote}}）{{/if}}</div>{{/if}}
-        {{#if has_spec_body}}<div class="spec-body">{{spec_body}}</div>{{/if}}
       </td>
       <td class="center">{{#if order_no}}{{order_no}}{{else}}{{../parent_po_number}}{{/if}}</td>
       <td class="center">{{#if term_start}}{{formatDateCompact term_start}}〜{{formatDateCompact term_end}}{{else}}{{#if delivery_date}}{{formatDateCompact delivery_date}}{{else}}—{{/if}}{{/if}}</td>
@@ -82,6 +81,9 @@
       <td class="num">{{#if sc_unit_text}}{{sc_unit_text}}{{else}}{{#if unit_price}}{{formatCurrency unit_price}}{{else}}—{{/if}}{{/if}}</td>
       <td class="num">{{formatCurrency (or inspected_amount_ex_tax amount_ex_tax)}}</td>
     </tr>
+    {{#if has_spec_body}}
+    <tr class="spec-row"><td colspan="6">{{spec_body}}</td></tr>
+    {{/if}}
     {{/each}}
     {{#each other_fees}}
     <tr>
