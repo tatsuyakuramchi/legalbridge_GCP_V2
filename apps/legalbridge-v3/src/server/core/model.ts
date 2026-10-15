@@ -114,6 +114,14 @@ export interface ConditionDetail extends ConditionSummary {
   paymentTerms: string | null;
   /** 契約形式（請負・委任など）。紙に書く語。支払条件とは別。 */
   contractForm: string | null;
+  /**
+   * 準委任の時間精算（A-073）。月間包括枠（時間）までは定額、超過は超過単価 × 時間、
+   * 未消化は控除単価 × 時間（空なら減額なし）。時間精算の回は役務提供完了通知書で確認する。
+   */
+  timeSettlement: boolean;
+  hoursIncluded: number | null;
+  overageUnitAmount: number | null;
+  shortfallUnitAmount: number | null;
   cycle: string | null;
   /**
    * 決済の型（A-071）。この取引は何回払うものか。

@@ -2528,6 +2528,42 @@ ALTER TABLE v3.documents ADD COLUMN IF NOT EXISTS counterparty_doc_no text;
 COMMENT ON COLUMN v3.documents.counterparty_doc_no IS
   '相手方が付けた文書番号の控え。当社番号（document_no）とは別。引用するとき 当社／相手方／両方 を選べる。A-072';
 
+-- ---------------------------------------------------------------------
+-- A-073 準委任の時間精算（conditions/time-settlement.ts）
+--   準委任（役務提供）の委託料には、成果物や固定額で精算するものと、月間の包括枠
+--   （コアタイム）を持ち、実績時間で精算するものがある。時間精算の条件は、
+--   役務提供完了通知書（service_completion_notice）を検収書の代わりに出す。
+--     time_settlement        … 時間精算か（既定 false＝固定額・成果物で精算）
+--     hours_included         … 月間包括枠（時間）。実績がこの枠までは基本委託料（flat_amount）
+--     overage_unit_amount    … 超過単価（最小通貨単位／時間）。枠を超えた分の追加委託料
+--     shortfall_unit_amount  … 控除単価（最小通貨単位／時間）。空なら未消化でも減額しない
+--   実績（condition_events）には 実績時間（hours）と 月次業務報告書の受領日（report_received_on）を持つ。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS time_settlement       boolean NOT NULL DEFAULT false;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS hours_included        numeric(8,2);
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS overage_unit_amount   bigint;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS shortfall_unit_amount bigint;
+DO $a073$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_time_settlement_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_time_settlement_chk
+      CHECK ((NOT time_settlement OR (hours_included IS NOT NULL AND hours_included > 0 AND overage_unit_amount IS NOT NULL))
+         AND (hours_included IS NULL OR hours_included >= 0)
+         AND (overage_unit_amount IS NULL OR overage_unit_amount >= 0)
+         AND (shortfall_unit_amount IS NULL OR shortfall_unit_amount >= 0));
+  END IF;
+END $a073$;
+COMMENT ON COLUMN v3.conditions.time_settlement IS
+  '準委任の時間精算か。true なら包括枠（hours_included）までは基本委託料、超過は overage_unit_amount × 時間。A-073';
+COMMENT ON COLUMN v3.conditions.hours_included IS '月間包括枠（時間）。時間精算のときだけ。A-073';
+COMMENT ON COLUMN v3.conditions.overage_unit_amount IS '超過単価（最小通貨単位／時間）。A-073';
+COMMENT ON COLUMN v3.conditions.shortfall_unit_amount IS '控除単価（最小通貨単位／時間）。空なら未消化でも減額しない。A-073';
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS hours              numeric(8,2);
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS report_received_on date;
+COMMENT ON COLUMN v3.condition_events.hours IS '実績時間。時間精算の役務提供の回。A-073';
+COMMENT ON COLUMN v3.condition_events.report_received_on IS '月次業務報告書の受領日。役務提供完了通知書に出す。A-073';
+
 COMMIT;
 
 
@@ -2805,6 +2841,12 @@ SELECT * FROM (
   SELECT 72, '相手方の文書番号（A-072。列 1 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
+  UNION ALL
+  SELECT 73, '準委任の時間精算（A-073。列 6・CHECK 1 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
+            AND ((table_name='conditions' AND column_name IN ('time_settlement', 'hours_included', 'overage_unit_amount', 'shortfall_unit_amount'))
+              OR (table_name='condition_events' AND column_name IN ('hours', 'report_received_on'))))
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_time_settlement_chk'))::text
   UNION ALL
   SELECT 71, '決済の型（A-071。列 4・CHECK 3 で 7 であること）',
          ((SELECT count(*) FROM information_schema.columns

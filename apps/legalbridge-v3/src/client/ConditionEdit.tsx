@@ -6,6 +6,7 @@ import type { ConditionDetail } from "../server/core/model.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { minorUnitHint, SETTLEMENT_CYCLE_OPTIONS, SETTLEMENT_MODE_OPTIONS } from "./ConditionCreateForm.js";
 import { SETTLEMENT_GRACE_DAYS_DEFAULT } from "../server/conditions/settlement-mode.js";
@@ -102,6 +103,10 @@ export function ConditionEdit(
     settlementCycle: detail.settlementCycle ?? "",
     settlementGraceDays: detail.settlementGraceDays === null ? "" : String(detail.settlementGraceDays),
     contractForm: detail.contractForm ?? "",
+    timeSettlement: detail.timeSettlement ? "1" : "",
+    hoursIncluded: detail.hoursIncluded === null || detail.hoursIncluded === undefined ? "" : String(detail.hoursIncluded),
+    overageUnitAmount: asMoney(detail.overageUnitAmount),
+    shortfallUnitAmount: asMoney(detail.shortfallUnitAmount),
     spec: detail.spec ?? "",
     orderNo: detail.orderNo ?? "",
     deliverableOwnership: detail.deliverableOwnership ?? "",
@@ -186,6 +191,17 @@ export function ConditionEdit(
         || sCycle !== detail.settlementCycle || sGrace !== detail.settlementGraceDays) {
       patch.settlementMode = sMode; patch.settlementCount = sCount;
       patch.settlementCycle = sCycle; patch.settlementGraceDays = sGrace;
+    }
+
+    // 準委任の時間精算（A-073）。4 つで 1 組。どれか変わったら 4 つとも送る（時間精算でなければサーバが捨てる）。
+    const tOn = v.timeSettlement === "1";
+    const tHours = v.hoursIncluded.trim() === "" ? null : Number(v.hoursIncluded.replace(/[^0-9.]/g, ""));
+    const tOver = v.overageUnitAmount.trim() === "" ? null : Math.round(Number(v.overageUnitAmount.replace(/[^0-9-]/g, "")));
+    const tShort = v.shortfallUnitAmount.trim() === "" ? null : Math.round(Number(v.shortfallUnitAmount.replace(/[^0-9-]/g, "")));
+    if (tOn !== Boolean(detail.timeSettlement) || (tOn && (tHours !== (detail.hoursIncluded ?? null)
+        || tOver !== (detail.overageUnitAmount ?? null) || tShort !== (detail.shortfallUnitAmount ?? null)))) {
+      patch.timeSettlement = tOn; patch.hoursIncluded = tOn ? tHours : null;
+      patch.overageUnitAmount = tOn ? tOver : null; patch.shortfallUnitAmount = tOn ? tShort : null;
     }
 
     // 自動更新（A-039）。更新しないなら単位と止めた日は空に戻す。
@@ -536,6 +552,29 @@ export function ConditionEdit(
               発注書・検収書の「契約種別」に出る。一覧に無い形は直接書ける（海外版は英語で）
             </small>
           </label>
+          {/* 準委任の時間精算（A-073）。委託料だけ。契約形式が準委任のときに出す（他の形式でも付けてあれば出す）。 */}
+          {(inPlace ? v.kind : detail.kind) === "service" && (isQuasiMandate(v.contractForm) || v.timeSettlement === "1") && (
+            <label className="field">
+              <span>精算の仕方（準委任）</span>
+              <select value={v.timeSettlement} onChange={(e) => set("timeSettlement", e.target.value)}>
+                <option value="">固定額・成果物で精算（検収書）</option>
+                <option value="1">時間精算：月間包括枠と実績時間で精算（役務提供完了通知書）</option>
+              </select>
+              <small className="faint">
+                {v.timeSettlement === "1"
+                  ? "枠までは定額、超過は超過単価 × 時間。決済文書は検収書ではなく役務提供完了通知書になる"
+                  : "成果物や固定額で精算するなら従来どおり検収書"}
+              </small>
+            </label>
+          )}
+          {(inPlace ? v.kind : detail.kind) === "service" && v.timeSettlement === "1" && (<>
+            {field("hoursIncluded", "月間包括枠（時間）", { type: "number", placeholder: "64",
+              hint: "この時間までは定額（上の定額の欄が月額）。コアタイム" })}
+            {field("overageUnitAmount", "超過単価（1 時間あたり・最小通貨単位）", { type: "number", placeholder: "3125",
+              hint: "枠を超えた時間 × 超過単価 を追加精算" })}
+            {field("shortfallUnitAmount", "控除単価（1 時間あたり・最小通貨単位）", { type: "number",
+              hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" })}
+          </>)}
           <label className="field">
             <span>支払条件</span>
             <input list="payment-terms-presets" value={v.paymentTerms}

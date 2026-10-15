@@ -24,6 +24,7 @@ import { CreateForm, int, text } from "./CreateForm.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
 import { settlementRuleLabel } from "../server/conditions/settlement-mode.js";
+import { timeSettlementLabel } from "../server/conditions/time-settlement.js";
 
 type DetailResponse = ConditionDetail & {
   envelopeCheck: { envelope: RightsEnvelope; check: EnvelopeCheck } | null;
@@ -490,6 +491,9 @@ export function ConditionsWorkspace(
                       ({ taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税", included: "税込（海外・内税）" } as Record<string, string>)[detail.taxCategory]
                     }</dd>
                     {detail.paymentTerms && (<><dt>支払条件</dt><dd>{detail.paymentTerms}</dd></>)}
+                    {detail.contractForm && (<><dt>契約形式</dt><dd>{detail.contractForm}</dd></>)}
+                    {detail.timeSettlement && (<><dt>時間精算</dt>
+                      <dd>{timeSettlementLabel(detail, detail.flatAmount)}　<span className="faint">決済文書は役務提供完了通知書</span></dd></>)}
                     <dt>決済の型</dt><dd>{settlementRuleLabel({
                       mode: detail.settlementMode, count: detail.settlementCount,
                       cycle: detail.settlementCycle, graceDays: detail.settlementGraceDays })}</dd>

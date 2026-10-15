@@ -1890,6 +1890,13 @@ export function createRoutes(database: Transactable) {
    * 自動更新（A-039）。期間そのものは termStart / termEnd。
    * 更新した回数は持たない（終了日・単位・基準日から数える）。
    */
+  // 準委任の時間精算（A-073）。要る値の組み合わせはサービス側（normalizeTimeSettlement）で確かめる。
+  const timeSettlementFields = {
+    timeSettlement: z.boolean().nullable().optional(),
+    hoursIncluded: z.coerce.number().min(0).max(999999).nullable().optional(),
+    overageUnitAmount: z.coerce.number().int().min(0).nullable().optional(),
+    shortfallUnitAmount: z.coerce.number().int().min(0).nullable().optional()
+  };
   // 決済の型（A-071）。要る値の組み合わせはサービス側（normalizeSettlementRule）で確かめる。
   const settlementRuleFields = {
     settlementMode: z.enum(["once", "fixed_count", "term_bound", "open"]).nullable().optional(),
@@ -1937,6 +1944,7 @@ export function createRoutes(database: Transactable) {
     paymentTerms: z.string().trim().max(500).nullable().optional(),
     // 契約形式（請負・委任など）。支払条件とは別の欄。
     contractForm: z.string().trim().max(60).nullable().optional(),
+    ...timeSettlementFields,
     cycle: z.string().trim().max(60).nullable().optional(),
     ...settlementRuleFields,
     notes: z.string().trim().max(4000).nullable().optional(),
@@ -2061,6 +2069,7 @@ export function createRoutes(database: Transactable) {
     paymentTerms: z.string().trim().max(300).nullable().optional(),
     contractForm: z.string().trim().max(60).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
+    ...timeSettlementFields,
     rows: z.array(z.object({
       kind: z.enum(["service", "expense", "fee"]),
       name: z.string().trim().max(300).nullable().optional(),
@@ -2075,7 +2084,8 @@ export function createRoutes(database: Transactable) {
       contractForm: z.string().trim().max(60).nullable().optional(),
       deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
       workId: z.coerce.number().int().positive().nullable().optional(),
-      taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional()
+      taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional(),
+      ...timeSettlementFields
     })).min(1).max(60),
     license: z.object({
       mode: z.enum(["separate", "included", "free", "none"]),
@@ -2159,6 +2169,7 @@ export function createRoutes(database: Transactable) {
     deliveryDue: z.string().date().nullable().optional(),
     paymentTerms: z.string().trim().max(300).nullable().optional(),
     contractForm: z.string().trim().max(60).nullable().optional(),
+    ...timeSettlementFields,
     taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
     workId: z.coerce.number().int().positive().nullable().optional(),
@@ -2402,7 +2413,10 @@ export function createRoutes(database: Transactable) {
     deliverable: z.string().trim().max(2000).nullable().optional(),
     inspectedOn: z.string().date().nullable().optional(),
     inspectorDept: z.string().trim().max(120).nullable().optional(),
-    inspectorName: z.string().trim().max(120).nullable().optional()
+    inspectorName: z.string().trim().max(120).nullable().optional(),
+    // 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。役務提供完了通知書に出る。
+    hours: z.coerce.number().min(0).max(999999).nullable().optional(),
+    reportReceivedOn: z.string().date().nullable().optional()
   };
 
   // 予定明細を実績に移す。予定と実績を繋ぐのは condition_events.schedule_id
@@ -2607,6 +2621,8 @@ export function createRoutes(database: Transactable) {
     deliverable: z.string().trim().max(2000).nullable().optional(),
     inspectorDept: z.string().trim().max(120).nullable().optional(),
     inspectorName: z.string().trim().max(120).nullable().optional(),
+    hours: z.coerce.number().min(0).max(999999).nullable().optional(),
+    reportReceivedOn: z.string().date().nullable().optional(),
     varianceNote: z.string().trim().max(2000).nullable().optional(),
     followUp: z.string().trim().max(2000).nullable().optional(),
     followUpDueOn: z.string().date().nullable().optional(),

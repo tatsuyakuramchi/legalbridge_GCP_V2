@@ -152,6 +152,7 @@ export class ConditionRepository {
               c.target_party_id, tp.name AS target_party_name,
               c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
               c.settlement_mode, c.settlement_count, c.settlement_cycle, c.settlement_grace_days,
+              c.time_settlement, c.hours_included, c.overage_unit_amount, c.shortfall_unit_amount,
               c.spec, c.deliverable_ownership, c.order_no,
               pc.condition_no AS parent_condition_no,
               wp.name AS work_part_name
@@ -194,6 +195,10 @@ export class ConditionRepository {
       taxCategory: row.tax_category ?? "taxable",
       paymentTerms: str(row.payment_terms),
       contractForm: str(row.contract_form),
+      timeSettlement: row.time_settlement === true,
+      hoursIncluded: num(row.hours_included),
+      overageUnitAmount: int(row.overage_unit_amount),
+      shortfallUnitAmount: int(row.shortfall_unit_amount),
       cycle: str(row.cycle),
       settlementMode: isSettlementMode(row.settlement_mode) ? row.settlement_mode : null,
       settlementCount: int(row.settlement_count),

@@ -307,6 +307,12 @@ SELECT * FROM (
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
   UNION ALL
+  SELECT 73, '準委任の時間精算（A-073。列 6・CHECK 1 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
+            AND ((table_name='conditions' AND column_name IN ('time_settlement', 'hours_included', 'overage_unit_amount', 'shortfall_unit_amount'))
+              OR (table_name='condition_events' AND column_name IN ('hours', 'report_received_on'))))
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_time_settlement_chk'))::text
+  UNION ALL
   SELECT 71, '決済の型（A-071。列 4・CHECK 3 で 7 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions'
