@@ -73,7 +73,6 @@
         {{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}
         {{#if reward_label}}<div class="item-spec">{{reward_label}}{{#if rate_pct}}　料率 {{rate_pct}}%{{/if}}{{#if formula_text}}　{{formula_text}}{{/if}}</div>{{/if}}
         {{#if payment_terms}}<div class="item-spec">契約種別: {{payment_terms}}{{#if deliverable_ownership}}　帰属: {{deliverable_ownership}}{{/if}}</div>{{else}}{{#if deliverable_ownership}}<div class="item-spec">帰属: {{deliverable_ownership}}</div>{{/if}}{{/if}}
-        {{#if hasChange}}<div class="item-change">金額変更: {{changeLabel}}{{#if changeNote}}（{{changeNote}}）{{/if}}</div>{{/if}}
       </td>
       <td class="center">{{#if order_no}}{{order_no}}{{else}}{{../parent_po_number}}{{/if}}</td>
       <td class="center">{{#if term_start}}{{formatDateCompact term_start}}〜{{formatDateCompact term_end}}{{else}}{{#if delivery_date}}{{formatDateCompact delivery_date}}{{else}}—{{/if}}{{/if}}</td>
