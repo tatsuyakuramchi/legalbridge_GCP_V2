@@ -145,6 +145,14 @@ export async function saveRoundEvent(
  *   意図どおり … 差分はあるが問題ない（理由だけ残す）
  */
 
+interface ReportImport {
+  report: { targetMonth: string | null; submittedOn: string | null; actualHours: number | null; overtimeHours: number | null;
+            matters: Array<{ code: string | null; name: string; hours: number | null; outcome: string | null }>;
+            expenses: Array<{ date: string | null; category: string | null; description: string; amount: number }> };
+  warnings: string[];
+  matterLines: string;
+}
+
 interface Detail {
   id: number; conditionNo: string | null; name: string; kind: string; currency: string;
   pricingModel: string; flatAmount: number | null; unitAmount: number | null; quantity: number | null;
@@ -190,6 +198,10 @@ export function ServiceEntry(
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scheduleId, setScheduleId] = useState<string>(initialScheduleId ? String(initialScheduleId) : "");
+  /** 月次業務報告書（Excel）の読み取り結果（A-073）。欄を埋めるだけで、何も保存しない。 */
+  const [report, setReport] = useState<ReportImport | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [extrasDone, setExtrasDone] = useState<string | null>(null);
   const [v, setV] = useState<Record<string, string>>({
     occurredOn: today(), inspectedOn: today(), quantity: "", amount: "", deliverable: "", contractForm: "",
     hours: "", reportReceivedOn: "",
@@ -333,6 +345,50 @@ export function ServiceEntry(
   const kindLabel = CONDITION_KIND_LABEL[kind] ?? kind;
   const open = schedules.filter((s) => !s.eventId);
 
+  /** 月次業務報告書（Excel）を読んで、実績時間・受領日・案件別の実績（メモ）を埋める。 */
+  async function readReport(file: File) {
+    if (!detail) return;
+    setReportBusy(true); setError(null); setExtrasDone(null);
+    try {
+      const q = scheduleId ? `?scheduleId=${scheduleId}` : "";
+      const r = await api.postRaw<ReportImport>(`/conditions/${conditionId}/report-import${q}`, file,
+        file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      setReport(r);
+      setV((s) => {
+        const next = { ...s };
+        if (r.report.actualHours !== null) {
+          next.hours = String(r.report.actualHours);
+          const calc = settleHours({ timeSettlement: true, hoursIncluded: detail.hoursIncluded ?? 0,
+                                     overageUnitAmount: detail.overageUnitAmount ?? 0, shortfallUnitAmount: detail.shortfallUnitAmount ?? null },
+                                   baseAmount, r.report.actualHours);
+          next.amount = String(calc.total);
+        }
+        if (r.report.submittedOn && !s.reportReceivedOn) next.reportReceivedOn = r.report.submittedOn;
+        if (r.matterLines && !s.note.trim()) next.note = r.matterLines;
+        return next;
+      });
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setReportBusy(false); }
+  }
+
+  /** Excel の経費明細を、この業務の実費の条件（と実績）として登録する。 */
+  async function addExpenses() {
+    if (!report || !report.report.expenses.length) return;
+    setReportBusy(true); setError(null);
+    try {
+      let n = 0;
+      for (const e of report.report.expenses) {
+        await api.post(`/conditions/${conditionId}/extras`, {
+          kind: "expense", name: [e.category, e.description].filter(Boolean).join(" "), amount: e.amount,
+          occurredOn: e.date ?? f("occurredOn") ?? today(), note: report.report.targetMonth ? `${report.report.targetMonth} 月次業務報告書より` : null
+        });
+        n += 1;
+      }
+      setExtrasDone(`実費 ${n} 件を登録しました（役務提供完了通知書の実費の行に出ます）`);
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setReportBusy(false); }
+  }
+
   return (
     <div className="stack">
       {/* 1. 条件の内容 */}
@@ -409,6 +465,36 @@ export function ServiceEntry(
               {expectedQty !== null && <small className="faint">予定 {expectedQty}</small>}
             </label>
           )}
+          {timeSettled && (
+            <div className="field wide">
+              <span>月次業務報告書（Excel）から読む</span>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <input type="file" accept=".xlsx" disabled={reportBusy}
+                       onChange={(e) => { const file = e.target.files?.[0]; if (file) void readReport(file); e.target.value = ""; }} />
+                {reportBusy && <span className="faint">読んでいます…</span>}
+                {report && (
+                  <span className="faint">
+                    対象月 {report.report.targetMonth ?? "—"}　提出日 {report.report.submittedOn ?? "—"}　実績 {hoursText(report.report.actualHours)}
+                    　案件 {report.report.matters.length} 件　経費 {report.report.expenses.length} 件
+                  </span>
+                )}
+              </div>
+              <small className="faint">実績時間・受領日・案件別の実績（メモ）を埋めます。Excel の基本枠・基本報酬・基準単価は使わず、条件明細と違えば下に出します</small>
+              {report && report.warnings.length > 0 && (
+                <div className="note warn" style={{ marginTop: 6 }}>
+                  {report.warnings.map((w, i) => <div key={i}>{w}</div>)}
+                </div>
+              )}
+              {report && report.report.expenses.length > 0 && (
+                <div className="note" style={{ marginTop: 6 }}>
+                  <b>経費明細</b>　{report.report.expenses.map((e) => `${e.date ?? ""} ${[e.category, e.description].filter(Boolean).join(" ")} ${money(e.amount, currency)}`).join("、")}
+                  {!extrasDone
+                    ? <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} disabled={reportBusy} onClick={() => void addExpenses()}>実費の行として登録する</button>
+                    : <span className="faint" style={{ marginLeft: 8 }}>{extrasDone}</span>}
+                </div>
+              )}
+            </div>
+          )}
           {timeSettled && (<>
             <label className="field">
               <span>実績時間（h）</span>
@@ -455,8 +541,11 @@ export function ServiceEntry(
             </label>
           )}
           <label className="field wide">
-            <span>メモ</span>
-            <input value={f("note")} onChange={(e) => set("note", e.target.value)} />
+            <span>{timeSettled ? "案件別の実績（メモ）" : "メモ"}</span>
+            {timeSettled
+              ? <textarea rows={3} value={f("note")} onChange={(e) => set("note", e.target.value)} placeholder={"LGL-003 契約スキーム相談 18 h\nLGL-004 契約書レビュー 31.5 h"} />
+              : <input value={f("note")} onChange={(e) => set("note", e.target.value)} />}
+            {timeSettled && <small className="faint">役務提供完了通知書の「業務内容」の行の下にそのまま出る（1 行 1 案件）</small>}
           </label>
         </div>
       </div>

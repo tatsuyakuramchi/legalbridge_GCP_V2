@@ -1,0 +1,55 @@
+  /* ---- 170: 検収書 v2（役務提供完了通知書 169 と同じ段構成：概要の表 → 明細 → 右寄せの合計 → 署名欄 → 備考）
+     現行版の head の CSS は残し、ここで上書きする。箱と下線は表のセルで組む（Word に貼っても崩れない）。 */
+  @page { size: A4; margin: 12mm 12mm 14mm; }
+  body { font-family: "Noto Sans CJK JP", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif; font-size: 9.5pt; line-height: 1.5; color: #222; margin: 0; padding: 16px; }
+  h1.doc-title { font-size: 18pt; margin: 0 0 2px; letter-spacing: .3em; font-weight: 700; text-align: center; border: 0; }
+  .doc-head { text-align: center; margin-bottom: 6px; }
+  .doc-sub { font-size: 8.5pt; color: #555; }
+  .doc-meta { font-size: 8.5pt; text-align: right; margin: 0 0 6px; }
+  .doc-meta b { font-family: "IBM Plex Mono", Menlo, Consolas, monospace; font-weight: 500; }
+  hr.rule { border: none; border-top: 1px solid #333; margin: 0 0 10px; }
+  table { border-collapse: collapse; }
+  table.party { width: 100%; margin-bottom: 10px; }
+  table.party td { vertical-align: top; border: 0; }
+  table.party td + td { border-left: 1px solid #d9d9d9; }
+  .vlabel { font-size: 8pt; font-weight: 700; color: #555; margin-bottom: 3px; letter-spacing: .04em; }
+  .vendor-name { font-size: 13pt; font-weight: 700; border-bottom: 1px solid #333; padding-bottom: 3px; margin-bottom: 4px; }
+  .muted { font-size: 8.5pt; color: #555; }
+  .company-name { font-weight: 700; font-size: 10.5pt; margin-bottom: 2px; }
+  .contact { margin-top: 6px; padding-top: 5px; border-top: 1px solid #d9d9d9; font-size: 8.5pt; color: #555; }
+  p.lead { font-size: 9pt; margin: 0 0 6px; }
+  p.section-mark { font-size: 9.5pt; font-weight: 700; margin: 10px 0 4px; padding: 0 0 2px; border: 0; border-bottom: 1px solid #bdbdbd; page-break-after: avoid; }
+  table.summary { width: 100%; font-size: 8.5pt; margin: 0; }
+  table.summary th, table.summary td { border: 1px solid #d9d9d9; padding: 4px 7px; vertical-align: top; text-align: left; }
+  table.summary th { background: #f4f4f2; width: 16%; font-weight: 600; color: #333; white-space: nowrap; }
+  table.summary td { width: 34%; }
+  table.summary td b.no { font-family: "IBM Plex Mono", Menlo, Consolas, monospace; font-weight: 500; }
+  table.items { width: 100%; font-size: 8.5pt; margin: 0; }
+  table.items th, table.items td { border: 1px solid #d9d9d9; padding: 3px 6px; vertical-align: top; line-height: 1.4; }
+  table.items th { background: #f4f4f2; font-weight: 600; color: #333; text-align: center; white-space: nowrap; }
+  table.items thead { display: table-header-group; }
+  table.items tr { page-break-inside: avoid; }
+  td.center { text-align: center; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .item-name { font-weight: 600; }
+  .item-spec { font-size: 8pt; color: #555; margin-top: 1px; }
+  .item-change { font-size: 8pt; color: #92400e; margin-top: 1px; }
+  tr.spec-row td { border-top: 0; background: #fafaf8; font-size: 8.5pt; white-space: pre-line; padding: 4px 8px 6px; }
+  tr.spec-row td:first-child { background: transparent; }
+  table.totals { width: auto; min-width: 46%; margin: 6px 0 0 auto; font-size: 8.5pt; }
+  table.totals th { text-align: left; font-weight: 400; background: transparent; border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 10px 2px 2px; white-space: nowrap; width: auto; }
+  table.totals td { border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 2px 2px 16px; min-width: 9em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; width: auto; }
+  table.totals tr.grand th, table.totals tr.grand td { font-weight: 700; font-size: 10pt; border-top: 2px solid #333; border-bottom: 0; padding-top: 4px; }
+  table.totals tr.date th, table.totals tr.date td { border: 0; color: #555; font-size: 8pt; padding-top: 0; white-space: normal; }
+  p.progress { font-size: 8pt; color: #555; margin: 4px 0 0; text-align: right; }
+  .signature-section { margin: 10px 0 12px; padding: 8px 10px; border: 1px solid #c9a227; background: #fffbea; page-break-inside: avoid; }
+  .signature-section .t { font-size: 9.5pt; font-weight: 700; margin-bottom: 4px; }
+  .signature-section p { font-size: 8.5pt; margin: 0 0 8px; line-height: 1.5; }
+  .signature-section table { width: 100%; font-size: 8.5pt; }
+  .signature-section td { width: 50%; vertical-align: top; padding: 6px 8px; border: 1px solid #bbb; }
+  .signature-section .lbl { color: #555; margin-bottom: 6px; }
+  .signature-section .line { height: 44px; border-bottom: 1px solid #333; }
+  .signature-section .ours { min-height: 44px; border-bottom: 1px solid #333; display: flex; align-items: flex-end; padding-bottom: 2px; line-height: 1.4; }
+  .remarks { font-size: 8pt; color: #555; margin-top: 10px; }
+  .remarks ol { margin: 2px 0 0; padding-left: 1.4em; }
+  .remarks li { margin: 1px 0; }

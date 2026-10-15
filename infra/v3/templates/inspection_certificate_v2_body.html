@@ -1,0 +1,175 @@
+<body data-layout="ins-v2-2026-10">
+
+<!-- ===== ヘッダ ===== -->
+<div class="doc-head">
+  <h1 class="doc-title">検収書</h1>
+  {{#if PERIOD}}<div class="doc-sub">{{PERIOD}}</div>{{/if}}
+</div>
+<div class="doc-meta">文書番号: <b>{{DOC_NO}}</b>　　発行日: {{formatDate documentDate}}{{#if issueKey}}　　課題: {{issueKey}}{{/if}}</div>
+<hr class="rule">
+
+<!-- ===== 宛先 ＋ 発注者 ===== -->
+<table class="party">
+  <tr>
+    <td style="width:50%; padding-right:12px;">
+      <div class="vlabel">受注者</div>
+      <div class="vendor-name">{{VENDOR_NAME}}{{#if VENDOR_SUFFIX}}　{{VENDOR_SUFFIX}}{{else}}　御中{{/if}}</div>
+      {{#if VENDOR_REPRESENTATIVE_SAMA}}<div class="muted">{{VENDOR_REPRESENTATIVE_SAMA}}</div>{{/if}}
+      {{#if VENDOR_ADDRESS}}<div class="muted">{{VENDOR_ADDRESS}}</div>{{/if}}
+      <div class="muted">登録番号: {{#if INVOICE_REGISTRATION_NUMBER}}{{INVOICE_REGISTRATION_NUMBER}}{{else}}未登録{{/if}}</div>
+    </td>
+    <td style="width:50%; padding-left:12px;">
+      <div class="vlabel">発注者</div>
+      <div class="company-name">{{PARTY_A_NAME}}</div>
+      <div class="muted" style="white-space:pre-wrap;">{{PARTY_A_ADDRESS}}</div>
+      {{#if COMPANY_INVOICE_NO}}<div class="muted">登録番号: T{{COMPANY_INVOICE_NO}}</div>{{/if}}
+      {{#if PARTY_A_REP}}<div class="muted">{{PARTY_A_REP}}</div>{{/if}}
+      {{#if STAFF_NAME}}
+      <div class="contact">担当: {{#if STAFF_DEPARTMENT}}{{STAFF_DEPARTMENT}} {{/if}}{{STAFF_NAME}}{{#if STAFF_PHONE}}　TEL {{STAFF_PHONE}}{{/if}}{{#if STAFF_EMAIL}}<br>{{STAFF_EMAIL}}{{/if}}</div>
+      {{/if}}
+    </td>
+  </tr>
+</table>
+
+<p class="lead">下記のとおり納品を受け、検収したことを通知いたします。</p>
+
+<!-- ===== 検収概要 ===== -->
+<p class="section-mark">■ 検収概要</p>
+<table class="summary">
+  <tr>
+    <th>件名</th><td>{{PROJECT_TITLE}}</td>
+    <th>発注番号</th><td><b class="no">{{#if parent_po_number}}{{parent_po_number}}{{else}}—{{/if}}</b></td>
+  </tr>
+  <tr>
+    <th>納品日</th><td>{{#if DELIVERY_DATE}}{{formatDate DELIVERY_DATE}}{{else}}明細のとおり{{/if}}</td>
+    <th>検収日</th><td>{{#if INSPECTION_DATE}}{{formatDate INSPECTION_DATE}}{{else}}{{formatDate documentDate}}{{/if}}</td>
+  </tr>
+  <tr>
+    <th>契約種別</th><td>{{#each delivery_line_items}}{{#if @first}}{{#if payment_terms}}{{payment_terms}}{{else}}明細のとおり{{/if}}{{/if}}{{/each}}{{#if WITHHOLDING_TAX}}（源泉徴収 {{WITHHOLDING_TAX}}）{{/if}}</td>
+    <th>基本契約</th><td>{{#if HAS_BASE_CONTRACT}}あり{{#if MASTER_CONTRACT_REF}}（{{MASTER_CONTRACT_REF}}）{{/if}}{{else}}なし（発注書の標準約款による）{{/if}}</td>
+  </tr>
+</table>
+
+<!-- ===== 検収内容 ===== -->
+<p class="section-mark">■ 検収内容</p>
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:4%">No.</th>
+      <th style="width:36%">品目・成果物</th>
+      <th style="width:14%">発注番号</th>
+      <th style="width:14%">納品日</th>
+      <th style="width:8%">数量</th>
+      <th style="width:12%">単価（税抜）</th>
+      <th style="width:12%">金額（税抜）</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#each delivery_line_items}}
+    <tr>
+      <td class="center">{{index1 @index}}</td>
+      <td>
+        <div class="item-name">{{item_name}}</div>
+        {{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}
+        {{#if reward_label}}<div class="item-spec">{{reward_label}}{{#if rate_pct}}　料率 {{rate_pct}}%{{/if}}{{#if formula_text}}　{{formula_text}}{{/if}}</div>{{/if}}
+        {{#if payment_terms}}<div class="item-spec">契約種別: {{payment_terms}}{{#if deliverable_ownership}}　帰属: {{deliverable_ownership}}{{/if}}</div>{{else}}{{#if deliverable_ownership}}<div class="item-spec">帰属: {{deliverable_ownership}}</div>{{/if}}{{/if}}
+        {{#if hasChange}}<div class="item-change">金額変更: {{changeLabel}}{{#if changeNote}}（{{changeNote}}）{{/if}}</div>{{/if}}
+      </td>
+      <td class="center">{{#if order_no}}{{order_no}}{{else}}{{../parent_po_number}}{{/if}}</td>
+      <td class="center">{{#if term_start}}{{formatDateCompact term_start}}〜{{formatDateCompact term_end}}{{else}}{{#if delivery_date}}{{formatDateCompact delivery_date}}{{else}}—{{/if}}{{/if}}</td>
+      <td class="num">{{#if sc_hours_text}}{{sc_hours_text}}{{else}}{{#if inspected_quantity}}{{inspected_quantity}}{{else}}{{#if quantity}}{{quantity}}{{else}}—{{/if}}{{/if}}{{/if}}</td>
+      <td class="num">{{#if sc_unit_text}}{{sc_unit_text}}{{else}}{{#if unit_price}}{{formatCurrency unit_price}}{{else}}—{{/if}}{{/if}}</td>
+      <td class="num">{{formatCurrency (or inspected_amount_ex_tax amount_ex_tax)}}</td>
+    </tr>
+    {{#if has_spec_body}}
+    <tr class="spec-row"><td></td><td colspan="6">{{spec_body}}</td></tr>
+    {{/if}}
+    {{/each}}
+    {{#each other_fees}}
+    <tr>
+      <td class="center"></td>
+      <td><div class="item-name">{{or fee_name "手数料"}}</div>{{#if remarks}}<div class="item-spec">{{remarks}}</div>{{/if}}</td>
+      <td class="center">{{../parent_po_number}}</td>
+      <td class="center">—</td>
+      <td class="num">—</td>
+      <td class="num">—</td>
+      <td class="num">{{formatCurrency (or amount_ex_tax amount)}}</td>
+    </tr>
+    {{/each}}
+    {{#each expenses}}
+    <tr>
+      <td class="center"></td>
+      <td><div class="item-name">{{or expense_name "実費"}}（実費・税込）</div>{{#if remarks}}<div class="item-spec">{{remarks}}</div>{{/if}}</td>
+      <td class="center">{{../parent_po_number}}</td>
+      <td class="center">{{#if spent_date}}{{formatDateCompact spent_date}}{{else}}—{{/if}}</td>
+      <td class="num">—</td>
+      <td class="num">—</td>
+      <td class="num">{{formatCurrency (or amount_inc_tax amount)}}</td>
+    </tr>
+    {{/each}}
+  </tbody>
+</table>
+
+<!-- ===== 合計 ===== -->
+<table class="totals">
+  <tr><th>小計（税抜）</th><td>{{taxableSubtotalExTaxStr}}</td></tr>
+  <tr><th>消費税（{{taxRate}}%）{{#if isReducedTax}} ※軽減税率{{/if}}</th><td>{{combinedTaxStr}}</td></tr>
+  {{#if expenses.length}}<tr><th>実費（税込）</th><td>{{expensesTotalIncTaxStr}}</td></tr>{{/if}}
+  <tr class="grand"><th>お支払額</th><td>{{grandTotalPayableStr}}</td></tr>
+  {{#if PAYMENT_DATE}}<tr class="date"><th>お支払予定日</th><td>{{formatDate PAYMENT_DATE}}</td></tr>{{/if}}
+  {{#if BANK_NAME}}<tr class="date"><th>振込先</th><td>{{BANK_NAME}} {{BRANCH_NAME}}　{{ACCOUNT_TYPE}} {{ACCOUNT_NUMBER}}　{{ACCOUNT_HOLDER_KANA}}</td></tr>{{/if}}
+</table>
+{{#if totalOrderAmountStr}}{{#unless (eq inspectedPct 100)}}
+<p class="progress">発注総額 {{totalOrderAmountStr}} 円のうち、本検収書までの検収済額 {{inspectedAmountStr}} 円（{{inspectedPct}}%）、未検収額 {{pendingAmountStr}} 円。</p>
+{{/unless}}{{/if}}
+
+<!-- ===== 支払済みの分（分納をまとめた検収書） ===== -->
+{{#if useGroupedInspection}}
+<p class="section-mark">■ 支払済みの分（参考）</p>
+<table class="items">
+  <thead><tr><th style="width:4%"></th><th>品目・成果物</th><th style="width:16%">支払日</th><th style="width:16%">金額（税抜）</th></tr></thead>
+  <tbody>
+    {{#each paymentGroups}}{{#if isPaid}}
+    {{#each lines}}
+    <tr><td></td><td><div class="item-name">{{item_name}}</div>{{#if spec}}<div class="item-spec">{{spec}}</div>{{/if}}</td><td class="center">{{formatDateCompact ../date}}</td><td class="num">{{formatCurrency amount_ex_tax}}</td></tr>
+    {{/each}}
+    {{/if}}{{/each}}
+  </tbody>
+</table>
+{{/if}}
+
+<!-- ===== 変更内容の確認（金額が当初から変わったときだけ） ===== -->
+{{#if needsSignature}}
+<div class="signature-section">
+  <div class="t">■ 変更内容の確認</div>
+  <p>本検収書の金額は当初の発注条件から変更されています。{{#each changeLogs}}{{fieldLabel}} {{beforeValue}} → {{afterValue}}（{{reason}}）。{{/each}}変更の内容および理由を確認のうえ、下記にご署名（または記名押印）ください。ご署名をもって、変更後の金額で検収が確定します。</p>
+  <table>
+    <tr>
+      <td>
+        <div class="lbl">受注者（署名または記名押印）</div>
+        <div class="line"></div>
+        <div style="margin-top:6px;">署名日：　　　　年　　　月　　　日</div>
+      </td>
+      <td>
+        <div class="lbl">発注者（確認者）</div>
+        <div class="ours">{{PARTY_A_NAME}}　{{#if inspectorDept}}{{inspectorDept}}　{{/if}}{{inspectorName}}</div>
+        <div style="margin-top:6px;">確認日：{{#if INSPECTION_DATE}}{{formatDate INSPECTION_DATE}}{{else}}{{formatDate documentDate}}{{/if}}</div>
+      </td>
+    </tr>
+  </table>
+</div>
+{{/if}}
+
+<!-- ===== 備考 ===== -->
+<div class="remarks">
+  <b>備考</b>
+  <ol>
+    <li>記載内容に相違がある場合は、本検収書の受領後 5 営業日以内に上記の当社担当までご連絡ください。ご連絡がない場合は確認済みとして取り扱います。</li>
+    <li>成果物の権利の帰属は発注書および{{#if HAS_BASE_CONTRACT}}基本契約{{else}}標準約款{{/if}}の定めによります。</li>
+    <li>実費は税込の実費精算です。その他の経費は事前承認分に限ります。</li>
+    <li>受注者の請求書と記載が異なる場合は本検収書を優先します。</li>
+    {{#if remarks}}<li>{{remarks}}</li>{{/if}}
+  </ol>
+</div>
+
+</body>

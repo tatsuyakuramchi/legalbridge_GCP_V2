@@ -275,8 +275,14 @@ function timeSettledLines(condition: Ctx, event: Ctx, row: Row): Row[] {
   const unit = String(condition.currency ?? "JPY") === "JPY" ? "円" : String(condition.currency);
   const money = (n: number) => `${yen(n)} ${unit}`;
   const common = { ...row, trigger_kind: null, hasChange: false, changeNote: "" };
+  // その月の案件別の実績（実績のメモ。月次業務報告書から写したもの）は包括枠の行の下に出す。
+  const detail = String(event.note ?? "").trim();
+  // spec / description も書き換える（inspectionBlock は spec から見出しと本文を割り直す）。
+  const baseText = detail ? `${String(row.spec_head ?? row.item_name ?? "")}\n${detail}` : null;
+  const baseSpec = baseText ? { spec: baseText, description: baseText, ...splitSpec(baseText) } : {};
   const out: Row[] = [{
     ...common,
+    ...baseSpec,
     sc_role: "base",
     sc_hours: s.hoursApplied, sc_hours_text: hoursText(s.hoursApplied),
     sc_unit_text: `${money(base)}／月`,
@@ -380,7 +386,11 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
   const events = (context.events ?? []) as Ctx[];
   if (events.length) {
     // 定期課金の回が続くところは1行に畳む（同じ内容の行が縦に並ばないように）。
-    return foldPeriodicLines(events.flatMap((event) => {
+    // 実費・手数料の条件の実績は明細の行にしない（経費・その他手数料の表に条件から出る）。
+    // 同じ額が納品明細にも経費にも出て、消費税まで掛かっていた。
+    const settlementIds = new Set(((context.conditions ?? []) as Ctx[]).filter((c) => isSettlementKind(c.kind)).map((c) => c.id));
+    const lineEvents = events.filter((e) => !settlementIds.has(e.conditionId));
+    return foldPeriodicLines((lineEvents.length ? lineEvents : events).flatMap((event) => {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
       const spec = condition.spec ?? condition.notes ?? event.note ?? "";
@@ -704,8 +714,12 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
   const lines = rows(manual.delivery_line_items).length
     ? rows(manual.delivery_line_items)
     : deliveryLinesFrom(context);
-  const otherFees = rows(manual.other_fees);
-  const expenses = rows(manual.expenses);
+  // 手数料・経費は画面が条件から種を作って手入力として送ってくる。欄そのものが無い
+  // （画面を通らない API や試算）ときだけ、条件から組む。空の配列は「消した」なので尊重する。
+  const otherFees = manual.other_fees === undefined
+    ? feeLinesFrom((context.conditions ?? []) as Ctx[]) : rows(manual.other_fees);
+  const expenses = manual.expenses === undefined
+    ? expenseLinesFrom((context.conditions ?? []) as Ctx[]) : rows(manual.expenses);
   const source: Row = { delivery_line_items: lines, other_fees: otherFees, expenses, taxRate };
   const totals = computeInspectionTotals(source);
   const breakdown = inspectionTaxBreakdown(source);

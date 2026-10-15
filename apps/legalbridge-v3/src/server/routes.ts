@@ -4,6 +4,7 @@ import { dateStr, int, inTransaction, str, type Transactable } from "./core/db.j
 import { DomainError, statusFor } from "./core/errors.js";
 import { recordAudit } from "./core/audit.js";
 import { buildZip, safeFileName, type ZipEntry } from "./core/zip.js";
+import { matterLinesText, parseMonthlyReport, reportWarnings } from "./conditions/monthly-report.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
@@ -2418,6 +2419,33 @@ export function createRoutes(database: Transactable) {
     hours: z.coerce.number().min(0).max(999999).nullable().optional(),
     reportReceivedOn: z.string().date().nullable().optional()
   };
+
+  /**
+   * 月次業務報告書（Excel）を読む（A-073）。実績入力の欄を埋めるための読み取りだけで、何も書かない。
+   * 実績時間・提出日・案件別の実績・経費明細を返し、Excel の設定値（基本枠・基本報酬・基準単価）が
+   * 条件明細と違えば警告する（正は条件明細）。回（scheduleId）を渡せば対象月も突き合わせる。
+   */
+  router.post("/conditions/:id/report-import",
+    requireRole("admin", "legal"),
+    express.raw({ type: () => true, limit: "26mb" }),
+    asyncRoute(async (req, res) => {
+      const condition = await conditions.find(Number(req.params.id));
+      if (!condition) throw new DomainError("NOT_FOUND", `条件 ${req.params.id} が見つかりません`);
+      const scheduleId = req.query.scheduleId ? Number(req.query.scheduleId) : null;
+      const round = scheduleId
+        ? ((await database.query("SELECT service_from, service_to FROM condition_schedules WHERE id = $1 AND condition_id = $2",
+                                  [scheduleId, condition.id])).rows[0] as { service_from: unknown; service_to: unknown } | undefined)
+        : undefined;
+      let report;
+      try {
+        report = parseMonthlyReport(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+      } catch (e) {
+        throw new DomainError("VALIDATION", `月次業務報告書として読めません：${(e as Error).message}`);
+      }
+      const warnings = reportWarnings(report, condition,
+        round ? { serviceFrom: dateStr(round.service_from), serviceTo: dateStr(round.service_to) } : null);
+      res.json({ report, warnings, matterLines: matterLinesText(report) });
+    }));
 
   // 予定明細を実績に移す。予定と実績を繋ぐのは condition_events.schedule_id
   // だけで、これまで書く処理が無かった。

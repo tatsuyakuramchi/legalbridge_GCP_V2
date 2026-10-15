@@ -80,6 +80,20 @@ test("枠どおりの月は 1 行で署名欄なし。未消化は控除単価�
   assert.equal(deduct.needsSignature, true);
 });
 
+test("実績のメモ（案件別の実績）は包括枠の行の下に出る。実費の条件の実績は明細の行にしない", () => {
+  const note = "LGL-003 契約スキーム相談 18 h\nLGL-004 契約書レビュー 31.5 h";
+  const expense = { id: 2, kind: "expense", name: "交通費", taxCategory: "exempt", currency: "JPY", flatAmount: 1840 };
+  const c = buildTemplateContext(SERVICE_COMPLETION_KEY,
+    ctx({ conditions: [condition(), expense], events: [event({ note }), { id: 10, conditionId: 2, occurredOn: "2026-11-26", amount: 1840 }] }), {});
+  const lines = c.delivery_line_items as Array<Record<string, unknown>>;
+  assert.equal(lines.length, 2, "実費の実績は行にならない");
+  assert.equal(lines[0].spec_body, note);
+  assert.equal(lines[0].has_spec_body, true);
+  assert.equal(c.taxableSubtotalExTaxStr, "225,000");
+  assert.equal(c.expensesTotalIncTaxStr, "1,840");
+  assert.equal(c.grandTotalPayableStr, "249,340");
+});
+
 test("時間精算でない条件・実績時間の無い回は従来の 1 行のまま", () => {
   const plain = deliveryLinesFrom(ctx({ conditions: [condition({ timeSettlement: false })], condition: condition({ timeSettlement: false }) }));
   assert.equal(plain.length, 1);
