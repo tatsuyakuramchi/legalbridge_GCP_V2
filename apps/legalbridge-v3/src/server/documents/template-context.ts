@@ -360,6 +360,8 @@ function serviceCompletionExtras(context: Ctx, block: Record<string, unknown>, m
     sc_base_amount_str: yen(base),
     hasOverage, hasShortfall,
     sc_report_received_on: latest((e) => e.reportReceivedOn),
+    // お支払予定日：回の支払期日。無ければ完了日と相手先の区分から（検収書の行の支払日と同じ規則）。
+    sc_payment_date: latest((e) => e.schedule?.payOn) ?? (first ? payOnFor(first, condition) : null),
     // 確認期限：送付日から 10 営業日。送付日は決まっていないので発行日で仮置きし、人が直せる。
     sc_confirm_deadline: typedDeadline || addBusinessDays(issuedOn, 10),
     sc_is_invoice_statement: invoiceNo.length >= 13,

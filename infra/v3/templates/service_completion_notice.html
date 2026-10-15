@@ -168,7 +168,7 @@
   <tr><th>消費税（{{taxRate}}%）</th><td>{{combinedTaxStr}}</td></tr>
   {{#if expenses.length}}<tr><th>実費（税込）</th><td>{{expensesTotalIncTaxStr}}</td></tr>{{/if}}
   <tr class="grand"><th>お支払額</th><td>{{grandTotalPayableStr}}</td></tr>
-  {{#if PAYMENT_DATE}}<tr class="date"><th>お支払予定日</th><td>{{formatDate PAYMENT_DATE}}</td></tr>{{/if}}
+  {{#if sc_payment_date}}<tr class="date"><th>お支払予定日</th><td>{{formatDate sc_payment_date}}</td></tr>{{/if}}
 </table>
 
 {{#if needsSignature}}

@@ -57,6 +57,9 @@ test("時間精算の回は 包括枠／超過 の行に分かれ、合計は �
   assert.equal(c.sc_report_received_on, "2026-12-02");
   assert.equal(c.sc_confirm_deadline, "2026-12-18", "発行日 12/4 から 10 営業日");
   assert.equal(c.sc_is_invoice_statement, false);
+  assert.equal(c.sc_payment_date, "2026-12-21", "回の支払期日");
+  const noPayOn = buildTemplateContext(SERVICE_COMPLETION_KEY, ctx({ events: [event({ schedule: null })] }), {});
+  assert.equal(noPayOn.sc_payment_date, "2026-12-20", "回に支払期日が無ければ 完了日の翌月 20 日（個人）");
 });
 
 test("枠どおりの月は 1 行で署名欄なし。未消化は控除単価があるときだけ控除の行", () => {
