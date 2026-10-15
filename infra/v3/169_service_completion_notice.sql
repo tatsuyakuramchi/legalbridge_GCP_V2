@@ -67,8 +67,7 @@ DECLARE
   td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .item-name { font-weight: 600; }
   .item-spec { font-size: 8pt; color: #555; margin-top: 1px; }
-  tr.spec-row td { border-top: 0; background: #fafaf8; font-size: 8.5pt; white-space: pre-line; padding: 4px 8px 6px; }
-  tr.spec-row td:first-child { background: transparent; }
+  .spec-body { margin-top: 3px; padding: 3px 6px; background: #fafaf8; font-size: 8.5pt; white-space: pre-line; color: #333; }
   table.totals { width: auto; min-width: 46%; margin: 6px 0 0 auto; font-size: 8.5pt; }
   table.totals th { text-align: left; font-weight: 400; border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 10px 2px 2px; white-space: nowrap; }
   table.totals td { border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 2px 2px 16px; min-width: 9em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -152,16 +151,13 @@ DECLARE
     {{#each delivery_line_items}}
     <tr>
       <td class="center">{{index1 @index}}</td>
-      <td><div class="item-name">{{item_name}}</div>{{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}</td>
+      <td><div class="item-name">{{item_name}}</div>{{#if item_spec}}<div class="item-spec">{{item_spec}}</div>{{else}}{{#if spec_head}}<div class="item-spec">{{spec_head}}</div>{{/if}}{{/if}}{{#if has_spec_body}}<div class="spec-body">{{spec_body}}</div>{{/if}}</td>
       <td class="center">{{#if order_no}}{{order_no}}{{else}}{{../parent_po_number}}{{/if}}</td>
       <td class="center">{{#if term_start}}{{formatDateCompact term_start}}〜{{formatDateCompact term_end}}{{else}}{{#if delivery_date}}{{formatDateCompact delivery_date}}{{else}}—{{/if}}{{/if}}</td>
       <td class="num">{{#if sc_hours_text}}{{sc_hours_text}}{{else}}{{#if quantity}}{{quantity}}{{else}}—{{/if}}{{/if}}</td>
       <td class="num">{{#if sc_unit_text}}{{sc_unit_text}}{{else}}{{#if unit_price}}{{formatCurrency unit_price}}{{else}}—{{/if}}{{/if}}</td>
       <td class="num">{{formatCurrency (or inspected_amount_ex_tax amount_ex_tax)}}</td>
     </tr>
-    {{#if has_spec_body}}
-    <tr class="spec-row"><td></td><td colspan="6">{{spec_body}}</td></tr>
-    {{/if}}
     {{/each}}
     {{#each other_fees}}
     <tr>
@@ -192,7 +188,7 @@ DECLARE
   <tr><th>小計（税抜）</th><td>{{taxableSubtotalExTaxStr}}</td></tr>
   <tr><th>消費税（{{taxRate}}%）</th><td>{{combinedTaxStr}}</td></tr>
   {{#if expenses.length}}<tr><th>実費（税込）</th><td>{{expensesTotalIncTaxStr}}</td></tr>{{/if}}
-  <tr class="grand"><th>お支払額</th><td>{{grandTotalPayableStr}}</td></tr>
+  <tr class="grand"><th>源泉徴収税計算前お支払額</th><td>{{grandTotalPayableStr}}</td></tr>
   {{#if sc_payment_date}}<tr class="date"><th>お支払予定日</th><td>{{formatDate sc_payment_date}}</td></tr>{{/if}}
 </table>
 

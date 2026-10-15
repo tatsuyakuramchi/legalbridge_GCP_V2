@@ -117,7 +117,7 @@ test("本文：副題・業務概要・明細・合計・署名欄・確認期�
   assert.match(out, /2026年12月2日 受領/);
   assert.match(out, /月間包括枠 超過分の追加委託料/);
   assert.match(out, /実績 72 h − 包括枠 64 h/);
-  assert.match(out, /お支払額<\/th><td>247,500/);
+  assert.match(out, /源泉徴収税計算前お支払額<\/th><td>247,500/);
   assert.match(out, /2026年12月21日/);
   assert.match(out, /<div class="signature-section">/);
   assert.match(out, /■ 超過精算の確認/);
