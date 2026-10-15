@@ -101,6 +101,7 @@ const COND_COLUMNS = `
          c.kind, c.pricing_model, c.currency, c.payment_terms, c.direction, c.usage_type,
          c.term_start, c.term_end,
          c.settlement_mode, c.settlement_count, c.settlement_cycle, c.settlement_grace_days,
+         c.time_settlement,
          p.id AS party_id, p.name AS party_name,
          w.id AS work_id, w.title AS work_title,
          m.id AS matter_id, m.title AS matter_title`;
@@ -329,7 +330,7 @@ function toDeal(row: any, today: string, rowKind: DealRow["rowKind"], rule: Deal
     usageType: str(row.usage_type),
     termStart: dateStr(row.term_start), termEnd: dateStr(row.term_end),
     rule, roundLabel: roundLabelOf(base, rule, rowKind),
-    templateKey: settlementDocFor(base.kind).templateKey,
+    templateKey: settlementDocFor(base).templateKey,
     skipped: Boolean(row.skipped),
     rowKind,
     action: actionOf(base, rule, rowKind, today, direction)

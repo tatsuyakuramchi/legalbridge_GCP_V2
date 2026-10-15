@@ -6,7 +6,7 @@ import type { DocumentRepository, DocumentSummary } from "../documents/repositor
 import type { AgreementService, AgreementRow } from "../agreements/service.js";
 import type { IntakeRepository } from "../intake/repository.js";
 import type { ConditionRepository } from "../conditions/repository.js";
-import { conditionMatches, inferPattern, MAIN_DOCS, MASTER_DOC, SETTLEMENT_DOC, SET_DOMAIN, type WorkbenchPattern } from "./catalog.js";
+import { conditionMatches, inferPattern, MAIN_DOCS, MASTER_DOC, SERVICE_COMPLETION_DOC, SETTLEMENT_DOC, SET_DOMAIN, type WorkbenchPattern } from "./catalog.js";
 
 /**
  * 作業テーブルの ①「要る文書と用意の仕方を決める」に出す材料。
@@ -265,11 +265,11 @@ export class WorkbenchPlanService {
 
     const mine = conditions.filter((c) => conditionMatches(ctx.pattern, c));
     const others = conditions.filter((c) => !mine.includes(c));
-    const candidates = this.fromTask(ctx, this.fromDocument(ctx, await this.candidates(ctx, today)));
+    const candidates = this.fromTask(ctx, this.fromDocument(ctx, await this.candidates(ctx, today, mine.map((c) => c.id))));
     return { ctx, conditions: mine, otherConditions: others, candidates, linkedDocuments: linked };
   }
 
-  private async candidates(ctx: WorkbenchContext, today: string): Promise<WorkbenchCandidate[]> {
+  private async candidates(ctx: WorkbenchContext, today: string, conditionIds: number[] = []): Promise<WorkbenchCandidate[]> {
     const p = ctx.pattern;
     const partyDocs = ctx.partyId
       ? (await this.deps.documents.list({ partyId: ctx.partyId, limit: 300 })).filter((d) => d.status === "issued")
@@ -312,11 +312,23 @@ export class WorkbenchPlanService {
       });
     }
 
-    const settlement = SETTLEMENT_DOC[p];
+    let settlement = SETTLEMENT_DOC[p];
+    let settlementOptions = settlement ? [settlement] : [];
+    if (p === "service" && settlement) {
+      // 準委任の時間精算（A-073）の条件が載っていれば、決済文書は検収書ではなく役務提供完了通知書。
+      // どちらも選べるようにし、既定を条件から決める。回から来たときはその条件だけを見る。
+      const ids = ctx.round ? [ctx.round.conditionId] : conditionIds;
+      const timeSettled = ids.length
+        ? Boolean((await this.database.query(
+            "SELECT bool_or(time_settlement) AS t FROM conditions WHERE id = ANY($1::bigint[])", [ids])).rows[0]?.t)
+        : false;
+      settlementOptions = timeSettled ? [SERVICE_COMPLETION_DOC, settlement] : [settlement, SERVICE_COMPLETION_DOC];
+      if (timeSettled) settlement = SERVICE_COMPLETION_DOC;
+    }
     if (settlement) {
       const now = Boolean(ctx.round);
       out.push({
-        id: "settlement", role: "settlement", templateKey: settlement.key, options: [settlement], label: settlement.label,
+        id: "settlement", role: "settlement", templateKey: settlement.key, options: settlementOptions, label: settlement.label,
         why: now ? (ctx.round?.roundLabel ? `この回（${ctx.round.roundLabel}）の決済文書。実績から作る` : "この回の決済文書。実績から作る")
           : p === "service" ? "納品のあとに作る（実績から）" : "締めごとに作る（実績から）",
         needed: now ? "now" : "later", suggested: now ? "create" : "later", existing: [], agreements: []

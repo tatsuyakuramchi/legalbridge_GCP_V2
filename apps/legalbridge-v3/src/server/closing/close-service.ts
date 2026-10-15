@@ -31,7 +31,7 @@ import type { StatementIssuer } from "../royalty/statement-issue.js";
 
 /** 計算書の道で締める回。料率（売上報告ベース）の許諾。 */
 export const isStatementRow = (row: Pick<PeriodRow, "kind" | "pricingModel">): boolean =>
-  documentFor(row.kind).templateKey === "royalty_statement" && needsReport(row.pricingModel);
+  documentFor(row).templateKey === "royalty_statement" && needsReport(row.pricingModel);
 
 /** 計算書 1 枚ぶん。宛先（受取人か相手先）・載る条件と実績・回。 */
 export interface StatementDocPlan {
@@ -216,7 +216,7 @@ function assertReasons(rows: PeriodRow[], overrides: CloseOverrides) {
  */
 export function bundleKey(row: PeriodRow, bundle: CloseBundle): string {
   if (bundle === "condition") return `c:${row.conditionId}`;
-  return `p:${row.party?.id ?? `c${row.conditionId}`}:${documentFor(row.kind).templateKey}:${row.currency || "JPY"}`;
+  return `p:${row.party?.id ?? `c${row.conditionId}`}:${documentFor(row).templateKey}:${row.currency || "JPY"}`;
 }
 
 /** その回で記録する（した）額。直した額 → 実績 → 予定。 */
@@ -352,7 +352,7 @@ export class ClosingCloseService {
           conditionId: head.conditionId, conditionName: head.conditionName,
           conditionIds: [...conditions.keys()], conditionNames: [...conditions.values()],
           party: head.party,
-          templateKey: documentFor(head.kind).templateKey,
+          templateKey: documentFor(head).templateKey,
           documentLabel: head.documentLabel,
           scheduleIds: list.map((r) => r.scheduleId!),
           // 1枚に数回を載せるときは、いちばん遅い締め日で決定する。
@@ -373,7 +373,7 @@ export class ClosingCloseService {
           conditionId: head.conditionId, conditionName: head.conditionName,
           conditionIds: [...conditions.keys()], conditionNames: [...conditions.values()],
           party: plan.party,
-          templateKey: documentFor(head.kind).templateKey,
+          templateKey: documentFor(head).templateKey,
           documentLabel: plan.payeePartyId ? `${head.documentLabel}（受取人 ${plan.party?.name ?? ""}）` : head.documentLabel,
           scheduleIds: plan.rows.map((r) => r.scheduleId!),
           issuedOn: plan.rows.map((r) => r.closingOn).filter((d): d is string => !!d).sort().at(-1) ?? null,
@@ -563,7 +563,7 @@ export class ClosingCloseService {
         .filter((d): d is string => !!d).sort().at(-1) ?? null;
       try {
         const draft = await this.issues.createDraft({
-          templateKey: documentFor(head.kind).templateKey,
+          templateKey: documentFor(head).templateKey,
           conditionIds,
           matterId: matters.size === 1 ? head.matter?.id ?? null : null
         }, actor);

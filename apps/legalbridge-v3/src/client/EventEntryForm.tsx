@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { ConditionEvents } from "./ConditionEvents.js";
+import { hoursText, settleHours, timeSettlementLabel } from "../server/conditions/time-settlement.js";
 
 /**
  * 実績入力の 1 つの入口。
@@ -149,6 +150,8 @@ interface Detail {
   pricingModel: string; flatAmount: number | null; unitAmount: number | null; quantity: number | null;
   termStart: string | null; termEnd: string | null; spec: string | null; contractForm: string | null;
   paymentTerms: string | null; deliverableOwnership: string | null; taxCategory: string;
+  /** 準委任の時間精算（A-073）。 */
+  timeSettlement?: boolean; hoursIncluded?: number | null; overageUnitAmount?: number | null; shortfallUnitAmount?: number | null;
   matters: Array<{ id: number; matterNo: string | null; title: string }>;
 }
 export interface ScheduleLite {
@@ -189,6 +192,7 @@ export function ServiceEntry(
   const [scheduleId, setScheduleId] = useState<string>(initialScheduleId ? String(initialScheduleId) : "");
   const [v, setV] = useState<Record<string, string>>({
     occurredOn: today(), inspectedOn: today(), quantity: "", amount: "", deliverable: "", contractForm: "",
+    hours: "", reportReceivedOn: "",
     note: "", varianceNote: "", followUp: "", followUpDueOn: "", closeCondition: ""
   });
   const set = (k: string, value: string) => setV((s) => ({ ...s, [k]: value }));
@@ -228,8 +232,21 @@ export function ServiceEntry(
   // ---- 予定と実績の差分 ----------------------------------------------------
   const line = schedules.find((s) => String(s.id) === scheduleId) ?? null;
   const expectedQty = detail ? (detail.quantity ?? (settlement ? null : 1)) : null;
+  /**
+   * 準委任の時間精算（A-073）。枠までは基本委託料（回の予定額）、超過は単価 × 時間、未消化は控除単価があれば減額。
+   * 実績時間を入れると金額はこの式で出す。式どおりの額は「予定との差分」にしない（超過は合意された精算）。
+   */
+  const timeSettled = Boolean(detail?.timeSettlement) && !settlement;
+  const baseAmount = detail ? (line ? line.plannedAmount : detail.flatAmount ?? 0) : 0;
+  const hoursActual = numOf(f("hours"));
+  const hoursCalc = timeSettled && detail && hoursActual !== null
+    ? settleHours({ timeSettlement: true, hoursIncluded: detail.hoursIncluded ?? 0,
+                    overageUnitAmount: detail.overageUnitAmount ?? 0, shortfallUnitAmount: detail.shortfallUnitAmount ?? null },
+                  baseAmount, hoursActual)
+    : null;
   const expectedAmount = detail
-    ? (line ? line.plannedAmount
+    ? (hoursCalc ? hoursCalc.total
+       : line ? line.plannedAmount
        : detail.pricingModel === "unit_rate" && detail.unitAmount !== null && expectedQty !== null
          ? detail.unitAmount * expectedQty
          : detail.flatAmount)
@@ -260,6 +277,7 @@ export function ServiceEntry(
   // ---- 確定できるか ---------------------------------------------------------
   const whyNot = !detail ? "条件を読み込んでいます"
     : !f("occurredOn") ? (settlement ? "精算日を入れてください" : "納品日を入れてください")
+    : timeSettled && hoursActual === null ? "実績時間を入れてください"
     : actualAmount === null ? "金額を入れてください"
     : hasDiff && !f("varianceNote").trim() ? "予定と違います。理由を書いてください"
     : hasDiff && !f("followUp") ? "次のアクションを選んでください"
@@ -280,6 +298,9 @@ export function ServiceEntry(
         deliverable: f("deliverable").trim() || null,
         inspectedOn: settlement ? null : (f("inspectedOn") || null),
         contractForm: settlement ? null : (f("contractForm").trim() || null),
+        // 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。役務提供完了通知書に出る。
+        hours: timeSettled ? hoursActual : null,
+        reportReceivedOn: timeSettled ? (f("reportReceivedOn") || null) : null,
         scheduleId: scheduleId ? Number(scheduleId) : null,
         expectedQuantity: expectedQty,
         expectedAmount,
@@ -335,6 +356,10 @@ export function ServiceEntry(
               {detail.contractForm && `　／　${detail.contractForm}`}
               {detail.paymentTerms && `　／　${detail.paymentTerms}`}
             </dd>
+            {timeSettled && (<><dt>時間精算</dt>
+              <dd>{timeSettlementLabel({ timeSettlement: true, hoursIncluded: detail.hoursIncluded ?? null,
+                                         overageUnitAmount: detail.overageUnitAmount ?? null, shortfallUnitAmount: detail.shortfallUnitAmount ?? null }, baseAmount)}
+                　<span className="faint">決済文書は役務提供完了通知書</span></dd></>)}
           </dl>
         ) : <div className="faint">読み込み中…</div>}
         {open.length > 0 && (
@@ -360,7 +385,7 @@ export function ServiceEntry(
         <b>2. 実績</b>
         <div className="form-grid" style={{ marginTop: 6 }}>
           <label className="field">
-            <span>{settlement ? "精算日（利用日）" : "納品日（役務完了日）"}</span>
+            <span>{settlement ? "精算日（利用日）" : timeSettled ? "役務提供期間の末日（完了日）" : "納品日（役務完了日）"}</span>
             <input type="date" value={f("occurredOn")} onChange={(e) => set("occurredOn", e.target.value)} />
           </label>
           {!settlement && (
@@ -384,10 +409,39 @@ export function ServiceEntry(
               {expectedQty !== null && <small className="faint">予定 {expectedQty}</small>}
             </label>
           )}
+          {timeSettled && (<>
+            <label className="field">
+              <span>実績時間（h）</span>
+              <input inputMode="decimal" value={f("hours")} placeholder={detail?.hoursIncluded != null ? String(detail.hoursIncluded) : ""}
+                     onChange={(e) => {
+                       const h = e.target.value; set("hours", h);
+                       // 実績時間を入れたら金額は式で出す（基本＋超過−控除）。人が直せば手の値が勝つ。
+                       const n = numOf(h);
+                       if (detail && n !== null) {
+                         const calc = settleHours({ timeSettlement: true, hoursIncluded: detail.hoursIncluded ?? 0,
+                                                    overageUnitAmount: detail.overageUnitAmount ?? 0, shortfallUnitAmount: detail.shortfallUnitAmount ?? null },
+                                                  baseAmount, n);
+                         set("amount", String(calc.total));
+                       }
+                     }} />
+              <small className="faint">
+                月次業務報告書の実績時間。包括枠 {hoursText(detail?.hoursIncluded)}
+                {hoursCalc && hoursCalc.overageHours > 0 && `　→ 超過 ${hoursText(hoursCalc.overageHours)} × ${money(detail?.overageUnitAmount ?? 0, currency)} = ${money(hoursCalc.overageAmount, currency)}`}
+                {hoursCalc && hoursCalc.shortfallHours > 0 && (hoursCalc.shortfallAmount > 0
+                  ? `　→ 未消化 ${hoursText(hoursCalc.shortfallHours)} × ${money(detail?.shortfallUnitAmount ?? 0, currency)} = −${money(hoursCalc.shortfallAmount, currency)}`
+                  : `　→ 未消化 ${hoursText(hoursCalc.shortfallHours)}（減額なし）`)}
+              </small>
+            </label>
+            <label className="field">
+              <span>月次業務報告書の受領日</span>
+              <input type="date" value={f("reportReceivedOn")} onChange={(e) => set("reportReceivedOn", e.target.value)} />
+              <small className="faint">役務提供完了通知書の「月次業務報告書」欄に出る。報告書の Excel は文書として実績に繋ぐ</small>
+            </label>
+          </>)}
           <label className="field">
             <span>{settlement ? (kind === "expense" ? "金額（税込）" : "金額（税抜）") : "金額（税抜）"}</span>
             <input inputMode="numeric" value={f("amount")} onChange={(e) => set("amount", e.target.value)} />
-            {expectedAmount !== null && <small className="faint">予定 {money(expectedAmount, currency)}</small>}
+            {expectedAmount !== null && <small className="faint">{hoursCalc ? "式どおり" : "予定"} {money(expectedAmount, currency)}</small>}
           </label>
           <label className="field wide">
             <span>{settlement ? "内容" : "成果物"}</span>

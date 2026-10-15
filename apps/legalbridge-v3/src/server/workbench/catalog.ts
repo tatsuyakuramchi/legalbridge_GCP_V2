@@ -50,6 +50,9 @@ export const SETTLEMENT_DOC: Record<WorkbenchPattern, { key: string; label: stri
   other: null
 };
 
+/** 業務委託で、準委任の時間精算（A-073）の条件の決済文書。検収書の代わりに出す。 */
+export const SERVICE_COMPLETION_DOC = { key: "service_completion_notice", label: "役務提供完了通知書" };
+
 /** 基本契約＋本体を 1 つのフォームでまとめて作れる型（document-set.ts の domain に写る）。 */
 export const SET_DOMAIN: Record<WorkbenchPattern, "license" | "service" | null> = {
   game_in: "license", game_out: "license", pub_out: "license", service: "service", pub_in: null, other: null
