@@ -138,27 +138,6 @@
 </table>
 {{/if}}
 
-<!-- ===== 変更内容の確認（金額が当初から変わったときだけ） ===== -->
-{{#if needsSignature}}
-<div class="signature-section">
-  <div class="t">■ 変更内容の確認</div>
-  <p>本検収書の金額は当初の発注条件から変更されています。{{#each changeLogs}}{{fieldLabel}} {{beforeValue}} → {{afterValue}}（{{reason}}）。{{/each}}変更の内容および理由を確認のうえ、下記にご署名（または記名押印）ください。ご署名をもって、変更後の金額で検収が確定します。</p>
-  <table>
-    <tr>
-      <td>
-        <div class="lbl">受注者（署名または記名押印）</div>
-        <div class="line"></div>
-        <div style="margin-top:6px;">署名日：　　　　年　　　月　　　日</div>
-      </td>
-      <td>
-        <div class="lbl">発注者（確認者）</div>
-        <div class="ours">{{PARTY_A_NAME}}　{{#if inspectorDept}}{{inspectorDept}}　{{/if}}{{inspectorName}}</div>
-        <div style="margin-top:6px;">確認日：{{#if INSPECTION_DATE}}{{formatDate INSPECTION_DATE}}{{else}}{{formatDate documentDate}}{{/if}}</div>
-      </td>
-    </tr>
-  </table>
-</div>
-{{/if}}
 
 <!-- ===== 備考 ===== -->
 <div class="remarks">
@@ -171,5 +150,38 @@
     {{#if remarks}}<li>{{remarks}}</li>{{/if}}
   </ol>
 </div>
+
+{{#if needsSignature}}
+<!-- ===== 2 ページ目：内容変更確認書（金額が当初から変わったときだけ） ===== -->
+<div class="page-break annex">
+  <table class="sheet-title"><tr><td class="t">内容変更確認書</td><td class="doc-sub">検収書 {{DOC_NO}} に付帯　／　{{formatDate documentDate}}</td></tr></table>
+  <p class="lead">本書は、検収書 {{DOC_NO}}（件名 {{PROJECT_TITLE}}{{#if parent_po_number}}、発注番号 {{parent_po_number}}{{/if}}）に記載の金額が当初の発注条件と異なることについて、発注者と受注者がその内容を確認するものです。</p>
+  <p class="section-mark">■ 変更の内容</p>
+  <table class="changes">
+    <thead><tr><th style="width:30%">項目</th><th style="width:16%">変更前</th><th style="width:16%">変更後</th><th>理由</th></tr></thead>
+    <tbody>
+      {{#each changeLogs}}<tr><td>{{fieldLabel}}</td><td class="num">{{beforeValue}}</td><td class="num">{{afterValue}}</td><td>{{reason}}</td></tr>{{/each}}
+    </tbody>
+  </table>
+  <p class="section-mark">■ 確認</p>
+  <p class="lead">上記の変更の内容および理由を確認し、変更後の金額（源泉徴収税計算前お支払額 {{grandTotalPayableStr}} 円）で検収が確定することに同意します。</p>
+  <table class="sign2">
+    <tr>
+      <td>
+        <div class="lbl">受注者（署名または記名押印）</div>
+        <div class="who">{{VENDOR_NAME}}</div>
+        <div class="line"></div>
+        <div style="margin-top:6px;">署名日：　　　　年　　　月　　　日</div>
+      </td>
+      <td>
+        <div class="lbl">発注者（確認者）</div>
+        <div class="who">{{PARTY_A_NAME}}　{{#if inspectorDept}}{{inspectorDept}}　{{/if}}{{inspectorName}}</div>
+        <div class="line"></div>
+        <div style="margin-top:6px;">確認日：{{formatDate documentDate}}</div>
+      </td>
+    </tr>
+  </table>
+</div>
+{{/if}}
 
 </body>

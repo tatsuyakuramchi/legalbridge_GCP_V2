@@ -41,14 +41,19 @@
   table.totals tr.grand th, table.totals tr.grand td { font-weight: 700; font-size: 10pt; border-top: 2px solid #333; border-bottom: 0; padding-top: 4px; }
   table.totals tr.date th, table.totals tr.date td { border: 0; color: #555; font-size: 8pt; padding-top: 0; white-space: normal; }
   p.progress { font-size: 8pt; color: #555; margin: 4px 0 0; text-align: right; }
-  .signature-section { margin: 10px 0 12px; padding: 8px 10px; border: 1px solid #c9a227; background: #fffbea; page-break-inside: avoid; }
-  .signature-section .t { font-size: 9.5pt; font-weight: 700; margin-bottom: 4px; }
-  .signature-section p { font-size: 8.5pt; margin: 0 0 8px; line-height: 1.5; }
-  .signature-section table { width: 100%; font-size: 8.5pt; }
-  .signature-section td { width: 50%; vertical-align: top; padding: 6px 8px; border: 1px solid #bbb; }
-  .signature-section .lbl { color: #555; margin-bottom: 6px; }
-  .signature-section .line { height: 44px; border-bottom: 1px solid #333; }
-  .signature-section .ours { min-height: 44px; border-bottom: 1px solid #333; display: flex; align-items: flex-end; padding-bottom: 2px; line-height: 1.4; }
+  .page-break { page-break-before: always; break-before: page; }
+  table.sheet-title { width: 100%; margin-bottom: 8px; }
+  table.sheet-title td { border: 0; border-bottom: 1px solid #333; padding: 0 0 3px; vertical-align: bottom; }
+  table.sheet-title td.t { font-size: 14pt; font-weight: 700; letter-spacing: .2em; }
+  table.sheet-title td.doc-sub { text-align: right; font-size: 8.5pt; color: #555; }
+  table.changes { width: 100%; font-size: 8.5pt; }
+  table.changes th, table.changes td { border: 1px solid #d9d9d9; padding: 4px 7px; vertical-align: top; text-align: left; }
+  table.changes th { background: #f4f4f2; font-weight: 600; color: #333; }
+  table.sign2 { width: 100%; font-size: 8.5pt; margin-top: 10px; page-break-inside: avoid; }
+  table.sign2 td { width: 50%; vertical-align: top; padding: 8px 10px; border: 1px solid #bbb; }
+  table.sign2 .lbl { color: #555; margin-bottom: 4px; }
+  table.sign2 .who { font-weight: 600; margin-bottom: 4px; }
+  table.sign2 .line { height: 44px; border-bottom: 1px solid #333; }
   .remarks { font-size: 8pt; color: #555; margin-top: 10px; }
   .remarks ol { margin: 2px 0 0; padding-left: 1.4em; }
   .remarks li { margin: 1px 0; }

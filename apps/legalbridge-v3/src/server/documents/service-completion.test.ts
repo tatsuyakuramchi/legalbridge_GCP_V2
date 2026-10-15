@@ -119,8 +119,8 @@ test("本文：副題・業務概要・明細・合計・署名欄・確認期�
   assert.match(out, /実績 72 h − 包括枠 64 h/);
   assert.match(out, /源泉徴収税計算前お支払額<\/th><td>247,500/);
   assert.match(out, /2026年12月21日/);
-  assert.match(out, /<div class="signature-section">/);
-  assert.match(out, /■ 超過精算の確認/);
+  assert.match(out, /<div class="page-break annex">/, "変更があれば 2 ページ目に内容変更確認書");
+  assert.match(out, /内容変更確認書/);
   assert.match(out, /超過 8 h × 3,125 円 ＝ 25,000 円を追加精算/);
   assert.match(out, /10 営業日以内（2026年12月18日まで）/);
   assert.match(out, /源泉徴収 対象外/);
@@ -134,7 +134,7 @@ test("本文：登録番号ありなら「兼 仕入明細書」、枠どおり�
   const out = renderDocumentHtml(html, { ...computed, VENDOR_NAME: "合同会社アトリエ蒼", INVOICE_REGISTRATION_NUMBER: "T9010001000001" });
   assert.match(out, /兼 仕入明細書/);
   assert.match(out, /登録番号: T9010001000001/);
-  assert.doesNotMatch(out, /<div class="signature-section">/);
+  assert.doesNotMatch(out, /<div class="page-break annex">/, "枠どおりなら 2 ページ目は無い");
 });
 
 test("決済文書の振り分け：時間精算の委託料だけ役務提供完了通知書", () => {

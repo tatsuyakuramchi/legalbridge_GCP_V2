@@ -48,14 +48,19 @@
   table.totals td { border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 2px 2px 16px; min-width: 9em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   table.totals tr.grand th, table.totals tr.grand td { font-weight: 700; font-size: 10pt; border-top: 2px solid #333; border-bottom: 0; padding-top: 4px; }
   table.totals tr.date th, table.totals tr.date td { border: 0; color: #555; font-size: 8pt; padding-top: 0; }
-  .signature-section { margin: 10px 0 12px; padding: 8px 10px; border: 1px solid #c9a227; background: #fffbea; page-break-inside: avoid; }
-  .signature-section .t { font-size: 9.5pt; font-weight: 700; margin-bottom: 4px; }
-  .signature-section p { font-size: 8.5pt; margin: 0 0 8px; line-height: 1.5; }
-  .signature-section table { width: 100%; font-size: 8.5pt; }
-  .signature-section td { width: 50%; vertical-align: top; padding: 6px 8px; border: 1px solid #bbb; }
-  .signature-section .lbl { color: #555; margin-bottom: 6px; }
-  .signature-section .line { height: 44px; border-bottom: 1px solid #333; }
-  .signature-section .ours { min-height: 44px; border-bottom: 1px solid #333; display: flex; align-items: flex-end; padding-bottom: 2px; line-height: 1.4; }
+  .page-break { page-break-before: always; break-before: page; }
+  table.sheet-title { width: 100%; margin-bottom: 8px; }
+  table.sheet-title td { border: 0; border-bottom: 1px solid #333; padding: 0 0 3px; vertical-align: bottom; }
+  table.sheet-title td.t { font-size: 14pt; font-weight: 700; letter-spacing: .2em; }
+  table.sheet-title td.doc-sub { text-align: right; font-size: 8.5pt; color: #555; }
+  table.changes { width: 100%; font-size: 8.5pt; }
+  table.changes th, table.changes td { border: 1px solid #d9d9d9; padding: 4px 7px; vertical-align: top; text-align: left; }
+  table.changes th { background: #f4f4f2; font-weight: 600; color: #333; }
+  table.sign2 { width: 100%; font-size: 8.5pt; margin-top: 10px; page-break-inside: avoid; }
+  table.sign2 td { width: 50%; vertical-align: top; padding: 8px 10px; border: 1px solid #bbb; }
+  table.sign2 .lbl { color: #555; margin-bottom: 4px; }
+  table.sign2 .who { font-weight: 600; margin-bottom: 4px; }
+  table.sign2 .line { height: 44px; border-bottom: 1px solid #333; }
   .remarks { font-size: 8pt; color: #555; margin-top: 10px; }
   .remarks ol { margin: 2px 0 0; padding-left: 1.4em; }
   .remarks li { margin: 1px 0; }
@@ -167,26 +172,6 @@
   {{#if sc_payment_date}}<tr class="date"><th>お支払予定日</th><td>{{formatDate sc_payment_date}}</td></tr>{{/if}}
 </table>
 
-{{#if needsSignature}}
-<div class="signature-section">
-  <div class="t">■ {{#if hasOverage}}超過精算{{else}}{{#if hasShortfall}}未消化精算{{else}}変更内容{{/if}}{{/if}}の確認</div>
-  <p>{{#if hasOverage}}実績が月間包括枠（{{sc_hours_included_text}}）を超えたため、超過 {{sc_overage_hours_text}} × {{sc_overage_unit_str}} 円 ＝ {{sc_overage_amount_str}} 円を追加精算します。{{/if}}{{#if hasShortfall}}実績が月間包括枠（{{sc_hours_included_text}}）に満たないため、未消化 {{sc_shortfall_hours_text}} × {{sc_shortfall_unit_str}} 円 ＝ {{sc_shortfall_amount_str}} 円を控除します。{{/if}}{{#if hasChangeLogs}}{{#each changeLogs}}{{fieldLabel}} {{beforeValue}} → {{afterValue}}（{{reason}}）。{{/each}}{{/if}}発注時の合意額に含まれない額のため、ご確認のうえご署名（または記名押印）ください。</p>
-  <table>
-    <tr>
-      <td>
-        <div class="lbl">受注者（署名または記名押印）</div>
-        <div class="line"></div>
-        <div style="margin-top:6px;">署名日：　　　　年　　　月　　　日</div>
-      </td>
-      <td>
-        <div class="lbl">発注者（確認者）</div>
-        <div class="ours">{{PARTY_A_NAME}}　{{#if inspectorDept}}{{inspectorDept}}　{{/if}}{{inspectorName}}</div>
-        <div style="margin-top:6px;">確認日：{{formatDate documentDate}}</div>
-      </td>
-    </tr>
-  </table>
-</div>
-{{/if}}
 
 <div class="remarks">
   <b>備考</b>
@@ -199,6 +184,41 @@
     {{#if remarks}}<li>{{remarks}}</li>{{/if}}
   </ol>
 </div>
+
+{{#if needsSignature}}
+<!-- ===== 2 ページ目：内容変更確認書（金額が発注時の合意と違うときだけ） ===== -->
+<div class="page-break annex">
+  <table class="sheet-title"><tr><td class="t">内容変更確認書</td><td class="doc-sub">役務提供完了通知書 {{DOC_NO}} に付帯　／　{{formatDate documentDate}}</td></tr></table>
+  <p class="lead">本書は、役務提供完了通知書 {{DOC_NO}}（件名 {{PROJECT_TITLE}}{{#if parent_po_number}}、発注番号 {{parent_po_number}}{{/if}}）に記載の金額が発注時の合意額と異なることについて、発注者と受注者がその内容を確認するものです。</p>
+  <p class="section-mark">■ 変更の内容</p>
+  <table class="changes">
+    <thead><tr><th style="width:26%">項目</th><th style="width:18%">合意</th><th style="width:18%">今回</th><th>内容・理由</th></tr></thead>
+    <tbody>
+      {{#if hasOverage}}<tr><td>月間包括枠の超過</td><td class="num">{{sc_hours_included_text}}</td><td class="num">{{sc_hours_actual_text}}</td><td>超過 {{sc_overage_hours_text}} × {{sc_overage_unit_str}} 円 ＝ {{sc_overage_amount_str}} 円を追加精算</td></tr>{{/if}}
+      {{#if hasShortfall}}<tr><td>月間包括枠の未消化</td><td class="num">{{sc_hours_included_text}}</td><td class="num">{{sc_hours_actual_text}}</td><td>未消化 {{sc_shortfall_hours_text}} × {{sc_shortfall_unit_str}} 円 ＝ {{sc_shortfall_amount_str}} 円を控除</td></tr>{{/if}}
+      {{#each changeLogs}}<tr><td>{{fieldLabel}}</td><td class="num">{{beforeValue}}</td><td class="num">{{afterValue}}</td><td>{{reason}}</td></tr>{{/each}}
+    </tbody>
+  </table>
+  <p class="section-mark">■ 確認</p>
+  <p class="lead">上記の変更の内容および理由を確認し、変更後の金額（源泉徴収税計算前お支払額 {{grandTotalPayableStr}} 円）で当月分の精算が確定することに同意します。</p>
+  <table class="sign2">
+    <tr>
+      <td>
+        <div class="lbl">受注者（署名または記名押印）</div>
+        <div class="who">{{VENDOR_NAME}}</div>
+        <div class="line"></div>
+        <div style="margin-top:6px;">署名日：　　　　年　　　月　　　日</div>
+      </td>
+      <td>
+        <div class="lbl">発注者（確認者）</div>
+        <div class="who">{{PARTY_A_NAME}}　{{#if inspectorDept}}{{inspectorDept}}　{{/if}}{{inspectorName}}</div>
+        <div class="line"></div>
+        <div style="margin-top:6px;">確認日：{{formatDate documentDate}}</div>
+      </td>
+    </tr>
+  </table>
+</div>
+{{/if}}
 
 </body>
 </html>

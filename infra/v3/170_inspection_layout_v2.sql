@@ -88,14 +88,19 @@ DECLARE
   table.totals tr.grand th, table.totals tr.grand td { font-weight: 700; font-size: 10pt; border-top: 2px solid #333; border-bottom: 0; padding-top: 4px; }
   table.totals tr.date th, table.totals tr.date td { border: 0; color: #555; font-size: 8pt; padding-top: 0; white-space: normal; }
   p.progress { font-size: 8pt; color: #555; margin: 4px 0 0; text-align: right; }
-  .signature-section { margin: 10px 0 12px; padding: 8px 10px; border: 1px solid #c9a227; background: #fffbea; page-break-inside: avoid; }
-  .signature-section .t { font-size: 9.5pt; font-weight: 700; margin-bottom: 4px; }
-  .signature-section p { font-size: 8.5pt; margin: 0 0 8px; line-height: 1.5; }
-  .signature-section table { width: 100%; font-size: 8.5pt; }
-  .signature-section td { width: 50%; vertical-align: top; padding: 6px 8px; border: 1px solid #bbb; }
-  .signature-section .lbl { color: #555; margin-bottom: 6px; }
-  .signature-section .line { height: 44px; border-bottom: 1px solid #333; }
-  .signature-section .ours { min-height: 44px; border-bottom: 1px solid #333; display: flex; align-items: flex-end; padding-bottom: 2px; line-height: 1.4; }
+  .page-break { page-break-before: always; break-before: page; }
+  table.sheet-title { width: 100%; margin-bottom: 8px; }
+  table.sheet-title td { border: 0; border-bottom: 1px solid #333; padding: 0 0 3px; vertical-align: bottom; }
+  table.sheet-title td.t { font-size: 14pt; font-weight: 700; letter-spacing: .2em; }
+  table.sheet-title td.doc-sub { text-align: right; font-size: 8.5pt; color: #555; }
+  table.changes { width: 100%; font-size: 8.5pt; }
+  table.changes th, table.changes td { border: 1px solid #d9d9d9; padding: 4px 7px; vertical-align: top; text-align: left; }
+  table.changes th { background: #f4f4f2; font-weight: 600; color: #333; }
+  table.sign2 { width: 100%; font-size: 8.5pt; margin-top: 10px; page-break-inside: avoid; }
+  table.sign2 td { width: 50%; vertical-align: top; padding: 8px 10px; border: 1px solid #bbb; }
+  table.sign2 .lbl { color: #555; margin-bottom: 4px; }
+  table.sign2 .who { font-weight: 600; margin-bottom: 4px; }
+  table.sign2 .line { height: 44px; border-bottom: 1px solid #333; }
   .remarks { font-size: 8pt; color: #555; margin-top: 10px; }
   .remarks ol { margin: 2px 0 0; padding-left: 1.4em; }
   .remarks li { margin: 1px 0; }
@@ -240,27 +245,6 @@ $q$;
 </table>
 {{/if}}
 
-<!-- ===== 変更内容の確認（金額が当初から変わったときだけ） ===== -->
-{{#if needsSignature}}
-<div class="signature-section">
-  <div class="t">■ 変更内容の確認</div>
-  <p>本検収書の金額は当初の発注条件から変更されています。{{#each changeLogs}}{{fieldLabel}} {{beforeValue}} → {{afterValue}}（{{reason}}）。{{/each}}変更の内容および理由を確認のうえ、下記にご署名（または記名押印）ください。ご署名をもって、変更後の金額で検収が確定します。</p>
-  <table>
-    <tr>
-      <td>
-        <div class="lbl">受注者（署名または記名押印）</div>
-        <div class="line"></div>
-        <div style="margin-top:6px;">署名日：　　　　年　　　月　　　日</div>
-      </td>
-      <td>
-        <div class="lbl">発注者（確認者）</div>
-        <div class="ours">{{PARTY_A_NAME}}　{{#if inspectorDept}}{{inspectorDept}}　{{/if}}{{inspectorName}}</div>
-        <div style="margin-top:6px;">確認日：{{#if INSPECTION_DATE}}{{formatDate INSPECTION_DATE}}{{else}}{{formatDate documentDate}}{{/if}}</div>
-      </td>
-    </tr>
-  </table>
-</div>
-{{/if}}
 
 <!-- ===== 備考 ===== -->
 <div class="remarks">
@@ -273,6 +257,39 @@ $q$;
     {{#if remarks}}<li>{{remarks}}</li>{{/if}}
   </ol>
 </div>
+
+{{#if needsSignature}}
+<!-- ===== 2 ページ目：内容変更確認書（金額が当初から変わったときだけ） ===== -->
+<div class="page-break annex">
+  <table class="sheet-title"><tr><td class="t">内容変更確認書</td><td class="doc-sub">検収書 {{DOC_NO}} に付帯　／　{{formatDate documentDate}}</td></tr></table>
+  <p class="lead">本書は、検収書 {{DOC_NO}}（件名 {{PROJECT_TITLE}}{{#if parent_po_number}}、発注番号 {{parent_po_number}}{{/if}}）に記載の金額が当初の発注条件と異なることについて、発注者と受注者がその内容を確認するものです。</p>
+  <p class="section-mark">■ 変更の内容</p>
+  <table class="changes">
+    <thead><tr><th style="width:30%">項目</th><th style="width:16%">変更前</th><th style="width:16%">変更後</th><th>理由</th></tr></thead>
+    <tbody>
+      {{#each changeLogs}}<tr><td>{{fieldLabel}}</td><td class="num">{{beforeValue}}</td><td class="num">{{afterValue}}</td><td>{{reason}}</td></tr>{{/each}}
+    </tbody>
+  </table>
+  <p class="section-mark">■ 確認</p>
+  <p class="lead">上記の変更の内容および理由を確認し、変更後の金額（源泉徴収税計算前お支払額 {{grandTotalPayableStr}} 円）で検収が確定することに同意します。</p>
+  <table class="sign2">
+    <tr>
+      <td>
+        <div class="lbl">受注者（署名または記名押印）</div>
+        <div class="who">{{VENDOR_NAME}}</div>
+        <div class="line"></div>
+        <div style="margin-top:6px;">署名日：　　　　年　　　月　　　日</div>
+      </td>
+      <td>
+        <div class="lbl">発注者（確認者）</div>
+        <div class="who">{{PARTY_A_NAME}}　{{#if inspectorDept}}{{inspectorDept}}　{{/if}}{{inspectorName}}</div>
+        <div class="line"></div>
+        <div style="margin-top:6px;">確認日：{{formatDate documentDate}}</div>
+      </td>
+    </tr>
+  </table>
+</div>
+{{/if}}
 
 </body>$q$;
 BEGIN
