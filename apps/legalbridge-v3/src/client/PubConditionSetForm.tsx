@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
-import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, type DigitalCycle } from "../server/conditions/pub-digital-cycle.js";
+import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, PAY_DAYS, digitalPaymentTerms, payDayLabel, payScheduleText, type DigitalCycle, type PayDay } from "../server/conditions/pub-digital-cycle.js";
 import { CreateForm } from "./CreateForm.js";
 import { searchParties } from "./SearchSelect.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
@@ -58,21 +58,23 @@ const CONSENT_OPTIONS = [
 ];
 
 
-/** 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。 */
+/** 電子の集計のしかた（年 1 回・年 2 回・年 4 回）と支払月・支払日。 */
 const MONTH_OPTIONS = [{ value: "", label: "（既定）" }, ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} 月` }))];
-const PAY_AFTER_OPTIONS = [{ value: "", label: "（既定）" },
-  ...[1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: n === 1 ? "翌月末" : n === 2 ? "翌々月末" : `${n} か月後の月末` }))];
+const PAY_DAY_OPTIONS = PAY_DAYS.map((d) => ({ value: String(d), label: payDayLabel(d) }));
 const cycleOf = (v: Record<string, string>): DigitalCycle =>
   (["year", "half_year", "quarter"].includes(v.digitalCycle) ? v.digitalCycle : "year") as DigitalCycle;
 function digitalCycleOf(v: Record<string, string>) {
   const cycle = cycleOf(v);
+  const d = DIGITAL_CYCLE_DEFAULTS[cycle];
   return {
     cycle,
-    startMonth: v.digitalStartMonth ? Number(v.digitalStartMonth) : DIGITAL_CYCLE_DEFAULTS[cycle].startMonth,
-    payMonthsAfter: v.digitalPayAfter ? Number(v.digitalPayAfter) : DIGITAL_CYCLE_DEFAULTS[cycle].payMonthsAfter
+    startMonth: v.digitalStartMonth ? Number(v.digitalStartMonth) : d.startMonth,
+    payMonth: v.digitalPayMonth ? Number(v.digitalPayMonth) : d.payMonth,
+    payDay: (v.digitalPayDay ? (v.digitalPayDay === "end" ? "end" : Number(v.digitalPayDay)) : d.payDay) as PayDay
   };
 }
 const digitalTermsOf = (v: Record<string, string>) => digitalPaymentTerms(digitalCycleOf(v));
+const digitalScheduleOf = (v: Record<string, string>) => payScheduleText(digitalCycleOf(v));
 
 export function PubConditionSetForm(
   { preset, onDone, onCancel }: {
@@ -150,10 +152,14 @@ export function PubConditionSetForm(
           options: MONTH_OPTIONS,
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
           hint: (v) => `空なら ${DIGITAL_CYCLE_DEFAULTS[cycleOf(v)].startMonth} 月` },
-        { name: "digitalPayAfter", label: "電子 支払（集計期間の末日から）", type: "select",
-          options: PAY_AFTER_OPTIONS,
+        { name: "digitalPayMonth", label: "電子 支払月（最初の集計期間の分）", type: "select",
+          options: MONTH_OPTIONS,
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
-          hint: (v) => `空なら ${DIGITAL_CYCLE_DEFAULTS[cycleOf(v)].payMonthsAfter} か月後の月末` },
+          hint: (v) => `空なら ${DIGITAL_CYCLE_DEFAULTS[cycleOf(v)].payMonth} 月。${digitalScheduleOf(v)}` },
+        { name: "digitalPayDay", label: "電子 支払日", type: "select",
+          options: PAY_DAY_OPTIONS,
+          visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
+          hint: "空なら末日" },
         { name: "transPrintRate", label: "翻訳版再許諾 紙 料率（%）", type: "number", placeholder: "50",
           hint: "乙が第三者に翻訳版を出させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
         { name: "transDigitalRate", label: "翻訳版再許諾 電子 料率（%）", type: "number", placeholder: "40",

@@ -15,7 +15,7 @@ import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
 import { validateShareInput } from "../royalty/shares.js";
 import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
 import { normalizeTimeSettlement } from "./time-settlement.js";
-import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle } from "./pub-digital-cycle.js";
+import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
 export interface PublishingTerms {
@@ -29,8 +29,10 @@ export interface PublishingTerms {
   cycle?: DigitalCycle | null;
   /** 最初の集計期間が始まる月（1〜12）。 */
   startMonth?: number | null;
-  /** 集計期間の末日から何か月後の月末に払うか。 */
-  payMonthsAfter?: number | null;
+  /** 最初の集計期間の支払月（1〜12）。 */
+  payMonth?: number | null;
+  /** 支払日。"end" は末日。 */
+  payDay?: PayDay | null;
 }
 /**
  * 翻訳版の再許諾（A-033）。乙が第三者に出させ、受領額から甲へ払う。
@@ -685,7 +687,8 @@ export class ConditionWriteService {
       const spec = cycle ? {
         cycle,
         startMonth: input.digital.startMonth ?? DIGITAL_CYCLE_DEFAULTS[cycle].startMonth,
-        payMonthsAfter: input.digital.payMonthsAfter ?? DIGITAL_CYCLE_DEFAULTS[cycle].payMonthsAfter
+        payMonth: input.digital.payMonth ?? DIGITAL_CYCLE_DEFAULTS[cycle].payMonth,
+        payDay: input.digital.payDay ?? DIGITAL_CYCLE_DEFAULTS[cycle].payDay
       } : null;
       rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
                   paymentTerms: terms || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS),

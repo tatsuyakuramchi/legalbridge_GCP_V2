@@ -111,6 +111,11 @@ export function parsePaymentTerms(text: string | null | undefined): PaymentTerms
       if (end > bestEnd) { bestEnd = end; monthsAfter = n; }
     }
   }
+  // 「3か月後の月の末日」（出版の年 2 回・年 4 回の文）。
+  for (const m of s.matchAll(/(\d{1,2})\s*[かヶカケ]\s*月\s*後\s*の\s*月\s*の?/g)) {
+    const end = (m.index ?? 0) + m[0].length;
+    if (end > bestEnd) { bestEnd = end; monthsAfter = Number(m[1]); }
+  }
   if (monthsAfter === null) {
     // 年 1 回（「10月末日までに支払う」「10月20日払い」）。支払の語の直前の「N月D日／N月末日」だけ読む。
     // 「7月1日〜翌年6月30日を集計期間とし」の期間の日付は支払の語が続かないので読まない。

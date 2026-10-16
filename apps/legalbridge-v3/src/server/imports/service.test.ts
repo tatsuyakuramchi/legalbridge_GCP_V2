@@ -506,3 +506,31 @@ test("作品の書き出し：取込と同じ語で 1 作品 1 行。種別・�
   const r = await new ImportService(back).run({ kind: "works", csv: lines.slice(0, 2).join("\n"), dryRun: true, actor: "k", mode: "update" });
   assert.equal(r.error, 0, JSON.stringify(r.rows));
 });
+
+test("電子出版の集計のしかた・支払月・支払日を CSV で直すと、支払条件の文と決済の型が入れ替わる", async () => {
+  const updates: any[] = [];
+  const db = {
+    async query(sql: string) {
+      if (/FROM conditions/.test(sql) && /condition_no/.test(sql)) {
+        return { rows: [{ id: 8, condition_no: "CL-8", name: "星｜電子出版", status: "active", kind: "license", usage_type: "pub_digital",
+                          payment_terms: "毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。" }] };
+      }
+      return { rows: [] };
+    }
+  } as any;
+  const svc = new ImportService(db) as any;
+  svc.conditions = { updateEconomics: async (id: number, patch: any) => { updates.push({ id, patch }); return {}; }, replaceScopes: async () => ({}) };
+  const r = await svc.run({ kind: "license_conditions", mode: "update", dryRun: false, actor: "k",
+    csv: "条件番号,支払条件,集計のしかた,集計開始月,支払月,支払日\nCL-8,毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。,年2回,1,9,20" });
+  assert.equal(r.rows[0].status, "ok", r.rows[0].message);
+  assert.equal(updates[0].patch.paymentTerms, "毎年1月1日〜6月30日及び7月1日〜12月31日を集計期間とし、各集計期間の末日の3か月後の月の20日までに支払う。");
+  assert.equal(updates[0].patch.settlementCycle, "half_year");
+  assert.equal(updates[0].patch.settlementMode, "term_bound");
+
+  // 書き出したまま（集計の列がいまのまま）なら何も変わらない。
+  updates.length = 0;
+  const same = await svc.run({ kind: "license_conditions", mode: "update", dryRun: false, actor: "k",
+    csv: "条件番号,支払条件,集計のしかた,集計開始月,支払月,支払日\nCL-8,毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。,年1回,7,10,末日" });
+  assert.equal(same.rows[0].status, "skip");
+  assert.equal(updates.length, 0);
+});

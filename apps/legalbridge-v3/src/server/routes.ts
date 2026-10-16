@@ -1979,7 +1979,8 @@ export function createRoutes(database: Transactable) {
     // 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。pub-digital-cycle.ts。
     cycle: z.enum(["year", "half_year", "quarter"]).nullable().optional(),
     startMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
-    payMonthsAfter: z.coerce.number().int().min(1).max(6).nullable().optional()
+    payMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
+    payDay: z.union([z.literal("end"), z.coerce.number().int().min(1).max(28)]).nullable().optional()
   }).nullable().optional();
   const publishingTranslationSchema = z.object({
     ratePct: z.coerce.number().min(0).max(100),
