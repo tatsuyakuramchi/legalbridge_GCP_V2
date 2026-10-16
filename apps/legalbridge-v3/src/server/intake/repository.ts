@@ -20,7 +20,8 @@ export function purposeOfTask(row: { purpose: string | null }): DailyPurpose {
  * 返信した）、すべて。振り分けたあとの作業はデイリータスク（tasks）か案件で追う。
  */
 
-export type IntakeTab = "new" | "on_hold" | "updated" | "all";
+/** direct … 案件にせず処理中（デイリータスク）の依頼。作業が終わっていないもの。計算書の回に付ける候補。 */
+export type IntakeTab = "new" | "on_hold" | "updated" | "all" | "direct";
 
 /** 依頼から起こした作業（A-064）。デイリータスクにした依頼だけ持つ。 */
 export interface IntakeTaskRef {
@@ -180,6 +181,7 @@ export class IntakeRepository {
     const where = tab === "new" ? "r.state = 'new'"
       : tab === "on_hold" ? "r.state = 'on_hold'"
       : tab === "updated" ? "r.state <> 'new' AND r.has_unseen_update"
+      : tab === "direct" ? "r.handling = 'direct' AND r.state = 'accepted' AND t.done_at IS NULL"
       : "TRUE";
     // 保留は再確認日が来たものを上に。それ以外は新しい順。
     const order = tab === "on_hold" ? "r.hold_until NULLS LAST, r.created_at DESC" : "r.created_at DESC";

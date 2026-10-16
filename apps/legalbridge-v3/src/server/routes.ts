@@ -1075,8 +1075,8 @@ export function createRoutes(database: Transactable) {
   }));
   router.get("/intake", asyncRoute(async (req, res) => {
     const tab = String(req.query.state ?? "new");
-    if (!["new", "on_hold", "updated", "all"].includes(tab)) {
-      throw new DomainError("VALIDATION", "state は new / on_hold / updated / all のいずれかです");
+    if (!["new", "on_hold", "updated", "all", "direct"].includes(tab)) {
+      throw new DomainError("VALIDATION", "state は new / on_hold / updated / all / direct のいずれかです");
     }
     res.json({ items: await intakeRepo.list(tab as IntakeTab) });
   }));

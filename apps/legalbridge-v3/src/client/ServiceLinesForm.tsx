@@ -529,7 +529,7 @@ export function ServiceLinesForm(
                   発注書には全回を 1 行にまとめて出す（例：全 12 回（毎月）1 回あたり ¥35,000）。回ごとの金額を直すのは条件明細の「予定」</small></label>
             </div>
           )}
-          {payMode === "lump" && <span className="faint">発注書は行ごとに出ますが、検収は全行の納品後に 1 枚の検収書でまとめます（支払文書処理で選ぶ）。</span>}
+          {payMode === "lump" && <span className="faint">発注書は行ごとに出ますが、検収は全行の納品後に 1 枚の検収書でまとめます（支払文書で選ぶ）。</span>}
           <span className="faint">売上連動（ロイヤリティ）は委託料ではなく上の利用許諾条件に料率を持たせ、計算書で回します。</span>
         </div>
 

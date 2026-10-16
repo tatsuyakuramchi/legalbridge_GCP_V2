@@ -3,6 +3,8 @@ import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { SearchSelect, searchParties, type SearchOption } from "./SearchSelect.js";
 import { EventEntryForm } from "./EventEntryForm.js";
+import { RoyaltyLedger, type DocBack } from "./RoyaltyLedger.js";
+import { EbookSalesImport } from "./EbookSalesImport.js";
 import type { PayDocRow, PayDocTile, NextAction } from "../server/paydocs/rows.js";
 import type { PayDocsList } from "../server/paydocs/service.js";
 
@@ -20,7 +22,19 @@ export interface PayDocsHandoff {
   conditionId: number; conditionName: string; roundLabel: string; scheduleId: number | null; eventId: number | null;
 }
 
-type Pane = "list" | "plans" | "past";
+type Pane = "list" | "author" | "imports" | "plans" | "past";
+
+/** 作家の報告と計算書を開く先。支払文書の行・作品・デイリータスクから来る。 */
+export interface AuthorTarget { partyId: number; partyName?: string | null; workId?: number | null;
+                                focus?: { conditionId: number; closeOn: string | null } | null }
+
+/**
+ * 作家の台帳（報告を入れる・計算書を作る）で扱う回か。料率・単価で計算する取得（IN）の許諾料。
+ * それ以外（検収書・役務提供完了通知書・OUT の許諾料）は作業テーブルで作る。
+ */
+export const isLedgerRow = (r: PayDocRow) =>
+  (r.condition.kind === "license" || r.condition.kind === "product") && r.condition.direction === "in"
+  && (r.condition.pricingModel === "revenue_rate" || r.condition.pricingModel === "unit_rate") && !!r.party;
 
 const TILES: Array<{ key: PayDocTile; label: string; sub: string; tone?: "warn" | "bad" }> = [
   { key: "wait", label: "発生・報告待ち", sub: "製造予定・報告・入金" },
@@ -50,6 +64,11 @@ const NEXT_LABEL: Record<NextAction, string> = {
   record_event: "実績を入れる", remind_report: "報告を督促", compose: "作る（作業テーブルへ）", finish_draft: "下書きを仕上げる",
   send: "送る・送付済みにする", remind_receipt: "受領を督促", record_receipt: "受領を記録", pay: "支払を立てる", none: "—"
 };
+
+/** 次にすることの札。許諾料の報告・計算書は作家の台帳へ移る。 */
+const nextLabel = (r: PayDocRow) => isLedgerRow(r) && r.next === "compose" ? "計算書を作る（作家の台帳へ）"
+  : isLedgerRow(r) && r.next === "record_event" ? (r.trigger === "active" ? "製造を入れる（作家の台帳へ）" : "報告を入れる（作家の台帳へ）")
+  : NEXT_LABEL[r.next];
 
 const md = (iso: string | null | undefined) => (iso ? `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}` : "");
 const today = () => new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
@@ -126,9 +145,18 @@ function PayCell({ r }: { r: PayDocRow }) {
 }
 
 export function PayDocsWorkspace(
-  { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenClosing }: {
+  { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenClosing,
+    author, onOpenAuthor, onLedgerCompose, onOpenRequest }: {
     /** 予定どおりにまとめて締める（旧 支払文書処理の一括）。 */
     onOpenClosing?: () => void;
+    /** 開いておく作家（支払文書の外から「作家の報告と計算書」へ来たとき）。 */
+    author?: (AuthorTarget & { nonce: number }) | null;
+    /** 作家の報告と計算書を開く。埋め込み（作品のタブ）からは支払文書の画面へ移る。 */
+    onOpenAuthor?: (a: AuthorTarget) => void;
+    /** 作家の台帳から計算書を作る：文書の画面へ（戻り先はこの作家）。 */
+    onLedgerCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null, back: DocBack,
+                       revise?: { supersedesIds: number[]; reason: string } | null) => void;
+    onOpenRequest?: (requestId: number) => void;
     /** 作品・相手先・案件・条件に絞って埋め込むとき。 */
     scope?: { workId?: number; partyId?: number; matterId?: number; conditionId?: number };
     onOpenCondition: (id: number) => void;
@@ -142,7 +170,16 @@ export function PayDocsWorkspace(
   }
 ) {
   const embedded = !!scope;
-  const [pane, setPane] = useState<Pane>("list");
+  const [pane, setPane] = useState<Pane>(author ? "author" : "list");
+  /** 作家の台帳から「送付・受領・支払」へ戻ったとき、一覧をその作家で絞る。 */
+  const [listParty, setListParty] = useState<number | null>(null);
+  const [who, setWho] = useState<(AuthorTarget & { nonce: number }) | null>(author ?? null);
+  useEffect(() => { if (author) { setWho(author); setPane("author"); } }, [author?.nonce]);
+  /** 行から作家を開く。この画面の中ならタブを移る。埋め込みなら外へ頼む。 */
+  const openAuthor = (a: AuthorTarget) => {
+    if (embedded) { onOpenAuthor?.(a); return; }
+    setWho({ ...a, nonce: Date.now() }); setPane("author");
+  };
   return (
     <section className={embedded ? "stack" : "workspace"}>
       {!embedded && (
@@ -155,14 +192,23 @@ export function PayDocsWorkspace(
       {!embedded && (
         <div className="tabs" role="tablist" aria-label="支払文書の見出し">
           <button role="tab" aria-selected={pane === "list"} onClick={() => setPane("list")}>一覧</button>
+          <button role="tab" aria-selected={pane === "author"} onClick={() => setPane("author")}>作家の報告と計算書</button>
+          <button role="tab" aria-selected={pane === "imports"} onClick={() => setPane("imports")}>取込（電子書籍売上・年次締め）</button>
           <button role="tab" aria-selected={pane === "plans"} onClick={() => setPane("plans")}>製造予定</button>
           <button role="tab" aria-selected={pane === "past"} onClick={() => setPane("past")}>過去分の整理</button>
         </div>
       )}
       {pane === "list" && (
-        <PayDocsTable scope={scope} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
-                     onOpenDraft={onOpenDraft} onIssueRound={onIssueRound} onComposeEvents={onComposeEvents} />
+        <PayDocsTable key={`l${listParty ?? 0}`} initialPartyId={listParty} scope={scope} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+                     onOpenDraft={onOpenDraft} onIssueRound={onIssueRound} onComposeEvents={onComposeEvents}
+                     onOpenAuthor={openAuthor} />
       )}
+      {pane === "author" && (
+        <AuthorPane who={who} onPick={(a) => setWho({ ...a, nonce: Date.now() })} onOpenDocument={onOpenDocument}
+                    onOpenRequest={onOpenRequest} onLedgerCompose={onLedgerCompose}
+                    onOpenList={(partyId) => { setPane("list"); setListParty(partyId); }} />
+      )}
+      {pane === "imports" && <EbookSalesImport />}
       {pane === "plans" && <PlansPane />}
       {pane === "past" && <PastPane />}
     </section>
@@ -170,7 +216,8 @@ export function PayDocsWorkspace(
 }
 
 function PayDocsTable(
-  { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents }: Parameters<typeof PayDocsWorkspace>[0]
+  { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenAuthor, initialPartyId }:
+    Parameters<typeof PayDocsWorkspace>[0] & { onOpenAuthor: (a: AuthorTarget) => void; initialPartyId?: number | null }
 ) {
   const readOnly = useReadOnly();
   const embedded = !!scope;
@@ -180,7 +227,7 @@ function PayDocsTable(
   const [trigger, setTrigger] = useState<"" | "active" | "passive">("");
   const [month, setMonth] = useState("");
   const [q, setQ] = useState("");
-  const [partyId, setPartyId] = useState<number | null>(null);
+  const [partyId, setPartyId] = useState<number | null>(initialPartyId ?? null);
   const [partyLabel, setPartyLabel] = useState<string | null>(null);
   const [data, setData] = useState<PayDocsList | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -230,6 +277,12 @@ function PayDocsTable(
 
   /** 次にすること（1 行）。作る・下書きは画面を移る。 */
   function act(r: PayDocRow, action: NextAction) {
+    // 許諾料（IN・料率/単価）の報告と計算書は作家の台帳で（作家でまとめる・取引モデル・報告の行）。
+    if (isLedgerRow(r) && (action === "compose" || action === "record_event")) {
+      onOpenAuthor({ partyId: r.party!.id, partyName: r.party!.name, workId: null,
+                     focus: { conditionId: r.condition.id, closeOn: r.closeOn } });
+      return;
+    }
     if (action === "compose") {
       if (r.scheduleId) {
         onIssueRound({ conditionId: r.condition.id, conditionName: r.condition.name, roundLabel: r.label,
@@ -377,7 +430,7 @@ function PayDocsTable(
                     <td style={{ whiteSpace: "nowrap" }}>
                       {r.next === "none" ? <span className="faint">—</span>
                         : <button className={`btn btn-sm${r.next === "compose" ? " primary" : ""}`} disabled={readOnly && r.next !== "remind_report" && r.next !== "remind_receipt"}
-                                  onClick={() => act(r, r.next)}>{NEXT_LABEL[r.next]}</button>}
+                                  onClick={() => act(r, r.next)}>{nextLabel(r)}</button>}
                     </td>
                   </tr>
                 ))}
@@ -388,7 +441,7 @@ function PayDocsTable(
         </div>
 
         {open && (
-          <RowDetail key={open.key} r={open} busy={busy} readOnly={readOnly}
+          <RowDetail key={open.key} r={open} busy={busy} readOnly={readOnly} onOpenAuthor={onOpenAuthor}
                      onClose={() => setOpenKey(null)} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
                      onAct={(a) => act(open, a)} onRun={(fn) => void run(fn)} onReload={() => void load()} />
         )}
@@ -445,8 +498,8 @@ function RecordForm({ kind, count, busy, onSubmit, onCancel }: {
   );
 }
 
-function RowDetail({ r, busy, readOnly, onClose, onOpenCondition, onOpenDocument, onAct, onRun, onReload }: {
-  r: PayDocRow; busy: boolean; readOnly: boolean; onClose: () => void;
+function RowDetail({ r, busy, readOnly, onClose, onOpenCondition, onOpenDocument, onAct, onRun, onReload, onOpenAuthor }: {
+  r: PayDocRow; busy: boolean; readOnly: boolean; onClose: () => void; onOpenAuthor: (a: AuthorTarget) => void;
   onOpenCondition: (id: number) => void; onOpenDocument: (id: number) => void;
   onAct: (a: NextAction) => void; onRun: (fn: () => Promise<string>) => void; onReload: () => void;
 }) {
@@ -500,9 +553,15 @@ function RowDetail({ r, busy, readOnly, onClose, onOpenCondition, onOpenDocument
 
         <div className="row" style={{ gap: 6 }}>
           {r.next !== "none" && !["send", "record_receipt", "remind_receipt", "remind_report", "record_event"].includes(r.next) && (
-            <button className="btn btn-sm primary" disabled={readOnly || busy} onClick={() => onAct(r.next)}>{NEXT_LABEL[r.next]}</button>
+            <button className="btn btn-sm primary" disabled={readOnly || busy} onClick={() => onAct(r.next)}>{nextLabel(r)}</button>
           )}
-          {(r.source.state === "waiting" || r.source.state === "late" || r.source.state === "plan" || r.doc.state === "make") && (
+          {isLedgerRow(r) && (
+            <button className="btn btn-sm" onClick={() => onOpenAuthor({ partyId: r.party!.id, partyName: r.party!.name, workId: null,
+                                                                         focus: { conditionId: r.condition.id, closeOn: r.closeOn } })}>
+              報告・計算書（作家の台帳）
+            </button>
+          )}
+          {!isLedgerRow(r) && (r.source.state === "waiting" || r.source.state === "late" || r.source.state === "plan" || r.doc.state === "make") && (
             <button className="btn btn-sm" disabled={readOnly} onClick={() => setForm("event")}>
               {r.trigger === "active" ? "実績を入れる（製造・納品）" : "報告・実績を入れる"}
             </button>
@@ -763,6 +822,40 @@ function PastPane() {
             </table>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 作家の報告と計算書（以前の 作品 › 利用許諾計算）
+// ---------------------------------------------------------------------------
+
+function AuthorPane({ who, onPick, onOpenDocument, onOpenRequest, onLedgerCompose, onOpenList }: {
+  who: (AuthorTarget & { nonce: number }) | null;
+  onPick: (a: AuthorTarget) => void;
+  onOpenDocument: (id: number) => void;
+  onOpenRequest?: (requestId: number) => void;
+  onLedgerCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null, back: DocBack,
+                     revise?: { supersedesIds: number[]; reason: string } | null) => void;
+  onOpenList: (partyId: number) => void;
+}) {
+  return (
+    <div className="stack">
+      <div className="row" style={{ gap: 8 }}>
+        <span className="faint">作家（支払先）</span>
+        <div style={{ minWidth: 260 }}>
+          <SearchSelect value={who ? String(who.partyId) : ""} valueLabel={who?.partyName ?? null} search={searchParties}
+                        placeholder="作家を選ぶ（名前・コード）"
+                        onChange={(v, o) => { if (v) onPick({ partyId: Number(v), partyName: o?.label ?? null, workId: null }); }} />
+        </div>
+        <span className="faint">報告は相手から 1 通で複数の作品が来て、計算書は作家ごとにまとめるので、作家で開きます。一覧の許諾料の行の「報告を入れる」「計算書を作る」からも来られます。</span>
+      </div>
+      {!who && <div className="panel"><div className="panel-bd faint">作家を選ぶと、報告待ちの回・報告の表・計算書の試算が出ます。</div></div>}
+      {who && (
+        <RoyaltyLedger key={`${who.partyId}-${who.nonce}`} partyId={who.partyId} workId={who.workId ?? null} focus={who.focus ?? null}
+                       onOpenDocument={(id) => onOpenDocument(id)} onOpenRequest={onOpenRequest}
+                       onCompose={onLedgerCompose} onOpenPayDocs={() => onOpenList(who.partyId)} />
       )}
     </div>
   );

@@ -9,16 +9,15 @@ import { CsvImport } from "./CsvImport.js";
 import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
-import { RoyaltyLedger } from "./RoyaltyLedger.js";
-import { PayDocsWorkspace, type PayDocsHandoff } from "./PayDocsWorkspace.js";
+import type { DocBack } from "./RoyaltyLedger.js";
+import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
 import { useReadOnly } from "./read-only.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 
-/** 文書の画面から戻る先（作品 › 利用許諾計算 の作家）。 */
-export interface DocBack { label: string; workId: number; partyId: number }
+export type { DocBack } from "./RoyaltyLedger.js";
 
 /**
  * 作品台帳。
@@ -136,15 +135,13 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose, initialLedgerParty, onOpenDocument, onOpenRequest, payDocs }: {
+  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs }: {
     /** 支払文書のタブ（A-074）。この作品の回を支払文書と同じ表で出す。 */
-    payDocs?: { onIssueRound: (h: PayDocsHandoff) => void; onOpenDraft: (id: number) => void };
-    /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
-    onOpenRequest?: (requestId: number) => void;
+    payDocs?: { onIssueRound: (h: PayDocsHandoff) => void; onOpenDraft: (id: number) => void;
+                /** 許諾料の報告・計算書は支払文書の「作家の報告と計算書」で。 */
+                onOpenAuthor: (a: AuthorTarget) => void };
     onOpenCondition: (id: number) => void;
     initialId?: number;
-    /** 利用許諾計算（許諾料の台帳）をこの作家で開く。受付箱の依頼から来たとき。 */
-    initialLedgerParty?: number | null;
     onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
     /** 文書の画面へ、選んだ条件を載せた状態で移る。台帳から文書を作る入口。 */
@@ -161,8 +158,8 @@ export function WorksWorkspace(
   const [includeVoid, setIncludeVoid] = useState(false);
   const [kindFilter, setKindFilter] = useState<"all" | "source" | "work">("all");
   const [selected, setSelected] = useState<number | undefined>(initialId);
-  /** 作品の中の見出し。利用許諾計算（許諾料の台帳）は作品の情報とは別の作業なので切り替える。 */
-  const [pane, setPane] = useState<"work" | "royalty" | "paydocs">(initialLedgerParty ? "royalty" : "work");
+  // 「利用許諾計算」タブは閉じた（A-074）。報告・計算書は支払文書の「作家の報告と計算書」へ。
+  const [pane, setPane] = useState<"work" | "paydocs">("work");
   /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */
   const [payCounts, setPayCounts] = useState<Map<number, { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }>>(new Map());
   useEffect(() => {
@@ -770,20 +767,15 @@ export function WorksWorkspace(
           {work && (
             <div className="tabs" role="tablist" aria-label="作品の見出し">
               <button role="tab" aria-selected={pane === "work"} onClick={() => setPane("work")}>作品</button>
-              <button role="tab" aria-selected={pane === "royalty"} onClick={() => setPane("royalty")}>利用許諾計算</button>
               {payDocs && <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>}
             </div>
-          )}
-          {work && pane === "royalty" && (
-            <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument}
-                           onOpenRequest={onOpenRequest}
-                           onCompose={onCompose ? (ids, events, key, back, revise) => onCompose(ids, events, null, key, back, revise) : undefined} />
           )}
           {work && pane === "paydocs" && payDocs && (
             <PayDocsWorkspace scope={{ workId: work.id }} onOpenCondition={onOpenCondition}
                               onOpenDocument={(id) => onOpenDocument?.(id)} onOpenDraft={payDocs.onOpenDraft}
                               onIssueRound={payDocs.onIssueRound}
-                              onComposeEvents={(ids, events, key) => onCompose?.(ids, events, null, key)} />
+                              onComposeEvents={(ids, events, key) => onCompose?.(ids, events, null, key)}
+                              onOpenAuthor={payDocs.onOpenAuthor} />
           )}
           {work && pane === "work" && (<>
             <div className="panel">

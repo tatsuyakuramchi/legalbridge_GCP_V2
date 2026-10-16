@@ -3,7 +3,6 @@ import { StatusTag } from "./labels.js";
 import { CsvBar } from "./CsvBar.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
-import { EbookSalesImport } from "./EbookSalesImport.js";
 import { MissingContracts } from "./MissingContracts.js";
 import { UnsentBundles } from "./UnsentBundles.js";
 import { Leftovers } from "./Leftovers.js";
@@ -205,7 +204,10 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
 
       {tab === "leftovers" && <Leftovers />}
 
-      {tab === "imports" && (<><EbookSalesImport /><CsvImport /></>)}
+      {tab === "imports" && (<>
+        {/* 電子書籍売上の取込・年次締めは支払文書の「取込」へ移した（実績の入口なので）。 */}
+        <div className="note">電子書籍売上の取込と年次締めは「支払文書 › 取込（電子書籍売上・年次締め）」に移しました。</div>
+        <CsvImport /></>)}
       {tab === "contracts" && <MissingContracts />}
       {tab === "sending" && <UnsentBundles />}
 

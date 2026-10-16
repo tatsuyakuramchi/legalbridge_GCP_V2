@@ -58,9 +58,9 @@ export function ClosingWorkspace({ onOpenCondition, onOpenDocument, onRecord }: 
   return (
     <section className="workspace">
       <header className="workspace-head">
-        <h1>支払文書処理</h1>
+        <h1>まとめて締める（一括）</h1>
         <p>
-          検収書・計算書はここから出します。回ごとに「① 実績 → ② 検収書 → ③ 送る → ④ 支払」の順に進み、
+          予定どおりの回をまとめて締める画面です（ふだんの確認・送付・受領は「支払文書」で）。回ごとに「① 実績 → ② 検収書 → ③ 送る → ④ 支払」の順に進み、
           上の帯で各段に何件残っているかが分かります。行の「次にやること」を押せば、その手へ進みます。
           ほかの画面で作った検収書も、実績に結びついていればここに反映されます。
         </p>

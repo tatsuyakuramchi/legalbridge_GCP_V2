@@ -86,7 +86,7 @@ export function DailyTasksWorkspace(
     onOpenMatter?: (matterId: number) => void;
     /** 依頼の条件を載せた状態で文書の画面へ移る（案件なし。作った文書は依頼に繋がる）。 */
     onOpenDocument?: (documentId: number) => void;
-    /** 計算書の依頼を、作品の利用許諾計算（許諾料の台帳）で開く。 */
+    /** 計算書の依頼を、支払文書の「作家の報告と計算書」で開く。 */
     onOpenLedger?: (workId: number, partyId: number) => void;
     /** 元の依頼を受付箱で開く。 */
     onOpenRequest?: (requestId: number) => void;
@@ -462,7 +462,7 @@ function TaskPanel(
                     <span className="row" style={{ gap: 6 }}>
                       <span>{l.partyName} × {l.workTitle}</span>
                       {onOpenLedger && (
-                        <button className="btn btn-sm" onClick={() => onOpenLedger(l.workId, l.partyId)}>台帳で開く</button>
+                        <button className="btn btn-sm" onClick={() => onOpenLedger(l.workId, l.partyId)}>支払文書で開く（作家の報告と計算書）</button>
                       )}
                     </span>
                     {(() => {

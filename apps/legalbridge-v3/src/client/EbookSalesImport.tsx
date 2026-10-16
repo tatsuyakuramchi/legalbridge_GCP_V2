@@ -265,7 +265,7 @@ export function EbookSalesImport() {
                             {g.condition.shares.length > 0 && <> · 取り分 {g.condition.shares.join("・")}</>}
                             {g.round
                               ? <> · 回 {g.round.label ?? `#${g.round.id}`}</>
-                              : <> · <span className="warn" title="年 1 回の締めを立てると、支払文書処理でまとめて締められます">回なし</span></>}
+                              : <> · <span className="warn" title="年 1 回の締めを立てると、支払文書の「まとめて締める」で計算書にできます">回なし</span></>}
                           </div>
                         )}
                         {g.status === "unresolved" && !readOnly && g.cid && read && (
@@ -425,7 +425,7 @@ function AnnualClosesPanel() {
     <div className="subpanel">
       <div className="row" style={{ alignItems: "center", gap: 8 }}>
         <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "集計期間の締めをまとめて立てる（年 1・2・4 回）"}</button>
-        <span className="faint">取込の実績を付ける回。立てておくと、支払文書処理の「まとめて締める」で計算書を一括で作れます</span>
+        <span className="faint">取込の実績を付ける回。立てておくと、支払文書の「まとめて締める」で計算書を一括で作れます（1 人ずつなら「作家の報告と計算書」から）</span>
       </div>
       {open && (
         <div className="stack" style={{ marginTop: 8 }}>

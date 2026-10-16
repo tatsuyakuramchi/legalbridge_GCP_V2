@@ -7,14 +7,20 @@ import { RoyaltyCloses } from "./RoyaltyCloses.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { roundTargets, roundTitle } from "./RoundPicker.js";
 import type {
-  LedgerCondition, LedgerEvent, LedgerView, Round, WorkRoyaltyParty
+  LedgerCondition, LedgerEvent, LedgerView, Round
 } from "../server/royalty/ledger-service.js";
-import type { DocBack } from "./WorksWorkspace.js";
+
+/** 文書の画面から戻る先（支払文書のこの作家）。 */
+export interface DocBack { label: string; partyId: number; workId?: number | null }
 
 /**
- * 作品 › 利用許諾計算（許諾料の台帳）。docs/royalty-ledger.md
+ * 支払文書 › 作家の報告と計算書（許諾料の台帳）。docs/royalty-ledger.md
  *
- * 作家 × この作品（切り替えれば作家 × 全作品）で、条件を毎期くり返し使って
+ * 以前は作品の「利用許諾計算」タブにあった。報告は相手から 1 通で複数の作品が来て、
+ * 計算書は作家（支払先）ごとにまとめるので、作品ではなく作家で開く（A-074）。
+ * 送付・受領・支払は支払文書の一覧が持つ（ここでは持たない）。
+ *
+ * 作家 × 全作品（作品で絞れば作家 × その作品）で、条件を毎期くり返し使って
  * 計算書を出す。主役は「開いている回」。作品が何本あっても、いま手を動かす回は
  * 数件に収まる。過去の回は年ごとに畳む。
  *
@@ -41,11 +47,12 @@ const ROUND_STATE: Record<string, { label: string; tag: string }> = {
   before: { label: "締め前", tag: "" },
   input: { label: "実績を入力中", tag: "accent" },
   ready: { label: "計算書を作れる", tag: "warn" },
+  // 決定したあと（送付・受領・支払）は支払文書の一覧が持つ。ここでは「決定」までを出す（A-074）。
   issued: { label: "計算書を決定", tag: "ok" },
-  sent: { label: "送付済", tag: "ok" },
-  scheduled: { label: "支払予定", tag: "accent" },
-  paid: { label: "支払済", tag: "ok" },
-  nopay: { label: "支払なし（AG 充当など）", tag: "ok" },
+  sent: { label: "計算書を決定", tag: "ok" },
+  scheduled: { label: "計算書を決定", tag: "ok" },
+  paid: { label: "計算書を決定", tag: "ok" },
+  nopay: { label: "計算書を決定", tag: "ok" },
   skipped: { label: "報告なし", tag: "" }
 };
 const PART_STATE: Record<string, { label: string; tag: string }> = {
@@ -68,24 +75,28 @@ const useOpenRequests = (version: number) => {
 };
 
 export function RoyaltyLedger(
-  { workId, initialPartyId, onOpenDocument, onOpenRequest, onCompose }: {
-    workId: number;
+  { partyId, workId = null, focus = null, onOpenDocument, onOpenRequest, onCompose, onOpenPayDocs }: {
+    /** 作家（支払先）。 */
+    partyId: number;
+    /** 作品で絞って開くとき（「この作品」）。空なら作家の全作品。 */
+    workId?: number | null;
+    /** 開いた直後に選ぶ回（支払文書の行から来たとき）。 */
+    focus?: { conditionId: number; closeOn: string | null } | null;
+    /** 送付・受領・支払は支払文書で。この作家の行へ戻る。 */
+    onOpenPayDocs?: () => void;
     /**
      * 計算書を作る。その回の条件と実績を選んだ状態で文書の画面へ移る。
      * 中身の確認・手入力・下書き保存・決定は文書の画面でする（台帳からいきなり決定しない）。
      */
     onCompose?: (conditionIds: number[], eventIds: number[], templateKey: string | null, back: DocBack,
                  revise?: { supersedesIds: number[]; reason: string } | null) => void;
-    initialPartyId?: number | null;
     onOpenDocument?: (documentId: number, back?: DocBack | null) => void;
     /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
     onOpenRequest?: (requestId: number) => void;
   }
 ) {
   const readOnly = useReadOnly();
-  const [parties, setParties] = useState<WorkRoyaltyParty[] | null>(null);
-  const [partyId, setPartyId] = useState<number | null>(initialPartyId ?? null);
-  const [allWorks, setAllWorks] = useState(false);
+  const [allWorks, setAllWorks] = useState(!workId);
   const [view, setView] = useState<LedgerView | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   /**
@@ -102,24 +113,20 @@ export function RoyaltyLedger(
   useEffect(() => {
     api.get<{ user?: { role: string } }>("/me").then((r) => setRole(r.user?.role ?? null)).catch(() => setRole(null));
   }, []);
-  useEffect(() => {
-    setParties(null);
-    api.get<{ parties: WorkRoyaltyParty[] }>(`/works/${workId}/royalty`)
-      .then((r) => {
-        setParties(r.parties);
-        setPartyId((cur) => cur && r.parties.some((p) => p.id === cur) ? cur : r.parties[0]?.id ?? null);
-      })
-      .catch((e: ApiError) => setError(e.message));
-  }, [workId, version]);
+  /** 支払文書の行から来たときに選ぶ回。最初の 1 回だけ使う。 */
+  const focusRef = useRef(focus);
   useEffect(() => {
     if (!partyId) { setView(null); return; }
-    api.get<LedgerView>(`/royalty-ledger?partyId=${partyId}${allWorks ? "" : `&workId=${workId}`}`)
+    api.get<LedgerView>(`/royalty-ledger?partyId=${partyId}${allWorks || !workId ? "" : `&workId=${workId}`}`)
       .then((v) => {
         setView(v);
         // 新しい製造の回を記録した直後は、その製造日の回を開く。
         const madeOn = pendingDate.current; pendingDate.current = null;
         const made = madeOn ? v.rounds.find((r) => r.kind === "event" && r.closeOn === madeOn) : null;
-        setSelected((cur) => made ? made.key
+        const f = focusRef.current; focusRef.current = null;
+        const focused = f ? [...v.rounds, ...v.history].find((r) => r.parts.some((p) => p.conditionId === f.conditionId)
+          && (!f.closeOn || r.closeOn === f.closeOn || r.parts.some((p) => p.closeOn === f.closeOn))) : null;
+        setSelected((cur) => made ? made.key : focused ? focused.key
           : cur === NEW_EVENT || (cur && [...v.rounds, ...v.history].some((r) => r.key === cur)) ? cur
           : v.rounds.find((r) => r.state !== "before")?.key ?? v.rounds[0]?.key ?? null);
       })
@@ -153,7 +160,6 @@ export function RoyaltyLedger(
     } catch (e) { setError((e as ApiError).message); }
   }
   const oldWaiting = view ? view.rounds.flatMap((r) => r.parts).filter((p) => p.state === "waiting").length : 0;
-  const party = parties?.find((p) => p.id === partyId) ?? null;
   const round = [...(view?.rounds ?? []), ...(view?.history ?? [])].find((r) => r.key === selected) ?? null;
   /** 取引モデルの札。条件の利用形態ごとに1枚。イベント式の条件が1本でもあればイベント式。 */
   const models = view ? [...new Map(view.conditions.map((c) => [c.usageType ?? "-", c])).values()].map((c) => {
@@ -172,7 +178,8 @@ export function RoyaltyLedger(
   /** 新しい製造の回で使える条件（選んだ取引モデルのイベント式の条件）。 */
   const eventConditions = view ? view.conditions.filter((c) => c.timing === "event" && (!model || (c.usageType ?? "-") === model)) : [];
   /** 文書の画面から戻る先。この作家 × この作品。 */
-  const back: DocBack | null = view ? { label: `${view.party.name} × ${view.scope?.workTitle ?? "全作品"}`, workId, partyId: view.party.id } : null;
+  const back: DocBack | null = view ? { label: `支払文書 › ${view.party.name}${allWorks ? "" : ` × ${view.scope?.workTitle ?? ""}`}`,
+                                       workId: allWorks ? null : workId, partyId: view.party.id } : null;
   const openDoc = onOpenDocument ? (id: number) => onOpenDocument(id, back) : undefined;
   const composeWith = onCompose && back
     ? (ids: number[], events: number[], key: string | null, revise?: { supersedesIds: number[]; reason: string } | null) =>
@@ -193,42 +200,17 @@ export function RoyaltyLedger(
     catch (e) { setError((e as ApiError).message); }
   }
 
-  if (parties && !parties.length) {
-    return (
-      <div className="panel"><div className="panel-bd faint">
-        この作品には、料率・単価で計算する許諾（IN）の条件がありません。条件の「利用形態」と「計算方式（料率）」を入れると、作家ごとの台帳がここに出ます。
-      </div></div>
-    );
-  }
-
   return (
     <div className="stack">
       {error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}
 
-      {/* 作家。作品を許諾している人ごとに台帳がある。 */}
-      <div className="ledger-parties">
-        {(parties ?? []).map((p) => (
-          <button key={p.id} className="ledger-party" aria-pressed={p.id === partyId}
-                  onClick={() => { setPartyId(p.id); setModel(null); setSelected(p.next?.roundKey ?? null); }}>
-            <b>{p.name}</b>
-            <span className="faint">{p.conditions.map((c) => `${c.usageLabel} ${pct(c.ratePpm)}${c.targetPartyName ? `（${c.targetPartyName} 専用）` : ""}`).join("・")}</span>
-            {p.next
-              ? <span className="ledger-next">▶ 次：{p.next.label}の回に報告待ちが {p.next.waiting} 行</span>
-              : p.noClose.length
-                ? <span className="ledger-next" style={{ color: "var(--warn)" }}>▶ 次：{p.noClose.map((c) => c.usageLabel).join("・")} の締めを作る（回が立ちません）</span>
-                : <span className="faint">▶ 次：{p.nextPayOn ? `締め前（次の支払 ${md(p.nextPayOn)}）。いま入れるものはありません`
-                    : p.conditions.some((c) => c.timing === "event") ? "製造の報告を足すと、その報告の回が立ちます"
-                    : "締めがありません（条件と締めの設定…）"}</span>}
-            <span className="row" style={{ gap: 4 }}>
-              <span className="tag">開いている回 {p.openRounds}</span>
-              {p.nextPayOn && <span className="tag">次の支払 {md(p.nextPayOn)}</span>}
-              {p.requests.map((r) => <span key={r.id} className="tag pin">{r.requestNo ?? `#${r.id}`}</span>)}
-            </span>
-          </button>
-        ))}
-        {!parties && <span className="faint">読み込んでいます…</span>}
-      </div>
+      {!view && !error && <span className="faint">読み込んでいます…</span>}
+      {view && !view.conditions.length && (
+        <div className="panel"><div className="panel-bd faint">
+          この作家には、料率・単価で計算する許諾（IN）の条件がありません。条件の「利用形態」と「計算方式（料率）」を入れると、ここに回が出ます。
+        </div></div>
+      )}
 
       {view && (
         <>
@@ -242,12 +224,13 @@ export function RoyaltyLedger(
               </span>
             </div>
             <div className="row" style={{ gap: 6, marginLeft: "auto" }}>
-              <span className="chips" role="group" aria-label="見る範囲">
-                <button className="chip" aria-pressed={!allWorks} onClick={() => { setAllWorks(false); setSelected(null); }}>この作品</button>
-                <button className="chip" aria-pressed={allWorks} onClick={() => { setAllWorks(true); setSelected(null); }}>
-                  この作家の全作品{party ? `（${party.otherWorks + 1}）` : ""}
-                </button>
-              </span>
+              {workId && (
+                <span className="chips" role="group" aria-label="見る範囲">
+                  <button className="chip" aria-pressed={!allWorks} onClick={() => { setAllWorks(false); setSelected(null); }}>この作品</button>
+                  <button className="chip" aria-pressed={allWorks} onClick={() => { setAllWorks(true); setSelected(null); }}>この作家の全作品</button>
+                </span>
+              )}
+              {onOpenPayDocs && <button className="btn btn-sm" onClick={onOpenPayDocs}>この作家の送付・受領・支払（支払文書）</button>}
               {view.conditions.length > 3 && <span className="ledger-term-chip"><span className="faint">{view.works.length} 作品 · {view.conditions.length} 条件</span></span>}
               {view.conditions.length <= 3 && view.conditions.map((c) => (
                 <span key={c.id} className="ledger-term-chip">
@@ -712,13 +695,6 @@ function RoundDetail(
       .catch(() => undefined);
   }, []);
 
-  /** 決定した計算書から支払を立てる。経理提出用の帳票は支払から作られる。 */
-  async function createPayment(d: { id: number; documentNo: string | null }) {
-    try {
-      const x = await api.post<{ paymentId: number; amount: number; dueOn: string | null }>(`/documents/${d.id}/payment`, {});
-      onChanged(`${d.documentNo ?? `#${d.id}`} の支払 #${x.paymentId}（${yen(x.amount)}${x.dueOn ? ` · 支払期日 ${x.dueOn}` : ""}）を立てました。経理提出用は「運用」の出力タブから`);
-    } catch (e) { onError((e as ApiError).message); }
-  }
   /**
    * 訂正版を出し直す。その計算書に結ばれた実績（直したものを含む）と条件を選んだ状態で
    * 文書の画面を開く。決定すると元の計算書が退き、実績が新しい版に移る。
@@ -767,7 +743,6 @@ function RoundDetail(
             </div>
             <RoundReport round={r} view={view} canWrite={canWrite} onChanged={onChanged} onError={onError} onOpenDocument={onOpenDocument}
                          adding={adding} setAdding={setAdding} isAdmin={isAdmin} onReissue={onCompose ? reissue : undefined}
-                         onCreatePayment={canWrite ? (id) => void createPayment(r.documents.find((d) => d.id === id) ?? { id, documentNo: null }) : undefined}
                          merging={merging} onMerge={canWrite && onCompose ? toggleMerge : undefined} />
           </div>
         </div>
@@ -820,34 +795,20 @@ function RoundDetail(
           </div>
         </div>
 
-        {/* 3 送付・支払 */}
+        {/* 3 送付・受領・支払は支払文書で（A-074）。ここは決定した計算書と依頼の紐づけだけ。 */}
         <div className="ledger-step">
-          <span className={`step-no ${r.state === "paid" || r.state === "nopay" ? "done" : r.documents.length ? "" : "todo"}`}>3</span>
+          <span className={`step-no ${r.documents.length ? "done" : "todo"}`}>3</span>
           <div className="stack" style={{ gap: 4, minWidth: 0 }}>
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <b>送付・支払</b>
-              <span className="faint">決定した文書のページで進める</span>
+              <b>決定した計算書</b>
+              <span className="faint">送付・受領・支払は支払文書の一覧で（状態はそちらが正）</span>
             </div>
             {r.documents.map((d) => (
               <div key={d.id} className="row" style={{ gap: 6 }}>
                 {onOpenDocument
                   ? <button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button>
                   : <span className="code">{d.documentNo ?? `#${d.id}`}</span>}
-                <span className="tag ok">決定</span>{d.sent && <span className="tag ok">送付済</span>}
                 <span className="faint">差引 {yen(d.net)}</span>
-                {d.status === "issued" && !d.paymentIds.length && d.net > 0 && (
-                  <>
-                    <span className="tag warn">支払なし</span>
-                    {canWrite && <button className="btn btn-sm primary" onClick={() => void createPayment(d)}>支払を立てる</button>}
-                  </>
-                )}
-                {d.status === "issued" && !d.paymentIds.length && d.net <= 0 && <span className="tag">支払なし（差引 0）</span>}
-              </div>
-            ))}
-            {r.payments.map((x) => (
-              <div key={x.id} className="faint">
-                支払 <span className="code">{x.paymentNo ?? `#${x.id}`}</span> {yen(x.amount)} ·
-                {x.status === "paid" ? ` 支払済 ${x.paidOn ?? ""}` : ` 支払予定 ${x.dueOn ?? "—"}`}
               </div>
             ))}
             {!r.documents.length && <span className="faint">この回の計算書はまだありません。</span>}

@@ -19,7 +19,7 @@ import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
-import { PayDocsWorkspace } from "./PayDocsWorkspace.js";
+import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
@@ -178,9 +178,16 @@ export function App() {
     setView("workbench");
   };
 
-  /** 作品の利用許諾計算をこの作家で開く（受付箱の依頼から）。作品画面を離れたら消す。 */
-  const [ledgerParty, setLedgerParty] = useState<number | null>(null);
-  useEffect(() => { if (view !== "works") setLedgerParty(null); }, [view]);
+  /**
+   * 支払文書の「作家の報告と計算書」をこの作家で開く（作品のタブ・デイリータスク・文書の画面の戻りから）。
+   * 以前の 作品 › 利用許諾計算（A-074 で支払文書へ移した）。
+   */
+  const [payAuthor, setPayAuthor] = useState<(AuthorTarget & { nonce: number }) | null>(null);
+  // 左のメニューから支払文書を開き直したときは一覧から（作家を持ち越さない）。
+  useEffect(() => { if (view !== "paydocs") setPayAuthor(null); }, [view]);
+  const openAuthor = (a: AuthorTarget) => {
+    setPayAuthor({ ...a, nonce: Date.now() }); setConditionId(undefined); setFocus(null); setView("paydocs");
+  };
 
   /** その画面に渡す選択。別の画面へ移ったら持ち越さない。 */
   const focusFor = (view: View) => (focus && focus.view === view ? focus.id : undefined);
@@ -251,8 +258,8 @@ export function App() {
    */
   const [docBack, setDocBack] = useState<DocBack | null>(null);
   const goBack = (back: DocBack) => {
-    setLedgerParty(back.partyId); setConditionId(undefined); setCompose(null); setOpenDocument(undefined);
-    setFocus({ view: "works", id: back.workId }); setView("works");
+    setCompose(null); setOpenDocument(undefined);
+    openAuthor({ partyId: back.partyId, workId: back.workId ?? null });
   };
   const startCompose = (
     conditionIds: number[], eventIds: number[] = [], matterId: number | null = null,
@@ -389,10 +396,7 @@ export function App() {
           <DailyTasksWorkspace key={`t${focusFor("daily") ?? 0}`} initialId={focusFor("daily")}
             onOpenMatter={(id) => openEntity("matter", id)}
             onOpenDocument={openDocumentAt}
-            onOpenLedger={(workId, partyId) => {
-              setLedgerParty(partyId); setConditionId(undefined);
-              setFocus({ view: "works", id: workId }); setView("works");
-            }}
+            onOpenLedger={(workId, partyId) => openAuthor({ partyId, workId })}
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
             // デイリータスクからの行き先は作業テーブル 1 つ（その作業の文脈で開く）。
             onGo={(ctx) => {
@@ -412,7 +416,10 @@ export function App() {
             onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
             onIssueRound={issueRound}
             onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}
-            onOpenClosing={() => setView("closing")} />
+            onOpenClosing={() => setView("closing")}
+            author={payAuthor} onOpenAuthor={openAuthor}
+            onLedgerCompose={(ids, events, key, back, revise) => startCompose(ids, events, null, key, back, revise ?? null)}
+            onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }} />
         )}
         {view === "workbench" && (
           <WorkbenchWorkspace state={workbench} onState={setWorkbench}
@@ -451,12 +458,11 @@ export function App() {
                                  startCompose(conditionIds, [], null, templateKey, null, null, null, conditionFlow(conditionIds[0]))} />
         )}
         {view === "works" && (
-          <WorksWorkspace key={`w${focusFor("works") ?? 0}-${ledgerParty ?? 0}`}
+          <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("works")}
-            initialLedgerParty={ledgerParty} onOpenDocument={openDocumentAt}
-            onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
+            onOpenDocument={openDocumentAt}
             onOpen={openEntity} onCompose={startCompose}
-            payDocs={{ onIssueRound: issueRound, onOpenDraft: (id) => openDocumentAt(id, null, null, true) }} />
+            payDocs={{ onIssueRound: issueRound, onOpenDraft: (id) => openDocumentAt(id, null, null, true), onOpenAuthor: openAuthor }} />
         )}
         {view === "parties" && (
           <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")}
