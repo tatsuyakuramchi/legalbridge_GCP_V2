@@ -141,7 +141,9 @@ const UNLINKED_WHERE = `d.agreement_id IS NULL
  * 出版許諾契約書は基本契約を兼ねる（出版 IN の取引）。
  */
 const MASTER_DOCUMENT_SQL = `t.template_key IN ('license_master', 'service_master', 'pub_master_individual', 'pub_master_corporate')
-  OR COALESCE(d.manual_inputs->>'documentKind', t.label, '') LIKE '%基本契約%'`;
+  OR COALESCE(d.manual_inputs->>'documentKind', t.label, '') LIKE '%基本契約%'
+  -- 取り込んだ業務委託契約書（種別＝業務委託契約書）。基本契約か単体契約かは立てるときに選ぶ。
+  OR d.manual_inputs->>'documentKind' = '業務委託契約書'`;
 
 /** 条件書（相手と結ぶ個別の契約そのもの）。取り込んだ利用許諾契約書も同じ扱い。 */
 const TERMS_DOCUMENT_SQL = `t.template_key IN ('individual_license_terms_v3', 'individual_license_terms_v4',
@@ -990,6 +992,41 @@ export class PartyAgreementMapService {
    *      （発注書の約款で取引）にする。
    *   4. 契約は消す（参照が残っていて消せなければ「文書だけ」にして契約から外す）。
    */
+  /**
+   * 基本契約なしの発注書を、あとから結んだ基本契約の下に入れる。
+   * 発注書に載っている条件明細（契約の無いもの・単体契約に載っていないもの）を基本契約に載せる。
+   * 基本契約は同じ取引先（名寄せ後）のものに限る。
+   */
+  async orderUnderMaster(documentId: number, agreementId: number, actor: string): Promise<{ conditionsLinked: number; agreementNo: string | null }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const ar = await client.query(
+          `SELECT a.id, a.agreement_no, COALESCE(a.kind, 'master') AS kind, r.resolved_id
+             FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id WHERE a.id = $1`, [agreementId]);
+        const a = ar.rows[0] as any;
+        if (!a) throw new DomainError("NOT_FOUND", `契約 ${agreementId} が見つかりません`);
+        if (a.kind !== "master") throw new DomainError("VALIDATION", "入れられるのは基本契約の下だけです");
+        const dr = await client.query(
+          `SELECT d.id, d.document_no FROM documents d
+             JOIN v_document_display v ON v.document_id = d.id
+             JOIN v_party_resolved r ON r.party_id = v.counterparty_id
+            WHERE d.id = $1 AND r.resolved_id = $2`, [documentId, Number(a.resolved_id)]);
+        if (!dr.rows[0]) throw new DomainError("VALIDATION", "発注書と基本契約の取引先が違います");
+        const linked = await client.query(
+          `UPDATE conditions SET agreement_id = $2
+            WHERE status NOT IN ('superseded', 'void')
+              AND id IN (SELECT condition_id FROM document_conditions WHERE document_id = $1)
+              AND (agreement_id IS NULL OR agreement_id = $2)
+            RETURNING id`, [documentId, agreementId]);
+        const ids = (linked.rows as Array<{ id: number }>).map((x) => Number(x.id));
+        if (!ids.length) throw new DomainError("VALIDATION", "この発注書には基本契約に載せられる条件明細がありません（別の契約に載っている条件は動かしません）");
+        await recordAudit(client, { actor, action: "agreement.order_under_master", targetType: "agreement", targetId: agreementId,
+                                    detail: { documentId, conditionIds: ids } });
+        return { conditionsLinked: ids.length, agreementNo: str(a.agreement_no) };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async orderAgreementToDocument(id: number, actor: string): Promise<{
     documentId: number; documentNo: string; created: boolean; conditionsLinked: number; masterNo: string | null;
   }> {
@@ -1104,7 +1141,7 @@ export class PartyAgreementMapService {
    * （個別契約のときは基本契約の明細にする。条件書を決定したときと同じ形）。
    * 状態は「交渉中」で立てる。締結日は「編集」で入れる（入れると締結済み）。
    */
-  async agreementFromDocument(documentId: number, actor: string): Promise<{
+  async agreementFromDocument(documentId: number, actor: string, options: { as?: "master" | "standalone" | null } = {}): Promise<{
     agreementId: number; agreementNo: string; kind: "master" | "supplement" | "standalone";
     parentNo: string | null; conditionsLinked: number;
   }> {
@@ -1113,6 +1150,7 @@ export class PartyAgreementMapService {
         const dr = await client.query(
           `SELECT d.id, d.document_no, d.status, d.agreement_id, d.issued_at, v.title, v.counterparty_id,
                   d.manual_inputs->>'title' AS manual_title, t.template_key,
+                  d.manual_inputs->>'documentKind' AS document_kind,
                   COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label,
                   ${DOCUMENT_ROLE_SQL} AS role, r.resolved_id
              FROM documents d
@@ -1147,7 +1185,9 @@ export class PartyAgreementMapService {
           `SELECT DISTINCT co.direction FROM conditions co JOIN v_party_resolved r ON r.party_id = co.counterparty_id
             WHERE r.resolved_id = $1 AND ${LOOSE_CONDITION_WHERE}`, [Number(d.resolved_id)])
           ?? "in";
-        const domain = String(d.template_key ?? "").startsWith("service") ? "service" : "license";
+        // 取り込んだ業務委託契約書も業務委託（ひな形の無い文書は種別で見る）。
+        const domain = String(d.template_key ?? "").startsWith("service") || d.document_kind === "業務委託契約書"
+          ? "service" : "license";
         const name = str(d.manual_title) ?? str(d.title);
         // ひな形の名前の末尾の注記（「（個人版）」「（V3・一覧形式／…）」）は契約の件名に要らない。
         // 文書には「2026年9月18日付出版等許諾基本契約書」のように件名で出る。
@@ -1157,6 +1197,9 @@ export class PartyAgreementMapService {
         let kind: "master" | "supplement" | "standalone" = "master";
         let parentId: number | null = null;
         let parentNo: string | null = null;
+        // 基本契約書の文書でも、その取引だけで完結する契約（単体契約）として立てられる。
+        // 業務委託契約書は基本契約のことも単体の契約のこともあるので、立てる人が選ぶ。
+        if (role === "master" && options.as === "standalone") kind = "standalone";
         if (role === "terms") {
           // 同じ相手・同じ向きの、解除されていない基本契約。種別が同じ・締結済み・新しいものを先に。
           const mr = await client.query(
@@ -1170,7 +1213,7 @@ export class PartyAgreementMapService {
           if (m) { kind = "supplement"; parentId = Number(m.id); parentNo = str(m.agreement_no); }
           else kind = "standalone";
         }
-        const title = role === "master" ? label : `${label}${name && name !== label ? `（${name}）` : ""}`;
+        const title = role === "master" && kind === "master" ? label : `${label}${name && name !== label ? `（${name}）` : ""}`;
         const ins = await client.query(
           `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id)
            VALUES ($1, $2, $3, $4, 'negotiating', $5, $6, $7) RETURNING id`,

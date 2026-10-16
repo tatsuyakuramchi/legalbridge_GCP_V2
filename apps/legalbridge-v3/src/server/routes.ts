@@ -469,10 +469,17 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.json(await agreementMap.orderAgreementToDocument(Number(req.params.id), actor(res)));
     }));
+  // 基本契約なしの発注書を、基本契約の下に入れる（発注書の条件明細を基本契約に載せる）。
+  router.post("/agreement-map/orders/:id/master", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const body = z.object({ agreementId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await agreementMap.orderUnderMaster(Number(req.params.id), body.agreementId, actor(res)));
+    }));
   // 契約に繋がっていない基本契約書・条件書から契約を立てる（番号・件名は文書のまま）。
   router.post("/agreement-map/documents/:id/agreement", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      res.status(201).json(await agreementMap.agreementFromDocument(Number(req.params.id), actor(res)));
+      const body = z.object({ as: z.enum(["master", "standalone"]).nullable().optional() }).parse(req.body ?? {});
+      res.status(201).json(await agreementMap.agreementFromDocument(Number(req.params.id), actor(res), { as: body.as ?? null }));
     }));
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
