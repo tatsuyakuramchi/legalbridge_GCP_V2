@@ -18,6 +18,8 @@ import {
 
 export interface PayDocsQuery {
   partyId?: number | null; workId?: number | null; conditionId?: number | null; matterId?: number | null;
+  /** 作品の一覧の数を 1 回で出すとき。 */
+  workIds?: number[] | null;
   q?: string | null;
   /** 決済文書の種類（royalty_statement / inspection_certificate / service_completion_notice）。 */
   templateKey?: string | null;
@@ -60,6 +62,7 @@ export class PayDocsService {
     const add = (sql: string, v: unknown) => { args.push(v); where.push(sql.replaceAll("$?", `$${args.length}`)); };
     if (query.partyId) add("c.counterparty_id = $?", query.partyId);
     if (query.workId) add("c.work_id = $?", query.workId);
+    if (query.workIds?.length) add("c.work_id = ANY($?::bigint[])", query.workIds);
     if (query.conditionId) add("c.id = $?", query.conditionId);
     if (query.matterId) add(`EXISTS (SELECT 1 FROM matter_links ml WHERE ml.matter_id = $?
                                AND ml.target_type = 'condition' AND ml.target_ref = c.id::text)`, query.matterId);
@@ -192,8 +195,10 @@ export class PayDocsService {
   /** 作品ごとの数（作品の検索結果に出す）。 */
   async countsByWork(workIds: number[]): Promise<Map<number, { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }>> {
     const out = new Map<number, { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }>();
+    if (!workIds.length) return out;
+    const all = (await this.rows({ workIds })).filter((r) => r.source.state !== "before" && !r.past);
     for (const id of workIds) {
-      const rows = (await this.rows({ workId: id })).filter((r) => r.source.state !== "before" && !r.past);
+      const rows = all.filter((r) => r.work?.id === id);
       const t = countTiles(rows);
       out.set(id, { make: t.make + t.draft, unsent: t.unsent, await: t.await, overdue: t.overdue, wait: t.wait,
                     rounds: rows.length });

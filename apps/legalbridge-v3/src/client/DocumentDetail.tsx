@@ -7,6 +7,15 @@ import { DocumentSend } from "./DocumentSend.js";
 import { DocumentAttachFile } from "./DocumentImport.js";
 import { api, ApiError } from "./api.js";
 
+const SENT_VIA_LABEL: Record<string, string> = {
+  gmail: "メール", cloudsign: "CloudSign", post: "郵送", hand: "手渡し", email_other: "別のメール",
+  cloudsign_ui: "CloudSign の画面", past: "過去分", other: "その他"
+};
+const RECEIVED_VIA_LABEL: Record<string, string> = {
+  signed_copy: "署名済みの控え", reply: "メールの返信", verbal: "口頭・電話", confirmed: "相手の確認",
+  cloudsign: "CloudSign 締結", past: "過去分", other: "その他"
+};
+
 /**
  * 文書1件の詳細。
  *
@@ -34,7 +43,10 @@ export interface DocumentRow {
   /** 人が見る段階。下書き → 決定済み → 送信済み（退いた版・無効はそのまま）。 */
   phase: "draft" | "decided" | "sent" | "superseded" | "void";
   sentAt: string | null;
-  sentVia: "gmail" | "cloudsign" | null;
+  /** gmail / cloudsign / post / hand / email_other / cloudsign_ui / past / other（A-074）。 */
+  sentVia: string | null;
+  receivedAt?: string | null;
+  receivedVia?: string | null;
   /**
    * この文書の実績にもう立っている支払（取消済みを除く）。
    * 一覧の行には付かないので、詳細を引いたときだけ入る。
@@ -173,7 +185,8 @@ export function DocumentDetail(
               <span>
                 {note.detail}
                 {doc.phase === "sent" && doc.sentAt && (
-                  <>　最後に送ったのは {day(doc.sentAt)}（{doc.sentVia === "cloudsign" ? "CloudSign" : "メール"}）。</>
+                  <>　最後に送ったのは {day(doc.sentAt)}（{SENT_VIA_LABEL[doc.sentVia ?? ""] ?? "メール"}）。
+                    {doc.receivedAt && <>受領 {day(doc.receivedAt)}（{RECEIVED_VIA_LABEL[doc.receivedVia ?? ""] ?? "記録あり"}）。</>}</>
                 )}
                 {doc.status === "superseded" && doc.supersededByNo && (
                   <>　現行は <b className="code">{doc.supersededByNo}</b> です。</>

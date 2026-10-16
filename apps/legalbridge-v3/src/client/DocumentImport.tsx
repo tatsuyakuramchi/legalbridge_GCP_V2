@@ -26,6 +26,9 @@ const FALLBACK_KINDS: ImportKind[] = [
   { kind: "利用許諾契約書", prefix: "LIC" }, { kind: "その他", prefix: "IMP" }
 ];
 
+/** 相手から受け取る種類（サーバの既定と同じ。documents/import-service.ts isInboundKind）。 */
+const INBOUND_KIND = /請求書|発注請書|請書|納品書|見積書|領収書|報告書|受領書/;
+
 const ACCEPT = ".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx";
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -86,6 +89,9 @@ export function DocumentImport(
   const [v, setV] = useState({
     title: "", documentKind: defaultKind ?? FALLBACK_KINDS[0].kind, receivedOn: today(), note: "", counterpartyDocNo: ""
   });
+  /** 相手から受け取った文書か。触るまでは種別から決める。 */
+  const [inbound, setInbound] = useState<boolean | null>(null);
+  const inboundOn = inbound ?? INBOUND_KIND.test(v.documentKind);
   const picker = useRef<HTMLInputElement>(null);
 
   function pick(next: File | null) {
@@ -108,6 +114,7 @@ export function DocumentImport(
       });
       if (v.note.trim()) params.set("note", v.note.trim());
       if (v.counterpartyDocNo.trim()) params.set("counterpartyDocNo", v.counterpartyDocNo.trim());
+      params.set("inbound", inboundOn ? "1" : "0");
       if (linkIds.length) params.set("conditionIds", linkIds.join(","));
       if (matterId) params.set("matterId", String(matterId));
       if (agreementId) params.set("agreementId", String(agreementId));
@@ -264,6 +271,14 @@ export function DocumentImport(
                  onChange={(e) => setV({ ...v, note: e.target.value })} />
         </label>
         {theirNoField}
+        <label className="field">
+          <span>向き</span>
+          <label className="row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={inboundOn} onChange={(e) => setInbound(e.target.checked)} />
+            相手から受け取った文書（送付・受領を追わない）
+          </label>
+          <small className="faint">当社が出した文書（発注書・検収書・計算書など）なら外す。外すと支払文書で送付・受領を追います</small>
+        </label>
       </div>
       {error && <div className="alert">{error}</div>}
       <div className="row">

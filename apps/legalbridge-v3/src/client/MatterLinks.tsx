@@ -849,7 +849,10 @@ export function MatterDocuments(
                         ? <div><span className="tag accent" title={d.sentAt ? `送信 ${d.sentAt.slice(0, 10)}` : undefined}>CloudSign 送信済</span></div>
                         : d.sentVia === "gmail"
                           ? <div><span className="tag" title={d.sentAt ? `送信 ${d.sentAt.slice(0, 10)}` : undefined}>メール送付済</span></div>
-                          : null)}
+                          : d.sentVia
+                            ? <div><span className="tag" title={d.sentAt ? `送付 ${d.sentAt.slice(0, 10)}` : undefined}>
+                                {d.sentVia === "past" ? "過去分" : d.sentVia === "post" ? "郵送済" : d.sentVia === "hand" ? "手渡し済" : "送付済"}</span></div>
+                            : null)}
                 </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   <span className="row" style={{ flexWrap: "nowrap", gap: 4 }}>

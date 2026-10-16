@@ -10,6 +10,7 @@ import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { RoyaltyLedger } from "./RoyaltyLedger.js";
+import { PayDocsWorkspace, type PayDocsHandoff } from "./PayDocsWorkspace.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
@@ -135,7 +136,9 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose, initialLedgerParty, onOpenDocument, onOpenRequest }: {
+  { onOpenCondition, initialId, onOpen, onCompose, initialLedgerParty, onOpenDocument, onOpenRequest, payDocs }: {
+    /** 支払文書のタブ（A-074）。この作品の回を支払文書と同じ表で出す。 */
+    payDocs?: { onIssueRound: (h: PayDocsHandoff) => void; onOpenDraft: (id: number) => void };
     /** 作家・作品 → 依頼。受付箱のその依頼を開く。 */
     onOpenRequest?: (requestId: number) => void;
     onOpenCondition: (id: number) => void;
@@ -159,7 +162,17 @@ export function WorksWorkspace(
   const [kindFilter, setKindFilter] = useState<"all" | "source" | "work">("all");
   const [selected, setSelected] = useState<number | undefined>(initialId);
   /** 作品の中の見出し。利用許諾計算（許諾料の台帳）は作品の情報とは別の作業なので切り替える。 */
-  const [pane, setPane] = useState<"work" | "royalty">(initialLedgerParty ? "royalty" : "work");
+  const [pane, setPane] = useState<"work" | "royalty" | "paydocs">(initialLedgerParty ? "royalty" : "work");
+  /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */
+  const [payCounts, setPayCounts] = useState<Map<number, { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }>>(new Map());
+  useEffect(() => {
+    const ids = tree.works.filter((w) => w.conditions > 0).map((w) => w.id).slice(0, 300);
+    if (!ids.length) { setPayCounts(new Map()); return; }
+    api.get<{ works: Array<{ id: number; make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }> }>(
+      `/paydocs/by-work?ids=${ids.join(",")}`)
+      .then((r) => setPayCounts(new Map(r.works.map((w) => [w.id, w]))))
+      .catch(() => setPayCounts(new Map()));
+  }, [tree]);
   const [work, setWork] = useState<WorkDetail | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [envelope, setEnvelope] = useState<RightsEnvelope | null>(null);
@@ -546,6 +559,7 @@ export function WorksWorkspace(
         <span className="grow">{w.title}</span>
         {w.legacy && <span className="faint" title="V2 から移した作品">移行</span>}
         {w.mergedIntoId ? <span className="faint">統合済</span> : w.status === "archived" && <span className="faint">終了</span>}
+        <PayBadge c={payCounts.get(w.id)} />
         <span className="faint num">{w.conditions}</span>
       </button>
       {depth < 3 && kindFilter === "all" && (grouped.childrenOf.get(w.id) ?? []).map((c) => renderNode(c, depth + 1))}
@@ -757,12 +771,19 @@ export function WorksWorkspace(
             <div className="tabs" role="tablist" aria-label="作品の見出し">
               <button role="tab" aria-selected={pane === "work"} onClick={() => setPane("work")}>作品</button>
               <button role="tab" aria-selected={pane === "royalty"} onClick={() => setPane("royalty")}>利用許諾計算</button>
+              {payDocs && <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>}
             </div>
           )}
           {work && pane === "royalty" && (
             <RoyaltyLedger workId={work.id} initialPartyId={initialLedgerParty ?? null} onOpenDocument={onOpenDocument}
                            onOpenRequest={onOpenRequest}
                            onCompose={onCompose ? (ids, events, key, back, revise) => onCompose(ids, events, null, key, back, revise) : undefined} />
+          )}
+          {work && pane === "paydocs" && payDocs && (
+            <PayDocsWorkspace scope={{ workId: work.id }} onOpenCondition={onOpenCondition}
+                              onOpenDocument={(id) => onOpenDocument?.(id)} onOpenDraft={payDocs.onOpenDraft}
+                              onIssueRound={payDocs.onIssueRound}
+                              onComposeEvents={(ids, events, key) => onCompose?.(ids, events, null, key)} />
           )}
           {work && pane === "work" && (<>
             <div className="panel">
@@ -1400,4 +1421,16 @@ function WorkActivity(
       </div>
     </div>
   );
+}
+
+/** 作品の一覧に出す支払文書の札。期限超過 → 未送付 → 作れる → 受領待ち の順に 1〜2 個。 */
+function PayBadge({ c }: { c?: { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number } }) {
+  if (!c || !c.rounds) return null;
+  const tags: Array<[string, string, React.CSSProperties]> = [];
+  if (c.overdue) tags.push(["期限超過", String(c.overdue), { background: "var(--out-soft)", color: "var(--out)", borderColor: "transparent" }]);
+  if (c.unsent) tags.push(["未送付", String(c.unsent), { background: "var(--warn-soft)", color: "var(--warn)", borderColor: "transparent" }]);
+  if (c.make) tags.push(["作れる", String(c.make), { background: "var(--accent-soft)", color: "var(--accent)", borderColor: "transparent" }]);
+  if (c.await) tags.push(["受領待ち", String(c.await), {}]);
+  if (!tags.length) return <span className="tag" title="支払文書：要対応なし" style={{ color: "var(--ok)" }}>支払文書 済</span>;
+  return <>{tags.slice(0, 2).map(([l, n, st]) => <span key={l} className="tag" style={st} title={`支払文書：${l} ${n} 回`}>{l} {n}</span>)}</>;
 }

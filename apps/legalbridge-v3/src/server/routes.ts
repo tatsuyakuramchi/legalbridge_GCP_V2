@@ -309,7 +309,7 @@ export function createRoutes(database: Transactable) {
   }));
   router.get("/paydocs/by-work", asyncRoute(async (req, res) => {
     const { ids } = z.object({ ids: z.string().max(2000) }).parse(req.query);
-    const workIds = ids.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 60);
+    const workIds = ids.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 300);
     const counts = await paydocs.countsByWork(workIds);
     res.json({ works: [...counts.entries()].map(([id, c]) => ({ id, ...c })) });
   }));

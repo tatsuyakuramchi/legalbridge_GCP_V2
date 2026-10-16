@@ -19,11 +19,12 @@ import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
+import { PayDocsWorkspace } from "./PayDocsWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "workbench" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -45,8 +46,9 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     // 文書を作る・登録する・繋ぐのはこの 1 枚だけ。デイリータスク・案件からも同じ画面に入る。
     // 以前の「取引を進める」（基礎情報 → 契約 → 条件 → 文書 → 送信）はここに一本化した。
     { view: "workbench", label: "作業テーブル" },
-    // 条件明細 × 回 で 予定 → 実績 → 決済文書 → 支払 を進める。決済文書は作業テーブルへ渡す。
-    { view: "deals", label: "取引管理" }
+    // 計算書・検収書・役務提供完了通知書を回ごとに 起点 → 文書 → 送付 → 受領 → 支払 まで（A-074）。
+    // 以前の「取引管理」「支払文書処理」はここへまとめた（取引管理の表は案件・条件明細の中に残る）。
+    { view: "paydocs", label: "支払文書" }
   ] },
   { section: "横断で見る", items: [
     // 契約が器で、条件はその明細。並びもその順にする。
@@ -69,8 +71,6 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "money", label: "お金" }
   ] },
   { section: "監視・運用", items: [
-    // 月の表・まとめて締める・算定期間を並べる。ふだんの操作は「取引管理」へ寄せた。
-    { view: "closing", label: "支払文書処理（締め・一括）" },
     // 条件を直したあとに取り残された金額・日付を集めて直す。案件をまたぐので
     // 工程表（案件1件）とは別の入口にする。ホームの札「金額の取り残し」と同じ語にする。
     { view: "drift", label: "金額の取り残し" },
@@ -407,9 +407,16 @@ export function App() {
             // 決済文書は作業テーブルで作る（この回の実績を渡す）。決定したら取引管理へ戻れる。
             onIssueDocument={issueRound} />
         )}
+        {view === "paydocs" && (
+          <PayDocsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+            onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
+            onIssueRound={issueRound}
+            onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}
+            onOpenClosing={() => setView("closing")} />
+        )}
         {view === "workbench" && (
           <WorkbenchWorkspace state={workbench} onState={setWorkbench}
-            onOpenDeals={() => { setFocus(null); setView("deals"); }}
+            onOpenDeals={() => { setFocus(null); setView("paydocs"); }}
             onCompose={(unit, a) => startCompose(a.conditionIds, a.eventIds, a.matterId, a.templateKey || null, null, null, a.requestId,
                                                  workbenchFlow(unit.key, unit.label))}
             // 訂正版・下敷きの下書きは、文書の画面を「直す」状態で開く。決定したらこの単位を済みにする。
@@ -448,7 +455,8 @@ export function App() {
             onOpenCondition={openCondition} initialId={focusFor("works")}
             initialLedgerParty={ledgerParty} onOpenDocument={openDocumentAt}
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
-            onOpen={openEntity} onCompose={startCompose} />
+            onOpen={openEntity} onCompose={startCompose}
+            payDocs={{ onIssueRound: issueRound, onOpenDraft: (id) => openDocumentAt(id, null, null, true) }} />
         )}
         {view === "parties" && (
           <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")}
