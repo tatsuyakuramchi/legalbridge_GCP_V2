@@ -15,12 +15,22 @@ import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
 import { validateShareInput } from "../royalty/shares.js";
 import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
 import { normalizeTimeSettlement } from "./time-settlement.js";
+import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle } from "./pub-digital-cycle.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
 export interface PublishingTerms {
   /** 料率（%）。11 は 11%。 */
   ratePct: number;
   exclusivity?: "exclusive" | "non_exclusive" | null;
+  /**
+   * 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。pub-digital-cycle.ts。
+   * 入っていれば支払条件の文と決済の型（期間で決まる・周期）をここから作る。
+   */
+  cycle?: DigitalCycle | null;
+  /** 最初の集計期間が始まる月（1〜12）。 */
+  startMonth?: number | null;
+  /** 集計期間の末日から何か月後の月末に払うか。 */
+  payMonthsAfter?: number | null;
 }
 /**
  * 翻訳版の再許諾（A-033）。乙が第三者に出させ、受領額から甲へ払う。
@@ -87,6 +97,9 @@ export interface LicenseSetRow {
   licenseFeeBasis?: LicenseFeeBasis | null;
   /** この行だけの支払条件。空ならセット共通の支払条件。 */
   paymentTerms?: string | null;
+  /** この行だけの決済の型（A-071）。空ならセット共通。電子の年 2 回・年 4 回で使う。 */
+  settlementMode?: SettlementMode | null;
+  settlementCycle?: SettlementCycle | null;
 }
 
 /**
@@ -594,8 +607,9 @@ export class ConditionWriteService {
       paymentTerms: row.paymentTerms ?? input.paymentTerms ?? null,
       sublicensable: input.sublicensable ?? null,
       statementTiming: input.statementTiming ?? null,
-      settlementMode: input.settlementMode ?? null,
-      settlementCycle: input.settlementMode === "term_bound" ? (input.settlementCycle ?? "quarter") : null,
+      settlementMode: row.settlementMode ?? input.settlementMode ?? null,
+      settlementCycle: (row.settlementMode ?? input.settlementMode) === "term_bound"
+        ? (row.settlementCycle ?? input.settlementCycle ?? "quarter") : null,
       notes: input.notes ?? null,
       scopes,
       usageType: row.usageType,
@@ -666,8 +680,16 @@ export class ConditionWriteService {
                   paymentTerms: terms || PUB_PRINT_PAYMENT_TERMS });
     }
     if (input.digital) {
+      // 集計のしかた（年 1 回・年 2 回・年 4 回）を選んでいれば、支払条件の文と決済の型をそこから作る。
+      const cycle = input.digital.cycle ?? null;
+      const spec = cycle ? {
+        cycle,
+        startMonth: input.digital.startMonth ?? DIGITAL_CYCLE_DEFAULTS[cycle].startMonth,
+        payMonthsAfter: input.digital.payMonthsAfter ?? DIGITAL_CYCLE_DEFAULTS[cycle].payMonthsAfter
+      } : null;
       rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
-                  paymentTerms: terms || PUB_DIGITAL_PAYMENT_TERMS });
+                  paymentTerms: terms || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS),
+                  ...(spec ? { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(spec.cycle) } : {}) });
     }
     if (input.sublicense) {
       rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,

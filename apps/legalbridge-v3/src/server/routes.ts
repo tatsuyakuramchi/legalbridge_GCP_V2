@@ -1975,7 +1975,11 @@ export function createRoutes(database: Transactable) {
    */
   const publishingTermsSchema = z.object({
     ratePct: z.coerce.number().min(0).max(100),
-    exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
+    exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
+    // 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。pub-digital-cycle.ts。
+    cycle: z.enum(["year", "half_year", "quarter"]).nullable().optional(),
+    startMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
+    payMonthsAfter: z.coerce.number().int().min(1).max(6).nullable().optional()
   }).nullable().optional();
   const publishingTranslationSchema = z.object({
     ratePct: z.coerce.number().min(0).max(100),

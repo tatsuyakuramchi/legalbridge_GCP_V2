@@ -7,6 +7,7 @@ import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
 import { isQuasiMandate } from "../server/conditions/time-settlement.js";
+import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, readDigitalCycle, type DigitalCycle } from "../server/conditions/pub-digital-cycle.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { minorUnitHint, SETTLEMENT_CYCLE_OPTIONS, SETTLEMENT_MODE_OPTIONS } from "./ConditionCreateForm.js";
 import { SETTLEMENT_GRACE_DAYS_DEFAULT } from "../server/conditions/settlement-mode.js";
@@ -127,6 +128,14 @@ export function ConditionEdit(
   const [inPlace, setInPlace] = useState(false);
   const hasPayment = ["payment_planned", "partly_paid", "paid"].includes(detail.settlement?.state ?? "");
   const set = (k: string, value: string) => setV({ ...v, [k]: value });
+  /** 電子書籍の集計のしかた（年 1 回・年 2 回・年 4 回）。支払条件の文と決済の型をまとめて入れる。 */
+  const readCycle = readDigitalCycle(detail.paymentTerms);
+  const [cyc, setCyc] = useState<{ cycle: DigitalCycle; startMonth: number; payMonthsAfter: number }>(
+    readCycle ?? DIGITAL_CYCLE_DEFAULTS.year);
+  const applyCycle = (next: typeof cyc) => {
+    setCyc(next);
+    setV({ ...v, paymentTerms: digitalPaymentTerms(next), settlementMode: "term_bound", settlementCycle: next.cycle });
+  };
 
   useEffect(() => {
     api.get<{ works: Array<{ id: number; title: string }> }>("/works")
@@ -575,6 +584,30 @@ export function ConditionEdit(
             {field("shortfallUnitAmount", "控除単価（1 時間あたり・最小通貨単位）", { type: "number",
               hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" })}
           </>)}
+          {detail.usageType === "pub_digital" && (
+            <div className="field wide">
+              <span>電子書籍の集計のしかた</span>
+              <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <select value={cyc.cycle} aria-label="集計のしかた"
+                        onChange={(e) => { const c = e.target.value as DigitalCycle; applyCycle({ ...DIGITAL_CYCLE_DEFAULTS[c] }); }}>
+                  {DIGITAL_CYCLES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                <select value={cyc.startMonth} aria-label="最初の集計期間の開始月"
+                        onChange={(e) => applyCycle({ ...cyc, startMonth: Number(e.target.value) })}>
+                  {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1} 月始まり</option>)}
+                </select>
+                <select value={cyc.payMonthsAfter} aria-label="支払"
+                        onChange={(e) => applyCycle({ ...cyc, payMonthsAfter: Number(e.target.value) })}>
+                  {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 1 ? "翌月末払い" : n === 2 ? "翌々月末払い" : `${n} か月後の月末払い`}</option>)}
+                </select>
+                <button type="button" className="btn btn-sm" onClick={() => applyCycle(cyc)}>支払条件と決済の型に入れる</button>
+              </div>
+              <small className="faint">
+                {readCycle ? `いまの支払条件は「${DIGITAL_CYCLES.find((c) => c.value === readCycle.cycle)?.label}」と読めます。` : "いまの支払条件は集計のしかたとして読めません。"}
+                選び直すと下の支払条件の文と決済の型（期間で決まる・周期）が入れ替わります。出版条件書の支払の表と計算書の回はこの文に連動します
+              </small>
+            </div>
+          )}
           <label className="field">
             <span>支払条件</span>
             <input list="payment-terms-presets" value={v.paymentTerms}

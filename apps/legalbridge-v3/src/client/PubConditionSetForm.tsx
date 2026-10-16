@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
+import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, type DigitalCycle } from "../server/conditions/pub-digital-cycle.js";
 import { CreateForm } from "./CreateForm.js";
 import { searchParties } from "./SearchSelect.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
@@ -56,6 +57,23 @@ const CONSENT_OPTIONS = [
   { value: "required", label: "要（再許諾先ごとに別途合意）" }
 ];
 
+
+/** 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。 */
+const MONTH_OPTIONS = [{ value: "", label: "（既定）" }, ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} 月` }))];
+const PAY_AFTER_OPTIONS = [{ value: "", label: "（既定）" },
+  ...[1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: n === 1 ? "翌月末" : n === 2 ? "翌々月末" : `${n} か月後の月末` }))];
+const cycleOf = (v: Record<string, string>): DigitalCycle =>
+  (["year", "half_year", "quarter"].includes(v.digitalCycle) ? v.digitalCycle : "year") as DigitalCycle;
+function digitalCycleOf(v: Record<string, string>) {
+  const cycle = cycleOf(v);
+  return {
+    cycle,
+    startMonth: v.digitalStartMonth ? Number(v.digitalStartMonth) : DIGITAL_CYCLE_DEFAULTS[cycle].startMonth,
+    payMonthsAfter: v.digitalPayAfter ? Number(v.digitalPayAfter) : DIGITAL_CYCLE_DEFAULTS[cycle].payMonthsAfter
+  };
+}
+const digitalTermsOf = (v: Record<string, string>) => digitalPaymentTerms(digitalCycleOf(v));
+
 export function PubConditionSetForm(
   { preset, onDone, onCancel }: {
     preset?: Partial<Record<"counterpartyId" | "workId" | "agreementId" | "matterId", string>>;
@@ -78,7 +96,7 @@ export function PubConditionSetForm(
       title="出版の条件を登録（紙・電子）"
       submitLabel="紙・電子の条件を登録する"
       path="/conditions/publishing-set"
-      initial={{ printExclusivity: "non_exclusive", digitalExclusivity: "non_exclusive",
+      initial={{ printExclusivity: "non_exclusive", digitalExclusivity: "non_exclusive", digitalCycle: "year",
                  sublicenseExclusivity: "non_exclusive", transConsent: "covered",
                  taxCategory: "taxable", ...preset }}
       fields={[
@@ -123,6 +141,19 @@ export function PubConditionSetForm(
         { name: "digitalExclusivity", label: "電子 独占区分", type: "select",
           options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "" },
+        // 電子の集計のしかた。支払条件の文（計算書の回・条件書の支払の表が読む）と決済の型がここから決まる。
+        { name: "digitalCycle", label: "電子 集計のしかた", type: "select",
+          options: DIGITAL_CYCLES.map((c) => ({ value: c.value, label: c.label })),
+          visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
+          hint: (v) => `支払条件：${digitalTermsOf(v)}` },
+        { name: "digitalStartMonth", label: "電子 最初の集計期間の開始月", type: "select",
+          options: MONTH_OPTIONS,
+          visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
+          hint: (v) => `空なら ${DIGITAL_CYCLE_DEFAULTS[cycleOf(v)].startMonth} 月` },
+        { name: "digitalPayAfter", label: "電子 支払（集計期間の末日から）", type: "select",
+          options: PAY_AFTER_OPTIONS,
+          visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
+          hint: (v) => `空なら ${DIGITAL_CYCLE_DEFAULTS[cycleOf(v)].payMonthsAfter} か月後の月末` },
         { name: "transPrintRate", label: "翻訳版再許諾 紙 料率（%）", type: "number", placeholder: "50",
           hint: "乙が第三者に翻訳版を出させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
         { name: "transDigitalRate", label: "翻訳版再許諾 電子 料率（%）", type: "number", placeholder: "40",
@@ -194,7 +225,8 @@ export function PubConditionSetForm(
           taxCategory: v.taxCategory, notes: text(v.notes),
           scopes: scopes.length ? scopes : undefined,
           print: print === null ? null : { ratePct: print, exclusivity: v.printExclusivity || null },
-          digital: digital === null ? null : { ratePct: digital, exclusivity: v.digitalExclusivity || null },
+          digital: digital === null ? null : { ratePct: digital, exclusivity: v.digitalExclusivity || null,
+                                               ...digitalCycleOf(v) },
           translationPrint: transPrint === null ? null : translation(transPrint),
           translationDigital: transDigital === null ? null : translation(transDigital)
         };

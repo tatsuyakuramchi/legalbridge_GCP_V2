@@ -131,7 +131,8 @@ export function parsePaymentTerms(text: string | null | undefined): PaymentTerms
   // 「月末締め翌々月20日払い」の "月末締め" を支払日と読んで末日にしてしまう。
   const tail = s.slice(bestEnd);
   // 「末払い」「末日払い」
-  if (/^\s*末\s*日?\s*(締|払|支払)/.test(tail) || /^\s*末\s*$/.test(tail)) {
+  // 「末日までに支払う」（出版の集計期間の書き方）も末日。
+  if (/^\s*末\s*日?\s*(?:(?:まで|迄)\s*に?\s*)?(締|払|支払)/.test(tail) || /^\s*末\s*$/.test(tail)) {
     return { monthsAfter, day: "end" };
   }
   // 「20日払い」「25日支払」

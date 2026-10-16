@@ -188,8 +188,14 @@ export function readPubPaymentTerms(terms: unknown, media: "print" | "digital" |
   const s = text(terms).normalize("NFKC").replace(/\s+/g, "").replace(/~|～/g, "〜");
   if (!s) return null;
   if (media === "digital") {
-    const m = /(?:毎年)?(\d{1,2}月\d{1,2}日〜翌?年?\d{1,2}月(?:\d{1,2}日|末日))を集計期間とし[、,]?(.+?)まで(?:に)?支払/.exec(s);
-    return m ? { period: m[1], pay: m[2] } : null;
+    // 集計期間は 1 つ（年 1 回）でも複数（年 2 回・年 4 回。「及び」「、」でつなぐ）でもよい。
+    const at = s.indexOf("を集計期間とし");
+    if (at < 0) return null;
+    const head = s.slice(0, at);
+    const period = head.includes("毎年") ? head.slice(head.lastIndexOf("毎年") + 2) : head;
+    if (!/^\d{1,2}月\d{1,2}日〜/.test(period)) return null;
+    const pay = /^[、,]?(.+?)まで(?:に)?支払/.exec(s.slice(at + "を集計期間とし".length));
+    return pay ? { period, pay: pay[1] } : null;
   }
   const explicit = /(?:都度|受領した日の)[、,]?(.+?)まで(?:に)?支払/.exec(s);
   if (explicit) return { pay: explicit[1] };

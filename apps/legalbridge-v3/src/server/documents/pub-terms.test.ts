@@ -319,6 +319,8 @@ test("条件明細の支払条件から 電子の集計期間・支払時期、�
   assert.deepEqual(readPubPaymentTerms("都度払い（刊行日を含む月の翌月末日払い）", "print"), { pay: "翌月末日" });
   assert.deepEqual(readPubPaymentTerms("刷部数確定の都度、翌々月20日までに支払う。", "print"), { pay: "翌々月20日" });
   assert.deepEqual(readPubPaymentTerms("乙が再許諾先から対価を受領した日の翌々月末日までに支払う", "translation"), { pay: "翌々月末日" });
+  assert.deepEqual(readPubPaymentTerms("毎年1月1日〜6月30日及び7月1日〜12月31日を集計期間とし、各集計期間の末日の翌々月末日までに支払う。", "digital"),
+    { period: "1月1日〜6月30日及び7月1日〜12月31日", pay: "各集計期間の末日の翌々月末日" });
   assert.equal(readPubPaymentTerms("年2回", "digital"), null);
 });
 
