@@ -307,3 +307,46 @@ test("紙と電子で按分が違う作品：共同著作の行に両方、受�
   assert.equal(payeeRateText({ partyId: 21 }, print), "6%（全体 10%）");
   assert.equal(payeeRateText({ partyId: 21 }, digital), "10%（全体 15%）");
 });
+
+// ---- 支払の表は条件明細の支払条件から ------------------------------------
+
+test("条件明細の支払条件から 電子の集計期間・支払時期、紙・翻訳版の支払時期を読む", async () => {
+  const { readPubPaymentTerms } = await import("./pub-terms.js");
+  assert.deepEqual(readPubPaymentTerms("毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。", "digital"),
+    { period: "7月1日〜翌年6月30日", pay: "10月末日" });
+  assert.deepEqual(readPubPaymentTerms("毎年1月1日～12月31日を集計期間とし、翌年3月末日までに支払う", "digital"),
+    { period: "1月1日〜12月31日", pay: "翌年3月末日" });
+  assert.deepEqual(readPubPaymentTerms("都度払い（刊行日を含む月の翌月末日払い）", "print"), { pay: "翌月末日" });
+  assert.deepEqual(readPubPaymentTerms("刷部数確定の都度、翌々月20日までに支払う。", "print"), { pay: "翌々月20日" });
+  assert.deepEqual(readPubPaymentTerms("乙が再許諾先から対価を受領した日の翌々月末日までに支払う", "translation"), { pay: "翌々月末日" });
+  assert.equal(readPubPaymentTerms("年2回", "digital"), null);
+});
+
+test("紙面の支払の表は条件明細の支払条件に連動し、欄の手入力より勝つ", () => {
+  const conds = [
+    { ...context.conditions[0], usageType: "pub_print", paymentTerms: "都度払い（刊行日を含む月の翌月末日払い）" },
+    { ...context.conditions[1], usageType: "pub_digital", paymentTerms: "毎年1月1日〜12月31日を集計期間とし、翌年3月末日までに支払う。" }
+  ];
+  const ctx = { ...context, conditions: conds };
+  const patch = pubTermsPatch(ctx, { "電子の集計期間": "7月1日〜翌年6月30日", "電子の支払時期": "10月末日" });
+  assert.equal(patch.digitalPeriod, "1月1日〜12月31日");
+  assert.equal(patch.payDigital, "翌年3月末日");
+  assert.equal(patch.payPrint, "翌月末日");
+  assert.equal(patch["電子の集計期間"], "1月1日〜12月31日", "欄も条件明細の値（計算）になる");
+  assert.deepEqual(pubTermsWarnings(ctx).filter((w) => /支払/.test(w.message)), []);
+});
+
+test("支払条件が読めない・食い違うときは警告し、読めなければ欄（空なら既定）で出る", () => {
+  const conds = [
+    { ...context.conditions[1], usageType: "pub_digital", paymentTerms: "年2回払い" },
+    { ...context.conditions[0], id: 5, conditionNo: "CL-X1", usageType: "pub_print", paymentTerms: "都度、翌月末日までに支払う" },
+    { ...context.conditions[2], id: 6, conditionNo: "CL-X2", usageType: "pub_print", paymentTerms: "都度、翌々月末日までに支払う" }
+  ];
+  const ctx = { ...context, conditions: conds };
+  const patch = pubTermsPatch(ctx, { "電子の支払時期": "11月末日" });
+  assert.equal(patch.payDigital, "11月末日", "読めなければ欄の手入力");
+  assert.equal(patch.digitalPeriod, "7月1日〜翌年6月30日", "欄も空なら既定");
+  const messages = pubTermsWarnings(ctx).map((w) => w.message).join("\n");
+  assert.match(messages, /支払の表の語を読めません：CL-2026-00452（年2回払い）/);
+  assert.match(messages, /紙の支払時期が条件明細ごとに違います/);
+});

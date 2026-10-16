@@ -150,13 +150,13 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
     group: "V. 許諾料・支払", noGuess: true,
     helpText: "翻訳版の条件明細があればそちらが使われます。条件明細が無いときだけ、この % で第４条を書きます" },
   { name: "紙の支払時期", label: "紙媒体の支払時期", group: "V. 許諾料・支払", noGuess: true,
-    default: "翌月末日", helpText: "「刷部数確定の都度、◯◯までに支払う」の◯◯" },
+    default: "翌月末日", helpText: "「刷部数確定の都度、◯◯までに支払う」の◯◯。紙の条件明細の支払条件から入る（変えるなら条件明細を直す）" },
   { name: "電子の集計期間", label: "電子書籍の集計期間", group: "V. 許諾料・支払", noGuess: true,
-    default: "7月1日〜翌年6月30日" },
+    default: "7月1日〜翌年6月30日", helpText: "電子の条件明細の支払条件から入る（変えるなら条件明細を直す）" },
   { name: "電子の支払時期", label: "電子書籍の支払時期", group: "V. 許諾料・支払", noGuess: true,
-    default: "10月末日" },
+    default: "10月末日", helpText: "電子の条件明細の支払条件から入る（変えるなら条件明細を直す）" },
   { name: "翻訳版の支払時期", label: "翻訳版の支払時期", group: "V. 許諾料・支払", noGuess: true,
-    default: "翌々月末日", helpText: "「乙が再許諾先から対価を受領した日の◯◯までに」の◯◯" },
+    default: "翌々月末日", helpText: "「乙が再許諾先から対価を受領した日の◯◯までに」の◯◯。翻訳版の条件明細の支払条件から入る" },
 
   { name: "特記事項", label: "特記事項", type: "textarea", group: "VI. 特記事項", noGuess: true,
     default: "本条件書は電子署名により締結し、電磁的記録をもって原本とする。" },
@@ -172,6 +172,70 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
 /** 条件1本の媒体。利用形態（A-027）が先、無ければ範囲の media から。 */
 export const mediaOfCondition = (condition: Data): PubMedia | null =>
   pubMediaOfUsage(condition?.usageType) ?? pubMediaOfScopes(condition?.scopes?.media);
+
+/**
+ * 条件明細の支払条件から、条件書の支払の表に入る語を読む。
+ *
+ * 条件書の表は「毎年{集計期間}を集計期間とし、{支払時期}までに支払う。」（電子）、
+ * 「刷部数確定の都度、{支払時期}までに支払う。」（紙）、「再許諾先から対価を受領した日の
+ * {支払時期}までに」（翻訳版）。条件明細の支払条件は計算書の回と支払期日が読む文なので、
+ * 紙面はそこから写す（別々に持つと、紙面と実際に回す時期が食い違う）。
+ * 読めない書き方なら null（画面の欄に任せ、警告を出す）。
+ */
+export interface PubPaymentTerms { period?: string; pay?: string }
+const MONTH_DAY = /(翌々?月|当月|\d{1,2}月)(末日|\d{1,2}日)/;
+export function readPubPaymentTerms(terms: unknown, media: "print" | "digital" | "translation"): PubPaymentTerms | null {
+  const s = text(terms).normalize("NFKC").replace(/\s+/g, "").replace(/~|～/g, "〜");
+  if (!s) return null;
+  if (media === "digital") {
+    const m = /(?:毎年)?(\d{1,2}月\d{1,2}日〜翌?年?\d{1,2}月(?:\d{1,2}日|末日))を集計期間とし[、,]?(.+?)まで(?:に)?支払/.exec(s);
+    return m ? { period: m[1], pay: m[2] } : null;
+  }
+  const explicit = /(?:都度|受領した日の)[、,]?(.+?)まで(?:に)?支払/.exec(s);
+  if (explicit) return { pay: explicit[1] };
+  const m = MONTH_DAY.exec(s);
+  return m ? { pay: `${m[1]}${m[2]}` } : null;
+}
+
+/**
+ * 載っている条件の支払条件から、紙・電子・翻訳版それぞれの語を 1 つに決める。
+ * 同じ媒体で読めた語が食い違えば、いちばん多いもの（同数なら先の条件）を使い、食い違いを返す。
+ */
+export function pubPaymentFromConditions(conditions: Data[]): {
+  payPrint?: string; digitalPeriod?: string; payDigital?: string; payTranslation?: string;
+  unreadable: string[]; conflicts: string[];
+} {
+  const out: ReturnType<typeof pubPaymentFromConditions> = { unreadable: [], conflicts: [] };
+  const buckets: Record<string, Array<{ no: string; value: string }>> = { payPrint: [], digitalPeriod: [], payDigital: [], payTranslation: [] };
+  for (const c of conditions) {
+    const media = mediaOfCondition(c);
+    if (!media) continue;
+    const kind = isTranslationCondition(c) ? "translation" : media === "digital" ? "digital" : "print";
+    const raw = text(c.paymentTerms);
+    if (!raw) continue;
+    const read = readPubPaymentTerms(raw, kind);
+    const no = text(c.conditionNo) || `#${c.id}`;
+    if (!read) { out.unreadable.push(`${no}（${raw}）`); continue; }
+    if (kind === "digital") {
+      if (read.period) buckets.digitalPeriod.push({ no, value: read.period });
+      if (read.pay) buckets.payDigital.push({ no, value: read.pay });
+    } else if (read.pay) {
+      buckets[kind === "print" ? "payPrint" : "payTranslation"].push({ no, value: read.pay });
+    }
+  }
+  const label: Record<string, string> = { payPrint: "紙の支払時期", digitalPeriod: "電子の集計期間", payDigital: "電子の支払時期", payTranslation: "翻訳版の支払時期" };
+  for (const [key, rows] of Object.entries(buckets)) {
+    if (!rows.length) continue;
+    const counts = new Map<string, number>();
+    for (const r of rows) counts.set(r.value, (counts.get(r.value) ?? 0) + 1);
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    (out as Record<string, unknown>)[key] = best;
+    if (counts.size > 1) {
+      out.conflicts.push(`${label[key]}が条件明細ごとに違います（${rows.map((r) => `${r.no}：${r.value}`).join("、")}）。紙面は「${best}」で出ます`);
+    }
+  }
+  return out;
+}
 
 /** 翻訳版の再許諾か（A-033）。自社出版の紙・電子と分けて畳む。 */
 export const isTranslationCondition = (condition: Data): boolean =>
@@ -345,6 +409,12 @@ export function pubTitleSeeds(context: Data): Data[] {
 export function pubTermsWarnings(context: Data, templateKey: string = PUB_TERMS_KEY): Warning[] {
   const out: Warning[] = [];
   const conditions = list(context.conditions);
+  // 支払の表は条件明細の支払条件から写す。読めない書き方・食い違いは紙面の前に知らせる。
+  const payment = pubPaymentFromConditions(conditions);
+  for (const u of payment.unreadable) {
+    out.push({ kind: "other", message: `条件明細の支払条件から支払の表の語を読めません：${u}。紙面は画面の欄（空なら既定）で出ます。条件明細の支払条件を「毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。」の形にすると連動します` });
+  }
+  for (const c of payment.conflicts) out.push({ kind: "other", message: c });
   for (const condition of conditions) {
     const blocker = rowBlockerOf(condition);
     if (blocker) out.push({ kind: "other", message: `一覧に載せられない条件明細 ${blocker}` });
@@ -448,6 +518,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     return "";
   };
   const conditions = list(context.conditions);
+  const payment = pubPaymentFromConditions(conditions);
   const byId = new Map(conditions.map((c) => [Number(c.id), c]));
   const seeds = pubTitleSeeds(context);
   const rows = list(manual[PUB_TITLES_FIELD]).length ? list(manual[PUB_TITLES_FIELD]) : seeds;
@@ -585,10 +656,16 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     translationLabel,
     translationSellOff: pick("翻訳物の在庫販売期間") || "6か月",
     translationShare: translationShare == null ? "" : percentText(translationShare),
-    payPrint: pick("紙の支払時期") || "翌月末日",
-    digitalPeriod: pick("電子の集計期間") || "7月1日〜翌年6月30日",
-    payDigital: pick("電子の支払時期") || "10月末日",
-    payTranslation: pick("翻訳版の支払時期") || "翌々月末日",
+    // 支払の表は条件明細の支払条件から写す（読めた語が欄の手入力に勝つ）。読めなければ欄、欄も空なら既定。
+    payPrint: payment.payPrint ?? (pick("紙の支払時期") || "翌月末日"),
+    digitalPeriod: payment.digitalPeriod ?? (pick("電子の集計期間") || "7月1日〜翌年6月30日"),
+    payDigital: payment.payDigital ?? (pick("電子の支払時期") || "10月末日"),
+    payTranslation: payment.payTranslation ?? (pick("翻訳版の支払時期") || "翌々月末日"),
+    // 同じ値を欄の名前でも返す。画面の欄が「計算（条件明細から）」になり、手入力で上書きされない。
+    ...(payment.payPrint ? { "紙の支払時期": payment.payPrint } : {}),
+    ...(payment.digitalPeriod ? { "電子の集計期間": payment.digitalPeriod } : {}),
+    ...(payment.payDigital ? { "電子の支払時期": payment.payDigital } : {}),
+    ...(payment.payTranslation ? { "翻訳版の支払時期": payment.payTranslation } : {}),
     specialNotes: pick("特記事項"),
 
     hasBank: Boolean(bank),
