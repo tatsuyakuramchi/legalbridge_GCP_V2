@@ -34,6 +34,12 @@ import { prefixForKind } from "./import-kinds.js";
  * もらってから attachFile でファイルを付けて発行済みにする。
  */
 
+/** 相手から受け取る種類の文書（取込の既定）。当社が出す文書（発注書・検収書・計算書）は含めない。 */
+const INBOUND_KIND = /請求書|発注請書|請書|納品書|見積書|領収書|報告書|受領書/;
+export function isInboundKind(kind: string | null | undefined): boolean {
+  return INBOUND_KIND.test(String(kind ?? ""));
+}
+
 export interface ImportInput {
   /** 文書名。相手方から届いた契約書の題名など。 */
   title: string;
@@ -49,6 +55,11 @@ export interface ImportInput {
   counterpartyDocNo?: string | null;
   /** デイリータスクの依頼。付けると依頼に繋がり、作業の進み具合に数えられる。 */
   requestId?: number | null;
+  /**
+   * 相手から受け取った文書か（A-074）。送付・受領を追わない。空なら種別から決める
+   * （請求書・発注請書・納品書・見積書・領収書・報告書は受け取ったもの）。
+   */
+  inbound?: boolean | null;
   file: { filename: string; mimeType: string; data: Buffer };
 }
 
@@ -240,9 +251,9 @@ export class DocumentImportService {
         const inserted = await client.query(
           `INSERT INTO documents
              (document_no, template_version_id, matter_id, agreement_id, status,
-              manual_inputs, storage_url, issued_at, issued_by, counterparty_doc_no)
+              manual_inputs, storage_url, issued_at, issued_by, counterparty_doc_no, inbound)
            VALUES ($1, NULL, $2, $3, 'issued', $4::jsonb, $5,
-                   COALESCE($6::date, current_date), $7, $8)
+                   COALESCE($6::date, current_date), $7, $8, $9)
            RETURNING id`,
           [documentNo, input.matterId ?? null, input.agreementId ?? null,
            JSON.stringify({
@@ -251,7 +262,8 @@ export class DocumentImportService {
              imported: true
            }),
            stored.webViewLink, input.receivedOn ?? null, actor,
-           String(input.counterpartyDocNo ?? "").trim() || null]);
+           String(input.counterpartyDocNo ?? "").trim() || null,
+           input.inbound ?? isInboundKind(input.documentKind)]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await this.linkConditions(client, id, conditionIds);

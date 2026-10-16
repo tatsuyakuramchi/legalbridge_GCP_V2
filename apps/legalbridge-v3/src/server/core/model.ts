@@ -132,6 +132,8 @@ export interface ConditionDetail extends ConditionSummary {
   settlementCount: number | null;
   settlementCycle: "month" | "quarter" | "half_year" | "year" | null;
   settlementGraceDays: number | null;
+  /** 締めから報告（売上報告・月次報告）の期限までの日数。空なら 30 日（A-074）。 */
+  reportDueDays: number | null;
   notes: string | null;
   /** 仕様・成果物。書類の明細の「仕様・成果物」に出る。 */
   spec: string | null;

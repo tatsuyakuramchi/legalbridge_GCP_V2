@@ -279,11 +279,7 @@ export class MatterRepository {
          LEFT JOIN agreements a ON a.id = d.agreement_id
          -- 送った記録（文書の一覧と同じ引き方）。案件の文書タブで CloudSign の段を出す。
          LEFT JOIN LATERAL (
-           SELECT x.occurred_at AS sent_at, split_part(x.action, '.', 1) AS sent_via
-             FROM audit_events x
-            WHERE x.target_type = 'document' AND x.target_id = d.id
-              AND x.action IN ('gmail.send', 'cloudsign.send')
-            ORDER BY x.occurred_at DESC LIMIT 1
+           SELECT dv.sent_at, dv.sent_via FROM document_delivery(d.id) dv
          ) snd ON true
         WHERE ${where}
         ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, params);

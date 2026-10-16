@@ -47,7 +47,15 @@ export interface DocumentSummary {
   phase: DocumentPhase;
   /** 最後に送った日時と経路。送っていなければ null。 */
   sentAt: string | null;
-  sentVia: "gmail" | "cloudsign" | null;
+  /** gmail / cloudsign / post / hand / email_other / past / other（documents/delivery.ts）。 */
+  sentVia: string | null;
+  /** 相手が受け取ったと確かめた日時と経路（署名済みの控え・返信・CloudSign 締結など）。 */
+  receivedAt: string | null;
+  receivedVia: string | null;
+  /** 過去分（一括で送付済み扱い）。 */
+  past: boolean;
+  /** 相手から受け取った文書（取込）。送付・受領を追わない。 */
+  inbound: boolean;
   /** 一括作成の束。CSV から作った文書だけ持つ。 */
   batchId: number | null;
 }
@@ -100,7 +108,7 @@ const LIST_SELECT = `
   m.matter_no,
   -- この版を差し替えた新しい版。参照は新→旧の向きしか無いので反転して読む。
   nx.id AS superseded_by_id, nx.document_no AS superseded_by_no,
-  snd.sent_at, snd.sent_via,
+  snd.sent_at, snd.sent_via, snd.received_at, snd.received_via, snd.past, d.inbound,
   -- 条件明細は件数ではなく番号で出す。件数だけでは何に紐づくか分からない。
   (SELECT array_agg(json_build_object('id', c.id, 'conditionNo', c.condition_no)
                     ORDER BY dc.line_no)
@@ -128,11 +136,8 @@ const LIST_FROM = `
   ) nx ON true
   -- 送った記録。送信は audit_events に1本で残しているので、そこから最後の1件を引く。
   LEFT JOIN LATERAL (
-    SELECT a.occurred_at AS sent_at, split_part(a.action, '.', 1) AS sent_via
-      FROM audit_events a
-     WHERE a.target_type = 'document' AND a.target_id = d.id
-       AND a.action IN ('gmail.send', 'cloudsign.send')
-     ORDER BY a.occurred_at DESC LIMIT 1
+    SELECT dv.sent_at, dv.sent_via, dv.received_at, dv.received_via, dv.past
+      FROM document_delivery(d.id) dv
   ) snd ON true`;
 
 /** 状態と送信の有無から、人が見る段階を決める。 */
@@ -168,7 +173,11 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     storageUrl: str(row.storage_url),
     phase: phaseOf(String(row.status), row.sent_at),
     sentAt: row.sent_at ? new Date(String(row.sent_at)).toISOString() : null,
-    sentVia: row.sent_via === "gmail" || row.sent_via === "cloudsign" ? row.sent_via : null,
+    sentVia: str(row.sent_via),
+    receivedAt: row.received_at ? new Date(String(row.received_at)).toISOString() : null,
+    receivedVia: str(row.received_via),
+    past: row.past === true,
+    inbound: row.inbound === true,
     batchId: int(row.batch_id)
   };
 }

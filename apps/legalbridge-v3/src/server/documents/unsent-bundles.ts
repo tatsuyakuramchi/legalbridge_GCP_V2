@@ -60,9 +60,8 @@ export class UnsentBundlesService {
            LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
            LEFT JOIN document_templates t ON t.id = tv.template_id
           WHERE d.status = 'issued' AND t.template_key = ANY($1::text[])
-            AND NOT EXISTS (SELECT 1 FROM audit_events a
-                             WHERE a.target_type = 'document' AND a.target_id = d.id
-                               AND a.action IN ('gmail.send', 'cloudsign.send'))
+            AND NOT d.inbound
+            AND (SELECT dv.sent_at FROM document_delivery(d.id) dv) IS NULL
           ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [BUNDLE_TEMPLATE_KEYS])).rows as Array<Record<string, any>>;
       const partyIds = [...new Set(docs.map((d) => d.party_id).filter((x) => x !== null && x !== undefined).map(Number))];
       const parties = partyIds.length ? (await this.database.query(

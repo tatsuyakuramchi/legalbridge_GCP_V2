@@ -211,10 +211,8 @@ const PERIOD_SELECT = `
     LEFT JOIN documents d ON d.id = e.document_id AND d.status <> 'void'
     -- 送った記録（文書の一覧と同じ出どころ）。「③ 送る」が済んだかを見る。
     LEFT JOIN LATERAL (
-      SELECT a.occurred_at AS sent_at FROM audit_events a
-       WHERE a.target_type = 'document' AND a.target_id = d.id
-         AND a.action IN ('gmail.send', 'cloudsign.send')
-       ORDER BY a.occurred_at DESC LIMIT 1
+      -- 送付は document_delivery に 1 本化（A-074。郵送・CloudSign の画面・過去分も数える）。
+      SELECT dv.sent_at FROM document_delivery(d.id) dv
     ) snd ON true
     LEFT JOIN LATERAL (
       SELECT a.amount, a.payment_id FROM payment_allocations a
@@ -252,10 +250,8 @@ const UNPLANNED_SELECT = `
     LEFT JOIN documents d ON d.id = e.document_id AND d.status <> 'void'
     -- 送った記録（文書の一覧と同じ出どころ）。「③ 送る」が済んだかを見る。
     LEFT JOIN LATERAL (
-      SELECT a.occurred_at AS sent_at FROM audit_events a
-       WHERE a.target_type = 'document' AND a.target_id = d.id
-         AND a.action IN ('gmail.send', 'cloudsign.send')
-       ORDER BY a.occurred_at DESC LIMIT 1
+      -- 送付は document_delivery に 1 本化（A-074。郵送・CloudSign の画面・過去分も数える）。
+      SELECT dv.sent_at FROM document_delivery(d.id) dv
     ) snd ON true
     LEFT JOIN LATERAL (
       SELECT a.amount, a.payment_id FROM payment_allocations a

@@ -407,6 +407,8 @@ export interface EconomicsPatch {
   settlementCount?: number | null;
   settlementCycle?: SettlementCycle | null;
   settlementGraceDays?: number | null;
+  /** 締めから報告期限までの日数（A-074）。空なら 30 日。 */
+  reportDueDays?: number | null;
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
@@ -425,7 +427,8 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   settlementMode: "settlement_mode", settlementCount: "settlement_count",
   settlementCycle: "settlement_cycle", settlementGraceDays: "settlement_grace_days",
   timeSettlement: "time_settlement", hoursIncluded: "hours_included",
-  overageUnitAmount: "overage_unit_amount", shortfallUnitAmount: "shortfall_unit_amount"
+  overageUnitAmount: "overage_unit_amount", shortfallUnitAmount: "shortfall_unit_amount",
+  reportDueDays: "report_due_days"
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
@@ -445,7 +448,9 @@ const COPY_COLUMNS = [
   // 決済の型（A-071）。回数を増やす・期間を延ばすのは改訂で行うので、版をまたいで引き継ぐ。
   "settlement_mode", "settlement_count", "settlement_cycle", "settlement_grace_days",
   // 準委任の時間精算（A-073）。
-  "time_settlement", "hours_included", "overage_unit_amount", "shortfall_unit_amount"
+  "time_settlement", "hours_included", "overage_unit_amount", "shortfall_unit_amount",
+  // 報告期限（A-074）。
+  "report_due_days"
 ];
 
 /**

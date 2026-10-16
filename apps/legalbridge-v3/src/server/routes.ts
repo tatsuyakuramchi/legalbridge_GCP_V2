@@ -115,6 +115,7 @@ import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { intakeViewHtml } from "./intake/view-page.js";
 import { WorkbenchPlanService } from "./workbench/plan-service.js";
 import { DealsService } from "./deals/service.js";
+import { PayDocsService } from "./paydocs/service.js";
 import { periodicLines } from "./conditions/write-service.js";
 import { payDateFromTerms } from "./conditions/payment-terms.js";
 import { SETTLEMENT_CYCLE_MONTHS } from "./conditions/settlement-mode.js";
@@ -287,6 +288,80 @@ export function createRoutes(database: Transactable) {
       pattern: q.pattern ?? null,
       documentId: q.documentId ?? null, documentMode: q.documentMode ?? null
     }));
+  }));
+  // 支払文書（A-074）：回ごとの 起点 → 文書 → 送付 → 受領 → 支払 を 1 本の表で。
+  const paydocs = new PayDocsService(database);
+  const idList = z.array(z.coerce.number().int().positive()).min(1).max(500);
+  router.get("/paydocs", asyncRoute(async (req, res) => {
+    const q = z.object({
+      view: z.enum(["todo", "all", "past"]).default("todo"),
+      tile: z.enum(["wait", "make", "draft", "unsent", "await", "overdue", "nopay"]).optional(),
+      trigger: z.enum(["active", "passive"]).optional(),
+      templateKey: z.string().trim().max(60).optional(),
+      month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+      partyId: z.coerce.number().int().positive().optional(),
+      matterId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      conditionId: z.coerce.number().int().positive().optional(),
+      q: z.string().trim().max(100).optional()
+    }).parse(req.query);
+    res.json(await paydocs.list({ ...q, tile: q.tile ?? null, trigger: q.trigger ?? null }));
+  }));
+  router.get("/paydocs/by-work", asyncRoute(async (req, res) => {
+    const { ids } = z.object({ ids: z.string().max(2000) }).parse(req.query);
+    const workIds = ids.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 60);
+    const counts = await paydocs.countsByWork(workIds);
+    res.json({ works: [...counts.entries()].map(([id, c]) => ({ id, ...c })) });
+  }));
+  router.post("/paydocs/sent", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentIds: idList, via: z.string(), on: z.string().optional().nullable(),
+                         memo: z.string().max(500).optional().nullable() }).parse(req.body ?? {});
+    res.json(await paydocs.markSent(b.documentIds, b, actor(res)));
+  }));
+  router.post("/paydocs/sent/clear", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentId: z.coerce.number().int().positive(), reason: z.string().max(500).optional().nullable() })
+      .parse(req.body ?? {});
+    res.json(await paydocs.clearSent(b.documentId, b.reason ?? null, actor(res)));
+  }));
+  router.post("/paydocs/received", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentIds: idList, via: z.string(), on: z.string().optional().nullable(),
+                         memo: z.string().max(500).optional().nullable() }).parse(req.body ?? {});
+    res.json(await paydocs.recordReceipt(b.documentIds, b, actor(res)));
+  }));
+  router.post("/paydocs/received/clear", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentId: z.coerce.number().int().positive(), reason: z.string().max(500).optional().nullable() })
+      .parse(req.body ?? {});
+    res.json(await paydocs.clearReceipt(b.documentId, b.reason ?? null, actor(res)));
+  }));
+  router.post("/paydocs/inbound", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentId: z.coerce.number().int().positive(), inbound: z.boolean() }).parse(req.body ?? {});
+    res.json(await paydocs.setInbound(b.documentId, b.inbound, actor(res)));
+  }));
+  router.get("/paydocs/past", asyncRoute(async (req, res) => {
+    const { cutoff } = z.object({ cutoff: z.string().optional() }).parse(req.query);
+    const preview = await paydocs.pastPreview(cutoff ?? null);
+    res.json({ ...preview, sample: await paydocs.pastSample(preview.cutoff, 30) });
+  }));
+  router.post("/paydocs/past", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ cutoff: z.string().optional().nullable(), receipt: z.boolean().default(true) }).parse(req.body ?? {});
+    res.json(await paydocs.markPast(b, actor(res)));
+  }));
+  router.get("/paydocs/plan-candidates", asyncRoute(async (req, res) => {
+    const q = z.object({ workId: z.coerce.number().int().positive().optional(),
+                         partyId: z.coerce.number().int().positive().optional() }).parse(req.query);
+    res.json({ candidates: await paydocs.planCandidates(q) });
+  }));
+  router.post("/paydocs/plans", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({
+      conditionId: z.coerce.number().int().positive(), plannedOn: z.string(),
+      quantity: z.coerce.number().nonnegative().optional().nullable(), label: z.string().max(200).optional().nullable(),
+      note: z.string().max(500).optional().nullable(), sourceDocumentId: z.coerce.number().int().positive().optional().nullable()
+    }).parse(req.body ?? {});
+    res.json(await paydocs.addPlan(b, actor(res)));
+  }));
+  router.post("/paydocs/plans/:id/drop", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    res.json(await paydocs.dropPlan(id, actor(res)));
   }));
   // 取引管理：条件明細 × 回 を 1 本の表で（予定 → 実績 → 決済文書 → 支払）。
   const deals = new DealsService(database);
@@ -2196,6 +2271,7 @@ export function createRoutes(database: Transactable) {
     orderNo: z.string().trim().max(60).nullable().optional(),
     usageType: usageTypeSchema,
     ...settlementRuleFields,
+    reportDueDays: z.coerce.number().int().min(0).max(366).nullable().optional(),
     // 直接編集のときだけ通る（サービス側で確かめる）。
     kind: z.enum(["license", "product", "service", "expense", "fee"]).optional(),
     pricingModel: z.enum(["fixed", "unit_rate", "revenue_rate", "subscription", "none"]).optional()
@@ -3252,7 +3328,8 @@ export function createRoutes(database: Transactable) {
     note: z.string().trim().max(2000).optional(),
     filename: z.string().trim().max(300).optional(),
     requestId: z.coerce.number().int().positive().optional(),
-    counterpartyDocNo: z.string().trim().max(120).optional()
+    counterpartyDocNo: z.string().trim().max(120).optional(),
+    inbound: z.enum(["0", "1"]).optional()
   });
   router.post("/documents/import",
     requireRole("admin", "legal"), requireWritable,
@@ -3266,6 +3343,7 @@ export function createRoutes(database: Transactable) {
         conditionIds: ids, matterId: q.matterId ?? null, agreementId: q.agreementId ?? null,
         receivedOn: q.receivedOn ?? null, note: q.note ?? null, requestId: q.requestId ?? null,
         counterpartyDocNo: q.counterpartyDocNo ?? null,
+        inbound: q.inbound === undefined ? null : q.inbound === "1",
         file: {
           filename: q.filename ?? q.title,
           mimeType: String(req.headers["content-type"] ?? "").split(";")[0].trim(),

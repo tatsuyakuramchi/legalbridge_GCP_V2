@@ -103,6 +103,7 @@ export function ConditionEdit(
     settlementCount: detail.settlementCount === null ? "" : String(detail.settlementCount),
     settlementCycle: detail.settlementCycle ?? "",
     settlementGraceDays: detail.settlementGraceDays === null ? "" : String(detail.settlementGraceDays),
+    reportDueDays: detail.reportDueDays === null || detail.reportDueDays === undefined ? "" : String(detail.reportDueDays),
     contractForm: detail.contractForm ?? "",
     timeSettlement: detail.timeSettlement ? "1" : "",
     hoursIncluded: detail.hoursIncluded === null || detail.hoursIncluded === undefined ? "" : String(detail.hoursIncluded),
@@ -186,7 +187,8 @@ export function ConditionEdit(
       ["currency", patchText(v.currency, detail.currency)],
       ["targetPartyId", patchInt(v.targetPartyId, detail.targetParty?.id ?? null)],
       ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)],
-      ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")]
+      ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")],
+      ["reportDueDays", patchInt(v.reportDueDays, detail.reportDueDays ?? null)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
 
@@ -650,6 +652,10 @@ export function ConditionEdit(
           {(v.settlementMode === "open" || v.settlementMode === "term_bound") && field("settlementGraceDays", "終了後の猶予（日）", {
             type: "number", placeholder: String(SETTLEMENT_GRACE_DAYS_DEFAULT),
             hint: `終了日の後いつまで回を立ててよいか。空なら ${SETTLEMENT_GRACE_DAYS_DEFAULT} 日` })}
+          {(v.pricingModel === "revenue_rate" || v.timeSettlement === "1"
+            || v.usageType === "sublicense" || v.usageType === "oem") && field("reportDueDays", "報告期限（締めから何日）", {
+            type: "number", placeholder: "30",
+            hint: "売上報告・月次報告が締めから何日で来るはずか。過ぎると支払文書で督促の対象になる。空なら 30 日" })}
           {field("spec", "仕様・成果物", { type: "textarea",
             placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
             hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}

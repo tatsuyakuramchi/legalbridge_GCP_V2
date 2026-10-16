@@ -586,8 +586,7 @@ export class RoyaltyLedgerService {
       const docIds = [...new Set(events.map((e) => e.documentId).filter((x): x is number => !!x))];
       const docs = docIds.length ? (await q.query(
         `SELECT d.id, d.document_no, d.status,
-                EXISTS (SELECT 1 FROM audit_events a WHERE a.target_type = 'document' AND a.target_id = d.id
-                         AND a.action IN ('gmail.send', 'cloudsign.send')) AS sent,
+                (SELECT dv.sent_at IS NOT NULL FROM document_delivery(d.id) dv) AS sent,
                 COALESCE((SELECT sum(s.net_amount) FROM statements s WHERE s.document_id = d.id), 0) AS net
            FROM documents d WHERE d.id = ANY($1::bigint[])`, [docIds])).rows as any[] : [];
       const eventIds = events.map((e) => e.id);

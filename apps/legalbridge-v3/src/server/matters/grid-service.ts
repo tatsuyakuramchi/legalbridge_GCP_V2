@@ -82,9 +82,7 @@ const documentLateral = (alias: string, keys: string, importKinds: string | null
            NULLIF(d.rendered_values ->> 'DELIVERY_DATE', '') AS delivery_on,
            NULLIF(d.rendered_values ->> 'INSPECTION_DATE', '') AS inspection_on,
            NULLIF(d.rendered_values ->> 'PAYMENT_DATE', '') AS payment_on,
-           (SELECT max(a.occurred_at) FROM audit_events a
-             WHERE a.target_type = 'document' AND a.target_id = d.id
-               AND a.action IN ('gmail.send', 'cloudsign.send')) AS sent_at,
+           (SELECT dv.sent_at FROM document_delivery(d.id) dv) AS sent_at,
            -- CloudSign の状態（送った／締結／取下げ）。束の画面に出す。
            ${signStateSql("d.id")} AS sign
       FROM document_conditions dc

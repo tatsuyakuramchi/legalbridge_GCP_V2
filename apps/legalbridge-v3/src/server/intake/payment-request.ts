@@ -371,9 +371,7 @@ export async function loadProgress(
 
   const sent = ids.length
     ? (await q.query(
-        `SELECT min(occurred_at) AS at FROM audit_events
-          WHERE target_type = 'document' AND target_id = ANY($1::bigint[])
-            AND action IN ('gmail.send', 'cloudsign.send')`, [ids])).rows[0] as any
+        `SELECT min(dv.sent_at) AS at FROM unnest($1::bigint[]) AS i(id), document_delivery(i.id) dv`, [ids])).rows[0] as any
     : null;
 
   const pay = ids.length
