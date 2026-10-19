@@ -9,7 +9,9 @@ import { ClosingService, type PeriodRow } from "./service.js";
 import { documentFor, needsReport, notYet } from "./state.js";
 import { loadDistribution, loadShares } from "../royalty/shares.js";
 import type { StatementIssuer } from "../royalty/statement-issue.js";
-import { periodLabel } from "../royalty/annual-closes.js";
+import { roundPeriodLabel } from "../royalty/annual-closes.js";
+
+export { roundPeriodLabel };
 
 /**
  * まとめて締める。
@@ -44,20 +46,6 @@ export interface StatementDocPlan {
   entries: Array<{ conditionId: number; eventIds: number[]; payeePartyId: number | null; period: string | null }>;
   /** 計算書 1 枚の対象期間（載る回の期間をつないだもの）。 */
   periodLabel: string | null;
-}
-
-/**
- * 回の対象期間の呼び名。役務提供期間（集計期間）があれば最初の開始〜最後の終わり
- * （「2025年7月〜2026年6月」）、無ければ回の名前が 1 つに揃っていればそれ。
- * 計算書の対象期間は回で決める。実績の月から導くと、売上の無い月が端にある作品だけ短くなる。
- */
-export function roundPeriodLabel(rows: Array<Pick<PeriodRow, "serviceFrom" | "serviceTo" | "label">>): string | null {
-  if (!rows.length) return null;
-  const froms = rows.map((r) => r.serviceFrom).filter((d): d is string => !!d).sort();
-  const tos = rows.map((r) => r.serviceTo).filter((d): d is string => !!d).sort();
-  if (froms.length === rows.length && tos.length === rows.length) return periodLabel(froms[0]!, tos.at(-1)!);
-  const labels = [...new Set(rows.map((r) => String(r.label ?? "").trim()))];
-  return labels.length === 1 && labels[0] ? labels[0] : null;
 }
 
 /** 締められない理由。preview でも run でも同じ言葉を使う。 */
