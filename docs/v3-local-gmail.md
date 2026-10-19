@@ -1,4 +1,4 @@
-# 予備系（ローカル版）からメール（Gmail）を送る
+# 予備系（ローカル版）からメール（Gmail）を送る・Drive に保存する・CloudSign で送る
 
 本番が止まっている間、予備系で決定した文書を予備系から相手へ送るための設定。
 既定はメールを止めている（`GMAIL_MODE=off`）。使うときだけ開ける。
@@ -138,6 +138,52 @@ docker compose up -d app
 Drive に保存した文書は、本番へ持ち帰ったあともそのリンクのまま使える（ローカルにしか無い
 `/local-files/` のリンクだけが持ち帰りで外される）。戻すときは `DRIVE_STORAGE=local`。
 
+## CloudSign で送る（任意）
+
+既定では予備系から CloudSign へは送らない（`CLOUDSIGN_MODE=off`）。そのときは CloudSign の画面から直接
+送り、文書の「CloudSign の状態を記録」で送った・締結したを手で入れる。予備系から本番と同じ CloudSign の
+アカウントへ署名依頼を作りたいときは、次を足す。
+
+CloudSign は client_id だけでつながる（人のログイン `keys/adc.json` は要らない）。
+
+1. 本番の client_id を読む（Cloud Shell）:
+   ```bash
+   gcloud secrets versions access latest --secret=cloudsign-client-id --project legalbridge-488506
+   ```
+   これは CloudSign のアカウントの鍵なので、`.env` 以外（チャット・メール・リポジトリ）に貼らない。
+
+2. `.env` に足す（`.env.example` の末尾にひな形がある）。まずは **dry_run** で:
+   ```
+   CLOUDSIGN_MODE=dry_run
+   CLOUDSIGN_CLIENT_ID=<1 の値>
+   DISPATCH_ALLOWLIST=<自分のアドレス>
+   READ_ONLY=false
+   ```
+   `CLOUDSIGN_AUTO_SEND` は既定（false）のままにする。CloudSign に下書きができるだけで、相手には
+   届かない。中身を CloudSign の画面で確かめてから、そこで送信する。
+
+3. `docker compose up -d app` → 署名依頼の操作で「検証モードのため送信しません」と宛先・書類が出ること。
+
+4. `CLOUDSIGN_MODE=live` にして上げ直し、自分を署名者にした 1 件で CloudSign に下書きができることを確かめる
+   （確かめたら CloudSign の画面で消す）。問題が無ければ `DISPATCH_ALLOWLIST=` を空にする。
+
+**気をつけること**
+
+- **本番と同じアカウントを使う。** 本番と予備系の両方から同じ文書を送ると、二重に依頼が出る。
+  予備系から送るのは本番が止まっている間だけ。メールと同じく `ops backup-begin` のあとで送る
+  （送った記録が本番へ持ち帰られる）。
+- **締結の知らせ（webhook）は予備系に届かない。** CloudSign は知らせを、アカウントに登録した URL
+  （本番）へ送る。本番が止まっている間の知らせは失われる。次のどちらかで補う。
+  - **手で記録する（勧める）**：相手が締結したら、文書の「CloudSign の状態を記録」で「締結した」と締結日を入れる。
+    本番が戻ってから、止まっていた間に締結したものを CloudSign の画面で見て記録してもよい。
+  - **トンネルで受ける**：`docker compose --profile tunnel up -d` で外からの口を開け、`.env` に
+    `WEBHOOK_TOKEN=<長い乱数>` を足して上げ直す。CloudSign の設定で webhook の URL を一時的に
+    `https://<トンネルのホスト>/internal/webhooks/cloudsign?key=<WEBHOOK_TOKEN>` に替える
+    （`/internal/` は人のログインの外で、合言葉で守る）。Cloudflare Access を掛けているなら、
+    Access 側でも `/internal/webhooks/*` をログインなし（Bypass）にする。
+    **本番が戻ったら、webhook の URL を必ず本番に戻す。**
+- 終わったら `CLOUDSIGN_MODE=off`（`WEBHOOK_TOKEN` も空に）にして `docker compose up -d app`。
+
 ## うまくいかないとき
 
 | 画面・ログに出る言葉 | 見るところ |
@@ -151,6 +197,8 @@ Drive に保存した文書は、本番へ持ち帰ったあともそのリン�
 | `unable to impersonate`（403） | ログインした人に、`DRIVE_IMPERSONATE_SA` の Token Creator が付いていない |
 | `EACCES: permission denied, open '/keys/adc.json'` | app が認証情報を読めない（古い login で作ったファイル）。`docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json` |
 | `invalid_grant`・`reauth related error (invalid_rapt)` | 組織の再認証ポリシーでログインが切れた。ログインし直して写す（下の「ログインし直す」）。app の上げ直しは要らない |
+| CloudSign のトークンを取得できませんでした・CloudSign（401・403） | `CLOUDSIGN_CLIENT_ID` が違う（本番の `cloudsign-client-id` と同じか） |
+| CloudSign には送信する書類が必要です | 文書の PDF ができていない。先に決定して PDF を作る |
 | JWT に署名できませんでした（403…） | 2 の権限がログインした人に付いていない（付けてから数分かかることがある） |
 | 代理トークンを得られませんでした（unauthorized_client） | 署名用 SA が本番と違う（ドメイン全体委任が付いていない SA）。1 の値を見直す |
 

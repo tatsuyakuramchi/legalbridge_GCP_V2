@@ -76,7 +76,7 @@ services:
       DRIVE_IMPERSONATE_SA: ${DRIVE_IMPERSONATE_SA:-}
       LOCAL_FILES_DIR: /data/files
       CHROMIUM_PATH: /usr/bin/chromium-browser
-      # 外部連携は既定で止める（設定しない＝off）。Backlog・Slack・CloudSign は送らない。
+      # 外部連携は既定で止める（設定しない＝off）。Backlog・Slack は送らない。
       SLACK_MODE: "off"
       # メール（Gmail）だけは .env で開けられる（本番停止中に予備系から送るため。
       # docs/v3-local-gmail.md）。既定は off。GOOGLE_APPLICATION_CREDENTIALS は keys/adc.json
@@ -86,7 +86,13 @@ services:
       GMAIL_DELEGATION_SA: ${GMAIL_DELEGATION_SA:-}
       DISPATCH_ALLOWLIST: ${DISPATCH_ALLOWLIST:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GMAIL_ADC_PATH:-}
-      CLOUDSIGN_MODE: "off"
+      # CloudSign も .env で開けられる（docs/v3-local-gmail.md の「CloudSign で送る」）。既定は off。
+      # 締結の知らせ（webhook）は本番に届くので、予備系では手で記録するか、トンネルで受ける。
+      CLOUDSIGN_MODE: ${CLOUDSIGN_MODE:-off}
+      CLOUDSIGN_CLIENT_ID: ${CLOUDSIGN_CLIENT_ID:-}
+      CLOUDSIGN_AUTO_SEND: ${CLOUDSIGN_AUTO_SEND:-false}
+      # 外からの知らせ（webhook）の合言葉。空なら受け口は閉じたまま。
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:-}
       BACKLOG_MODE: "off"
       TZ: Asia/Tokyo
     volumes:

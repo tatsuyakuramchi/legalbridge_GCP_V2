@@ -128,7 +128,7 @@ export class DocumentSendService {
   /**
    * システム外で扱った CloudSign の状態を手で記録する。
    *
-   * 予備系（ローカル）では CloudSign 連携が動かないので、署名依頼は CloudSign の
+   * 予備系（ローカル）で CloudSign 連携を開けていない（既定）ときは、署名依頼は CloudSign の
    * 画面から直接送る。そのままだと「送る」の段が進まず、締結も記録されない。
    * 送信は cloudsign.send、結果は cloudsign.applied として、webhook と同じ形で
    * 監査に残す（manual: true を付ける）。段の導出は変えない。
