@@ -9,7 +9,8 @@ import { joinContactParts } from "./contact-line.js";
  * 契約なしから一括で作った契約書は、通知先が空のまま決定されていた。
  *   - 条件書の第９条 甲（許諾者）：取引先の主担当（個人は本人）。連絡先の無い取引先で空になる
  *   - 条件書の第９条 乙（当社）　：案件の担当者。一括作成は案件が無いので空になる
- *   - 基本契約書の 通知先 担当者・電話・メール：相手先の窓口。人が選ぶ欄で、自動では入らない
+ *   - 基本契約書の 甲の通知先（通知先 担当者・電話・メール）：相手先の窓口。人が選ぶ欄で、自動では入らない
+ *   - 基本契約書の 乙の通知先（STAFF_NAME・STAFF_PHONE・STAFF_EMAIL）：文書の当社担当者。一括作成は担当者が無い
  * 甲・相手先の窓口：個人は本人（主担当がいればその人）。法人は主担当、いなければ代表者（肩書・氏名と
  * 取引先のメール・電話）、代表者も無ければ連絡先の先頭 → 取引先のメール・電話。
  * 乙は画面で選んだ当社の担当者（部署・氏名・メール・電話）。文書の担当者（_ownerStaffId）にもする。
@@ -58,6 +59,7 @@ const CANDIDATES = `
          d.rendered_values->>'通知先担当者' AS notice_name,
          d.rendered_values->>'通知先電話' AS notice_phone,
          d.rendered_values->>'通知先メール' AS notice_email,
+         d.rendered_values->>'STAFF_NAME' AS staff_name,
          COALESCE(CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
                        THEN (d.manual_inputs->>'_payeePartyId')::bigint END,
                   CASE WHEN t.template_key = ANY($2::text[]) THEN a.counterparty_id END,
@@ -73,9 +75,10 @@ const CANDIDATES = `
    WHERE d.status = 'issued' AND t.template_key = ANY($1::text[])
      AND (
        (t.template_key = ANY($2::text[])
-        AND COALESCE(btrim(d.rendered_values->>'通知先担当者'), '') = ''
-        AND COALESCE(btrim(d.rendered_values->>'通知先電話'), '') = ''
-        AND COALESCE(btrim(d.rendered_values->>'通知先メール'), '') = '')
+        AND ((COALESCE(btrim(d.rendered_values->>'通知先担当者'), '') = ''
+              AND COALESCE(btrim(d.rendered_values->>'通知先電話'), '') = ''
+              AND COALESCE(btrim(d.rendered_values->>'通知先メール'), '') = '')
+             OR COALESCE(btrim(d.rendered_values->>'STAFF_NAME'), '') = ''))
        OR (NOT t.template_key = ANY($2::text[])
         AND (COALESCE(btrim(d.rendered_values->>'licensorContact'), '') = ''
              OR COALESCE(btrim(d.rendered_values->>'licenseeContact'), '') = ''))
@@ -107,13 +110,21 @@ export class NoticeFillService {
         const reasons: string[] = [];
         const window = party?.person ?? null;
         if (kind === "master") {
-          if (window) {
+          const masterBlank = blank(r.notice_name) && blank(r.notice_phone) && blank(r.notice_email);
+          if (masterBlank && window) {
             const name = [window.department, window.name].filter(Boolean).join(" ");
             if (name) { patch["通知先担当者"] = name; fills.push({ field: "通知先担当者", label: "通知先 担当者", value: name }); }
             if (window.phone) { patch["通知先電話"] = window.phone; fills.push({ field: "通知先電話", label: "通知先 電話", value: window.phone }); }
             if (window.email) { patch["通知先メール"] = window.email; fills.push({ field: "通知先メール", label: "通知先 メール", value: window.email }); }
           }
-          if (!fills.length) reasons.push("取引先に連絡先（主担当・メール・電話）がありません。取引先の画面で入れてください");
+          if (masterBlank && !fills.length) reasons.push("取引先に連絡先（主担当・メール・電話）がありません。取引先の画面で入れてください");
+          // 乙（当社）の通知先は文書の担当者（STAFF_NAME・STAFF_PHONE・STAFF_EMAIL）。
+          if (blank(r.staff_name)) {
+            if (staff) {
+              patch["_ownerStaffId"] = ownerStaffId;
+              fills.push({ field: "STAFF_NAME", label: "乙（当社）", value: line(staff) });
+            } else reasons.push("乙（当社）の通知先に入れる担当者を選んでください");
+          }
         } else {
           if (blank(r.licensor)) {
             const value = window ? line(window) : "";

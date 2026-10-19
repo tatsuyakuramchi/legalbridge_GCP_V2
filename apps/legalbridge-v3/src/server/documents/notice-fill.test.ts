@@ -43,8 +43,8 @@ test("試算：甲・相手先の窓口は主担当（個人は本人）、乙�
     "被許諾者連絡先": "法務部 ／ 倉持 達也 ／ kura@arclight.test ／ 03-2222-2222",
     _ownerStaffId: 7
   });
-  assert.deepEqual(by.get(902)!.patch, { "通知先担当者": "編集部 編集 花子", "通知先メール": "hanako@otsu.test" },
-    "基本契約書は主担当。請求先ではない");
+  assert.deepEqual(by.get(902)!.patch, { "通知先担当者": "編集部 編集 花子", "通知先メール": "hanako@otsu.test", _ownerStaffId: 7 },
+    "基本契約書の甲は主担当（請求先ではない）。乙（STAFF_NAME）は選んだ担当者");
   assert.equal(by.get(902)!.kind, "master");
   assert.deepEqual(Object.keys(by.get(903)!.patch), ["被許諾者連絡先", "_ownerStaffId"], "入っている甲は触らない");
   assert.equal(by.get(903)!.reuseDraftId, 995);
@@ -94,5 +94,26 @@ test("法人で主担当がいなければ代表者（肩書・氏名と取引�
   const by = new Map(r.targets.map((t) => [t.documentId, t]));
   assert.deepEqual(by.get(905)!.patch, { "通知先担当者": "代表取締役 戊山 太郎", "通知先電話": "03-3333-3333", "通知先メール": "info@bo.test" },
     "請求先の人ではなく代表者");
+  assert.equal(by.get(905)!.skip, null, "乙は担当者を選んでいないので入れない（甲だけで出し直す）");
   assert.equal(by.get(906)!.patch["許諾者連絡先"], "代表取締役 ／ 戊山 太郎 ／ info@bo.test ／ 03-3333-3333");
+});
+
+test("基本契約書：甲は入っていて乙（STAFF_NAME）だけ空なら、担当者を付けて出し直す。選ばなければ出さない", async () => {
+  const database = () => new FakeDatabase((text) => {
+    if (text.includes("rendered_values->>'licensorContact'")) return [
+      { id: 907, document_no: "ARC-PUBM-2026-0032", issued_at: "2026-10-08T03:00:00Z", template_key: "pub_master_individual",
+        notice_name: "作家甲", notice_phone: null, notice_email: "kou@example.test", staff_name: "", party_id: 11, open_draft: null }
+    ];
+    if (text.includes("FROM parties p WHERE p.id = ANY")) return [
+      { id: 11, name: "作家甲", kind: "individual", email: "kou@example.test", phone: null, contacts: [] }
+    ];
+    if (text.includes("FROM staff s WHERE s.id")) return [{ name: "梶原 佳介", email: "k-kaji@arclight.test", department: "出版部", phone: "03-6811-7277" }];
+    return undefined;
+  });
+  const chosen = (await new NoticeFillService(database()).preview(172)).targets[0]!;
+  assert.deepEqual(chosen.patch, { _ownerStaffId: 172 }, "入っている甲は触らない");
+  assert.equal(chosen.fills[0]!.value, "出版部 ／ 梶原 佳介 ／ k-kaji@arclight.test ／ 03-6811-7277");
+  assert.equal(chosen.skip, null);
+  const none = (await new NoticeFillService(database()).preview(null)).targets[0]!;
+  assert.match(none.skip ?? "", /担当者を選んでください/);
 });
