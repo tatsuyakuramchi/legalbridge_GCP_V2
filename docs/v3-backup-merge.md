@@ -56,8 +56,9 @@
    ```powershell
    docker compose up -d --build app
    ```
-4. 予備系で作業する。文書番号は 9000 番台で振られる。メール・CloudSign・Slack は止まっているので、
-   **相手への送付は復旧後に本番から**行う。
+4. 予備系で作業する。文書番号は 9000 番台で振られる。CloudSign・Slack は止まっている。
+   メールは既定で止まっているが、`docs/v3-local-gmail.md` の設定で予備系から送れる
+   （送った記録も持ち帰る）。開けなければ、**相手への送付は復旧後に本番から**行う。
 5. ときどき、書いた変更の数を見る:
    ```powershell
    docker compose run --rm ops backup-status

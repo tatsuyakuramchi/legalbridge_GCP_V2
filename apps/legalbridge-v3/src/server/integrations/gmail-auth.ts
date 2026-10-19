@@ -12,6 +12,9 @@ import { GoogleAuth } from "google-auth-library";
  *     IAM Credentials signJwt で署名し、JWT-bearer で交換する。Cloud Run で鍵を持たない構成でも動く。
  *     要るもの：署名する SA に対する roles/iam.serviceAccountTokenCreator と、
  *     その SA の client_id への Workspace のドメイン全体委任（スコープ）。
+ *   - GCP の外（予備系の PC。メタデータが無い）では、人のログイン（ADC。adcToken）で signJwt を
+ *     呼ぶ。署名する SA は GMAIL_DELEGATION_SA で必ず指定し、ログインした人にその SA の
+ *     Token Creator が要る。組織ポリシーで SA の鍵が作れない環境向け（infra/local）。
  *
  * スコープは用途ごとに分けて求める。委任に無いスコープを混ぜると交換そのものが断られる
  * （送信だけ委任してある SA で読み取りまで求めると、送信も止まる）。
@@ -26,6 +29,11 @@ export interface DelegationOptions {
   keyFilePath?: string;
   /** 署名に使う SA。空なら実行中の SA。 */
   delegationSa?: string;
+  /**
+   * GCP の外で signJwt を呼ぶためのトークン（人のログイン＝ADC）。渡すとメタデータを見ない。
+   * delegationSa が要る（実行中の SA が無いので）。
+   */
+  adcToken?: () => Promise<string>;
   fetchImpl?: typeof fetch;
   now?: () => number;
 }
@@ -57,8 +65,15 @@ export function delegatedToken(options: DelegationOptions): () => Promise<string
       if (!r.ok) throw new Error(`メタデータを読めませんでした（${path}: ${r.status}）`);
       return r.text();
     };
-    const signer = options.delegationSa?.trim() || (await meta("email")).trim();
-    const access = JSON.parse(await meta("token")).access_token as string;
+    let signer: string, access: string;
+    if (options.adcToken) {
+      signer = options.delegationSa?.trim() ?? "";
+      if (!signer) throw new Error("GCP の外で Gmail を使うには GMAIL_DELEGATION_SA（署名に使う SA）が要ります");
+      access = await options.adcToken();
+    } else {
+      signer = options.delegationSa?.trim() || (await meta("email")).trim();
+      access = JSON.parse(await meta("token")).access_token as string;
+    }
     const iat = Math.floor(now() / 1000);
     const payload = JSON.stringify({
       iss: signer, sub: options.sender, scope: options.scope,
@@ -69,7 +84,8 @@ export function delegatedToken(options: DelegationOptions): () => Promise<string
       { method: "POST", headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
         body: JSON.stringify({ payload }) });
     if (!signed.ok) {
-      throw new Error(`JWT に署名できませんでした（${signed.status}。${signer} への Token Creator を確認）：`
+      throw new Error(`JWT に署名できませんでした（${signed.status}。${signer} への Token Creator を確認`
+        + `${options.adcToken ? "。予備系ならログインした人に付ける" : ""}）：`
         + (await signed.text()).slice(0, 200));
     }
     const assertion = (await signed.json() as { signedJwt?: string }).signedJwt;

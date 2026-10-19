@@ -70,14 +70,23 @@ services:
       DRIVE_STORAGE: local
       LOCAL_FILES_DIR: /data/files
       CHROMIUM_PATH: /usr/bin/chromium-browser
-      # 外部連携はすべて止める（設定しない＝off）。Backlog・Slack・メール・CloudSign は送らない。
+      # 外部連携は既定で止める（設定しない＝off）。Backlog・Slack・CloudSign は送らない。
       SLACK_MODE: "off"
-      GMAIL_MODE: "off"
+      # メール（Gmail）だけは .env で開けられる（本番停止中に予備系から送るため。
+      # docs/v3-local-gmail.md）。既定は off。GOOGLE_APPLICATION_CREDENTIALS は keys/adc.json
+      # （docker compose run --rm login で取る人のログイン）を指す。
+      GMAIL_MODE: ${GMAIL_MODE:-off}
+      GMAIL_SENDER: ${GMAIL_SENDER:-}
+      GMAIL_DELEGATION_SA: ${GMAIL_DELEGATION_SA:-}
+      DISPATCH_ALLOWLIST: ${DISPATCH_ALLOWLIST:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GMAIL_ADC_PATH:-}
       CLOUDSIGN_MODE: "off"
       BACKLOG_MODE: "off"
       TZ: Asia/Tokyo
     volumes:
       - ./data:/data
+      # 人のログイン（keys/adc.json）。メールを開けるときだけ使う（GMAIL_ADC_PATH）。
+      - ./keys:/keys:ro
 
   # 社外から使うときの口（Cloudflare Tunnel）。PC から Cloudflare へ外向きにつなぐので、
   # ルーターのポート開放も固定 IP も要らない。普段の up では立たない（profile: tunnel）。

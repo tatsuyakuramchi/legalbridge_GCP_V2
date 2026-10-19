@@ -597,7 +597,7 @@ PC の管理はいっそう厳しくすること。
 docker compose run --rm ops backup-begin    # 記録を始める（写しを入れ直した直後に）
 # .env を READ_ONLY=false にして
 docker compose up -d app
-#   …予備系で作業する（文書番号は 9000 番台。Gmail・CloudSign は止まったまま）…
+#   …予備系で作業する（文書番号は 9000 番台。CloudSign は止まったまま。メールは docs/v3-local-gmail.md で開けられる）…
 docker compose run --rm ops backup-status   # 書いた変更の数
 docker compose run --rm ops backup-export   # 本番が戻ったら、持ち帰る SQL を作る（dumps\merge\）
 #   → Cloud Shell で、試す（check）→ 確定（apply）
@@ -606,6 +606,9 @@ docker compose run --rm ops backup-close merged   # 持ち帰ったら閉じる�
 
 記録を閉じるまでは、`ops sync`・`ops restore`・`ops import-rows` などの写しの入れ直しは
 止まる（予備系で書いた分が消えるため）。
+
+停止中に予備系から相手へメールを送るときは、`docs/v3-local-gmail.md` の設定で Gmail だけ開ける
+（既定は止めてある。記録を始めてから送ると、送った記録も本番へ持ち帰れる）。
 
 ## 復旧したあと
 
