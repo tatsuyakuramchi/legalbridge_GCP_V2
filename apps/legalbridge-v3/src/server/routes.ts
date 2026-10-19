@@ -76,6 +76,7 @@ import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { StatementPeriodReissueService } from "./royalty/statement-reissue.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
+import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner } from "./documents/unsent-send.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { PUB_STATEMENT_KEY, StatementIssuer } from "./royalty/statement-issue.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
@@ -3366,6 +3367,49 @@ export function createRoutes(database: Transactable) {
   router.get("/documents/unsent-bundles", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
     res.json(await unsentBundles.list());
   }));
+
+  // 選んだ相手先へ、相手先ごとに 1 通でまとめて送る（取引先へ。documents/unsent-send.ts）。
+  // 下書き（宛先・件名・本文）を先に見せ、画面が相手先ごとに 1 件ずつ send を呼ぶ（途中で切れない・
+  // 相手先ごとに結果を出す）。/documents/:id/send より先に登録する（unsent-bundles を :id に取られる）。
+  const unsentSend = new UnsentSendPlanner(database);
+  const unsentKinds = z.array(z.enum(["master", "terms", "statement", "other"])).min(1);
+  router.post("/documents/unsent-bundles/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const input = z.object({
+      partyIds: z.array(z.coerce.number().int().positive()).min(1).max(500), kinds: unsentKinds
+    }).parse(req.body ?? {});
+    res.json({ mails: await unsentSend.plan(input.partyIds, input.kinds) });
+  }));
+  router.post("/documents/unsent-bundles/send", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ partyId: z.coerce.number().int().positive(), kinds: unsentKinds }).parse(req.body ?? {});
+      // 送る直前に組み直す（見せたあとに別の画面で送っていれば、その文書は入らない）。
+      const [mail] = await unsentSend.plan([input.partyId], input.kinds);
+      if (!mail) throw new DomainError("NOT_FOUND", "この相手先に未送付の文書がありません（もう送ったか、種類が違います）");
+      if (!mail.to.length) throw new DomainError("VALIDATION", `${mail.partyName}：メールアドレスの登録がありません`);
+      const who = actor(res);
+      const to = mail.to.map((p) => p.email);
+      const cc = mail.cc.map((p) => p.email);
+      const parts: Array<{ documentIds: number[]; documentNos: string[]; outcome: Awaited<ReturnType<typeof dispatch.dispatch>> }> = [];
+      for (let start = 0; start < mail.docs.length; start += UNSENT_PER_MAIL) {
+        const docs = mail.docs.slice(start, start + UNSENT_PER_MAIL);
+        const loaded = [];
+        for (const d of docs) loaded.push(await pdfOf(d.id));
+        const ids = loaded.map((x) => x.document.id);
+        const subject = mail.mails > 1 ? `${mail.subject}（${start / UNSENT_PER_MAIL + 1}/${mail.mails}）` : mail.subject;
+        const outcome = await dispatch.dispatch({
+          channel: "gmail", targetType: "documents", targetId: ids[0]!, actor: who,
+          request: { recipient: to.join(", "), cc, bcc: [], subject, body: mail.body,
+                     attachments: loaded.map((x) => x.attachment) }
+        });
+        if (outcome.sent) {
+          await markSent(ids, "gmail", outcome.externalId ?? null, { subject, to, cc, bcc: [], bulk: true }, who);
+        }
+        parts.push({ documentIds: ids, documentNos: docs.map((d) => d.documentNo ?? `#${d.id}`), outcome });
+        // 止められた（検証モード・読み取り専用・許可リストなど）なら、残りも同じなので打ち切る。
+        if (!outcome.sent && !outcome.duplicated) break;
+      }
+      res.json({ partyId: mail.partyId, partyName: mail.partyName, parts });
+    }));
 
   router.get("/documents/:id", asyncRoute(async (req, res) => {
     const detail = await documents.find(Number(req.params.id));
