@@ -128,9 +128,12 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
     noGuess: true, helpText: "空なら条件明細の終了日のいちばん遅い日。どの条件にも無ければ期間の定めなし" },
   { name: "自動更新", label: "自動更新", type: "select", options: ["する", "しない"],
     group: "IV. 許諾期間・地域・言語", noGuess: true, default: "する" },
-  { name: "更新期間", label: "更新の単位", group: "IV. 許諾期間・地域・言語", noGuess: true, default: "1年" },
+  // 既定（1年・1か月）は本文の側で補う。欄に既定を持たせると、決定のときの最初の束縛で既定が
+  // 入り、条件の更新の単位（3年など）・契約の通知月数の文案が負けていた（一括で作った条件書）。
+  { name: "更新期間", label: "更新の単位", group: "IV. 許諾期間・地域・言語", noGuess: true,
+    helpText: "空なら条件の更新の単位（揃っていれば。3年など）、無ければ1年" },
   { name: "終了通知期限", label: "終了の通知期限（満了の何か月前）", group: "IV. 許諾期間・地域・言語",
-    noGuess: true, default: "1か月", helpText: "契約（合意）に更新通知の月数があればそれが入ります" },
+    noGuess: true, helpText: "契約（合意）に更新通知の月数があればそれが入ります。無ければ1か月" },
   { name: "許諾地域", label: "許諾地域", type: "regions", group: "IV. 許諾期間・地域・言語", noGuess: true,
     helpText: "空なら条件明細の地域。どの条件にも無ければ全世界" },
   { name: "許諾言語", label: "許諾言語", type: "languages", group: "IV. 許諾期間・地域・言語", noGuess: true,
@@ -423,7 +426,29 @@ export function pubTermsSuggestions(context: Data, _bound: Data = {}): Data {
   }
   const months = number(context.agreement?.renewalNoticeMonths);
   if (months) out["終了通知期限"] = `${months}か月`;
+  const unit = renewUnitOf(conditions);
+  if (unit) out["更新期間"] = unit;
   return out;
+}
+
+/** 契約（合意）の更新通知の月数。「3か月」。 */
+const noticeOf = (context: Data): string => {
+  const months = number(context.agreement?.renewalNoticeMonths);
+  return months ? `${months}か月` : "";
+};
+
+/**
+ * 条件の更新の単位（自動更新する条件がみな同じ単位のときだけ）。36 か月なら「3年」。
+ * 許諾期間を入れ直した条件（3 年・3 年ごとに更新）の条件書で、第３条の更新の行が
+ * 既定の「1年」のままにならないように。単位が揃っていなければ空（欄の値か既定）。
+ */
+export function renewUnitOf(conditions: Data[]): string {
+  const units = [...new Set(conditions
+    .filter((c) => c.autoRenew === true && text(c.termEnd))
+    .map((c) => number(c.renewMonths) ?? 12))];
+  if (units.length !== 1) return "";
+  const months = units[0]!;
+  return months % 12 === 0 ? `${months / 12}年` : `${months}か月`;
 }
 
 // ---------------------------------------------------------------------------
@@ -564,8 +589,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     termStart: pick("許諾開始日") || minDate(conditions.map((c) => text(c.termStart))),
     termEnd: pick("許諾終了日") || maxDate(conditions.map((c) => text(c.termEnd))),
     autoRenew,
-    renewPeriod: pick("更新期間") || "1年",
-    noticeBefore: pick("終了通知期限") || "1か月",
+    renewPeriod: pick("更新期間") || renewUnitOf(conditions) || "1年",
+    noticeBefore: pick("終了通知期限") || noticeOf(context) || "1か月",
     region: pick("許諾地域") || "全世界",
     language: pick("許諾言語") || "日本語",
 

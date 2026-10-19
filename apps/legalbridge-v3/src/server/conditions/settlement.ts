@@ -1,3 +1,5 @@
+import { renewalOf } from "./renewal.js";
+
 /**
  * 条件の進み具合（決着）。
  *
@@ -53,6 +55,10 @@ export interface SettlementFacts {
   pricingModel?: string | null;
   flatAmount?: number | null;
   termEnd?: string | null;
+  /** 自動更新（A-039）。更新する条件は、元の終了日を過ぎても更新後の期間の満了までは期間内。 */
+  autoRenew?: boolean | null;
+  renewMonths?: number | null;
+  renewStoppedOn?: string | null;
   eventCount: number;
   plannedAmount: number;
   paidAmount: number;
@@ -79,7 +85,11 @@ export function settlementState(f: SettlementFacts, today = new Date().toISOStri
     return "open";
   }
   if (paid > 0 || planned > 0 || f.eventCount > 0) return "in_progress";
-  if (f.termEnd && f.termEnd < today) return "expired";
+  if (f.termEnd) {
+    const end = renewalOf({ termStart: null, termEnd: f.termEnd, autoRenew: f.autoRenew ?? null,
+                            renewMonths: f.renewMonths ?? null, renewStoppedOn: f.renewStoppedOn ?? null }, today).currentEnd;
+    if (end && end < today) return "expired";
+  }
   return "open";
 }
 
@@ -111,14 +121,21 @@ export const SETTLEMENT_LATERAL_SQL = `
 
 export const SETTLEMENT_COLUMNS = `
   st.event_count, st.delivered_amount, st.planned_amount, st.paid_amount,
-  c.closed_at, c.closed_reason`;
+  c.closed_at, c.closed_reason,
+  c.auto_renew AS st_auto_renew, c.renew_months AS st_renew_months, c.renew_stopped_on AS st_renew_stopped_on`;
+
+const dayOf = (v: unknown): string | null =>
+  v ? String(v instanceof Date ? v.toISOString().slice(0, 10) : v).slice(0, 10) : null;
 
 /** 行（SETTLEMENT_COLUMNS と条件の列）から決着を組む。 */
 export function settlementOf(row: Record<string, any>): ConditionSettlement {
   const closedAt = row.closed_at ? new Date(row.closed_at).toISOString() : null;
   const facts: SettlementFacts = {
     pricingModel: row.pricing_model, flatAmount: row.flat_amount === null ? null : Number(row.flat_amount),
-    termEnd: row.term_end ? String(row.term_end instanceof Date ? row.term_end.toISOString().slice(0, 10) : row.term_end).slice(0, 10) : null,
+    termEnd: dayOf(row.term_end),
+    autoRenew: row.st_auto_renew === true,
+    renewMonths: row.st_renew_months === null || row.st_renew_months === undefined ? null : Number(row.st_renew_months),
+    renewStoppedOn: dayOf(row.st_renew_stopped_on),
     eventCount: Number(row.event_count ?? 0),
     plannedAmount: Number(row.planned_amount ?? 0),
     paidAmount: Number(row.paid_amount ?? 0),

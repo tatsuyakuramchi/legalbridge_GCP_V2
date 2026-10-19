@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, mediaSharesText, payeeRateText, payeeShareText, percentText,
-  pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, rowBlockerOf, sharesText
+  pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, renewUnitOf, rowBlockerOf, sharesText
 } from "./pub-terms.js";
 import { pubMediaOf, pubMediaOfScopes } from "../core/pub-media.js";
 
@@ -110,6 +110,21 @@ test("期間・地域・言語・更新の文案は条件と合意から", () =>
   assert.equal(out["終了通知期限"], "3か月");
 });
 
+test("3 年・3 年ごとに更新を入れた条件なら、第３条の更新の単位も 3 年。作品の行に更新の回数", () => {
+  const renewing = { ...context, conditions: context.conditions.map((c) => ({
+    ...c, termStart: "2018-04-01", termEnd: "2021-03-31", autoRenew: true, renewMonths: 36 })) };
+  assert.equal(renewUnitOf(renewing.conditions), "3年");
+  assert.equal(pubTermsSuggestions(renewing)["更新期間"], "3年");
+  const patch = pubTermsPatch(renewing, { "締結日": "2026-10-19" });
+  assert.equal(patch.renewPeriod, "3年");
+  assert.equal(patch.autoRenew, true);
+  assert.equal((patch.titles as Array<{ term: string }>)[0]!.term, "2018.4.1〜2027.3.31（更新 2回）");
+  // 単位が揃わない・自動更新しないなら決めない（欄の値か既定の 1 年）。
+  assert.equal(renewUnitOf([{ autoRenew: true, termEnd: "2021-03-31", renewMonths: 36 },
+                            { autoRenew: true, termEnd: "2021-03-31", renewMonths: 12 }]), "");
+  assert.equal(renewUnitOf(context.conditions), "");
+});
+
 test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・翻訳版・一覧", () => {
   const patch = pubTermsPatch(context, {
     "締結日": "2026-10-01", "許諾開始日": "2026-10-01", "許諾終了日": "2031-09-30",
@@ -170,9 +185,17 @@ test("翻訳版の欄が空なら翻訳版の行を出さない。署名欄は�
 test("項目の宣言：一覧は array で手入力に回らない。既定値のある欄が揃っている", () => {
   const titles = PUB_TERMS_VARIABLES.find((v) => v.name === PUB_TITLES_FIELD);
   assert.equal(titles?.type, "array");
-  for (const name of ["紙の支払時期", "電子の集計期間", "電子の支払時期", "翻訳版の支払時期", "更新期間", "終了通知期限"]) {
+  for (const name of ["紙の支払時期", "電子の集計期間", "電子の支払時期", "翻訳版の支払時期"]) {
     assert.ok(PUB_TERMS_VARIABLES.find((v) => v.name === name)?.default, name);
   }
+  // 更新の単位・通知期限は欄に既定を持たない（条件・契約の文案が既定に負けないように）。本文が 1年・1か月で補う。
+  for (const name of ["更新期間", "終了通知期限"]) {
+    assert.equal(PUB_TERMS_VARIABLES.find((v) => v.name === name)?.default, undefined, name);
+  }
+  const bare = pubTermsPatch({ ...context, agreement: {} }, {});
+  assert.equal(bare.renewPeriod, "1年");
+  assert.equal(bare.noticeBefore, "1か月");
+  assert.equal(pubTermsPatch(context, {}).noticeBefore, "3か月", "契約の通知月数");
   assert.equal(new Set(PUB_TERMS_VARIABLES.map((v) => v.name)).size, PUB_TERMS_VARIABLES.length, "名前の重複なし");
 });
 

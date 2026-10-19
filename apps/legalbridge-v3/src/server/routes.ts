@@ -75,6 +75,7 @@ import { loadDistribution, loadShares } from "./royalty/shares.js";
 import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { StatementPeriodReissueService } from "./royalty/statement-reissue.js";
 import { IndividualPayDayService } from "./conditions/individual-pay-day.js";
+import { TermDefaultService } from "./conditions/term-default.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner } from "./documents/unsent-send.js";
@@ -769,6 +770,31 @@ export function createRoutes(database: Transactable) {
     }) });
   }));
 
+  // 許諾期間の入っていない条件に「3 年・3 年ごとに自動更新」を入れ、決定済みの条件書を訂正版で出し直す。
+  // 試算してから直す。conditions/term-default.ts。/conditions/:id より前に置く（:id に取られる）。
+  const termDefault = new TermDefaultService(database, {
+    reissue: (id, reason, who) => issues.reissue(id, reason, who),
+    issue: (id, who, extra) => issues.issue(id, who, extra)
+  });
+  router.get("/conditions/term-default", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await termDefault.preview());
+  }));
+  router.post("/conditions/term-default", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(2000) }).parse(req.body ?? {});
+      res.status(201).json(await termDefault.run(input.conditionIds, actor(res)));
+    }));
+  router.get("/conditions/term-default/reissue", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await termDefault.reissueTargets());
+  }));
+  router.post("/conditions/term-default/reissue", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        documentIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        reason: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await termDefault.reissue(input.documentIds, actor(res), input.reason));
+    }));
   /**
    * 条件を CSV で書き出す。見出しは取込（license_conditions）と同じなので、
    * 書き出して直してそのまま取り込める。絞り込みは一覧と同じものを受ける。

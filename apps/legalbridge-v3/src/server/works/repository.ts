@@ -2,6 +2,7 @@ import type { Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import type { RightsEnvelope, ScopeType } from "../core/model.js";
+import { renewalOf } from "../conditions/renewal.js";
 
 export class WorkRepository {
   constructor(private readonly database: Transactable) {}
@@ -25,7 +26,7 @@ export class WorkRepository {
   /** 作品の権利包絡。スカラー次元はビュー、範囲次元は積を取るビューから読む。 */
   async envelope(workId: number): Promise<RightsEnvelope | null> {
     try {
-      const [scalar, scopes] = await Promise.all([
+      const [scalar, scopes, terms] = await Promise.all([
         this.database.query(
           `SELECT work_id, work_code, title, acquired_count, term_limit, term_limited_by,
                   exclusivity_limit, exclusivity_limited_by, sublicensable, sublicense_limited_by
@@ -34,7 +35,12 @@ export class WorkRepository {
           `SELECT scope_type,
                   jsonb_agg(jsonb_build_object('code', code, 'label', label)
                             ORDER BY label) AS values
-             FROM v_work_scope_envelope WHERE work_id = $1 GROUP BY scope_type`, [workId])
+             FROM v_work_scope_envelope WHERE work_id = $1 GROUP BY scope_type`, [workId]),
+        // 期間の上限はビューだと元の終了日のまま。自動更新する取得条件は更新後の期間で数え直す。
+        this.database.query(
+          `SELECT condition_no, term_end, auto_renew, renew_months, renew_stopped_on
+             FROM conditions
+            WHERE work_id = $1 AND direction = 'in' AND status = 'active' AND term_end IS NOT NULL`, [workId])
       ]);
       const row = scalar.rows[0] as Record<string, any> | undefined;
       if (!row) return null;
@@ -43,8 +49,7 @@ export class WorkRepository {
         workCode: str(row.work_code),
         title: String(row.title ?? ""),
         acquiredCount: Number(row.acquired_count ?? 0),
-        termLimit: dateStr(row.term_limit),
-        termLimitedBy: str(row.term_limited_by),
+        ...termLimitOf(terms.rows as Array<Record<string, any>>, dateStr(row.term_limit), str(row.term_limited_by)),
         exclusivityLimit: row.exclusivity_limit ?? null,
         exclusivityLimitedBy: str(row.exclusivity_limited_by),
         sublicensable: row.sublicensable !== false,
@@ -149,4 +154,28 @@ export class WorkRepository {
       partType: String(p.part_type), royaltyBearing: p.royalty_bearing !== false
     }));
   }
+}
+
+/**
+ * 取得条件の期間の上限（最も早く切れるもの）。自動更新する条件は、止めていなければ上限にしない
+ * （更新し続ける）。止めていれば止めた期間の満了日。行が読めなければビューの値のまま。
+ */
+function termLimitOf(rows: Array<Record<string, any>>, viewLimit: string | null, viewBy: string | null):
+  { termLimit: string | null; termLimitedBy: string | null } {
+  if (!Array.isArray(rows)) return { termLimit: viewLimit, termLimitedBy: viewBy };
+  let best: { termLimit: string; termLimitedBy: string | null } | null = null;
+  for (const r of rows) {
+    const termEnd = dateStr(r.term_end);
+    if (!termEnd) continue;
+    const renewing = r.auto_renew === true;
+    const stoppedOn = dateStr(r.renew_stopped_on);
+    if (renewing && !stoppedOn) continue;
+    const end = renewing
+      ? renewalOf({ termStart: null, termEnd, autoRenew: true,
+                    renewMonths: r.renew_months === null || r.renew_months === undefined ? null : Number(r.renew_months),
+                    renewStoppedOn: stoppedOn }, stoppedOn!).currentEnd ?? termEnd
+      : termEnd;
+    if (!best || end < best.termLimit) best = { termLimit: end, termLimitedBy: str(r.condition_no) };
+  }
+  return best ?? { termLimit: null, termLimitedBy: null };
 }
