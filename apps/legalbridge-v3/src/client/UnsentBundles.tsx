@@ -14,7 +14,8 @@ import { RecipientPicker, type Person } from "./RecipientPicker.js";
  * 送っていない扱いで、ここに残る）。担当者の確認が済んだら、相手先へ普通に送る。
  */
 type Kind = "master" | "terms" | "statement" | "other";
-interface Doc { id: number; documentNo: string | null; templateKey: string | null; templateLabel: string | null; kind: Kind; issuedOn: string | null; reviewedAt?: string | null }
+interface Doc { id: number; documentNo: string | null; templateKey: string | null; templateLabel: string | null; kind: Kind; issuedOn: string | null;
+              reviewedAt?: string | null; partyCheckedAt?: string | null }
 interface Bundle { partyId: number; partyName: string; partyKind: string | null; email: string | null; docs: Doc[]; counts: Record<Kind, number> }
 type Channel = { channel: string; mode: "off" | "dry_run" | "live"; configured: boolean };
 const KIND_LABEL: Record<Kind, string> = { master: "基本契約書", terms: "条件書", statement: "計算書", other: "文書" };
@@ -113,6 +114,12 @@ interface PartyMail {
 interface SendPart { documentIds: number[]; documentNos: string[];
   outcome: { sent: boolean; duplicated?: boolean; gate?: { reasons: string[] } } }
 interface PartyResult { partyName: string; ok: boolean; message: string }
+/** まとめ送りの文面。contract_unify は内容確認なので、送っても一覧に残る（返信をもらって CloudSign へ）。 */
+type MailPurpose = "delivery" | "contract_unify";
+const PURPOSES: Array<{ value: MailPurpose; label: string; hint: string }> = [
+  { value: "delivery", label: "送付", hint: "文書の種類に合った送付の文面（計算書・検収書・その他）。送った文書は一覧から消える" },
+  { value: "contract_unify", label: "契約書の統一のご案内", hint: "契約書案を添付し、問題なければ 2 週間以内の返信をお願いする。送っても一覧に残り、返信をもらったら CloudSign で送る" }
+];
 
 /**
  * 選んだ相手先へ、相手先ごとに 1 通でまとめて送る（取引先へ）。宛先・件名・本文は設定の
@@ -127,14 +134,16 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
   const [progress, setProgress] = useState<string | null>(null);
   const [results, setResults] = useState<PartyResult[]>([]);
   const [open, setOpen] = useState<number | null>(null);
+  const [purpose, setPurpose] = useState<MailPurpose>("delivery");
 
   useEffect(() => {
     let live = true;
-    api.post<{ mails: PartyMail[] }>("/documents/unsent-bundles/preview", { partyIds, kinds })
+    setMails(null); setError(null); setResults([]);
+    api.post<{ mails: PartyMail[] }>("/documents/unsent-bundles/preview", { partyIds, kinds, purpose })
       .then((r) => { if (live) setMails(r.mails); })
       .catch((e) => { if (live) setError(e instanceof ApiError ? e.message : String(e)); });
     return () => { live = false; };
-  }, [partyIds.join(","), kinds.join(",")]);
+  }, [partyIds.join(","), kinds.join(","), purpose]);
 
   const ready = (mails ?? []).filter((m) => m.to.length);
   const docCount = ready.reduce((n, m) => n + m.docs.length, 0);
@@ -148,7 +157,7 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
     for (const [i, m] of ready.entries()) {
       setProgress(`${i + 1} / ${ready.length}　${m.partyName}`);
       try {
-        const r = await api.post<{ parts: SendPart[] }>("/documents/unsent-bundles/send", { partyId: m.partyId, kinds });
+        const r = await api.post<{ parts: SendPart[] }>("/documents/unsent-bundles/send", { partyId: m.partyId, kinds, purpose });
         const sent = r.parts.filter((p) => p.outcome.sent).reduce((n, p) => n + p.documentIds.length, 0);
         const dup = r.parts.some((p) => p.outcome.duplicated);
         const blocked = r.parts.find((p) => !p.outcome.sent && !p.outcome.duplicated);
@@ -174,11 +183,27 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={busy} onClick={onClose}>閉じる</button>
       </div>
       <div className="panel-bd stack">
-        <div className="faint">
-          相手先ごとに 1 通（{KIND_LABEL_LIST(kinds)}を全部添付。20 枚を超える相手先は分けて送ります）。宛先は相手先の請求先 → 主担当 →
-          連絡先の全員、Cc は設定の「いつも入れる cc」。件名・本文は運用 → 設定 →「メールの文面」から組んでいます。
-          送った文書はこの一覧から消えます。
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <span className="faint">文面：</span>
+          {PURPOSES.map((p) => (
+            <button key={p.value} className="chip" aria-pressed={purpose === p.value} title={p.hint}
+                    disabled={busy} onClick={() => setPurpose(p.value)}>{p.label}</button>
+          ))}
         </div>
+        {purpose === "delivery" ? (
+          <div className="faint">
+            相手先ごとに 1 通（{KIND_LABEL_LIST(kinds)}を全部添付。20 枚を超える相手先は分けて送ります）。宛先は相手先の請求先 → 主担当 →
+            連絡先の全員、Cc は設定の「いつも入れる cc」。件名・本文は運用 → 設定 →「メールの文面」から組んでいます。
+            送った文書はこの一覧から消えます。
+          </div>
+        ) : (
+          <div className="faint">
+            相手先ごとに 1 通（{KIND_LABEL_LIST(kinds)}を全部添付）で、契約書案の内容確認をお願いします。宛先は相手先の主担当 →
+            連絡先の全員、Cc は設定の「いつも入れる cc」。文面は運用 → 設定 →「メールの文面」の「契約書の統一（書面化）のご案内」。
+            送っても「送付」にはならず、この一覧に「内容確認中」で残ります。返信をもらったら、相手先の「CloudSign」から署名依頼を送ってください。
+            {kinds.some((k) => k === "statement" || k === "other") && "　※ 種類で「基本契約書」「条件書」だけに絞ると、契約書案だけを添付します。"}
+          </div>
+        )}
         {gmailMode !== "live" && (
           <div className="alert">いまメールは{gmailMode === "dry_run" ? "検証モード（送らずに中身だけ確かめる）" : "止めて"}あります。相手先には届きません</div>
         )}
@@ -335,6 +360,7 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
                           : (d.documentNo ?? `#${d.id}`)}
                         {d.issuedOn && <span className="faint">　{d.issuedOn}</span>}
                         {d.reviewedAt && <span className="tag" title={`社内確認で送付 ${d.reviewedAt.slice(0, 16).replace("T", " ")}`}>　社内確認済</span>}
+                        {d.partyCheckedAt && <span className="tag" title={`取引先へ内容確認で送付 ${d.partyCheckedAt.slice(0, 16).replace("T", " ")}。返信をもらったら CloudSign へ`}>　内容確認中</span>}
                       </div>
                     ))}
                   </td>

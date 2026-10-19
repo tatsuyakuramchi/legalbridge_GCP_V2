@@ -76,3 +76,15 @@ test("種類が混ざれば「その他の書類」の文面。連絡先が無�
 test("選んでいない相手先・種類に当たる文書の無い相手先は組まない", async () => {
   assert.deepEqual(await new UnsentSendPlanner(db()).plan([12], ["terms"]), []);
 });
+
+test("契約書の統一のご案内：主担当へ、専用の文面で（請求先より主担当を先に）", async () => {
+  const mails = await new UnsentSendPlanner(db()).plan([11, 13], ["terms"], "contract_unify");
+  const kou = mails.find((m) => m.partyId === 11)!;
+  assert.deepEqual(kou.docs.map((d) => d.id), [3]);
+  assert.deepEqual(kou.to, [{ name: "甲 本人", email: "kou@example.test" }], "内容確認は主担当へ");
+  assert.deepEqual(kou.cc.map((c) => c.email), ["keiri@arclight.test"]);
+  assert.match(kou.subject, /利用許諾契約書（統一書式）のご確認のお願い/);
+  assert.match(kou.body, /^作家甲 様\n/);
+  assert.match(kou.body, /2週間以内/);
+  assert.equal(mails.find((m) => m.partyId === 13), undefined, "条件書の無い相手先は組まない");
+});

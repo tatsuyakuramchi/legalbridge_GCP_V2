@@ -3396,17 +3396,21 @@ export function createRoutes(database: Transactable) {
   // 相手先ごとに結果を出す）。/documents/:id/send より先に登録する（unsent-bundles を :id に取られる）。
   const unsentSend = new UnsentSendPlanner(database);
   const unsentKinds = z.array(z.enum(["master", "terms", "statement", "other"])).min(1);
+  // 文面。contract_unify（契約書の統一のご案内）は内容確認なので、送っても「送付済み」にしない。
+  const unsentPurpose = z.enum(["delivery", "contract_unify"]).default("delivery");
   router.post("/documents/unsent-bundles/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const input = z.object({
-      partyIds: z.array(z.coerce.number().int().positive()).min(1).max(500), kinds: unsentKinds
+      partyIds: z.array(z.coerce.number().int().positive()).min(1).max(500), kinds: unsentKinds, purpose: unsentPurpose
     }).parse(req.body ?? {});
-    res.json({ mails: await unsentSend.plan(input.partyIds, input.kinds) });
+    res.json({ mails: await unsentSend.plan(input.partyIds, input.kinds, input.purpose) });
   }));
   router.post("/documents/unsent-bundles/send", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const input = z.object({ partyId: z.coerce.number().int().positive(), kinds: unsentKinds }).parse(req.body ?? {});
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(), kinds: unsentKinds, purpose: unsentPurpose
+      }).parse(req.body ?? {});
       // 送る直前に組み直す（見せたあとに別の画面で送っていれば、その文書は入らない）。
-      const [mail] = await unsentSend.plan([input.partyId], input.kinds);
+      const [mail] = await unsentSend.plan([input.partyId], input.kinds, input.purpose);
       if (!mail) throw new DomainError("NOT_FOUND", "この相手先に未送付の文書がありません（もう送ったか、種類が違います）");
       if (!mail.to.length) throw new DomainError("VALIDATION", `${mail.partyName}：メールアドレスの登録がありません`);
       const who = actor(res);
@@ -3424,7 +3428,9 @@ export function createRoutes(database: Transactable) {
           request: { recipient: to.join(", "), cc, bcc: [], subject, body: mail.body,
                      attachments: loaded.map((x) => x.attachment) }
         });
-        if (outcome.sent) {
+        if (outcome.sent && input.purpose === "contract_unify") {
+          await markPartyChecked(ids, outcome.externalId ?? null, { subject, to, cc, bulk: true, purpose: input.purpose }, who);
+        } else if (outcome.sent) {
           await markSent(ids, "gmail", outcome.externalId ?? null, { subject, to, cc, bcc: [], bulk: true }, who);
         }
         parts.push({ documentIds: ids, documentNos: docs.map((d) => d.documentNo ?? `#${d.id}`), outcome });
@@ -4768,6 +4774,28 @@ export function createRoutes(database: Transactable) {
           idempotencyKey: `${action}:multi:${externalId ?? "none"}:${id}`,
           detail: { ...detail, externalId, documentIds: ids, partOfBundle: ids.length > 1,
                     ...(draft ? { draft: true } : {}) }
+        });
+      }
+    });
+  };
+
+  /**
+   * 取引先へ内容確認として送ったことを、文書ごとに記録する（gmail.party_check）。
+   *
+   * 契約書の統一のご案内のように、契約書案を送って返信をもらってから CloudSign で締結する
+   * もの。相手先には届いているが「送付」ではないので gmail.send にはしない（未送付の一覧に残り、
+   * 返信をもらったらそこから CloudSign で送る）。送る画面の「内容確認のメール」の段は済になる。
+   */
+  const markPartyChecked = async (
+    ids: number[], externalId: string | null, detail: Record<string, unknown>, who: string
+  ) => {
+    await inTransaction(database, async (client) => {
+      for (const id of ids) {
+        await recordAudit(client, {
+          actor: who, action: "gmail.party_check", targetType: "document", targetId: id,
+          idempotencyKey: `gmail.party_check:${externalId ?? "none"}:${id}`,
+          detail: { ...detail, recipient: (detail.to as string[] | undefined)?.join(", ") ?? null,
+                    externalId, documentIds: ids }
         });
       }
     });

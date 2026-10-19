@@ -197,3 +197,12 @@ test("社内確認として担当者に送った（gmail.review）だけなら�
   await new DocumentSendService(db).timeline(5);
   assert.match(db.find("FROM audit_events")!.text, /'gmail\.review'/, "社内確認の記録も読む");
 });
+
+test("取引先へ内容確認で送った（gmail.party_check。契約書の統一のまとめ送り）なら、内容確認のメールは済。次は CloudSign（メールで送ったときと同じ）", async () => {
+  const t = await new DocumentSendService(build([
+    ev("gmail.party_check", "2026-10-19T00:00:00Z", { recipient: "kou@example.test", bulk: true })
+  ])).timeline(5);
+  assert.equal(t.steps[0].done, true);
+  assert.match(t.steps[0].detail, /kou@example\.test へ内容確認で送付/);
+  assert.equal(t.current?.key, "cloudsign");
+});

@@ -63,7 +63,7 @@ export class DocumentSendService {
       const r = await this.database.query(
         `SELECT occurred_at, action, actor, detail FROM audit_events
           WHERE (target_type = 'document' AND target_id = $1
-                 AND action IN ('gmail.send', 'gmail.review', 'gmail.blocked', 'document.confirmed', 'cloudsign.send', 'cloudsign.draft', 'cloudsign.blocked'))
+                 AND action IN ('gmail.send', 'gmail.review', 'gmail.party_check', 'gmail.blocked', 'document.confirmed', 'cloudsign.send', 'cloudsign.draft', 'cloudsign.blocked'))
              OR (action = 'cloudsign.applied' AND (detail->>'documentId')::bigint = $1)
           ORDER BY occurred_at, id`, [documentId]);
       const events: SendEvent[] = r.rows.map((e: Record<string, any>) => ({
@@ -73,6 +73,8 @@ export class DocumentSendService {
 
       const last = (action: string) => [...events].reverse().find((e) => e.action === action) ?? null;
       const mail = last("gmail.send");
+      // 取引先へ内容確認として送ったもの（契約書の統一のご案内のまとめ送り）。相手には届いている。
+      const partyCheck = last("gmail.party_check");
       // 社内確認として担当者に送ったもの（gmail.review）。相手には送っていないので段は進めない。
       const review = last("gmail.review");
       const confirmed = last("document.confirmed");
@@ -86,9 +88,12 @@ export class DocumentSendService {
       const needsExecution = isTerms || Boolean(doc.agreement_id);
 
       const steps: SendStep[] = [
-        { key: "mail", name: "内容確認のメール", done: mail !== null, at: mail?.at ?? null, optional: true,
+        { key: "mail", name: "内容確認のメール", done: mail !== null || partyCheck !== null,
+          at: mail?.at ?? partyCheck?.at ?? null, optional: true,
           detail: mail
             ? `${String(mail.detail.recipient ?? "")} へ送付（${mail.actor}）`
+            : partyCheck
+              ? `${String(partyCheck.detail.recipient ?? "")} へ内容確認で送付（${partyCheck.actor}）。返信をもらったら「相手の確認」を記録して CloudSign へ`
             : review
               ? `社内確認で ${String(review.detail.recipient ?? "")} へ送付済み（${review.actor}）。相手先にはまだ送っていない`
               : "任意。飛ばして CloudSign へ行ける" },
@@ -117,7 +122,7 @@ export class DocumentSendService {
       // 次にやる段。何も送っていなければ、まず内容確認のメール（任意だが、順番どおりに案内する。
       // 以前は CloudSign を「いま」にしていたので、メールを先に送るつもりの人が戸惑った）。
       // 何か 1 つでも進んでいれば「必須で済んでいない最初」。締結は合意に繋がる文書だけ。
-      const nothingYet = !mail && !confirmed && !sign && !drafted;
+      const nothingYet = !mail && !partyCheck && !confirmed && !sign && !drafted;
       const current = nothingYet ? steps[0]
         : steps.find((s) => !s.done && !s.optional)
           ?? (steps.every((s) => s.done || s.optional) && needsExecution && !steps[3].done ? steps[3] : null);

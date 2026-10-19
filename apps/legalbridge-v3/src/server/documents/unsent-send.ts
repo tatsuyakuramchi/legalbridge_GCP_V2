@@ -19,8 +19,16 @@ import { UnsentBundlesService, type UnsentBundle, type UnsentKind } from "./unse
  *     検収書の送付、混ざれば「その他の書類の送付」。文書番号・金額は文書ごとに「・」でつなぐ
  *   - 1 通に添付するのは 20 枚まで。超える相手先は分けて送る
  *
+ * 文面（purpose）:
+ *   - delivery（既定）… 上の送付の文面。送ったら「送付済み」（gmail.send）になり一覧から消える
+ *   - contract_unify … 「契約書の統一（書面化）のご案内」。契約書案を添付して内容確認をお願いする。
+ *     宛先は主担当 → 連絡先の全員 → 相手先のメール（文書の「取引先への内容確認」と同じ順）。
+ *     送っても「送付」にはしない（gmail.party_check）。返信をもらったら、同じ一覧から CloudSign で送る
+ *
  * 下書きを返すだけで送らない。送るのは routes（/documents/unsent-bundles/send）。
  */
+
+export type UnsentMailPurpose = "delivery" | "contract_unify";
 
 export const PER_MAIL = 20;
 
@@ -43,7 +51,7 @@ type Person = { name: string | null; email: string };
 export class UnsentSendPlanner {
   constructor(private readonly database: Queryable) {}
 
-  async plan(partyIds: number[], kinds: UnsentKind[]): Promise<PartyMail[]> {
+  async plan(partyIds: number[], kinds: UnsentKind[], purpose: UnsentMailPurpose = "delivery"): Promise<PartyMail[]> {
     try {
       const { bundles } = await new UnsentBundlesService(this.database).list();
       const wanted = new Set(partyIds.map(Number));
@@ -78,21 +86,22 @@ export class UnsentSendPlanner {
            FROM parties p WHERE p.id = ANY($1::bigint[])`, [picked.map((b) => b.partyId)])).rows as Array<Record<string, any>>;
       const partyOf = new Map(partyRows.map((r) => [Number(r.id), r]));
 
-      return picked.map((b) => this.mailOf(b, docOf, partyOf.get(b.partyId), templates, company));
+      return picked.map((b) => this.mailOf(b, docOf, partyOf.get(b.partyId), templates, company, purpose));
     } catch (error) { throw translate(error); }
   }
 
   private mailOf(
     b: UnsentBundle, docOf: Map<number, Record<string, any>>, party: Record<string, any> | undefined,
-    templates: ReturnType<typeof readMailTemplates>, company: string
+    templates: ReturnType<typeof readMailTemplates>, company: string, purpose: UnsentMailPurpose
   ): PartyMail {
     const warnings: string[] = [];
     const contacts = (Array.isArray(party?.contacts) ? party!.contacts : []) as Array<{ name: string | null; email: string; roles: unknown }>;
     const withRole = (role: string) => contacts
       .filter((c) => Array.isArray(c.roles) && (c.roles as unknown[]).map(String).includes(role))
       .map((c) => ({ name: str(c.name), email: String(c.email).trim() }));
-    let to: Person[] = withRole("billing");
-    if (!to.length) to = withRole("primary");
+    // 送付は請求先から、内容確認（契約書の統一）は主担当から。
+    let to: Person[] = purpose === "contract_unify" ? withRole("primary") : withRole("billing");
+    if (!to.length && purpose === "delivery") to = withRole("primary");
     if (!to.length) to = contacts.map((c) => ({ name: str(c.name), email: String(c.email).trim() }));
     if (!to.length && str(party?.email)) to = [{ name: null, email: String(party!.email).trim() }];
     to = to.filter((p, i, all) => all.findIndex((x) => x.email.toLowerCase() === p.email.toLowerCase()) === i);
@@ -103,7 +112,8 @@ export class UnsentSendPlanner {
 
     const rows = b.docs.map((d) => docOf.get(d.id)).filter((r): r is Record<string, any> => Boolean(r));
     const kinds = [...new Set(rows.map((r) => deliveryKindOf(str(r.template_key))))];
-    const kind: MailTemplateKind = kinds.length === 1 ? kinds[0]! : "general";
+    const kind: MailTemplateKind = purpose === "contract_unify" ? "contract_unify"
+      : kinds.length === 1 ? kinds[0]! : "general";
     const numberOf = (r: Record<string, any>) => r.document_no
       ? printedDocumentNumber(String(r.document_no), showRevisionOf({ _showRevision: r.show_revision })) : `#${r.id}`;
     const amounts = rows.map((r) => amountOf((r.rendered_values ?? {}) as Record<string, unknown>));

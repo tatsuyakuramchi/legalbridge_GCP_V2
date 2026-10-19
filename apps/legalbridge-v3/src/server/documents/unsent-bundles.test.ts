@@ -45,5 +45,6 @@ test("社内確認として担当者に送った文書（gmail.review）は未�
     [["ARC-PUBT-2026-1028", null], ["ARC-ROY-2026-1021", "2026-10-08T05:00:00.000Z"]]);
   const sql = db.find("JOIN v_document_display v")!.text;
   assert.match(sql, /action = 'gmail\.review'/);
+  assert.match(sql, /action = 'gmail\.party_check'/, "取引先への内容確認（契約書の統一）も読む。未送付のまま残す");
   assert.match(sql, /a\.action IN \('gmail\.send', 'cloudsign\.send'\)/, "未送付の判定は相手先へ送った記録だけ");
 });
