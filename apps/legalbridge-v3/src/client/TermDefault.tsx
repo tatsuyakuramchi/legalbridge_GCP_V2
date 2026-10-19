@@ -18,6 +18,8 @@ interface Target {
 interface DocTarget {
   documentId: number; documentNo: string | null; partyName: string | null;
   issuedOn: string | null; conditions: number; skip: string | null;
+  /** 前に決定に失敗して残った、この出し直しの下書き。作り直さずにこれを決定する。 */
+  reuseDraftId: number | null;
 }
 interface DocResult {
   documentId: number; documentNo: string | null; status: "reissued" | "skipped" | "error";
@@ -173,7 +175,10 @@ export function TermDefault() {
                     <td className="code">{d.documentNo ?? `#${d.documentId}`}</td>
                     <td>{d.issuedOn ?? "—"}</td>
                     <td className="num">{d.conditions}</td>
-                    <td>{d.skip && <span className="tag warn">{d.skip}</span>}</td>
+                    <td>
+                      {d.skip && <span className="tag warn">{d.skip}</span>}
+                      {d.reuseDraftId && <span className="faint">前に残った訂正版の下書き（#{d.reuseDraftId}）を決定します</span>}
+                    </td>
                   </tr>
                 ))}
                 {!docs.length && <tr><td colSpan={6} className="faint">出し直す条件書はありません</td></tr>}

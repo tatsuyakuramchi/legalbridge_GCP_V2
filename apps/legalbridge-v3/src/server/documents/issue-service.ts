@@ -517,7 +517,8 @@ export class DocumentIssueService {
         const auto = await ensureAgreementForTerms(client, {
           documentId, documentNo, templateKey: template.templateKey, templateLabel: template.label,
           conditionIds, agreementId: payeeId ? null : int(row.agreement_id), issuedOn,
-          payeePartyId: payeeId, parentAgreementId: payeeId ? int(row.agreement_id) : null
+          payeePartyId: payeeId, parentAgreementId: payeeId ? int(row.agreement_id) : null,
+          revision: Boolean(int(row.supersedes_id))
         }, actor);
 
         await recordAudit(client, {

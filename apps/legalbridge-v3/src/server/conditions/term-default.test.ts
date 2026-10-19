@@ -19,7 +19,10 @@ const db = () => new FakeDatabase((text) => {
   ];
   if (text.includes("condition.term_default") && text.includes("FROM documents d")) return [
     { id: 901, document_no: "ARC-PUBT-2026-1001", issued_at: "2026-10-01T03:00:00Z", party_name: "作家甲", conditions: 1, open_draft: null },
-    { id: 902, document_no: "ARC-PUBT-2026-1003", issued_at: "2026-10-02T03:00:00Z", party_name: "作家丙", conditions: 2, open_draft: 990 }
+    { id: 902, document_no: "ARC-PUBT-2026-1003", issued_at: "2026-10-02T03:00:00Z", party_name: "作家丙", conditions: 2, open_draft: 990,
+      open_draft_reason: "人が直している" },
+    { id: 904, document_no: "ARC-PUBT-2026-1004", issued_at: "2026-10-02T03:00:00Z", party_name: "作家丁", conditions: 1, open_draft: 995,
+      open_draft_reason: "許諾期間（3年・3年ごとの自動更新）を記載する" }
   ];
   return undefined;
 });
@@ -44,7 +47,7 @@ test("直す：終了日・自動更新・3 年ごとを入れ、監査に残す
   assert.equal(audit.params[1], "condition.term_default");
 });
 
-test("出し直す：訂正版の下書きを作って元の決定日で決定する。下書きが開いている条件書は飛ばす", async () => {
+test("出し直す：訂正版の下書きを作って元の決定日で決定する。人の下書きが開いている条件書は飛ばし、前に失敗して残った自分の下書きは決定し直す", async () => {
   const calls: Array<[string, number, unknown]> = [];
   const issuer = {
     reissue: async (id: number, reason: string) => { calls.push(["reissue", id, reason]); return { id: id + 1000 }; },
@@ -52,10 +55,11 @@ test("出し直す：訂正版の下書きを作って元の決定日で決定�
       calls.push(["issue", id, extra?.issuedOn]); return { documentNo: "ARC-PUBT-2026-1001-R2" };
     }
   };
-  const r = await new TermDefaultService(db(), issuer).reissue([901, 902, 903], "tester");
-  assert.equal(r.reissued, 1);
-  assert.deepEqual(calls, [["reissue", 901, "許諾期間（3年・3年ごとの自動更新）を記載する"], ["issue", 1901, "2026-10-01"]]);
-  assert.deepEqual(r.results.map((x) => [x.documentId, x.status]), [[901, "reissued"], [902, "skipped"], [903, "skipped"]]);
+  const r = await new TermDefaultService(db(), issuer).reissue([901, 902, 903, 904], "tester");
+  assert.equal(r.reissued, 2);
+  assert.deepEqual(calls, [["reissue", 901, "許諾期間（3年・3年ごとの自動更新）を記載する"], ["issue", 1901, "2026-10-01"],
+                           ["issue", 995, "2026-10-02"]]);
+  assert.deepEqual(r.results.map((x) => [x.documentId, x.status]), [[901, "reissued"], [902, "skipped"], [903, "skipped"], [904, "reissued"]]);
   assert.equal(r.results[0]!.newDocumentNo, "ARC-PUBT-2026-1001-R2");
   assert.match(r.results[1]!.message ?? "", /訂正版の下書き（#990）/);
 });

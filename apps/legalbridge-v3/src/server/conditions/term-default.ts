@@ -54,6 +54,11 @@ export interface ReissueTarget {
   conditions: number;
   /** 訂正版の下書きが開いているなど、出し直せない理由。 */
   skip: string | null;
+  /**
+   * この出し直しが前に作って、決定に失敗したまま残った訂正版の下書き。作り直さずにこれを決定する。
+   * 人が作った訂正版の下書き（理由が違う）は触らない（skip）。
+   */
+  reuseDraftId: number | null;
 }
 
 export interface ReissueResult {
@@ -96,13 +101,16 @@ const CANDIDATES = `
 const REISSUE_CANDIDATES = `
   SELECT d.id, d.document_no, d.issued_at, p.name AS party_name,
          count(DISTINCT dc.condition_id)::int AS conditions,
-         (SELECT x.id FROM documents x WHERE x.supersedes_id = d.id AND x.status = 'draft' LIMIT 1) AS open_draft
+         (SELECT x.id FROM documents x WHERE x.supersedes_id = d.id AND x.status = 'draft' ORDER BY x.id LIMIT 1) AS open_draft,
+         (SELECT x.supersede_reason FROM documents x WHERE x.supersedes_id = d.id AND x.status = 'draft' ORDER BY x.id LIMIT 1) AS open_draft_reason
     FROM documents d
     JOIN document_template_versions tv ON tv.id = d.template_version_id
     JOIN document_templates t ON t.id = tv.template_id
     JOIN document_conditions dc ON dc.document_id = d.id
     JOIN conditions c ON c.id = dc.condition_id
-    LEFT JOIN parties p ON p.id = c.counterparty_id
+    -- 受取人（共著の取り分）宛ての条件書は受取人の名前。
+    LEFT JOIN parties p ON p.id = COALESCE(CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
+                                                THEN (d.manual_inputs->>'_payeePartyId')::bigint END, c.counterparty_id)
    WHERE d.status = 'issued' AND t.template_key = ANY($1::text[])
      AND EXISTS (SELECT 1 FROM audit_events a
                   WHERE a.target_type = 'condition' AND a.target_id = dc.condition_id
@@ -119,6 +127,13 @@ export function termEndFrom(start: string, months = DEFAULT_TERM_MONTHS): string
 }
 
 export const DEFAULT_REISSUE_REASON = "許諾期間（3年・3年ごとの自動更新）を記載する";
+
+/** 開いている訂正版の下書き。この出し直しが作ったもの（理由が同じ）なら使い回し、人のものなら飛ばす。 */
+function draftOf(r: Record<string, any>): { skip: string | null; reuseDraftId: number | null } {
+  if (!r.open_draft) return { skip: null, reuseDraftId: null };
+  if (str(r.open_draft_reason) === DEFAULT_REISSUE_REASON) return { skip: null, reuseDraftId: Number(r.open_draft) };
+  return { skip: `訂正版の下書き（#${r.open_draft}）が開いています。それを決定するか捨ててください`, reuseDraftId: null };
+}
 
 export class TermDefaultService {
   constructor(
@@ -161,7 +176,7 @@ export class TermDefaultService {
         targets: rows.map((r) => ({
           documentId: Number(r.id), documentNo: str(r.document_no), partyName: str(r.party_name),
           issuedOn: dateStr(r.issued_at), conditions: Number(r.conditions ?? 0),
-          skip: r.open_draft ? `訂正版の下書き（#${r.open_draft}）が開いています。それを決定するか捨ててください` : null
+          ...draftOf(r)
         }))
       };
     } catch (error) { throw translate(error); }
@@ -185,7 +200,7 @@ export class TermDefaultService {
       }
       if (t.skip) { results.push({ documentId: id, documentNo: t.documentNo, status: "skipped", message: t.skip }); continue; }
       try {
-        const draft = await this.issuer.reissue(id, why, actor);
+        const draft = t.reuseDraftId ? { id: t.reuseDraftId } : await this.issuer.reissue(id, why, actor);
         const issued = await this.issuer.issue(draft.id, actor, { issuedOn: t.issuedOn });
         results.push({ documentId: id, documentNo: t.documentNo, status: "reissued",
                        newDocumentId: draft.id, newDocumentNo: issued.documentNo ?? null });

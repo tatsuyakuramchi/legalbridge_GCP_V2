@@ -38,6 +38,11 @@ export interface AutoAgreementInput {
    */
   payeePartyId?: number | null;
   parentAgreementId?: number | null;
+  /**
+   * 訂正版の決定か。受取人宛ての訂正版は、前の版の決定で文書の合意が補助文書（または単体契約）に
+   * 差し替わったものを引き継ぐ。そのときはその合意をそのまま使う（新しい合意を立てない）。
+   */
+  revision?: boolean;
 }
 
 export interface AutoAgreementResult {
@@ -82,6 +87,9 @@ export async function ensureAgreementForTerms(
         throw new DomainError("VALIDATION", "選んだ基本契約は受取人の契約ではありません。受取人の基本契約を選んでください");
       }
       if (String(p.kind ?? "master") !== "master") {
+        // 訂正版：前の版で立てた受取人との合意（補助文書・単体契約）を引き継いでいる。それを使い続ける
+        // （受取人宛てでない条件書の訂正版が、文書に付いた合意を触らないのと同じ）。
+        if (input.revision && (p.kind === "supplement" || p.kind === "standalone")) return null;
         throw new DomainError("VALIDATION", "受取人宛ての条件書の親に選べるのは基本契約だけです");
       }
       parents = [Number(p.id)];
