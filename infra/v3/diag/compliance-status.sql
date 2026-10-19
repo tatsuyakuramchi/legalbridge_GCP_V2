@@ -15,8 +15,11 @@
 --   ★ 読み方の注意
 --     - 「取適法の対象」はシステム上は個人（parties.kind = 'individual'）だけ。
 --       法人は資本金・従業員数を持っていないので判定できず、参考値として出す。
---     - 部署は案件の担当者 → 依頼者のメールで引いた担当者の部署の順。
+--     - 部署は依頼者のメールで引いた担当者の部署 → 案件の担当者の部署の順。
 --       どちらも引けない案件は「（部署なし）」に入る。
+--     - 支払の種類は割り当てた条件の種類で決める。業務委託（役務・製品）を
+--       含めば「業務委託」、ライセンスだけなら「印税・許諾料」。60日の検査は
+--       システム上は種類を問わず掛かるので、監査の説明では業務委託の行を見る。
 -- =====================================================================
 
 \pset pager off
@@ -33,6 +36,14 @@ SET search_path = v3;
 -- ---------------------------------------------------------------------
 WITH out_pay AS (
   SELECT p.*, pt.kind AS party_kind,
+         (SELECT CASE
+                 WHEN bool_or(c.kind IN ('service', 'product')) THEN '業務委託'
+                 WHEN bool_and(c.kind = 'license')              THEN '印税・許諾料'
+                 WHEN count(c.id) = 0                           THEN '割当なし'
+                 ELSE 'その他（経費・手数料）'
+               END
+          FROM payment_allocations a JOIN conditions c ON c.id = a.condition_id
+         WHERE a.payment_id = p.id) AS pay_kind,
          CASE
            WHEN p.basis_received_on IS NULL OR p.due_on IS NULL THEN 'unset'
            WHEN p.due_on - p.basis_received_on > 60          THEN 'over_limit'
@@ -68,6 +79,8 @@ SELECT :'since'::date                                                         AS
        (SELECT count(*) FROM out_pay WHERE party_kind = 'individual' AND verdict = 'ok')         AS 個人_期日適合,
        (SELECT count(*) FROM out_pay WHERE party_kind = 'individual' AND verdict = 'over_limit') AS 個人_期日超過,
        (SELECT count(*) FROM out_pay WHERE party_kind = 'individual' AND verdict = 'unset')      AS 個人_期日未設定,
+       (SELECT count(*) FROM out_pay WHERE party_kind = 'individual' AND verdict = 'over_limit'
+                                       AND pay_kind = '業務委託')                                 AS うち業務委託の超過,
        (SELECT count(*) FROM out_pay WHERE party_kind = 'corporate'  AND verdict = 'over_limit') AS 法人_期日超過_参考,
        (SELECT count(*) FROM out_pay WHERE party_kind = 'corporate'  AND verdict = 'unset')      AS 法人_期日未設定_参考,
        (SELECT count(*) FROM out_pay WHERE status <> 'paid' AND due_on < current_date)          AS 期日経過の未払,
@@ -84,7 +97,7 @@ SELECT :'since'::date                                                         AS
 WITH m AS (
   SELECT mt.id, mt.kind,
          date_trunc('month', mt.created_at)::date AS 月,
-         COALESCE(NULLIF(os.department, ''), NULLIF(rs.department, ''), '（部署なし）') AS 部署
+         COALESCE(NULLIF(rs.department, ''), NULLIF(os.department, ''), '（部署なし）') AS 部署
     FROM matters mt
     LEFT JOIN staff os ON os.id = mt.owner_staff_id
     LEFT JOIN staff rs ON lower(rs.email) = lower(mt.requester_email)
@@ -108,10 +121,35 @@ SELECT m.月, m.部署,
  GROUP BY m.月, m.部署
  ORDER BY m.月 DESC, 案件数 DESC;
 
+-- 依頼（受付箱）の月別・依頼部署別。案件にしなかった依頼も数える
+SELECT date_trunc('month', r.created_at)::date              AS 月,
+       COALESCE(NULLIF(s.department, ''), '（部署なし）')    AS 依頼部署,
+       count(*)                                            AS 依頼数,
+       count(*) FILTER (WHERE r.state = 'accepted')        AS 受付済
+  FROM intake_requests r
+  -- 依頼者はメールか Slack の ID で引く。二人当たっても1行に絞る
+  LEFT JOIN LATERAL (
+    SELECT department FROM staff st
+     WHERE lower(st.email) = lower(r.requester_email)
+        OR (st.slack_user_id IS NOT NULL AND st.slack_user_id = r.requester_slack_id)
+     ORDER BY (lower(st.email) = lower(r.requester_email)) DESC NULLS LAST, st.id
+     LIMIT 1) s ON true
+ WHERE r.created_at >= :'since'::date
+ GROUP BY 1, 2
+ ORDER BY 1 DESC, 依頼数 DESC;
+
 -- ---------------------------------------------------------------------
 -- 3. 支払期日の判定別（個人／法人 × 判定）
 -- ---------------------------------------------------------------------
 SELECT CASE pt.kind WHEN 'individual' THEN '個人（取適法の対象）' ELSE '法人（参考）' END AS 区分,
+       (SELECT CASE
+                 WHEN bool_or(c.kind IN ('service', 'product')) THEN '業務委託'
+                 WHEN bool_and(c.kind = 'license')              THEN '印税・許諾料'
+                 WHEN count(c.id) = 0                           THEN '割当なし'
+                 ELSE 'その他（経費・手数料）'
+               END
+          FROM payment_allocations a JOIN conditions c ON c.id = a.condition_id
+         WHERE a.payment_id = p.id) AS 種類,
        CASE
          WHEN p.basis_received_on IS NULL OR p.due_on IS NULL THEN '期日未設定'
          WHEN p.due_on - p.basis_received_on > 60          THEN '期日超過'
@@ -124,8 +162,8 @@ SELECT CASE pt.kind WHEN 'individual' THEN '個人（取適法の対象）' ELSE
   JOIN parties pt ON pt.id = p.party_id
  WHERE p.direction = 'out' AND p.status <> 'canceled'
    AND p.created_at >= :'since'::date
- GROUP BY 1, 2
- ORDER BY 1 DESC, 2;
+ GROUP BY 1, 2, 3
+ ORDER BY 1 DESC, 2, 3;
 
 -- ---------------------------------------------------------------------
 -- 4. 期日超過・期日未設定の支払の明細（個人を先に）
@@ -133,6 +171,14 @@ SELECT CASE pt.kind WHEN 'individual' THEN '個人（取適法の対象）' ELSE
 SELECT p.payment_no                                      AS 支払番号,
        pt.name                                           AS 相手先,
        CASE pt.kind WHEN 'individual' THEN '個人' ELSE '法人' END AS 区分,
+       (SELECT CASE
+                 WHEN bool_or(c.kind IN ('service', 'product')) THEN '業務委託'
+                 WHEN bool_and(c.kind = 'license')              THEN '印税・許諾料'
+                 WHEN count(c.id) = 0                           THEN '割当なし'
+                 ELSE 'その他（経費・手数料）'
+               END
+          FROM payment_allocations a JOIN conditions c ON c.id = a.condition_id
+         WHERE a.payment_id = p.id) AS 種類,
        p.amount                                          AS 税抜,
        p.basis_received_on                               AS 受領日,
        p.due_on                                          AS 期日,
@@ -148,10 +194,19 @@ SELECT p.payment_no                                      AS 支払番号,
 
 -- ---------------------------------------------------------------------
 -- 5. 発注書の無い外注支払。システムを通さずに発注した可能性がある
---    （顧問料・実費など、発注書を出さない支払も混ざるので目で仕分ける）
+--    種類が「業務委託」の行が確認の対象。印税・許諾料は計算書で払うので
+--    発注書が無くて正しい
 -- ---------------------------------------------------------------------
 SELECT p.payment_no                                      AS 支払番号,
        pt.name                                           AS 相手先,
+       (SELECT CASE
+                 WHEN bool_or(c.kind IN ('service', 'product')) THEN '業務委託'
+                 WHEN bool_and(c.kind = 'license')              THEN '印税・許諾料'
+                 WHEN count(c.id) = 0                           THEN '割当なし'
+                 ELSE 'その他（経費・手数料）'
+               END
+          FROM payment_allocations a JOIN conditions c ON c.id = a.condition_id
+         WHERE a.payment_id = p.id) AS 種類,
        p.amount                                          AS 税抜,
        p.created_at::date                                AS 登録日,
        string_agg(DISTINCT c.condition_no, ', ')         AS 条件,
