@@ -131,3 +131,10 @@ test("署名依頼は署名者・確認者の並びも冪等キーに入れる�
   assert.equal(DispatchService.idempotencyKey({ channel: "gmail", targetType: "document", targetId: 6,
     recipient: "acct@example.test", body: "本文" }).length, 64);
 });
+
+test("外へ送る段で失敗したら、理由をそのまま画面へ返す（サーバ内部のエラーにしない）", async () => {
+  const { adapter, service } = build();
+  adapter.send = async () => { throw new Error("JWT に署名できませんでした（403）"); };
+  await assert.rejects(() => service.dispatch(request),
+    (e: Error & { code?: string }) => e.code === "UNAVAILABLE" && /メール（Gmail）で送れませんでした：JWT に署名できませんでした/.test(e.message));
+});

@@ -113,7 +113,18 @@ docker compose up -d app
 | 検証中の宛先許可リストに入っていません | `DISPATCH_ALLOWLIST` に無い宛先（cc・bcc も含む） |
 | GMAIL_DELEGATION_SA（署名に使う SA）が要ります | `.env` の `GMAIL_DELEGATION_SA` が空 |
 | ログインの認証情報…からトークンを取れませんでした | `keys\adc.json` が無いか期限切れ。`docker compose run --rm login` で取り直す |
+| `invalid_grant`・`reauth related error (invalid_rapt)` | 組織の再認証ポリシーでログインが切れた。ログインし直して写す（下の「ログインし直す」）。app の上げ直しは要らない |
 | JWT に署名できませんでした（403…） | 2 の権限がログインした人に付いていない（付けてから数分かかることがある） |
 | 代理トークンを得られませんでした（unauthorized_client） | 署名用 SA が本番と違う（ドメイン全体委任が付いていない SA）。1 の値を見直す |
 
 アプリのログは `docker compose logs -f app`。
+
+### ログインし直す
+
+組織の再認証ポリシーで、人のログインは一定時間（組織の設定。たとえば 1 日）で切れる。
+切れると `invalid_rapt` で送れなくなるので、予備系で送る日は最初にログインし直しておく（同期も同じ認証情報を使う）。
+
+```powershell
+gcloud auth application-default login --project legalbridge-488506
+Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" keys\adc.json -Force
+```
