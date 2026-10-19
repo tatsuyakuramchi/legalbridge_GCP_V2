@@ -99,12 +99,14 @@ export class DocumentContextRepository {
       }
       // 受取人の計算書・条件書（共著の取り分。A-068）。相手先の欄を全部その人に差し替える。
       // 受取人は載せた条件すべての取り分に入っていること（入っていない人に紙を出さない）。
+      // ただし受取人が相手先の条件（その人単独の作品）は、取り分が無くても載せてよい（人ごとに 1 枚）。
       let payee: { partyId: number; name: string } | null = null;
       if (input.payeePartyId) {
         const found = await this.partyOnly(client, input.payeePartyId);
         if (!found) throw new DomainError("NOT_FOUND", `受取人 ${input.payeePartyId} が見つかりません`);
         for (const c of conditions) {
           const label = c.conditionNo ?? `#${c.id}`;
+          if (!c.shares.length && c.counterpartyId === input.payeePartyId) continue;
           if (!c.shares.length) {
             throw new DomainError("VALIDATION", `条件 ${label} には取り分がありません。受取人は条件の相手先です`);
           }

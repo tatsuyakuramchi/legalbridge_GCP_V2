@@ -457,7 +457,8 @@ export class PaymentService {
 
         // 受取人ごとの計算書（取り分）は、同じ実績に受取人の数だけ支払が立つ。
         // 二重払いの検査は、その受取人への支払だけで見る。
-        const payeePartyId = rows.every((r) => r.payee_party_id) ? Number(rows[0].payee_party_id) : null;
+        // 受取人としての分と本人の条件が 1 枚に載る計算書（人ごとに 1 枚）も、その人への支払だけで見る。
+        const payeePartyId = rows.some((r) => r.payee_party_id) ? Number(rows[0].counterparty_id) : null;
         const duplicated = await client.query(
           `SELECT ${BLOCKING_PAYMENT_SQL}
              FROM payments p

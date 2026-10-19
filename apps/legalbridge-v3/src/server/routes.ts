@@ -77,6 +77,7 @@ import { StatementPeriodReissueService } from "./royalty/statement-reissue.js";
 import { IndividualPayDayService } from "./conditions/individual-pay-day.js";
 import { TermDefaultService } from "./conditions/term-default.js";
 import { NoticeFillService } from "./documents/notice-fill.js";
+import { StatementMergeService } from "./royalty/statement-merge.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner } from "./documents/unsent-send.js";
@@ -2856,6 +2857,17 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = z.object({ scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(2000) }).parse(req.body ?? {});
       res.status(201).json(await individualPayDay.run(input.scheduleIds, actor(res)));
+    }));
+  // 同じ人・同じ回の計算書が 2 枚（受取人としての分と本人の分）に分かれたものを 1 枚にまとめる。
+  // 未払いの支払は取り消して 1 本に立て直す。royalty/statement-merge.ts
+  const statementMerge = new StatementMergeService(database, statementIssuer, payments);
+  router.get("/royalty-ledger/statements/merge", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await statementMerge.preview());
+  }));
+  router.post("/royalty-ledger/statements/merge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ keys: z.array(z.string().min(1).max(200)).min(1).max(500) }).parse(req.body ?? {});
+      res.json(await statementMerge.run(input.keys, actor(res)));
     }));
   // 出した計算書の対象期間を回の期間に揃えて、訂正版で一括で出し直す。試算してから出す。
   const periodReissue = new StatementPeriodReissueService(database, statementIssuer);

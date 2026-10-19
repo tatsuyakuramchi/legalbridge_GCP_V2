@@ -10,6 +10,7 @@ import { Leftovers } from "./Leftovers.js";
 import { IndividualPayDay } from "./IndividualPayDay.js";
 import { TermDefault } from "./TermDefault.js";
 import { NoticeFill } from "./NoticeFill.js";
+import { StatementMerge } from "./StatementMerge.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
 import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
@@ -206,7 +207,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
         </div>
       )}
 
-      {tab === "leftovers" && (<><TermDefault /><NoticeFill /><IndividualPayDay /><Leftovers /></>)}
+      {tab === "leftovers" && (<><StatementMerge /><TermDefault /><NoticeFill /><IndividualPayDay /><Leftovers /></>)}
 
       {tab === "imports" && (<><EbookSalesImport /><CsvImport /></>)}
       {tab === "contracts" && <MissingContracts />}

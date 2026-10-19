@@ -282,11 +282,13 @@ export class ClosingCloseService {
       if (!eventIds.length) continue;
       for (const payee of payeesOf.get(row.conditionId) ?? [null]) {
         const to = payee ?? row.party;
-        // 受取人として載る分と、自分が相手先の条件は別の紙（受取人宛ての紙は載る条件すべてに取り分が要る）。
+        // 相手先ごとなら人ごとに 1 枚。受取人として載る分（共著の取り分）と、その人が相手先の条件
+        // （単独の作品）を同じ紙に載せる。前は別の紙にしていて、同じ回に計算書も支払も 2 本になった。
         const key = bundle === "party"
-          ? `s:${to?.id ?? `c${row.conditionId}`}:${payee ? "payee" : "party"}:${row.currency || "JPY"}`
+          ? `s:${to?.id ?? `c${row.conditionId}`}:${row.currency || "JPY"}`
           : `s:c${row.conditionId}:${payee?.id ?? 0}`;
-        const doc = docs.get(key) ?? { key, party: to, payeePartyId: payee?.id ?? null, rows: [], entries: [], periodLabel: null };
+        const doc = docs.get(key) ?? { key, party: to, payeePartyId: null, rows: [], entries: [], periodLabel: null };
+        if (payee) doc.payeePartyId = payee.id;
         if (!doc.rows.includes(row)) doc.rows.push(row);
         const entry = doc.entries.find((x) => x.conditionId === row.conditionId);
         if (entry) entry.eventIds.push(...eventIds);
