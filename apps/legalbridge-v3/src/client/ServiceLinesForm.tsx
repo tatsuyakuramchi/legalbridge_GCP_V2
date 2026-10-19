@@ -109,6 +109,8 @@ export function ServiceLinesForm(
   const [lines, setLines] = useState<Line[]>([blank()]);
   const [paste, setPaste] = useState("");
   const [showPaste, setShowPaste] = useState(false);
+  /** 「仕様・成果物」を広げて編集している行の key。表のセルは狭いので、長文は表の下の大きな欄で書く。 */
+  const [specOpen, setSpecOpen] = useState<number | null>(null);
   // 権利の扱い
   const [licMode, setLicMode] = useState<"separate" | "included" | "free" | "none">("included");
   const [licUsage, setLicUsage] = useState("in_house");
@@ -332,7 +334,7 @@ export function ServiceLinesForm(
                   単価の列が画面の外に出て、入れ忘れたまま登録ボタンが押せない理由が分からなかった。 */}
               <th style={{ width: 28 }}>#</th><th style={{ width: 56 }}>種類</th><th style={{ minWidth: 200 }}>品目（条件名）</th>
               <th style={{ width: 70 }}>数量</th><th style={{ width: 60 }}>単位</th><th style={{ width: 120 }}>単価（税抜）</th><th style={{ width: 100 }}>金額</th>
-              <th>作品</th><th>仕様・成果物</th><th style={{ width: 140 }}>納期</th><th>契約形式</th><th>帰属</th><th>税</th><th></th>
+              <th>作品</th><th style={{ minWidth: 260 }}>仕様・成果物</th><th style={{ width: 140 }}>納期</th><th>契約形式</th><th>帰属</th><th>税</th><th></th>
             </tr></thead>
             <tbody>
               {lines.map((l, i) => (
@@ -371,7 +373,19 @@ export function ServiceLinesForm(
                       </select>
                     )}
                   </td>
-                  <td style={{ minWidth: 200 }}>{cell(l, "spec")}</td>
+                  <td style={{ minWidth: 260 }}>
+                    {/* 改行を落とさないよう input ではなく 1 行の textarea。長文は「広げる」で表の下の欄に出す。 */}
+                    <div className="spec-cell">
+                      <textarea rows={1} value={l.spec} aria-label={`${i + 1} 行目の仕様・成果物`}
+                                title={l.spec || undefined}
+                                onChange={(e) => update(l.key, { spec: e.target.value })} />
+                      <button type="button" className="btn btn-sm" aria-pressed={specOpen === l.key}
+                              onClick={() => setSpecOpen((k) => (k === l.key ? null : l.key))}>
+                        {specOpen === l.key ? "閉じる" : "広げる"}
+                      </button>
+                    </div>
+                    {l.spec.includes("\n") && <span className="faint">{l.spec.split("\n").length} 行</span>}
+                  </td>
                   <td style={{ width: 140 }}>{cell(l, "deliveryDue", { type: "date" })}</td>
                   {l.kind === "service" ? (<>
                     <td><select value={l.contractForm} onChange={(e) => update(l.key, { contractForm: e.target.value })}>
@@ -387,6 +401,25 @@ export function ServiceLinesForm(
             </tbody>
           </table>
         </div>
+        {(() => {
+          const i = lines.findIndex((l) => l.key === specOpen);
+          if (i < 0) return null;
+          const l = lines[i];
+          return (
+            <div className="spec-editor stack" style={{ gap: 6 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <b>{i + 1} 行目「{l.name || "（品目未入力）"}」の仕様・成果物</b>
+                <span className="faint">発注書・検収書の明細にそのまま出ます。改行もそのまま反映されます</span>
+                <button type="button" className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setSpecOpen(null)}>閉じる</button>
+              </div>
+              <textarea rows={16} value={l.spec} autoFocus aria-label={`${i + 1} 行目の仕様・成果物（広げた欄）`}
+                        placeholder={"業務概要\n…\n\n業務詳細（成果物仕様）\n1. …"}
+                        onChange={(e) => update(l.key, { spec: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === "Escape") setSpecOpen(null); }} />
+              <span className="faint">{l.spec.length.toLocaleString()} 文字・{l.spec ? l.spec.split("\n").length : 0} 行（Esc で閉じる）</span>
+            </div>
+          );
+        })()}
         <div className="row" style={{ justifyContent: "flex-end", gap: 18 }}>
           <span>委託料・手数料（税抜） <b>¥{yen(subtotal)}</b></span>
           {expenses > 0 && <span>実費（税込） <b>¥{yen(expenses)}</b></span>}
