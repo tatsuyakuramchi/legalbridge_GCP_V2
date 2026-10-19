@@ -49,7 +49,7 @@ function Sending({ what }: { what: string }) {
 interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; warnings?: string[]; externalId?: string; gate: { reasons: string[]; mode: string };
                     preview?: { recipient: string; bodyPreview: string } }
 
-type Purpose = "owner_check" | "party_check" | "delivery";
+type Purpose = "owner_check" | "party_check" | "contract_unify" | "delivery";
 interface Draft {
   to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
   subject: string; body: string; warnings: string[];
@@ -57,6 +57,7 @@ interface Draft {
 const PURPOSES: Array<{ value: Purpose; label: string; hint: string }> = [
   { value: "owner_check", label: "担当者への確認", hint: "依頼した事業部の担当者へ。相手に出す前に内容を確かめてもらう" },
   { value: "party_check", label: "取引先への内容確認", hint: "取引先へ。問題なければ CloudSign で締結に進む" },
+  { value: "contract_unify", label: "契約書の統一のご案内", hint: "取引先へ。統一書式の契約書案を添付し、問題なければ 2 週間以内に返信をもらって CloudSign で締結に進む" },
   { value: "delivery", label: "取引先へ送付（検収書・計算書など）", hint: "取引先へ書類を送る。検収書・利用許諾計算書は専用の文面" }
 ];
 

@@ -39,6 +39,16 @@ test("取引先への内容確認は主担当へ、依頼者を cc に", async (
   assert.match(d.body, /クラウドサイン/);
 });
 
+test("契約書の統一のご案内は主担当へ、依頼者を cc に。専用の文面で", async () => {
+  const d = await new MailDraftService(build()).draft(5, "contract_unify");
+  assert.equal(d.kind, "contract_unify");
+  assert.deepEqual(d.to.map((p) => p.email), ["ichiro@kou.example"]);
+  assert.deepEqual(d.cc.map((p) => p.email), ["biz@example.com"]);
+  assert.match(d.subject, /利用許諾契約書（統一書式）のご確認のお願い/);
+  assert.match(d.body, /^株式会社甲 様\n/);
+  assert.match(d.body, /2週間以内/);
+});
+
 test("検収書の送付は請求先へ、検収書の文面と金額で", async () => {
   const d = await new MailDraftService(build()).draft(5, "delivery");
   assert.equal(d.kind, "inspection");

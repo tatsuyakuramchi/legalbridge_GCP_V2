@@ -4629,10 +4629,10 @@ export function createRoutes(database: Transactable) {
   /**
    * 送るメールの下書き（宛先・件名・本文）。文面は設定（mail_templates）から取る。
    * purpose = owner_check（担当者への確認）／party_check（取引先への内容確認）／
-   *           delivery（取引先への送付。検収書・利用許諾計算書は専用の文面）
+   *           contract_unify（契約書の統一のご案内）／delivery（取引先への送付。検収書・利用許諾計算書は専用の文面）
    */
   router.get("/documents/:id/mail-draft", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
-    const purpose = z.enum(["owner_check", "party_check", "delivery"]).parse(String(req.query.purpose ?? ""));
+    const purpose = z.enum(["owner_check", "party_check", "contract_unify", "delivery"]).parse(String(req.query.purpose ?? ""));
     res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose));
   }));
   // 送り先の候補（CloudSign の署名者・確認者）。取引先の署名者と事業部の担当者を、
