@@ -99,6 +99,20 @@ test("一括：電子出版の有効な料率条件を拾い、試算は書か�
   assert.deepEqual(only.targets.map((t) => t.conditionId), [5, 6]);
 });
 
+test("相手先が個人の条件は、立てる回の支払日（末日）を同じ月の 20 日にする", async () => {
+  const db = new FakeDatabase((text) => {
+    if (text.includes("c.usage_type = $1")) {
+      return [{ id: 5, condition_no: "CL-5", name: "A", payment_terms: null, work_title: "作品A", party_name: "作家A" },
+              { id: 6, condition_no: "CL-6", name: "B", payment_terms: null, work_title: "作品B", party_name: "出版社B" }];
+    }
+    if (text.includes("p.kind = 'individual'")) return [{ id: 5 }];
+    return undefined;
+  });
+  const svc = new AnnualCloseService(db, { schedules: { list: async () => ({ lines: [] }), replace: async () => ({}) } });
+  const r = await svc.preview({ usageType: "pub_digital", from: "2025-07-01", count: 1 });
+  assert.deepEqual(r.targets.map((t) => [t.conditionId, t.adding[0]!.payOn]), [[5, "2026-10-20"], [6, "2026-10-31"]]);
+});
+
 test("浮いた実績のある条件だけに絞れる", async () => {
   const db = new FakeDatabase((text) => {
     if (text.includes("c.usage_type = $1")) {
@@ -118,18 +132,4 @@ test("浮いた実績のある条件だけに絞れる", async () => {
   assert.deepEqual(only.targets.map((t) => t.conditionId), [5]);
   assert.equal(only.targets[0].adding[0].label, "2025年3月〜2026年8月");
   assert.deepEqual([only.targets[0].attaching, only.attaching], [1, 1]);
-});
-
-test("相手先が個人の条件は、立てる回の支払日（末日）を同じ月の 20 日にする", async () => {
-  const db = new FakeDatabase((text) => {
-    if (text.includes("c.usage_type = $1")) {
-      return [{ id: 5, condition_no: "CL-5", name: "A", payment_terms: null, work_title: "作品A", party_name: "作家A" },
-              { id: 6, condition_no: "CL-6", name: "B", payment_terms: null, work_title: "作品B", party_name: "出版社B" }];
-    }
-    if (text.includes("p.kind = 'individual'")) return [{ id: 5 }];
-    return undefined;
-  });
-  const svc = new AnnualCloseService(db, { schedules: { list: async () => ({ lines: [] }), replace: async () => ({}) } });
-  const r = await svc.preview({ usageType: "pub_digital", from: "2025-07-01", count: 1 });
-  assert.deepEqual(r.targets.map((t) => [t.conditionId, t.adding[0]!.payOn]), [[5, "2026-10-20"], [6, "2026-10-31"]]);
 });
