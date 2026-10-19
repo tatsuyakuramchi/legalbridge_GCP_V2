@@ -333,16 +333,22 @@ export class DocumentContextRepository {
         out.push({ role, name: str(row.name), email: str(row.email), phone: str(row.phone), department: str(row.department) });
       }
     }
-    const p = await client.query("SELECT kind, name, email, phone FROM parties WHERE id = $1", [partyId]);
+    const p = await client.query(
+      `SELECT kind, name, email, phone, to_jsonb(p)->>'representative_name' AS rep_name,
+              to_jsonb(p)->>'representative_title' AS rep_title FROM parties p WHERE id = $1`, [partyId]);
     const party = p.rows[0] as Record<string, any> | undefined;
     if (party && String(party.kind) === "individual") {
       for (const role of ["primary", "signer", "billing"]) {
         if (out.some((x) => x.role === role)) continue;
         out.push({ role, name: str(party.name), email: str(party.email), phone: str(party.phone), department: null });
       }
+    } else if (party && !out.some((x) => x.role === "primary") && str(party.rep_name)) {
+      // 主担当のいない法人は代表者が窓口（条件書の甲の通知先）。部署の位置に肩書を置く。
+      out.push({ role: "primary", name: str(party.rep_name), email: str(party.email), phone: str(party.phone),
+                 department: str(party.rep_title) });
     } else if (party && !out.length && (str(party.email) || str(party.phone))) {
-      // 連絡先の無い法人（や種別の無い取引先）は、取引先のメール・電話を窓口にする（条件書の甲の通知先が
-      // 空にならないように）。氏名は入れない（代表者名に会社名が落ちるので）。
+      // 代表者も連絡先も無い法人（や種別の無い取引先）は、取引先のメール・電話を窓口にする。
+      // 氏名は入れない（代表者名に会社名が落ちるので）。
       out.push({ role: "primary", name: null, email: str(party.email), phone: str(party.phone), department: null });
     }
     return out;

@@ -10,7 +10,8 @@ import { joinContactParts } from "./contact-line.js";
  *   - 条件書の第９条 甲（許諾者）：取引先の主担当（個人は本人）。連絡先の無い取引先で空になる
  *   - 条件書の第９条 乙（当社）　：案件の担当者。一括作成は案件が無いので空になる
  *   - 基本契約書の 通知先 担当者・電話・メール：相手先の窓口。人が選ぶ欄で、自動では入らない
- * 甲・相手先の窓口は取引先の主担当 → 連絡先の先頭 → 取引先そのもの（個人は本人、法人はメール・電話）。
+ * 甲・相手先の窓口：個人は本人（主担当がいればその人）。法人は主担当、いなければ代表者（肩書・氏名と
+ * 取引先のメール・電話）、代表者も無ければ連絡先の先頭 → 取引先のメール・電話。
  * 乙は画面で選んだ当社の担当者（部署・氏名・メール・電話）。文書の担当者（_ownerStaffId）にもする。
  *
  * 決定済みの文書は中身が凍っているので、空いた欄だけを手入力に足した訂正版を、元の締結日・
@@ -172,10 +173,11 @@ export class NoticeFillService {
     return { reissued: results.filter((r) => r.status === "reissued").length, results };
   }
 
-  /** 取引先の窓口：主担当 → 連絡先の先頭 → 取引先そのもの（個人は本人、法人は氏名なしでメール・電話）。 */
+  /** 取引先の窓口：主担当 → （法人は）代表者 → 連絡先の先頭 → 取引先そのもの（個人は本人、法人は氏名なしでメール・電話）。 */
   private async partyWindows(ids: number[]): Promise<Map<number, { name: string; person: Person | null }>> {
     const rows = (await this.database.query(
       `SELECT p.id, p.name, p.kind, p.email, p.phone,
+              to_jsonb(p)->>'representative_name' AS rep_name, to_jsonb(p)->>'representative_title' AS rep_title,
               COALESCE((SELECT json_agg(json_build_object('name', c.name, 'email', c.email, 'phone', c.phone,
                                                           'department', c.department, 'roles', c.roles, 'role', c.role)
                                         ORDER BY c.id)
@@ -196,7 +198,11 @@ export class NoticeFillService {
         department: null, name: String(r.kind) === "individual" ? str(r.name) : null,
         email: str(r.email), phone: str(r.phone)
       };
+      // 法人で主担当がいなければ代表者。部署の位置に肩書（代表取締役 など）を置く。
+      const rep: Person | null = String(r.kind) !== "individual" && str(r.rep_name)
+        ? { department: str(r.rep_title), name: str(r.rep_name), email: str(r.email), phone: str(r.phone) } : null;
       const person = primary && useful(asPerson(primary)) ? asPerson(primary)
+        : rep ? rep
         : first ? asPerson(first)
         : useful(self) ? self : null;
       out.set(Number(r.id), { name: String(r.name ?? ""), person });

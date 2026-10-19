@@ -26,7 +26,10 @@ const db = () => new FakeDatabase((text) => {
       contacts: [{ name: "総務 一郎", email: "ichiro@otsu.test", phone: "03-1111-1111", department: "総務部", roles: ["billing"] },
                  { name: "編集 花子", email: "hanako@otsu.test", phone: null, department: "編集部", roles: ["primary"] }] },
     { id: 13, name: "作家丙", kind: "individual", email: null, phone: null, contacts: [] },
-    { id: 14, name: "有限会社丁", kind: "corporate", email: null, phone: null, contacts: [] }
+    { id: 14, name: "有限会社丁", kind: "corporate", email: null, phone: null, contacts: [] },
+    { id: 15, name: "株式会社戊", kind: "corporate", email: "info@bo.test", phone: "03-3333-3333",
+      rep_name: "戊山 太郎", rep_title: "代表取締役",
+      contacts: [{ name: "経理 次郎", email: "keiri@bo.test", phone: null, department: "経理部", roles: ["billing"] }] }
   ];
   if (text.includes("FROM staff s WHERE s.id")) return [{ name: "倉持 達也", email: "kura@arclight.test", department: "法務部", phone: "03-2222-2222" }];
   return undefined;
@@ -70,4 +73,26 @@ test("出し直す：訂正版の下書きに空いた欄を足して、元の�
   assert.deepEqual(updates.map((u) => u.params[0]), [1901, 995]);
   assert.equal(JSON.parse(String(updates[0]!.params[1]))["許諾者連絡先"], "作家甲 ／ kou@example.test");
   assert.deepEqual(r.results.map((x) => x.status), ["reissued", "reissued", "skipped"]);
+});
+
+test("法人で主担当がいなければ代表者（肩書・氏名と取引先のメール・電話）。個人は本人のまま", async () => {
+  const database = new FakeDatabase((text) => {
+    if (text.includes("rendered_values->>'licensorContact'")) return [
+      { id: 905, document_no: "ARC-PUBM-2026-0031", issued_at: "2026-10-08T03:00:00Z", template_key: "pub_master_corporate",
+        party_id: 15, open_draft: null },
+      { id: 906, document_no: "ARC-PUBT-2026-1027", issued_at: "2026-10-08T03:00:00Z", template_key: "pub_license_terms_v3",
+        licensor: "", licensee: "法務部 ／ 倉持", party_id: 15, open_draft: null }
+    ];
+    if (text.includes("FROM parties p WHERE p.id = ANY")) return [
+      { id: 15, name: "株式会社戊", kind: "corporate", email: "info@bo.test", phone: "03-3333-3333",
+        rep_name: "戊山 太郎", rep_title: "代表取締役",
+        contacts: [{ name: "経理 次郎", email: "keiri@bo.test", phone: null, department: "経理部", roles: ["billing"] }] }
+    ];
+    return undefined;
+  });
+  const r = await new NoticeFillService(database).preview(null);
+  const by = new Map(r.targets.map((t) => [t.documentId, t]));
+  assert.deepEqual(by.get(905)!.patch, { "通知先担当者": "代表取締役 戊山 太郎", "通知先電話": "03-3333-3333", "通知先メール": "info@bo.test" },
+    "請求先の人ではなく代表者");
+  assert.equal(by.get(906)!.patch["許諾者連絡先"], "代表取締役 ／ 戊山 太郎 ／ info@bo.test ／ 03-3333-3333");
 });
