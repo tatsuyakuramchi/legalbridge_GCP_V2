@@ -9,6 +9,9 @@ import { ClosingService, type PeriodRow } from "./service.js";
 import { documentFor, needsReport, notYet } from "./state.js";
 import { loadDistribution, loadShares } from "../royalty/shares.js";
 import type { StatementIssuer } from "../royalty/statement-issue.js";
+import { roundPeriodLabel } from "../royalty/annual-closes.js";
+
+export { roundPeriodLabel };
 
 /**
  * まとめて締める。
@@ -39,7 +42,10 @@ export interface StatementDocPlan {
   party: { id: number; name: string } | null;
   payeePartyId: number | null;
   rows: PeriodRow[];
-  entries: Array<{ conditionId: number; eventIds: number[]; payeePartyId: number | null }>;
+  /** period … その条件の回の対象期間（計算書と紙の対象期間）。回に期間が無ければ null（実績から導く）。 */
+  entries: Array<{ conditionId: number; eventIds: number[]; payeePartyId: number | null; period: string | null }>;
+  /** 計算書 1 枚の対象期間（載る回の期間をつないだもの）。 */
+  periodLabel: string | null;
 }
 
 /** 締められない理由。preview でも run でも同じ言葉を使う。 */
@@ -275,13 +281,17 @@ export class ClosingCloseService {
         const key = bundle === "party"
           ? `s:${to?.id ?? `c${row.conditionId}`}:${payee ? "payee" : "party"}:${row.currency || "JPY"}`
           : `s:c${row.conditionId}:${payee?.id ?? 0}`;
-        const doc = docs.get(key) ?? { key, party: to, payeePartyId: payee?.id ?? null, rows: [], entries: [] };
+        const doc = docs.get(key) ?? { key, party: to, payeePartyId: payee?.id ?? null, rows: [], entries: [], periodLabel: null };
         if (!doc.rows.includes(row)) doc.rows.push(row);
         const entry = doc.entries.find((x) => x.conditionId === row.conditionId);
         if (entry) entry.eventIds.push(...eventIds);
-        else doc.entries.push({ conditionId: row.conditionId, eventIds: [...eventIds], payeePartyId: payee?.id ?? null });
+        else doc.entries.push({ conditionId: row.conditionId, eventIds: [...eventIds], payeePartyId: payee?.id ?? null, period: null });
         docs.set(key, doc);
       }
+    }
+    for (const doc of docs.values()) {
+      for (const entry of doc.entries) entry.period = roundPeriodLabel(doc.rows.filter((r) => r.conditionId === entry.conditionId));
+      doc.periodLabel = roundPeriodLabel(doc.rows);
     }
     return [...docs.values()];
   }
@@ -486,7 +496,7 @@ export class ClosingCloseService {
       try {
         const made = await this.statements!.issue({
           templateKey: documentFor(doc.rows[0]!.kind).templateKey,
-          entries: doc.entries, issuedOn,
+          entries: doc.entries, issuedOn, periodLabel: doc.periodLabel,
           matterId: matters.size === 1 ? doc.rows[0]!.matter?.id ?? null : null
         }, actor);
         for (const r of doc.rows) {

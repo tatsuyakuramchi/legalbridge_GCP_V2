@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ClosingCloseService, REFUSAL_LABEL, refusalFor } from "./close-service.js";
+import { ClosingCloseService, REFUSAL_LABEL, refusalFor, roundPeriodLabel } from "./close-service.js";
 import { periodRow } from "./service.js";
 
 const TODAY = "2026-09-21";
@@ -305,8 +305,9 @@ test("料率の回：締めると計算書の道で発行し、支払は計算�
   const result = await service.run([100], "tester");
   assert.equal(result.ok, 1, JSON.stringify(result.outcomes));
   assert.equal(issuer.issued.length, 1);
-  assert.deepEqual(issuer.issued[0].entries, [{ conditionId: 7, eventIds: [51, 52], payeePartyId: null }],
-    "回に付いた、まだ文書の無い実績を全部載せる");
+  assert.deepEqual(issuer.issued[0].entries, [{ conditionId: 7, eventIds: [51, 52], payeePartyId: null, period: "2025年3月〜2026年8月" }],
+    "回に付いた、まだ文書の無い実績を全部載せる。対象期間は回の名前");
+  assert.equal(issuer.issued[0].periodLabel, "2025年3月〜2026年8月");
   assert.equal(issuer.issued[0].issuedOn, "2026-08-31", "決定日は締め日");
   assert.deepEqual(payments.made, [901]);
   assert.equal(result.outcomes[0].documentNo, "ARC-ROY-2026-1101");
@@ -339,4 +340,22 @@ test("料率の回で計算書はあるが支払が無い：支払は計算書�
   const result = await service.run([100], "tester");
   assert.equal(result.ok, 1, JSON.stringify(result.outcomes));
   assert.deepEqual(payments.made, [950]);
+});
+
+test("計算書の対象期間は回で決める：集計期間があれば最初の開始〜最後の終わり、無ければ揃った回の名前", async () => {
+  assert.equal(roundPeriodLabel([{ serviceFrom: "2025-07-01", serviceTo: "2026-06-30", label: "x" }]), "2025年7月〜2026年6月");
+  assert.equal(roundPeriodLabel([
+    { serviceFrom: "2025-07-01", serviceTo: "2026-06-30", label: "a" },
+    { serviceFrom: "2025-03-01", serviceTo: "2025-06-30", label: "b" }]), "2025年3月〜2026年6月", "回が 2 つなら端から端");
+  assert.equal(roundPeriodLabel([{ serviceFrom: null, serviceTo: null, label: "2026年7月分" }]), "2026年7月分");
+  assert.equal(roundPeriodLabel([{ serviceFrom: null, serviceTo: null, label: "a" }, { serviceFrom: null, serviceTo: null, label: "b" }]), null);
+
+  // 回に集計期間がある：実績の月（売上のあった月）ではなく回の期間を渡す。
+  const issuer = fakeIssuer();
+  const service = new ClosingCloseService(royaltyDb([royaltyRaw({ service_from: "2025-07-01", service_to: "2026-06-30" })]), now,
+    undefined, undefined, undefined, fakePayments() as any).useStatements(issuer as any);
+  const result = await service.run([100], "tester");
+  assert.equal(result.ok, 1, JSON.stringify(result.outcomes));
+  assert.equal(issuer.issued[0].entries[0].period, "2025年7月〜2026年6月");
+  assert.equal(issuer.issued[0].periodLabel, "2025年7月〜2026年6月");
 });

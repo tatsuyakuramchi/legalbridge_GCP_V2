@@ -73,6 +73,7 @@ import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
 import { AnnualCloseService } from "./royalty/annual-closes.js";
+import { StatementPeriodReissueService } from "./royalty/statement-reissue.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
@@ -2797,6 +2798,23 @@ export function createRoutes(database: Transactable) {
   router.post("/royalty-ledger/closes/bulk", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.status(201).json(await annualCloses.run(annualSchema.parse(req.body ?? {}), actor(res)));
+    }));
+  // 出した計算書の対象期間を回の期間に揃えて、訂正版で一括で出し直す。試算してから出す。
+  const periodReissue = new StatementPeriodReissueService(database, statementIssuer);
+  const reissueUsage = z.enum(["pub_digital", "pub_print"]).default("pub_digital");
+  router.post("/royalty-ledger/statements/period-reissue/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      const input = z.object({ usageType: reissueUsage }).parse(req.body ?? {});
+      res.json(await periodReissue.preview(input));
+    }));
+  router.post("/royalty-ledger/statements/period-reissue", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        usageType: reissueUsage,
+        documentIds: z.array(z.coerce.number().int().positive()).min(1).max(300),
+        reason: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await periodReissue.run(input, actor(res)));
     }));
   router.put("/royalty-ledger/timing", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

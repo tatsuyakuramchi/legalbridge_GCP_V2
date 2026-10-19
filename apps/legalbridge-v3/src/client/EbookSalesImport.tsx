@@ -178,6 +178,7 @@ export function EbookSalesImport() {
         </div>
         {error && <div className="alert">{error}</div>}
         <AnnualClosesPanel />
+        <PeriodReissuePanel />
         {read && (
           <div className="faint">
             読んだシート：{read.sheets.map((s) => `${s.name}（${s.rows} 行${s.note ? `・${s.note}` : ""}）`).join("、")}
@@ -484,6 +485,139 @@ function AnnualClosesPanel() {
                     </tr>
                   ))}
                   {!preview.targets.length && <tr><td colSpan={7} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ReissueStatus = "change" | "same" | "no_round" | "amount" | "draft" | "error";
+interface ReissueTarget {
+  documentId: number; documentNo: string | null; issuedOn: string | null; templateKey: string;
+  partyName: string | null; conditionCount: number; currentLabel: string | null; newLabel: string | null;
+  status: ReissueStatus; message: string | null;
+  newDocumentId?: number | null; newDocumentNo?: string | null;
+}
+const REISSUE_STATUS: Record<ReissueStatus, string> = {
+  change: "出し直す", same: "揃っている", no_round: "回が無い", amount: "額が変わる", draft: "下書きあり", error: "出せない"
+};
+
+/**
+ * 出した計算書の対象期間を、回の期間（「2025年7月〜2026年6月」）に揃えて訂正版で出し直す。
+ * まとめて締めるの計算書は売上のあった月の範囲で期間を出していて、作品・受取人ごとにばらついていた。
+ */
+function PeriodReissuePanel() {
+  const readOnly = useReadOnly();
+  const [open, setOpen] = useState(false);
+  const [usage, setUsage] = useState<"pub_digital" | "pub_print">("pub_digital");
+  const [targets, setTargets] = useState<ReissueTarget[] | null>(null);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [showAll, setShowAll] = useState(false);
+  const [reason, setReason] = useState("対象期間の表記を回の期間に揃える");
+  const [done, setDone] = useState<{ results: ReissueTarget[]; reissued: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function tryIt() {
+    setBusy(true); setError(null); setDone(null);
+    try {
+      const r = await api.post<{ targets: ReissueTarget[] }>("/royalty-ledger/statements/period-reissue/preview", { usageType: usage });
+      setTargets(r.targets);
+      setPicked(new Set(r.targets.filter((t) => t.status === "change").map((t) => t.documentId)));
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setTargets(null); }
+    finally { setBusy(false); }
+  }
+  async function run() {
+    if (!picked.size) return;
+    if (!window.confirm(`${picked.size} 枚の計算書を訂正版で出し直します。元の計算書は差し替え済みになり、番号は改訂の番号になります。相手に送り直す必要があります。よいですか？`)) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ results: ReissueTarget[]; reissued: number }>("/royalty-ledger/statements/period-reissue",
+        { usageType: usage, documentIds: [...picked], reason });
+      setDone(r); setTargets(null); setPicked(new Set());
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+  const toggle = (id: number) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const shown = (targets ?? []).filter((t) => showAll || t.status !== "same");
+  const failed = done?.results.filter((r) => r.status === "error") ?? [];
+
+  return (
+    <div className="subpanel">
+      <div className="row" style={{ alignItems: "center", gap: 8 }}>
+        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "出した計算書の対象期間を回の期間に揃える"}</button>
+        <span className="faint">売上のあった月の範囲で期間を出していた計算書を、訂正版でまとめて出し直します</span>
+      </div>
+      {open && (
+        <div className="stack" style={{ marginTop: 8 }}>
+          <div className="row" style={{ flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
+            <label className="field"><span>媒体</span>
+              <select value={usage} onChange={(e) => { setUsage(e.target.value as "pub_digital" | "pub_print"); setTargets(null); }}>
+                <option value="pub_digital">電子出版</option>
+                <option value="pub_print">紙出版</option>
+              </select>
+            </label>
+            <label className="field" style={{ minWidth: 260 }}><span>訂正の理由</span>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
+            </label>
+            <button className="btn btn-sm" disabled={busy} onClick={() => void tryIt()}>試算</button>
+            {targets && !readOnly && (
+              <button className="btn btn-sm primary" disabled={busy || !picked.size} onClick={() => void run()}>
+                {picked.size} 枚を出し直す
+              </button>
+            )}
+            {targets && (
+              <label className="row" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
+                <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+                揃っている計算書も出す
+              </label>
+            )}
+            {busy && <span className="faint">処理中…</span>}
+          </div>
+          <div className="faint">発行済みの計算書は書き換えず、訂正版を出して元を差し替え済みにします（実績は訂正版に移ります）。条件・受取人・実績・決定日は元のまま、額も変えません。いま計算し直して額が変わる計算書は出し直しません（個別に訂正してください）。支払は作り直しません。出し直した計算書は相手に送り直してください</div>
+          {error && <div className="alert">{error}</div>}
+          {done && (
+            <div className="notice">
+              {done.reissued} 枚を出し直しました
+              {done.results.filter((r) => r.newDocumentNo).length > 0 && (
+                <div className="faint" style={{ fontSize: "0.85em" }}>
+                  {done.results.filter((r) => r.newDocumentNo).map((r) => `${r.documentNo ?? `#${r.documentId}`} → ${r.newDocumentNo}`).join("、")}
+                </div>
+              )}
+              {failed.length > 0 && (
+                <div className="alert" style={{ marginTop: 6 }}>
+                  出せなかった計算書：{failed.map((r) => `${r.documentNo ?? `#${r.documentId}`}（${r.message ?? ""}）`).join("、")}
+                </div>
+              )}
+            </div>
+          )}
+          {targets && (
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th></th><th>計算書</th><th>決定日</th><th>宛先</th><th>条件</th><th>いまの対象期間</th><th>出し直したあと</th><th>状態</th></tr></thead>
+                <tbody>
+                  {shown.map((t) => (
+                    <tr key={t.documentId} className={t.status === "change" ? "" : "faint"}>
+                      <td><input type="checkbox" disabled={t.status !== "change"} checked={picked.has(t.documentId)}
+                                 onChange={() => toggle(t.documentId)} aria-label={`${t.documentNo ?? t.documentId} を出し直す`} /></td>
+                      <td className="code">{t.documentNo ?? `#${t.documentId}`}</td>
+                      <td>{t.issuedOn ?? "—"}</td>
+                      <td>{t.partyName ?? "—"}</td>
+                      <td className="num">{t.conditionCount}</td>
+                      <td>{t.currentLabel ?? "—"}</td>
+                      <td>{t.newLabel ?? "—"}</td>
+                      <td>{REISSUE_STATUS[t.status]}{t.message ? <div className="faint" style={{ fontSize: "0.85em" }}>{t.message}</div> : null}</td>
+                    </tr>
+                  ))}
+                  {!shown.length && <tr><td colSpan={8} className="faint">出し直す計算書はありません</td></tr>}
                 </tbody>
               </table>
             </div>

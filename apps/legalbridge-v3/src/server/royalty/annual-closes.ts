@@ -87,6 +87,20 @@ export function periodLabel(from: string, to: string): string {
   return fy === ty ? `${fy}年${fm}〜${tm}月` : `${fy}年${fm}月〜${ty}年${tm}月`;
 }
 
+/**
+ * 回の対象期間の呼び名。役務提供期間（集計期間）があれば最初の開始〜最後の終わり
+ * （「2025年7月〜2026年6月」）、無ければ回の名前が 1 つに揃っていればそれ。
+ * 計算書の対象期間は回で決める。実績の月から導くと、売上の無い月が端にある作品だけ短くなる。
+ */
+export function roundPeriodLabel(rows: Array<{ serviceFrom: string | null; serviceTo: string | null; label: string | null }>): string | null {
+  if (!rows.length) return null;
+  const froms = rows.map((r) => r.serviceFrom).filter((d): d is string => !!d).sort();
+  const tos = rows.map((r) => r.serviceTo).filter((d): d is string => !!d).sort();
+  if (froms.length === rows.length && tos.length === rows.length) return periodLabel(froms[0]!, tos.at(-1)!);
+  const labels = [...new Set(rows.map((r) => String(r.label ?? "").trim()))];
+  return labels.length === 1 && labels[0] ? labels[0] : null;
+}
+
 const validDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(new Date(`${d}T00:00:00Z`).getTime());
 
 /** 立てる回。既存の回と期間が重なる年は飛ばす。`to` があれば from〜to の 1 回だけ。 */
