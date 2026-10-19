@@ -19,6 +19,7 @@
 --     - 「取適法の対象」はシステム上は個人（parties.kind = 'individual'）だけ。
 --       法人は資本金・従業員数を持っていないので判定できず、参考値として出す。
 --     - 移行した支払（legacy_id あり）は登録日が移行日（2026-09-08）になる。
+--       V1 の空の控え（PAY-MIG-*・0円・相手先未特定）25件は数えない。
 --       案件・文書は V1 の作成日・発行日を引き継いでいる。依頼（受付箱）と
 --       定期ジョブは V3 で始めたもので、切替（9/26〜27）より前の記録は無い。
 --     - 部署は依頼者のメールで引いた担当者の部署 → 案件の担当者の部署の順。
@@ -62,6 +63,7 @@ WITH out_pay AS (
     FROM payments p
     JOIN parties pt ON pt.id = p.party_id
    WHERE p.direction = 'out' AND p.status <> 'canceled'
+     AND p.amount > 0  -- 移行の空の控え（PAY-MIG-*・0円）は数えない
      AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
 ),
 po AS (
@@ -171,6 +173,7 @@ SELECT CASE pt.kind WHEN 'individual' THEN '個人（取適法の対象）' ELSE
   FROM payments p
   JOIN parties pt ON pt.id = p.party_id
  WHERE p.direction = 'out' AND p.status <> 'canceled'
+     AND p.amount > 0  -- 移行の空の控え（PAY-MIG-*・0円）は数えない
    AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
  GROUP BY 1, 2, 3
  ORDER BY 1 DESC, 2, 3;
@@ -197,6 +200,7 @@ SELECT p.payment_no                                      AS 支払番号,
   FROM payments p
   JOIN parties pt ON pt.id = p.party_id
  WHERE p.direction = 'out' AND p.status <> 'canceled'
+     AND p.amount > 0  -- 移行の空の控え（PAY-MIG-*・0円）は数えない
    AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
    AND (p.basis_received_on IS NULL OR p.due_on IS NULL
         OR p.due_on - p.basis_received_on > 60)
@@ -226,6 +230,7 @@ SELECT p.payment_no                                      AS 支払番号,
   LEFT JOIN payment_allocations a ON a.payment_id = p.id
   LEFT JOIN conditions c          ON c.id = a.condition_id
  WHERE p.direction = 'out' AND p.status <> 'canceled'
+     AND p.amount > 0  -- 移行の空の控え（PAY-MIG-*・0円）は数えない
    AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
    AND NOT EXISTS (
      SELECT 1
