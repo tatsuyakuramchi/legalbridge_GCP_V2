@@ -340,6 +340,10 @@ export class DocumentContextRepository {
         if (out.some((x) => x.role === role)) continue;
         out.push({ role, name: str(party.name), email: str(party.email), phone: str(party.phone), department: null });
       }
+    } else if (party && !out.length && (str(party.email) || str(party.phone))) {
+      // 連絡先の無い法人（や種別の無い取引先）は、取引先のメール・電話を窓口にする（条件書の甲の通知先が
+      // 空にならないように）。氏名は入れない（代表者名に会社名が落ちるので）。
+      out.push({ role: "primary", name: null, email: str(party.email), phone: str(party.phone), department: null });
     }
     return out;
   }

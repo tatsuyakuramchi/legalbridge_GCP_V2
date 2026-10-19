@@ -76,6 +76,7 @@ import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { StatementPeriodReissueService } from "./royalty/statement-reissue.js";
 import { IndividualPayDayService } from "./conditions/individual-pay-day.js";
 import { TermDefaultService } from "./conditions/term-default.js";
+import { NoticeFillService } from "./documents/notice-fill.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner } from "./documents/unsent-send.js";
@@ -783,6 +784,23 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = z.object({ conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(2000) }).parse(req.body ?? {});
       res.status(201).json(await termDefault.run(input.conditionIds, actor(res)));
+    }));
+  // 通知先の空いた契約書（出版の基本契約書・条件書）を、通知先を入れて訂正版で出し直す。documents/notice-fill.ts
+  const noticeFill = new NoticeFillService(database, {
+    reissue: (id, reason, who) => issues.reissue(id, reason, who),
+    issue: (id, who, extra) => issues.issue(id, who, extra)
+  });
+  const staffIdOf = (v: unknown) => z.coerce.number().int().positive().nullable().optional().parse(v === "" ? null : v) ?? null;
+  router.get("/notice-fill", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await noticeFill.preview(staffIdOf(req.query.ownerStaffId)));
+  }));
+  router.post("/notice-fill", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        documentIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        ownerStaffId: z.coerce.number().int().positive().nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await noticeFill.run(input.documentIds, input.ownerStaffId ?? null, actor(res)));
     }));
   router.get("/conditions/term-default/reissue", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
     res.json(await termDefault.reissueTargets());
