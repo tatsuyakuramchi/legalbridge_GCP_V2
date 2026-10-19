@@ -1,6 +1,6 @@
 import { DomainError } from "../core/errors.js";
 import fs from "node:fs";
-import { GoogleAuth } from "google-auth-library";
+import { GoogleAuth, Impersonated, type AuthClient } from "google-auth-library";
 
 export interface StoredDriveFile {
   id: string;
@@ -55,11 +55,22 @@ const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 export interface GoogleDriveStorageOptions {
   keyFilePath?: string;
   environmentTag?: string;
+  /**
+   * このサービスアカウントとして Drive を使う（DRIVE_IMPERSONATE_SA）。予備系の PC（GCP の外）向け。
+   * 人のログイン（ADC）で IAM Credentials に短期トークンを頼み、本番と同じ SA・同じフォルダに保存する。
+   * ログインした人にその SA の Token Creator が要る（メールの署名と同じ権限。docs/v3-local-gmail.md）。
+   */
+  impersonate?: string;
+  /** 試験用：なりすましの元になる認証。省くと ADC。 */
+  impersonateSource?: AuthClient;
 }
 
 export class GoogleDriveStorage implements DriveStorage {
   private readonly auth: GoogleAuth;
   private readonly environmentTag: string;
+  private readonly impersonate: string;
+  private readonly impersonateSource: AuthClient | null;
+  private impersonated: Impersonated | null = null;
 
   constructor(
     private readonly folderId: string,
@@ -67,6 +78,8 @@ export class GoogleDriveStorage implements DriveStorage {
   ) {
     if (!folderId.trim()) throw new Error("GOOGLE_DRIVE_FOLDER_ID is required");
     this.environmentTag = options.environmentTag?.trim() || "validation";
+    this.impersonate = options.impersonate?.trim() ?? "";
+    this.impersonateSource = options.impersonateSource ?? null;
 
     // V1と同じ認証優先順位:
     //   1. GOOGLE_SERVICE_ACCOUNT_KEY_PATH（実在する鍵ファイル）—
@@ -85,7 +98,8 @@ export class GoogleDriveStorage implements DriveStorage {
     }
     this.auth = new GoogleAuth({
       ...(keyFileUsable ? { keyFile } : {}),
-      scopes: [DRIVE_SCOPE]
+      // なりすますときは、元の認証は IAM Credentials を呼べればよい（Drive は SA のトークンで使う）。
+      scopes: [this.impersonate ? "https://www.googleapis.com/auth/cloud-platform" : DRIVE_SCOPE]
     });
   }
 
@@ -227,12 +241,24 @@ export class GoogleDriveStorage implements DriveStorage {
   }
 
   private async accessToken() {
-    const client = await this.auth.getClient();
+    const client = this.impersonate ? await this.impersonatedClient() : await this.auth.getClient();
     const { token } = await client.getAccessToken();
     if (!token) {
       throw new Error("Google Drive access token could not be obtained");
     }
     return token;
+  }
+
+  /** 指定の SA としての認証。トークンの取り直しは Impersonated が受け持つ。 */
+  private async impersonatedClient(): Promise<Impersonated> {
+    if (!this.impersonated) {
+      const source = this.impersonateSource ?? await this.auth.getClient() as AuthClient;
+      this.impersonated = new Impersonated({
+        sourceClient: source, targetPrincipal: this.impersonate,
+        targetScopes: [DRIVE_SCOPE], lifetime: 3600, delegates: []
+      });
+    }
+    return this.impersonated;
   }
 }
 

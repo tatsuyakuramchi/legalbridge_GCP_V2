@@ -104,6 +104,40 @@ docker compose up -d app
 
 そのあと `docs/v3-backup-merge.md` の手順で本番へ持ち帰る。
 
+## Drive へ保存する（任意）
+
+既定では、予備系で作った PDF などは手元の `infra\local\data\files` に置かれ、本番へ持ち帰るときに
+本文から作り直す。予備系からも本番と同じ Drive のフォルダへ保存したいときは、次を足す。
+**本番が Drive に使っているサービスアカウントになりすまして**保存するので、フォルダ・共有・
+ファイルの持ち主は本番と同じになる。
+
+1. 本番の値を読む（Cloud Shell）:
+   ```bash
+   gcloud run services describe legalbridge-v3 --region=asia-northeast1 \
+     --format='value(spec.template.spec.containers[0].env)' | tr ';' '\n' \
+     | grep -E 'GOOGLE_DRIVE_FOLDER_ID|DRIVE_ENVIRONMENT_TAG|DRIVE_MATTER_PARENT_FOLDER_ID|GOOGLE_SERVICE_ACCOUNT_KEY_PATH'
+   gcloud run services describe legalbridge-v3 --region=asia-northeast1 \
+     --format='value(spec.template.spec.serviceAccountName)'
+   ```
+   `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` が出なければ、本番は実行中の SA（2 行目）で Drive を使っている。
+   それを `DRIVE_IMPERSONATE_SA` にする。出た場合は、その鍵の SA（鍵の `client_email`）を使う。
+2. その SA に、ログインする人の Token Creator を付ける（メールと同じ SA なら 2 で付け済み）。
+3. `.env` に足して `docker compose up -d app`:
+   ```
+   DRIVE_STORAGE=drive
+   GOOGLE_DRIVE_FOLDER_ID=<本番の値>
+   DRIVE_ENVIRONMENT_TAG=<本番の値>
+   DRIVE_MATTER_PARENT_FOLDER_ID=<本番の値。無ければ空>
+   DRIVE_IMPERSONATE_SA=<1 の SA>
+   GMAIL_ADC_PATH=/keys/adc.json
+   ```
+   `GMAIL_ADC_PATH`（人のログイン）はメールを開けないときも要る。
+4. 決定済みの文書で「Drive に保存」を押し、本番の Drive のフォルダにファイルができること、
+   画面のリンクが `https://drive.google.com/…` になることを確かめる。
+
+Drive に保存した文書は、本番へ持ち帰ったあともそのリンクのまま使える（ローカルにしか無い
+`/local-files/` のリンクだけが持ち帰りで外される）。戻すときは `DRIVE_STORAGE=local`。
+
 ## うまくいかないとき
 
 | 画面・ログに出る言葉 | 見るところ |
@@ -113,6 +147,8 @@ docker compose up -d app
 | 検証中の宛先許可リストに入っていません | `DISPATCH_ALLOWLIST` に無い宛先（cc・bcc も含む） |
 | GMAIL_DELEGATION_SA（署名に使う SA）が要ります | `.env` の `GMAIL_DELEGATION_SA` が空 |
 | ログインの認証情報…からトークンを取れませんでした | `keys\adc.json` が無いか期限切れ。`docker compose run --rm login` で取り直す |
+| Drive の保存で「権限がありません（403）」 | なりすました SA が本番のフォルダに入れない。`DRIVE_IMPERSONATE_SA` が本番の Drive の SA と同じか |
+| `unable to impersonate`（403） | ログインした人に、`DRIVE_IMPERSONATE_SA` の Token Creator が付いていない |
 | `EACCES: permission denied, open '/keys/adc.json'` | app が認証情報を読めない（古い login で作ったファイル）。`docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json` |
 | `invalid_grant`・`reauth related error (invalid_rapt)` | 組織の再認証ポリシーでログインが切れた。ログインし直して写す（下の「ログインし直す」）。app の上げ直しは要らない |
 | JWT に署名できませんでした（403…） | 2 の権限がログインした人に付いていない（付けてから数分かかることがある） |

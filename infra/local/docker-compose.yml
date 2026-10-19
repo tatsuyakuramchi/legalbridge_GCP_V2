@@ -66,15 +66,21 @@ services:
       LOCAL_USER_ROLE: ${LOCAL_USER_ROLE:-admin}
       SITE_LABEL: ${SITE_LABEL:-予備系}
       DATA_STAMP_PATH: /data/SYNC_STAMP
-      # ファイルは Drive ではなく手元のフォルダへ（./data/files）。
-      DRIVE_STORAGE: local
+      # ファイルは既定で Drive ではなく手元のフォルダへ（./data/files）。
+      # DRIVE_STORAGE=drive にすると、本番と同じ Drive のフォルダへ、本番の SA になりすまして保存する
+      # （DRIVE_IMPERSONATE_SA。認証はメールと同じ人のログイン GMAIL_ADC_PATH。docs/v3-local-gmail.md）。
+      DRIVE_STORAGE: ${DRIVE_STORAGE:-local}
+      GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
+      DRIVE_ENVIRONMENT_TAG: ${DRIVE_ENVIRONMENT_TAG:-}
+      DRIVE_MATTER_PARENT_FOLDER_ID: ${DRIVE_MATTER_PARENT_FOLDER_ID:-}
+      DRIVE_IMPERSONATE_SA: ${DRIVE_IMPERSONATE_SA:-}
       LOCAL_FILES_DIR: /data/files
       CHROMIUM_PATH: /usr/bin/chromium-browser
       # 外部連携は既定で止める（設定しない＝off）。Backlog・Slack・CloudSign は送らない。
       SLACK_MODE: "off"
       # メール（Gmail）だけは .env で開けられる（本番停止中に予備系から送るため。
       # docs/v3-local-gmail.md）。既定は off。GOOGLE_APPLICATION_CREDENTIALS は keys/adc.json
-      # （docker compose run --rm login で取る人のログイン）を指す。
+      # （docker compose run --rm login で取る人のログイン）を指す。Drive に保存するときも同じものを使う。
       GMAIL_MODE: ${GMAIL_MODE:-off}
       GMAIL_SENDER: ${GMAIL_SENDER:-}
       GMAIL_DELEGATION_SA: ${GMAIL_DELEGATION_SA:-}

@@ -257,7 +257,8 @@ export function createRoutes(database: Transactable) {
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
-      ? new GoogleMatterDriveFolderService({ keyFilePath: config.driveKeyFilePath || undefined })
+      ? new GoogleMatterDriveFolderService({ keyFilePath: config.driveKeyFilePath || undefined,
+                                             impersonate: (process.env.DRIVE_IMPERSONATE_SA ?? "").trim() || undefined })
       : new LocalMatterDriveFolderService(),
     config.driveMatterParentFolderId
   );
@@ -5186,7 +5187,9 @@ export function buildDrive(): DriveStorage | null {
     : config.driveFolderId
       ? new GoogleDriveStorage(config.driveFolderId, {
           keyFilePath: config.driveKeyFilePath || undefined,
-          environmentTag: config.driveEnvironmentTag
+          environmentTag: config.driveEnvironmentTag,
+          // 予備系の PC は、人のログインで本番の SA になりすまして同じフォルダへ保存する。
+          impersonate: (process.env.DRIVE_IMPERSONATE_SA ?? "").trim() || undefined
         })
       : null;
 }
