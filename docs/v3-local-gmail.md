@@ -113,6 +113,7 @@ docker compose up -d app
 | 検証中の宛先許可リストに入っていません | `DISPATCH_ALLOWLIST` に無い宛先（cc・bcc も含む） |
 | GMAIL_DELEGATION_SA（署名に使う SA）が要ります | `.env` の `GMAIL_DELEGATION_SA` が空 |
 | ログインの認証情報…からトークンを取れませんでした | `keys\adc.json` が無いか期限切れ。`docker compose run --rm login` で取り直す |
+| `EACCES: permission denied, open '/keys/adc.json'` | app が認証情報を読めない（古い login で作ったファイル）。`docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json` |
 | `invalid_grant`・`reauth related error (invalid_rapt)` | 組織の再認証ポリシーでログインが切れた。ログインし直して写す（下の「ログインし直す」）。app の上げ直しは要らない |
 | JWT に署名できませんでした（403…） | 2 の権限がログインした人に付いていない（付けてから数分かかることがある） |
 | 代理トークンを得られませんでした（unauthorized_client） | 署名用 SA が本番と違う（ドメイン全体委任が付いていない SA）。1 の値を見直す |
@@ -124,7 +125,17 @@ docker compose up -d app
 組織の再認証ポリシーで、人のログインは一定時間（組織の設定。たとえば 1 日）で切れる。
 切れると `invalid_rapt` で送れなくなるので、予備系で送る日は最初にログインし直しておく（同期も同じ認証情報を使う）。
 
+PC の gcloud が Google につながる環境なら:
+
 ```powershell
 gcloud auth application-default login --project legalbridge-488506
 Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" keys\adc.json -Force
+docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json
 ```
+
+PC の gcloud が `Failed to establish a new connection`（社内の通信の制限）で落ちるなら、コンテナでログインする:
+
+1. PowerShell ①（infra\local）で `docker compose run --rm login`。`Enter the output of the above command:` で待つ
+2. ① に出た `gcloud auth application-default login --remote-bootstrap="…"` を、**別の PowerShell ②** に丸ごと貼って実行（`y` → ブラウザで許可）
+3. ② の最後に出る `https://localhost:8085/?state=…&code=…` を ① に貼って Enter
+4. 「認証情報を keys/adc.json に置きました」と出れば完了。`(Get-Item keys\adc.json).LastWriteTime` が今になっていること
