@@ -585,11 +585,32 @@ PC の管理はいっそう厳しくすること。
    認証は無いので、社内ネットワークの外に公開しないこと。
 3. 画面左下の「データ … 時点」を見て、**それより後の変更は入っていない**ことを共有する。
 4. 停止中の登録・決定は、復旧後に本番で行う。予備系は読み取り専用で受け付けない。
+   **停止中も予備系で書いて作業を進めたいとき**は、下の「予備系で書いて、本番へ持ち帰る」。
+
+## 予備系で書いて、本番へ持ち帰る
+
+本番が止まっている間に予備系で登録・決定し、復旧後に本番へ持ち帰る。止まっている間に
+本番へも書き込みがあってよい（行ごとに比べて入れ、同じ行を両方で直していれば止まって知らせる）。
+手順の詳細は `docs/v3-backup-merge.md`。
+
+```powershell
+docker compose run --rm ops backup-begin    # 記録を始める（写しを入れ直した直後に）
+# .env を READ_ONLY=false にして
+docker compose up -d app
+#   …予備系で作業する（文書番号は 9000 番台。Gmail・CloudSign は止まったまま）…
+docker compose run --rm ops backup-status   # 書いた変更の数
+docker compose run --rm ops backup-export   # 本番が戻ったら、持ち帰る SQL を作る（dumps\merge\）
+#   → Cloud Shell で、試す（check）→ 確定（apply）
+docker compose run --rm ops backup-close merged   # 持ち帰ったら閉じる。READ_ONLY=true に戻す
+```
+
+記録を閉じるまでは、`ops sync`・`ops restore`・`ops import-rows` などの写しの入れ直しは
+止まる（予備系で書いた分が消えるため）。
 
 ## 復旧したあと
 
-何もしなくてよい。翌晩の同期で本番の最新に戻る。すぐ戻したければ
-`docker compose run --rm ops sync`。
+予備系で書いていなければ何もしなくてよい。翌晩の同期で本番の最新に戻る。すぐ戻したければ
+`docker compose run --rm ops sync`。予備系で書いたなら、先に上の手順で持ち帰る。
 
 ## 開発・実証実験で使うとき（本番データなし）
 
@@ -624,9 +645,11 @@ docker compose logs -f app                               # アプリのログ
 - `dumps/` と `data/` には口座情報・個人情報を含む本番の写しが入る。
   この PC に触れる人を絞り、不要になった写しは消す。
 - `keys/sa.json` と `.env` は git に入らない（`.gitignore`）。他の場所に写さない。
-- 本番へ書き戻す仕組みは基本的にない。予備系で入れた変更は本番に反映されない。
-  例外として、本番が止まっていた間にローカルを正として作業した分は、
-  `ops push-export` で本番 V3 を丸ごと入れ直せる（写しの時点から本番に書き込みが
-  無いときだけ。手順は `docs/v3-push-local-to-prod.md`）。
+- 予備系で入れた変更は、そのままでは本番に反映されない。本番へ持ち帰る道は 2 つ:
+  - `ops backup-begin` で記録を始めてから書いた分は、`ops backup-export` で行ごとに持ち帰る
+    （本番にも書き込みがあってよい。`docs/v3-backup-merge.md`）
+  - 記録せずに書いた分は、`ops push-export` で本番 V3 を丸ごと入れ直すしかない
+    （写しの時点から本番に書き込みが無いときだけ。`docs/v3-push-local-to-prod.md`）
+- 記録を始めずに予備系で書いた分（開発・試しの書き込み）は、どちらでも持ち帰らない前提で扱う。
 - Linux の PC で `data/` に書けないときは `sudo chown -R 1000:1000 data`
   （app コンテナは uid 1000 で動く）。

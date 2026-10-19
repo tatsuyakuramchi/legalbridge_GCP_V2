@@ -1,5 +1,6 @@
 import type { Queryable } from "../core/db.js";
 import { DomainError } from "../core/errors.js";
+import { BACKUP_BAND_SUFFIX, backupNumbering, bandStart } from "../core/numbering.js";
 
 /** 採番は東京の年で切る（V1・V2 と同じ）。 */
 export function currentYearInTokyo(now = new Date()): number {
@@ -19,6 +20,20 @@ export function normalizePrefix(configured: string | null | undefined): string |
 }
 
 /**
+ * いまの採番表の値（次に振るのはこれ + 1）。まとめて締めるなどの試算で、振られる番号の
+ * 範囲を先に見せるのに使う。予備系は番号帯の行を見る（nextSequence と同じ数え方）。
+ */
+export async function currentSequence(client: Queryable, prefix: string, year: number): Promise<number> {
+  const band = backupNumbering();
+  const r = await client.query(
+    "SELECT current_value FROM document_sequences WHERE prefix = $1 AND year = $2",
+    [band ? `${prefix}${BACKUP_BAND_SUFFIX}` : prefix, year]);
+  const value = (r.rows[0] as { current_value?: number } | undefined)?.current_value;
+  if (value === undefined || value === null) return band ? bandStart(4) - 1 : 0;
+  return Number(value);
+}
+
+/**
  * 連番を1つ進めて返す。同じトランザクション内で呼ぶこと。
  *
  * 進めた番号の文書がもうあれば（採番表が発行済みの番号より遅れている：本番の
@@ -30,14 +45,17 @@ export function normalizePrefix(configured: string | null | undefined): string |
 export async function nextSequence(
   client: Queryable, prefix: string, year: number, attempts = 5000
 ): Promise<number> {
+  // 予備系は番号帯（9000 番台）から、本番の採番表とは別の行で数える（core/numbering.ts）。
+  const band = backupNumbering();
+  const key = band ? `${prefix}${BACKUP_BAND_SUFFIX}` : prefix;
   for (let i = 0; i < attempts; i += 1) {
     const result = await client.query(
       `INSERT INTO document_sequences (prefix, year, current_value)
-       VALUES ($1, $2, 1)
+       VALUES ($1, $2, $3)
        ON CONFLICT (prefix, year) DO UPDATE
          SET current_value = document_sequences.current_value + 1
        RETURNING current_value`,
-      [prefix, year]
+      [key, year, band ? bandStart(4) : 1]
     );
     const sequence = Number((result.rows[0] as { current_value: number }).current_value);
     const taken = await client.query(

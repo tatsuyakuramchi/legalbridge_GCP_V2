@@ -50,6 +50,10 @@ services:
       DB_POOL_MAX: "5"
       # 予備系は読み取り専用が既定。開発で書き込むときは .env で false にする。
       READ_ONLY: ${READ_ONLY:-true}
+      # 予備系の番号帯。文書番号などを 9000 番台（5 桁なら 90000 番台）から振り、本番の連番と
+      # 重ならないようにする。予備系で書いた分をそのままの番号で本番へ持ち帰るため
+      # （docs/v3-backup-merge.md）。本番（Cloud Run）には付けない。
+      NUMBER_BAND: ${NUMBER_BAND:-backup}
       # 認証。既定は disabled（全員が LOCAL_USER_* を名乗る）。Cloudflare Tunnel で
       # 社外に出すときは cloudflare にし、Access のトークンを検証して人ごとに役割を決める。
       AUTH_MODE: ${AUTH_MODE:-disabled}
@@ -131,6 +135,7 @@ services:
     volumes:
       - ./bin/ops.sh:/usr/local/bin/ops:ro
       - ../v3:/v3:ro
+      - ./sql:/local-sql:ro
       - ./dumps:/dumps
       - ./data:/data
       - ./keys:/keys:ro

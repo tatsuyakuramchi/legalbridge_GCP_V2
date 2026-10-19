@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "./fake-db.js";
-import { allocateNumber, currentYearInTokyo, formatNumber, type NumberSpec } from "./numbering.js";
+import { allocateNumber, currentYearInTokyo, formatNumber, maxUsedSequence, type NumberSpec } from "./numbering.js";
 
 const MATTER: NumberSpec = { prefix: "MTR", table: "matters", column: "matter_no" };
 
@@ -83,4 +83,30 @@ test("空きが見つからなければ黙って壊さず止まる", async () =>
   await assert.rejects(
     () => allocateNumber(db, MATTER, new Date("2026-09-08T00:00:00Z"), 5),
     /5 回試しても確保できません/);
+});
+
+test("予備系（NUMBER_BAND=backup）は 90000 番台から、本番の採番表とは別の行で数える", async () => {
+  const before = process.env.NUMBER_BAND;
+  process.env.NUMBER_BAND = "backup";
+  try {
+    let current: number | null = null;
+    const db = new FakeDatabase((text, params) => {
+      if (text.includes("SELECT 1 FROM document_sequences")) return current === null ? [] : [{ x: 1 }];
+      if (text.includes("INSERT INTO document_sequences")) { current = Number(params[2]); return []; }
+      if (text.includes("UPDATE document_sequences")) { current = (current ?? 0) + 1; return [{ current_value: current }]; }
+      if (text.includes("FROM matters WHERE matter_no")) return [];
+      if (text.includes("COALESCE(MAX(")) throw new Error("予備系は本番の最大値から数えない");
+      return undefined;
+    });
+    assert.equal(await allocateNumber(db, MATTER, new Date("2026-09-08T00:00:00Z")), "MTR-2026-90000");
+    assert.equal(db.find("INSERT INTO document_sequences")!.params[0], "MTR@backup");
+  } finally {
+    if (before === undefined) delete process.env.NUMBER_BAND; else process.env.NUMBER_BAND = before;
+  }
+});
+
+test("本番の初回の採番は、予備系の番号帯（持ち帰った番号）を最大値に数えない", async () => {
+  const db = new FakeDatabase((text) => text.includes("COALESCE(MAX(") ? [{ m: 212 }] : undefined);
+  await maxUsedSequence(db, MATTER, 2026);
+  assert.equal(db.find("COALESCE(MAX(")!.params[3], 90000);
 });

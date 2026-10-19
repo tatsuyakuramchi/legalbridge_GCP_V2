@@ -10,6 +10,7 @@ import { documentFor, needsReport, notYet } from "./state.js";
 import { loadDistribution, loadShares } from "../royalty/shares.js";
 import type { StatementIssuer } from "../royalty/statement-issue.js";
 import { roundPeriodLabel } from "../royalty/annual-closes.js";
+import { currentSequence } from "../documents/numbering.js";
 
 export { roundPeriodLabel };
 
@@ -673,10 +674,7 @@ export class ClosingCloseService {
         byYear.set(year, (byYear.get(year) ?? 0) + 1);
       }
       for (const [year, count] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
-        const seq = await this.database.query(
-          "SELECT current_value FROM document_sequences WHERE prefix = $1 AND year = $2",
-          [prefix, year]);
-        const current = Number((seq.rows[0] as { current_value?: number } | undefined)?.current_value ?? 0);
+        const current = await currentSequence(this.database, prefix, year);
         const fmt = (n: number) => `ARC-${prefix}-${year}-${String(n).padStart(4, "0")}`;
         out.push({ templateKey, label: list[0]!.documentLabel, prefix, year, count,
                    from: fmt(current + 1), to: fmt(current + count) });

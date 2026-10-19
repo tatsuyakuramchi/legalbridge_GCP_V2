@@ -20,6 +20,13 @@
 #   ops push-export       ローカルの v3 の中身を、本番へ入れ直す SQL 1本にまとめる
 #                         （本番が止まっていた間にローカルで作業した分を持ち帰る。
 #                           流すのは Cloud Shell の psql。docs/v3-push-local-to-prod.md）
+#   ops backup-begin      予備系で書き始める（本番が止まったとき。ここからの変更を記録する）
+#   ops backup-status     予備系で書いた変更の数
+#   ops backup-export     予備系で書いた変更を、本番へ持ち帰る SQL 1 本にまとめる
+#                         （本番にも書き込みがあってよい。流すのは Cloud Shell の psql。
+#                           docs/v3-backup-merge.md）
+#   ops backup-close merged|discard
+#                         予備系の書き込みを閉じる（持ち帰った後か、捨てるとき）
 #   ops status            写しの一覧と、いま入っているデータの時点
 #   ops netcheck [host port]
 #                         同期に要る Google の口へ、コンテナから届くかを見る。
@@ -42,12 +49,28 @@ strip_cr SYNC_DB_PASSWORD SYNC_DB_USER SYNC_DB_HOST SYNC_DB_PORT \
 [ -n "$KEEP_DUMPS" ] || KEEP_DUMPS=14
 
 DUMPS="${DUMPS:-/dumps}"
+LOCAL_SQL="${LOCAL_SQL:-/local-sql}"
 DATA="${DATA:-/data}"
 STAMP="$DATA/SYNC_STAMP"
 V3="${V3:-/v3}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+# 予備系で書いた変更（backup-begin から）がまだ持ち帰られていないか。写しの入れ直しや
+# 作り直しはローカルの v3 を消すので、持ち帰る前に流すと予備系で書いた分が失われる。
+# 捨ててよいときは BACKUP_DISCARD=yes を付けて流す。
+backup_session() {
+  psql -Atq -c "SELECT id FROM backup.sessions WHERE closed_at IS NULL ORDER BY id DESC LIMIT 1" 2>/dev/null || true
+}
+assert_no_backup() {
+  local sid; sid=$(backup_session)
+  [ -z "$sid" ] && return 0
+  [ "${BACKUP_DISCARD:-}" = "yes" ] && { log "予備系で書いた変更（記録 ${sid}）を捨てて進める（BACKUP_DISCARD=yes）"; return 0; }
+  die "予備系で書いた変更（記録 ${sid}）がまだ持ち帰られていません。ローカルの v3 を入れ直すと失われます。
+  先に ops backup-export で本番へ持ち帰り、ops backup-close merged で閉じてください。
+  捨ててよいなら ops backup-close discard（または BACKUP_DISCARD=yes を付けて流す）。"
+}
 
 # NOTICE（存在しない表のスキップなど）は出さない。エラーだけ見えればよい。
 export PGOPTIONS="-c client_min_messages=warning"
@@ -91,6 +114,7 @@ backup_before_replace() {
 }
 
 restore() {
+  assert_no_backup
   local file="$1"
   [ -f "$file" ] || die "写しが見つかりません: $file"
   case "$file" in
@@ -573,6 +597,7 @@ EOF
 #   本番にしか無い列があれば取り込まずに止める（黙って落とさない）。
 # ---------------------------------------------------------------------
 import_rows() {
+  assert_no_backup
   local dir="${1:-}"
   [ -n "$dir" ] || die "使い方: ops import-rows /dumps/rows"
   [ -d "$dir" ] || die "フォルダがありません: $dir"
@@ -776,6 +801,7 @@ SQL
 # 取引先そのものは作らない（手元に無いコードは飛ばして、最後に数を出す）。
 # ---------------------------------------------------------------------
 import_contacts() {
+  assert_no_backup
   local dir="${1:-}"
   [ -n "$dir" ] || die "使い方: ops import-contacts /dumps/contacts"
   [ -d "$dir" ] || die "フォルダがありません: $dir"
@@ -981,6 +1007,7 @@ prune() {
 
 # 本番データなしの開発用。V1 相当の模擬 public を置き、本番と同じ手順（スキーマ→移行→後追い変更）で作る。
 fresh() {
+  assert_no_backup
   log "開発用 DB を作り直す（本番データは使わない）"
   psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;" >/dev/null
   psql_local -f "$V3/testdata/mock_public.sql" >/dev/null
@@ -1039,6 +1066,7 @@ netcheck() {
 
 # 写しの取り方は2通り。3307 番が通るかで決まる（既定は proxy）。
 sync() {
+  assert_no_backup
   case "${SYNC_MODE:-proxy}" in
     proxy)  sync_proxy ;;
     export) sync_export ;;
@@ -1076,6 +1104,203 @@ sql_prod() {
   [ "$rc" -eq 0 ] || die "照会が止まりました（上のエラーを見る）"
 }
 
+# ---------------------------------------------------------------------
+# 予備系で書く → 本番へ持ち帰る（docs/v3-backup-merge.md）。
+#
+#   push-export は「本番が写しの時点から変わっていない」ときだけ使える（丸ごと入れ直す）。
+#   こちらは本番にも書き込みがあってよい。予備系で書いた変更を行ごとに記録しておき、
+#   本番では行ごとに 3 方向（写し・ローカル・本番のいま）で比べて入れる。
+#
+#   backup-begin   記録を始める。v3 の表に記録の引き金を付け、id を予備系の帯（10 億〜）へ
+#                  進める。文書番号などはアプリの番号帯（NUMBER_BAND=backup、9000 番台）
+#   backup-export  記録を行ごとにまとめ、本番で流す SQL 1 本にする（/dumps/merge/）
+#   backup-close   記録を閉じる（引き金を外す）。持ち帰った後（merged）か、捨てるとき（discard）
+# ---------------------------------------------------------------------
+backup_begin() {
+  psql -Atq -c "SELECT 1 FROM v3.matters LIMIT 1" >/dev/null 2>&1 || die "v3 スキーマがありません。先に写しを入れてください"
+  [ -f "$LOCAL_SQL/backup_begin.sql" ] || die "$LOCAL_SQL/backup_begin.sql がありません（docker compose の ops に ./sql を入れる）"
+  local stamp; stamp=$(cat "$STAMP" 2>/dev/null || echo "")
+  log "予備系で書き始める（写しの時点: ${stamp:-不明}）"
+  psql_local -v data_stamp="$stamp" -v started_by="${LOCAL_USER_EMAIL:-ops}" -f "$LOCAL_SQL/backup_begin.sql"
+  log "ここから先のローカルの変更を記録します。書き込むには .env を READ_ONLY=false にして docker compose up -d app"
+  log "本番が戻ったら ops backup-export で持ち帰る SQL を作る"
+}
+
+# 記録を行ごとにまとめる（同じ行を何度直しても、写しの値と最後の値の 1 組にする）。
+#   足して消した行は持ち帰らない。直して元に戻した行も持ち帰らない。
+backup_net_sql() {
+  cat <<SQL
+WITH c AS (SELECT * FROM backup.changes WHERE session_id = $1),
+g AS (
+  SELECT table_name, pk,
+         (array_agg(old ORDER BY seq))[1]      AS old,
+         (array_agg(new ORDER BY seq DESC))[1] AS new,
+         (array_agg(op ORDER BY seq))[1]       AS first_op,
+         (array_agg(op ORDER BY seq DESC))[1]  AS last_op,
+         max(seq) AS last_seq, max(at) AS last_at
+    FROM c GROUP BY table_name, pk),
+n AS (
+  SELECT table_name, pk, old, new, last_seq, last_at,
+         CASE WHEN first_op = 'I' AND last_op = 'D' THEN NULL
+              WHEN first_op = 'I' THEN 'I'
+              WHEN last_op = 'D' THEN 'D'
+              ELSE 'U' END AS op
+    FROM g)
+SELECT row_number() OVER (ORDER BY last_seq) AS no, table_name, op, pk,
+       CASE WHEN op IN ('U', 'D') THEN old END AS old,
+       CASE WHEN op IN ('I', 'U') THEN new END AS new,
+       CASE WHEN op = 'U' THEN (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(new) k
+                                 WHERE (old -> k) IS DISTINCT FROM (new -> k)) END AS cols,
+       last_at
+  FROM n
+ WHERE op IS NOT NULL AND NOT (op = 'U' AND old = new)
+SQL
+}
+
+backup_status() {
+  local sid; sid=$(backup_session)
+  if [ -z "$sid" ]; then
+    echo "予備系の書き込みは始まっていません（ops backup-begin で始める）。"
+    psql -Atq -c "SELECT '最後の記録: ' || id || '（' || to_char(started_at, 'YYYY-MM-DD HH24:MI') || ' 〜 ' || to_char(closed_at, 'YYYY-MM-DD HH24:MI') || '、' || COALESCE(note, '') || '）' FROM backup.sessions ORDER BY id DESC LIMIT 1" 2>/dev/null || true
+    return 0
+  fi
+  psql_local -c "SELECT id AS 記録, to_char(started_at, 'YYYY-MM-DD HH24:MI') AS 始めた, data_stamp AS 写しの時点,
+                        to_char(exported_at, 'YYYY-MM-DD HH24:MI') AS 最後に書き出した,
+                        (SELECT count(*) FROM backup.changes WHERE session_id = s.id) AS 記録した変更
+                   FROM backup.sessions s WHERE id = $sid"
+  echo "持ち帰る行（表ごと。同じ行の変更は 1 つにまとめた数）:"
+  psql_local -c "SELECT table_name AS 表,
+                        count(*) FILTER (WHERE op = 'I') AS 足した,
+                        count(*) FILTER (WHERE op = 'U') AS 直した,
+                        count(*) FILTER (WHERE op = 'D') AS 消した
+                   FROM ($(backup_net_sql "$sid")) x GROUP BY table_name ORDER BY table_name"
+}
+
+backup_export() {
+  local sid; sid=$(backup_session)
+  [ -n "$sid" ] || die "予備系の書き込みが始まっていません（持ち帰るものがありません）"
+  [ -f "$LOCAL_SQL/merge_apply.sql" ] || die "$LOCAL_SQL/merge_apply.sql がありません"
+  local dir="$DUMPS/merge" ts out n
+  ts=$(date +%Y%m%d_%H%M)
+  mkdir -p "$dir"
+  out="$dir/v3_merge_${ts}.sql"
+  n=$(psql -Atq -c "SELECT count(*) FROM ($(backup_net_sql "$sid")) x")
+  [ "${n:-0}" -gt 0 ] || die "持ち帰る変更がありません"
+  local stamp; stamp=$(psql -Atq -c "SELECT COALESCE(data_stamp, '') FROM backup.sessions WHERE id = $sid")
+
+  log "予備系の変更をまとめる（記録 ${sid}、${n} 行）"
+  {
+    cat <<EOF
+-- =====================================================================
+-- 予備系で書いた変更を本番へ持ち帰る（ops backup-export が ${ts} に作成）
+--
+--   記録: ${sid}（写しの時点: ${stamp:-不明}）、持ち帰る行: ${n}
+--   流すのは Cloud Shell の psql（postgres ロール）。Studio では流せない。手順: docs/v3-backup-merge.md
+--
+--   まず試す（何も変えない）:
+--     psql -f $(basename "$out")
+--   ぶつかりが無ければ確定する:
+--     psql -v merge_mode=apply -f $(basename "$out")
+--   ぶつかった行は番号で選んで流し直す（本番を正 / ローカルを正）:
+--     psql -v merge_skip=12,57 -v merge_force=33 -f $(basename "$out")
+--
+--   口座番号・名義・連絡先を含むことがある。流し終えたら Cloud Shell とローカルの両方から消す。
+-- =====================================================================
+\\set ON_ERROR_STOP on
+\\set QUIET on
+\\pset pager off
+\\if :{?merge_mode}
+\\else
+  \\set merge_mode check
+\\endif
+\\if :{?merge_skip}
+\\else
+  \\set merge_skip ''
+\\endif
+\\if :{?merge_force}
+\\else
+  \\set merge_force ''
+\\endif
+\\if :{?merge_db}
+\\else
+  \\set merge_db legalbridge
+\\endif
+\\set merge_session '${sid}'
+\\set merge_exported_at '${ts}'
+SELECT :'merge_mode' IN ('check', 'apply') AS merge_mode_ok \\gset
+\\if :merge_mode_ok
+\\else
+  \\echo 'merge_mode は check か apply です。何も変えていません。'
+  \\quit
+\\endif
+\\echo '持ち帰り: ' :merge_mode '（記録 ${sid}、${n} 行）'
+
+BEGIN;
+SET LOCAL lock_timeout = '15s';
+
+CREATE TEMP TABLE merge_changes (
+  no int PRIMARY KEY, table_name text NOT NULL, op text NOT NULL, pk jsonb NOT NULL,
+  old jsonb, new jsonb, cols text[], last_at timestamptz
+) ON COMMIT DROP;
+COPY merge_changes FROM stdin;
+EOF
+    psql -Atq -c "COPY ($(backup_net_sql "$sid")) TO STDOUT"
+    echo '\.'
+    cat <<'EOF'
+
+CREATE TEMP TABLE merge_local_columns (table_name text, column_name text) ON COMMIT DROP;
+COPY merge_local_columns FROM stdin;
+EOF
+    psql -Atq -c "COPY (SELECT c.table_name, c.column_name FROM information_schema.columns c
+                         JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+                        WHERE c.table_schema = 'v3' AND t.table_type = 'BASE TABLE'
+                        ORDER BY 1, 2) TO STDOUT"
+    echo '\.'
+    echo
+    cat "$LOCAL_SQL/merge_apply.sql"
+  } > "$out"
+  chmod 600 "$out"
+  psql -Atq -c "UPDATE backup.sessions SET exported_at = now() WHERE id = $sid" >/dev/null
+
+  local size; size=$(du -h "$out" | cut -f1)
+  log "できました: $out（$size）"
+  backup_status
+  log "Cloud Shell へ上げ、まず merge_mode を付けずに（試すだけ）流す。手順: docs/v3-backup-merge.md"
+  log "書き出した後も予備系に書いたら、もう一度 backup-export する（同じ記録をまとめ直す。入れ済みの行は「本番でもう同じ」になる）"
+}
+
+backup_close() {
+  local how="${1:-}" sid
+  case "$how" in
+    merged)  ;;
+    discard) ;;
+    *) die "使い方: ops backup-close merged（本番へ持ち帰った後）| discard（持ち帰らずに捨てる）" ;;
+  esac
+  sid=$(backup_session)
+  [ -n "$sid" ] || die "予備系の書き込みは始まっていません"
+  log "記録 ${sid} を閉じる（${how}）。v3 の表から記録の引き金を外す"
+  psql_local <<SQL
+BEGIN;
+DO \$drop\$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT c.relname FROM pg_trigger tg
+             JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace ns ON ns.oid = c.relnamespace
+            WHERE ns.nspname = 'v3' AND tg.tgname = 'zz_backup_capture' LOOP
+    EXECUTE format('DROP TRIGGER zz_backup_capture ON v3.%I', r.relname);
+  END LOOP;
+END
+\$drop\$;
+UPDATE backup.sessions SET closed_at = now(), note = '${how}' WHERE id = ${sid};
+COMMIT;
+SQL
+  if [ "$how" = "merged" ]; then
+    log "閉じました。次に写しを入れ直すと、本番（持ち帰った分を含む）の中身になります"
+  else
+    log "閉じました（捨てた）。予備系で書いた分は持ち帰りません。写しを入れ直すと消えます"
+  fi
+}
+
 case "${1:-}" in
   netcheck) shift; netcheck "$@" ;;
   sync) sync ;;
@@ -1101,6 +1326,10 @@ case "${1:-}" in
        done
        psql -v ON_ERROR_STOP=1 "${sql_vars[@]+"${sql_vars[@]}"}" -f "$sql_file" ;;
   push-export) push_export ;;
+  backup-begin) backup_begin ;;
+  backup-status) backup_status ;;
+  backup-export) backup_export ;;
+  backup-close) shift; backup_close "${1:-}" ;;
   status) status ;;
-  *) sed -n '2,15p' "$0"; exit 2 ;;
+  *) sed -n '2,32p' "$0"; exit 2 ;;
 esac

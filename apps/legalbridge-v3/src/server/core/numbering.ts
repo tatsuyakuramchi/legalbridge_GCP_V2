@@ -29,6 +29,21 @@ export interface NumberSpec {
   width?: number;
 }
 
+/**
+ * 予備系の番号帯（docs/v3-backup-merge.md）。
+ *
+ * 本番が止まっている間に予備系（ローカル）で振った番号は、持ち帰るときそのまま本番に入れる。
+ * 本番の連番と重ならないよう、予備系は桁の最上位が 9 の帯（4 桁なら 9000 番台、5 桁なら
+ * 90000 番台）から振る。予備系の採番表は prefix に「@backup」を付けた別の行で数え、本番の
+ * 採番表の行には触らない（持ち帰ったときに本番の連番を動かさない）。
+ * 予備系の app だけ NUMBER_BAND=backup で起動する（infra/local/docker-compose.yml）。
+ */
+export const BACKUP_BAND_SUFFIX = "@backup";
+// 画面（tsconfig.client）からも読まれるので、process の型に頼らずに読む。
+export const backupNumbering = (): boolean =>
+  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.NUMBER_BAND === "backup";
+export const bandStart = (width: number): number => 9 * 10 ** (width - 1);
+
 export function formatNumber(prefix: string, year: number, sequence: number, width = 5): string {
   return `${prefix}-${year}-${String(sequence).padStart(width, "0")}`;
 }
@@ -41,12 +56,15 @@ export async function maxUsedSequence(
   client: Queryable, spec: NumberSpec, year: number
 ): Promise<number> {
   const pattern = `${spec.prefix}-${year}-%`;
+  // 予備系の番号帯（持ち帰った番号）は数えない。数えると本番の連番が帯へ飛ぶ。
   const r = await client.query(
-    `SELECT COALESCE(MAX(NULLIF(regexp_replace(${spec.column}, '^.*-', ''), '')::int), 0) AS m
-       FROM ${spec.table}
-      WHERE ${spec.column} LIKE $1
-        AND ${spec.column} ~ ('^' || $2 || '-' || $3 || '-[0-9]+$')`,
-    [pattern, spec.prefix, String(year)]
+    `SELECT COALESCE(MAX(n), 0) AS m FROM (
+       SELECT NULLIF(regexp_replace(${spec.column}, '^.*-', ''), '')::bigint AS n
+         FROM ${spec.table}
+        WHERE ${spec.column} LIKE $1
+          AND ${spec.column} ~ ('^' || $2 || '-' || $3 || '-[0-9]+$')) x
+      WHERE n < $4`,
+    [pattern, spec.prefix, String(year), bandStart(spec.width ?? 5)]
   );
   return Number((r.rows[0] as { m: number } | undefined)?.m ?? 0);
 }
@@ -72,21 +90,23 @@ export async function allocateNumber(
 ): Promise<string> {
   const year = currentYearInTokyo(now);
   const width = spec.width ?? 5;
+  const band = backupNumbering();
+  const key = band ? `${spec.prefix}${BACKUP_BAND_SUFFIX}` : spec.prefix;
 
-  // 未採番なら移行データの続きから始める。
+  // 未採番なら移行データの続きから始める。予備系は番号帯の頭から。
   const seeded = await client.query(
-    "SELECT 1 FROM document_sequences WHERE prefix = $1 AND year = $2", [spec.prefix, year]);
+    "SELECT 1 FROM document_sequences WHERE prefix = $1 AND year = $2", [key, year]);
   if (!seeded.rows[0]) {
-    const start = await maxUsedSequence(client, spec, year);
+    const start = band ? bandStart(width) - 1 : await maxUsedSequence(client, spec, year);
     await client.query(
       `INSERT INTO document_sequences (prefix, year, current_value) VALUES ($1, $2, $3)
-       ON CONFLICT (prefix, year) DO NOTHING`, [spec.prefix, year, start]);
+       ON CONFLICT (prefix, year) DO NOTHING`, [key, year, start]);
   }
 
   for (let i = 0; i < attempts; i += 1) {
     const next = await client.query(
       `UPDATE document_sequences SET current_value = current_value + 1
-        WHERE prefix = $1 AND year = $2 RETURNING current_value`, [spec.prefix, year]);
+        WHERE prefix = $1 AND year = $2 RETURNING current_value`, [key, year]);
     const sequence = Number((next.rows[0] as { current_value: number }).current_value);
     const candidate = formatNumber(spec.prefix, year, sequence, width);
 

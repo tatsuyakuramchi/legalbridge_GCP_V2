@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { currentYearInTokyo, formatDocumentNumber, normalizePrefix, nextSequence,
+import { currentSequence, currentYearInTokyo, formatDocumentNumber, normalizePrefix, nextSequence,
          baseDocumentNumber, revisionOf, revisionNumber, nextRevisionNumber, printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { FakeDatabase } from "../core/fake-db.js";
 
@@ -27,7 +27,25 @@ test("連番はプレフィックスと年ごとに1つ進む", async () => {
   const db = new FakeDatabase((text) =>
     text.includes("INSERT INTO document_sequences") ? [{ current_value: 8 }] : undefined);
   assert.equal(await nextSequence(db, "RS", 2026), 8);
-  assert.deepEqual(db.find("document_sequences")!.params, ["RS", 2026]);
+  assert.deepEqual(db.find("document_sequences")!.params, ["RS", 2026, 1]);
+});
+
+test("予備系（NUMBER_BAND=backup）は 9000 番台から、本番の採番表とは別の行で数える", async () => {
+  const before = process.env.NUMBER_BAND;
+  process.env.NUMBER_BAND = "backup";
+  try {
+    const db = new FakeDatabase((text, params) => {
+      if (text.includes("INSERT INTO document_sequences")) return [{ current_value: params[2] }];
+      if (text.includes("SELECT current_value FROM document_sequences")) return [];
+      return undefined;
+    });
+    const n = await nextSequence(db, "ROY", 2026);
+    assert.equal(formatDocumentNumber("ROY", 2026, n), "ARC-ROY-2026-9000");
+    assert.deepEqual(db.find("INSERT INTO document_sequences")!.params, ["ROY@backup", 2026, 9000]);
+    assert.equal(await currentSequence(db, "ROY", 2026), 8999, "まだ振っていなければ帯の頭の 1 つ前");
+  } finally {
+    if (before === undefined) delete process.env.NUMBER_BAND; else process.env.NUMBER_BAND = before;
+  }
 });
 
 test("進めた番号の文書がもうあれば、空いている番号まで進める（採番表の遅れ）", async () => {
