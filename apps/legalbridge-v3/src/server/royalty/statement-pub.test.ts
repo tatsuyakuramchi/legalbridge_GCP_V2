@@ -51,6 +51,20 @@ test("出版の計算書：作品 × 媒体で要約 1 行。集計期間は報�
   assert.deepEqual([annex[1].rows[0].period, annex[1].rows[0].detail], ["2025-11-30", "第3刷"]);
 });
 
+test("出版の計算書：回の期間（statementPeriod）があれば、売上の無い月があっても対象期間は回の期間", () => {
+  const ROUND = "2025年3月〜2026年8月";
+  const p = publishingStatementPatch(LINES.map((l) => ({ ...l, statementPeriod: ROUND })), { tax: 0, withholding: 0, netTransfer: null });
+  const works = p.pubWorks as Array<Record<string, unknown>>;
+  assert.deepEqual(works.map((w) => w.period), [ROUND, ROUND, ROUND], "作品ごとに売上の月の端でずれない");
+  assert.equal(p.pubPeriodLabel, ROUND);
+  // 別紙の行は販売月のまま。
+  const annex = p.pubAnnex as Array<{ rows: Array<Record<string, unknown>> }>;
+  assert.deepEqual(annex[0].rows.map((r) => r.period), ["2025年3月分", "2025年4月分"]);
+  // 1 枚の対象期間を渡されればそれ。
+  const q = publishingStatementPatch(LINES, { tax: 0, withholding: 0, netTransfer: null }, "2025年7月〜2026年6月");
+  assert.equal(q.pubPeriodLabel, "2025年7月〜2026年6月");
+});
+
 test("出版でない行だけなら何も足さない。源泉の無い相手は差引の行を出さない", () => {
   assert.deepEqual(publishingStatementPatch([line({ media: null })], { tax: 0, withholding: 0, netTransfer: null }), {});
   const p = publishingStatementPatch([LINES[0]], { tax: 207, withholding: 0, netTransfer: null });

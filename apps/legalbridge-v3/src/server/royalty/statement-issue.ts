@@ -37,6 +37,11 @@ export interface IssueStatementInput {
   reason?: string | null;
   /** 決定日（まとめて締めるは回の締め日）。省略すれば今日。 */
   issuedOn?: string | null;
+  /**
+   * 計算書 1 枚の対象期間（まとめて締めるは回の期間「2025年7月〜2026年6月」）。省略すれば
+   * 条件ごとの period が揃っていればそれ、無ければ載った実績の月の範囲。
+   */
+  periodLabel?: string | null;
 }
 
 export interface StatementIssuerDeps {
@@ -116,7 +121,14 @@ export class StatementIssuer {
     const previews = await this.previewBundle(input.entries, supersedes);
     const payeePartyId = this.payeeOf(previews);
     const totals = bundleTotals(previews);
-    const lines = await this.lines(previews, { agreementId: input.agreementId ?? null, manualInputs: input.manualInputs });
+    // 条件ごとに対象期間（回の期間）を指定されていれば、その条件の行に持たせる。紙の対象期間は
+    // 載った実績の月ではなくこれを出す（売上の無い月があると作品ごとに期間がずれていた）。
+    const periodOf = new Map(input.entries.map((e) => [e.conditionId, String(e.period ?? "").trim() || null]));
+    const lines = (await this.lines(previews, { agreementId: input.agreementId ?? null, manualInputs: input.manualInputs }))
+      .map((l) => {
+        const statementPeriod = l.conditionId === null ? null : periodOf.get(l.conditionId) ?? null;
+        return statementPeriod ? { ...l, statementPeriod } : l;
+      });
     const templateKey = await this.templateFor(input.templateKey, lines);
     const eventIds = input.entries.flatMap((e) => e.eventIds ?? []);
 
@@ -138,6 +150,7 @@ export class StatementIssuer {
         rs_bundle_withholding: totals.withholdingTax,
         rs_bundle_net_transfer: totals.netTransfer,
         rs_stage_notes: stageNotesOf(previews.flatMap((p) => p.events ?? [])),
+        ...(String(input.periodLabel ?? "").trim() ? { rs_period_label: String(input.periodLabel).trim() } : {}),
         // 2枚目以降の退かせる計算書。決定の瞬間に issue-service が退かせて実績を移す。
         ...(supersedes.length > 1 ? { _supersedesExtra: supersedes.slice(1) } : {})
       },

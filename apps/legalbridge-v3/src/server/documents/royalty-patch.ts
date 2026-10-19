@@ -408,6 +408,11 @@ export interface BundleLine {
   unitPrice?: number | null;
   store?: string | null;
   period?: string | null;
+  /**
+   * 計算書の対象期間（締めの回の期間。「2025年7月〜2026年6月」）。まとめて締めるなど回から出したときだけ持つ。
+   * 出版の計算書の対象期間はこれを出す（無ければ載った実績の月の範囲）。period は行ごとの販売月のまま。
+   */
+  statementPeriod?: string | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -433,7 +438,8 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     media: String(row.media ?? "") || null,
     unitPrice: row.unitPrice === null || row.unitPrice === undefined || row.unitPrice === "" ? null : num(row.unitPrice),
     store: String(row.store ?? "") || null,
-    period: String(row.period ?? "") || null
+    period: String(row.period ?? "") || null,
+    statementPeriod: String(row.statementPeriod ?? "") || null
   }));
 }
 
@@ -745,8 +751,20 @@ function spanLabel(keys: number[]): string {
 }
 const pctText = (value: number) => `${Math.round(value * 100) / 100}%`;
 
+/**
+ * 対象期間の見出し。回の期間（statementPeriod）が全部の行で 1 つに揃っていればそれ、揃わなければ
+ * 載った実績の月の範囲。実績の月の範囲は、売上の無い月が端にあると回ごと・作品ごとにずれる。
+ */
+function periodOfLines(lines: BundleLine[]): string {
+  const rounds = new Set(lines.map((l) => l.statementPeriod ?? ""));
+  const [only] = [...rounds];
+  return rounds.size === 1 && only ? only : spanLabel(lines.map(monthKey));
+}
+
 export function publishingStatementPatch(
-  lines: BundleLine[], totals: { tax: number; withholding: number; netTransfer: number | null }
+  lines: BundleLine[], totals: { tax: number; withholding: number; netTransfer: number | null },
+  /** 計算書 1 枚の対象期間（まとめて締めるの回の期間）。無ければ行から導く。 */
+  periodLabel?: string | null
 ): Data {
   const pub = lines.filter((l) => l.media === "紙" || l.media === "電子");
   if (!pub.length) return {};
@@ -768,7 +786,7 @@ export function publishingStatementPatch(
 
   const works = groups.map((g, i) => ({
     no: i + 1, title: g.title, media: g.media,
-    period: spanLabel(g.lines.map(monthKey)),
+    period: periodOfLines(g.lines),
     contractNumber: numbersOf(g.lines).join("・"),
     quantityStr: fmtYen(sum(g.lines, qty)),
     salesStr: fmtYen(sum(g.lines, (l) => l.salesJpy)),
@@ -813,7 +831,7 @@ export function publishingStatementPatch(
     pubAnnex: annex,
     pubRowCount: pub.length,
     pubWorkCount: works.length,
-    pubPeriodLabel: spanLabel(pub.map(monthKey)),
+    pubPeriodLabel: String(periodLabel ?? "").trim() || periodOfLines(pub),
     pubMediaLabel: media.length > 1 ? "紙媒体出版・電子書籍配信" : media[0] === "紙" ? "紙媒体出版" : "電子書籍配信",
     pubHasDigital: media.includes("電子"),
     pubHasPrint: media.includes("紙"),
@@ -871,7 +889,7 @@ export function royaltyStatementPatch(
         withholding: num(manual.rs_bundle_withholding),
         netTransfer: manual.rs_bundle_net_transfer === undefined || manual.rs_bundle_net_transfer === null
           ? null : num(manual.rs_bundle_net_transfer)
-      }),
+      }, manual.rs_period_label === undefined || manual.rs_period_label === null ? null : String(manual.rs_period_label)),
       ...receiptHeader(context, computedLines),
       // 取引モデル（利用形態）で、そのモデルに要らない欄を空にする。
       ...statementModelPatch(computedLines.map((l) => l.usageType)),
