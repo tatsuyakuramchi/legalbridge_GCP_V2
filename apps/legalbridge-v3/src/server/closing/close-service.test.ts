@@ -359,3 +359,14 @@ test("計算書の対象期間は回で決める：集計期間があれば最�
   assert.equal(issuer.issued[0].entries[0].period, "2025年7月〜2026年6月");
   assert.equal(issuer.issued[0].periodLabel, "2025年7月〜2026年6月");
 });
+
+test("まとめて締めるで担当者を選べば、計算書の担当（_ownerStaffId）にする。選ばなければ渡さない", async () => {
+  const picked = fakeIssuer();
+  await new ClosingCloseService(royaltyDb([royaltyRaw()]), now, undefined, undefined, undefined, fakePayments() as any)
+    .useStatements(picked as any).run([100], "tester", { ownerStaffId: 12 });
+  assert.deepEqual(picked.issued[0].manualInputs, { _ownerStaffId: 12 });
+  const none = fakeIssuer();
+  await new ClosingCloseService(royaltyDb([royaltyRaw()]), now, undefined, undefined, undefined, fakePayments() as any)
+    .useStatements(none as any).run([100], "tester");
+  assert.equal(none.issued[0].manualInputs, undefined);
+});

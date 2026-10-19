@@ -7,6 +7,7 @@ import { EbookSalesImport } from "./EbookSalesImport.js";
 import { MissingContracts } from "./MissingContracts.js";
 import { UnsentBundles } from "./UnsentBundles.js";
 import { Leftovers } from "./Leftovers.js";
+import { IndividualPayDay } from "./IndividualPayDay.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
 import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
@@ -203,7 +204,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
         </div>
       )}
 
-      {tab === "leftovers" && <Leftovers />}
+      {tab === "leftovers" && (<><IndividualPayDay /><Leftovers /></>)}
 
       {tab === "imports" && (<><EbookSalesImport /><CsvImport /></>)}
       {tab === "contracts" && <MissingContracts />}

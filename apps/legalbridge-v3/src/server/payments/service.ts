@@ -61,11 +61,11 @@ export interface PaymentRow {
  * 読めない文言（「30日以内」など。締め日が決まらない）は使わない。
  */
 export function dueFromPaymentTerms(
-  basis: string | null, terms: Array<string | null | undefined>
+  basis: string | null, terms: Array<string | null | undefined>, partyKind?: string | null
 ): string | null {
   if (!basis) return null;
   const days = terms
-    .map((t) => payDateFromTerms(basis, t))
+    .map((t) => payDateFromTerms(basis, t, partyKind))
     .filter((d): d is string => Boolean(d))
     .sort();
   return days[days.length - 1] ?? null;
@@ -518,7 +518,7 @@ export class PaymentService {
           .filter((d): d is string => Boolean(d)).sort();
         const dueOn = options.dueOn ?? printedDueOn
           ?? payOns[payOns.length - 1]
-          ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)))
+          ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)), str(rows[0]?.party_kind))
           ?? dueLimitFrom(basis);
         // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。
         const withholding = withholdingFor(net + tax, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;

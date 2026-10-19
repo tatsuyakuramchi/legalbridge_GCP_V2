@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { useDebounced } from "./ListTools.js";
+import { OwnerStaffPicker } from "./OwnerStaffPicker.js";
 
 /**
  * 電子書籍売上の取込（A-069。docs/royalty-shares.md §5）。
@@ -518,6 +519,8 @@ function PeriodReissuePanel() {
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [showAll, setShowAll] = useState(false);
   const [reason, setReason] = useState("対象期間の表記を回の期間に揃える");
+  /** 訂正版の担当者。選ばなければ元の計算書の担当のまま。 */
+  const [ownerStaffId, setOwnerStaffId] = useState<number | null>(null);
   const [done, setDone] = useState<{ results: ReissueTarget[]; reissued: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -537,7 +540,7 @@ function PeriodReissuePanel() {
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ results: ReissueTarget[]; reissued: number }>("/royalty-ledger/statements/period-reissue",
-        { usageType: usage, documentIds: [...picked], reason });
+        { usageType: usage, documentIds: [...picked], reason, ownerStaffId });
       setDone(r); setTargets(null); setPicked(new Set());
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -568,6 +571,10 @@ function PeriodReissuePanel() {
             <label className="field" style={{ minWidth: 260 }}><span>訂正の理由</span>
               <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
             </label>
+            <div className="field" style={{ minWidth: 260 }}><span>担当者</span>
+              <OwnerStaffPicker value={ownerStaffId} onChange={setOwnerStaffId} disabled={busy}
+                emptyLabel="選ばない（元の計算書の担当のまま）" />
+            </div>
             <button className="btn btn-sm" disabled={busy} onClick={() => void tryIt()}>試算</button>
             {targets && !readOnly && (
               <button className="btn btn-sm primary" disabled={busy || !picked.size} onClick={() => void run()}>

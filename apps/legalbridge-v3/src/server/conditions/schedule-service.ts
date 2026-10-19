@@ -2,7 +2,7 @@ import { inTransaction, type Queryable, type Transactable } from "../core/db.js"
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
-import { parsePaymentTerms, payOnFor } from "./payment-terms.js";
+import { forPartyKind, parsePaymentTerms, payOnFor } from "./payment-terms.js";
 import { readContractForm } from "./contract-form.js";
 
 /**
@@ -119,6 +119,8 @@ export function generateLines(input: {
   amount: number; triggerKind: TriggerKind; labelSuffix?: string;
   /** 支払条件。「検収月の翌月末払い」など。読めれば各回の支払期日を埋める。 */
   paymentTerms?: string | null;
+  /** 支払先の区分（parties.kind）。個人なら末日払いを 20 日にする（forPartyKind）。 */
+  partyKind?: string | null;
   /** 契約形式。全回に同じものを入れる。回ごとに違うなら画面で直す。 */
   contractForm?: string | null;
 }): ScheduleLine[] {
@@ -133,7 +135,7 @@ export function generateLines(input: {
   const suffix = input.labelSuffix ?? "分";
   // 読めない書き方なら null のまま。推測で埋めると、間違った支払期日が
   // 黙って入って気づけない。
-  const terms = parsePaymentTerms(input.paymentTerms);
+  const terms = forPartyKind(parsePaymentTerms(input.paymentTerms), input.partyKind);
 
   // 開始日がその月の末日なら、以降も末日で揃える。「翌月末払い」の契約で
   // 4/30 開始が 5/30・6/30 になると、毎月ずれた期日が並ぶ。

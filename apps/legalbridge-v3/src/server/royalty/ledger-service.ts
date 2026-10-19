@@ -2,7 +2,7 @@ import { dateStr, inTransaction, int, str, type Queryable, type Transactable } f
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
-import { parsePaymentTerms, payOnFor } from "../conditions/payment-terms.js";
+import { forPartyKind, parsePaymentTerms, payOnFor } from "../conditions/payment-terms.js";
 import { basisOf, type UsageType } from "./usage-type.js";
 import { ppmToPct } from "./economics.js";
 import { roundRoyalty } from "./rounding.js";
@@ -149,6 +149,8 @@ export function buildRounds(input: {
   skips: Array<{ conditionId: number; scheduleId: number }>;
   outs: OutLite[];
   plans?: PlanLite[];
+  /** 作家（台帳の取引先）の区分。個人なら支払条件の末日払いを 20 日にする（forPartyKind）。 */
+  partyKind?: string | null;
   /** 1作品の中で見ているか。作家でまとめないときも、1作品の中は支払日でまとめる。 */
   bundle: Bundle | "single_work";
   /**
@@ -185,7 +187,7 @@ export function buildRounds(input: {
         parts.push({ conditionId: c.id, scheduleId: null, eventId: list[0].id,
           label: list.find((e) => e.period)?.period ?? null,
           periodFrom: on, closeOn: on,
-          payOn: payOnFor(on, parsePaymentTerms(c.paymentTerms)), events: list, skipped: false,
+          payOn: payOnFor(on, forPartyKind(parsePaymentTerms(c.paymentTerms), input.partyKind)), events: list, skipped: false,
           expected: [], state: list.every((e) => e.documentId) ? "issued" : "reported" });
       }
       continue;
@@ -572,7 +574,7 @@ export class RoyaltyLedgerService {
         targetPartyId: int(c.target_party_id), targetPartyName: str(c.target_party_name)
       }));
 
-      const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today,
+      const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today, partyKind: str(p.kind),
         bundle: workId ? "single_work" : bundle, splitByModel: !mixModels });
 
       // 文書・送付・支払。

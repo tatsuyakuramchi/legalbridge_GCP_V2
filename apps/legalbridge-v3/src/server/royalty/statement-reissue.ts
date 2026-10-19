@@ -77,7 +77,9 @@ export class StatementPeriodReissueService {
   }
 
   async run(
-    input: { usageType: ReissueUsage; documentIds: number[]; reason?: string | null }, actor: string
+    input: { usageType: ReissueUsage; documentIds: number[]; reason?: string | null;
+             /** 訂正版の担当者（計算書の「担当」）。省けば元の計算書の担当のまま。 */
+             ownerStaffId?: number | null }, actor: string
   ): Promise<{ results: Array<ReissueTarget & { newDocumentId: number | null; newDocumentNo: string | null }>; reissued: number }> {
     const ids = [...new Set(input.documentIds.map(Number))].filter((n) => n > 0);
     if (!ids.length) throw new DomainError("VALIDATION", "出し直す計算書を選んでください");
@@ -104,7 +106,7 @@ export class StatementPeriodReissueService {
             entries: plan.entries,
             periodLabel: plan.target.newLabel,
             matterId: plan.matterId, agreementId: plan.agreementId,
-            manualInputs: plan.manualInputs,
+            manualInputs: input.ownerStaffId ? { ...plan.manualInputs, _ownerStaffId: input.ownerStaffId } : plan.manualInputs,
             supersedes: [plan.target.documentId], reason,
             issuedOn: plan.target.issuedOn
           }, actor);

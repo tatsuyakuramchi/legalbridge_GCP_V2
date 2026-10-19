@@ -90,6 +90,8 @@ export interface DueInput {
   paymentTerms?: string | null;
   /** 起算日。締め日（無ければ納品日）。支払条件と上限はここから数える。 */
   basisOn?: string | null;
+  /** 支払先の区分（parties.kind）。個人なら支払条件の末日払いを 20 日にする。 */
+  partyKind?: string | null;
 }
 
 export interface Due { on: string | null; source: DueSource; label: string }
@@ -111,7 +113,7 @@ export function dueOf(input: DueInput): Due {
 
   const basis = trim(input.basisOn);
   if (basis) {
-    const byTerms = payDateFromTerms(basis, input.paymentTerms ?? null);
+    const byTerms = payDateFromTerms(basis, input.paymentTerms ?? null, input.partyKind);
     if (byTerms) return made(byTerms, "terms");
     const limit = dueLimitFrom(basis);
     if (limit) return made(limit, "limit");

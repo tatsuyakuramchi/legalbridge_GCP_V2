@@ -74,6 +74,7 @@ import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
 import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { StatementPeriodReissueService } from "./royalty/statement-reissue.js";
+import { IndividualPayDayService } from "./conditions/individual-pay-day.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
 import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner } from "./documents/unsent-send.js";
@@ -2169,6 +2170,7 @@ export function createRoutes(database: Transactable) {
         everyMonths: input.everyMonths ?? 1, amount: input.amount,
         triggerKind: input.triggerKind ?? "periodic", labelSuffix: input.labelSuffix,
         paymentTerms: input.paymentTerms ?? condition?.paymentTerms ?? null,
+        partyKind: condition?.counterparty?.kind ?? null,
         // 契約形式も条件が持っている。組んだ全回に同じものを入れる。
         contractForm: condition?.contractForm ?? null
       }) });
@@ -2215,7 +2217,9 @@ export function createRoutes(database: Transactable) {
     overrides: z.record(z.string(), z.object({
       amount: z.coerce.number().positive().nullable().optional(),
       note: z.string().max(500).nullable().optional()
-    })).optional()
+    })).optional(),
+    // 作る文書の担当者（計算書の「担当」・検収書の検収者）。省けば案件の担当。
+    ownerStaffId: z.coerce.number().int().positive().nullable().optional()
   });
   router.post("/closing/preview",
     requireRole("admin", "legal"),
@@ -2799,6 +2803,16 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.status(201).json(await annualCloses.run(annualSchema.parse(req.body ?? {}), actor(res)));
     }));
+  // 個人への支払日を 20 日に揃える（すでに立っている回）。試算してから直す。conditions/individual-pay-day.ts
+  const individualPayDay = new IndividualPayDayService(database);
+  router.get("/schedules/individual-pay-day", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await individualPayDay.preview());
+  }));
+  router.post("/schedules/individual-pay-day", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(2000) }).parse(req.body ?? {});
+      res.status(201).json(await individualPayDay.run(input.scheduleIds, actor(res)));
+    }));
   // 出した計算書の対象期間を回の期間に揃えて、訂正版で一括で出し直す。試算してから出す。
   const periodReissue = new StatementPeriodReissueService(database, statementIssuer);
   const reissueUsage = z.enum(["pub_digital", "pub_print"]).default("pub_digital");
@@ -2812,7 +2826,9 @@ export function createRoutes(database: Transactable) {
       const input = z.object({
         usageType: reissueUsage,
         documentIds: z.array(z.coerce.number().int().positive()).min(1).max(300),
-        reason: z.string().trim().max(500).nullable().optional()
+        reason: z.string().trim().max(500).nullable().optional(),
+        // 訂正版の担当者（計算書の「担当」）。省けば元の計算書の担当のまま。
+        ownerStaffId: z.coerce.number().int().positive().nullable().optional()
       }).parse(req.body ?? {});
       res.status(201).json(await periodReissue.run(input, actor(res)));
     }));

@@ -353,10 +353,13 @@ test("相手先だけの支払はこれまでどおり割当なしで立つ", as
  * いた。60日は下請法の上限であって約束の日ではないので、条件に書いてあれば
  * そちらを使う。紙・予定の回が先なのは変えない。
  */
-test("予定の回が無ければ、条件の支払条件から期日を出す", async () => {
-  const { service } = svc({ occurredOn: "2026-06-20", paymentTerms: "月末締め翌月末払い" });
-  const result = await service.createFromStatementDocument(26, "kuramochi");
-  assert.equal(result.dueOn, "2026-07-31", "+60日（2026-08-19）ではなく翌月末");
+test("予定の回が無ければ、条件の支払条件から期日を出す（法人は末日、個人は 20 日）", async () => {
+  const corporate = await svc({ occurredOn: "2026-06-20", paymentTerms: "月末締め翌月末払い", partyKind: "corporate" })
+    .service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(corporate.dueOn, "2026-07-31", "+60日（2026-08-19）ではなく翌月末");
+  const individual = await svc({ occurredOn: "2026-06-20", paymentTerms: "月末締め翌月末払い" })
+    .service.createFromStatementDocument(26, "kuramochi");
+  assert.equal(individual.dueOn, "2026-07-20", "個人は末日払いを同じ月の 20 日に");
 });
 
 test("支払条件どうしが違えば、いちばん遅い日（全部を満たす日）", async () => {

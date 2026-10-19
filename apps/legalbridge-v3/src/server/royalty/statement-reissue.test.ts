@@ -77,3 +77,10 @@ test("出し直し：訂正版で、元の条件・実績・決定日のまま�
   assert.deepEqual(input.manualInputs, { notes: "備考" });
   assert.deepEqual(r.results.map((x) => [x.documentId, x.newDocumentNo]), [[901, "ARC-ROY-2026-1101-R1"], [902, null]]);
 });
+
+test("出し直し：担当者を選べば訂正版の担当にする（選ばなければ元の担当のまま）", async () => {
+  const issuer = fakeIssuer();
+  const service = new StatementPeriodReissueService(db(), issuer as any);
+  await service.run({ usageType: "pub_digital", documentIds: [901], ownerStaffId: 12 }, "tester");
+  assert.deepEqual(issuer.issued[0].manualInputs, { notes: "備考", _ownerStaffId: 12 });
+});

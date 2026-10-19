@@ -203,15 +203,31 @@ export function fixedPayDates(text: string | null | undefined): string[] {
  * いちばん早い日（次に来る支払日）。全部過ぎていれば最後の日。
  */
 export function payDateFromTerms(
-  basis: string | null | undefined, text: string | null | undefined
+  basis: string | null | undefined, text: string | null | undefined,
+  /** 支払先の区分（parties.kind）。個人なら末日払いを 20 日にする（forPartyKind）。 */
+  partyKind?: string | null
 ): string | null {
   const basisDay = String(basis ?? "").slice(0, 10) || null;
-  const byRule = payOnFor(basisDay, parsePaymentTerms(text));
+  const byRule = payOnFor(basisDay, forPartyKind(parsePaymentTerms(text), partyKind));
   if (byRule) return byRule;
   const dates = fixedPayDates(text);
   if (!dates.length) return null;
   return (basisDay && dates.find((d) => d >= basisDay)) ?? dates[dates.length - 1];
 }
+
+/**
+ * 個人への支払は 20 日（当社の決まり。検収書の payDateFromDelivery と同じ）。
+ *
+ * 支払条件の「…末日」を、同じ月の 20 日にする（10月末日 → 10月20日、翌月末日 → 翌月20日）。
+ * 日を書いてある規則（翌月15日など）・日数の規則（30日以内・Net 30）・日付そのものはそのまま。
+ * 法人・区分が分からない相手もそのまま。
+ */
+export function forPartyKind(terms: PaymentTerms | null, partyKind: string | null | undefined): PaymentTerms | null {
+  if (!terms || String(partyKind ?? "") !== "individual") return terms;
+  if (terms.daysAfter !== undefined || terms.day !== "end") return terms;
+  return { ...terms, day: INDIVIDUAL_PAY_DAY };
+}
+export const INDIVIDUAL_PAY_DAY = 20;
 
 /**
  * 納品日から支払日（当社の決まり。検収書の明細と、検収書から立てる支払）。
@@ -227,7 +243,7 @@ export function payDateFromDelivery(
 ): string | null {
   const day = String(deliveredOn ?? "").slice(0, 10) || null;
   const terms: PaymentTerms = String(partyKind ?? "") === "individual"
-    ? { monthsAfter: 1, day: 20 }
+    ? { monthsAfter: 1, day: INDIVIDUAL_PAY_DAY }
     : { monthsAfter: 1, day: "end" };
   return payOnFor(day, terms);
 }

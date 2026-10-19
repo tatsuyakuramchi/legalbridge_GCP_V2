@@ -809,7 +809,7 @@ export class DocumentContextRepository {
 
   private async matter(client: Queryable, id: number) {
     const r = await client.query(
-      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, m.counterparty_id, s.name AS owner_name
+      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, m.counterparty_id, m.business_line, s.name AS owner_name
          FROM matters m LEFT JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -820,7 +820,9 @@ export class DocumentContextRepository {
       /** 作品案件の軸（A-044）。条件に作品が無いときの許諾条件の引き先。 */
       workId: int(row.work_id),
       /** 案件の相手先。条件の無い文書（基本契約書）の相手先はここから。 */
-      counterpartyId: int(row.counterparty_id)
+      counterpartyId: int(row.counterparty_id),
+      /** 事業区分（A-050）。担当者が決まらない文書の「担当」に事業名を出すのに使う。 */
+      businessLine: str(row.business_line)
     };
   }
 

@@ -105,7 +105,9 @@ const validDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(n
 
 /** 立てる回。既存の回と期間が重なる年は飛ばす。`to` があれば from〜to の 1 回だけ。 */
 export function annualLines(
-  input: { from: string; count: number; to?: string | null; paymentTerms: string | null; usageType: AnnualUsage },
+  input: { from: string; count: number; to?: string | null; paymentTerms: string | null; usageType: AnnualUsage;
+           /** 支払先の区分。個人なら末日払いを 20 日にする（payment-terms.ts の forPartyKind）。 */
+           partyKind?: string | null },
   existing: ScheduleRow[]
 ): ScheduleLine[] {
   if (!validDay(input.from)) throw new DomainError("VALIDATION", `集計期間の開始が読み取れません：${input.from}`);
@@ -133,7 +135,7 @@ export function annualLines(
     out.push({
       seq, label: periodLabel(from, to), triggerKind: "periodic", plannedAmount: 0,
       dueOn: to,
-      payOn: payDateFromTerms(to, input.paymentTerms) ?? payDateFromTerms(to, fallback),
+      payOn: payDateFromTerms(to, input.paymentTerms, input.partyKind) ?? payDateFromTerms(to, fallback, input.partyKind),
       serviceFrom: from, serviceTo: to
     });
   }
@@ -184,7 +186,7 @@ export class AnnualCloseService {
 
   private async resolve(client: Queryable, input: AnnualCloseInput) {
     const r = await client.query(
-      `SELECT c.id, c.condition_no, c.name, c.payment_terms, w.title AS work_title, p.name AS party_name
+      `SELECT c.id, c.condition_no, c.name, c.payment_terms, w.title AS work_title, p.name AS party_name, p.kind AS party_kind
          FROM conditions c
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN parties p ON p.id = c.counterparty_id
@@ -208,7 +210,7 @@ export class AnnualCloseService {
       const conditionId = Number(row.id);
       if (input.onlyWithStrays && !strays.has(conditionId)) continue;
       const existing = (await this.deps.schedules.list(conditionId)).lines;
-      const adding = annualLines({ from: input.from, count: input.count, to: input.to ?? null, paymentTerms: str(row.payment_terms), usageType: input.usageType }, existing);
+      const adding = annualLines({ from: input.from, count: input.count, to: input.to ?? null, paymentTerms: str(row.payment_terms), usageType: input.usageType, partyKind: str(row.party_kind) }, existing);
       const periods = [...existing, ...adding].map((l) => ({ from: dateStr(l.serviceFrom), to: dateStr(l.serviceTo) }))
         .filter((p): p is { from: string; to: string } => Boolean(p.from && p.to));
       const days = strays.get(conditionId) ?? [];

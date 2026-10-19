@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixedPayDates, parsePaymentTerms, payDateFromTerms, payOnFor } from "./payment-terms.js";
+import { forPartyKind, fixedPayDates, parsePaymentTerms, payDateFromTerms, payOnFor } from "./payment-terms.js";
 
 const on = (dueOn: string, terms: string) => payOnFor(dueOn, parsePaymentTerms(terms));
 
@@ -113,4 +113,14 @@ test("年 1 回の支払（「10月末日までに支払う」）：起点日以
   assert.equal(payOnFor("2026-03-01", parsePaymentTerms("10月20日払い")), "2026-10-20");
   // 紙の既定「都度払い（刊行日を含む月の翌月末日払い）」は翌月末。
   assert.equal(payOnFor("2026-08-17", parsePaymentTerms("都度払い（刊行日を含む月の翌月末日払い）")), "2026-09-30");
+});
+
+test("個人への支払は、末日払いを同じ月の 20 日にする（日・日数・日付の規則はそのまま）", () => {
+  assert.equal(payDateFromTerms("2026-06-30", "毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。", "individual"), "2026-10-20");
+  assert.equal(payDateFromTerms("2026-06-30", "毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。", "corporate"), "2026-10-31");
+  assert.equal(payDateFromTerms("2026-06-20", "月末締め翌月末払い", "individual"), "2026-07-20");
+  assert.equal(payDateFromTerms("2026-06-20", "月末締め翌月末払い", null), "2026-07-31", "区分が分からなければ法人と同じ");
+  assert.equal(payDateFromTerms("2026-06-20", "月末締め翌月15日払い", "individual"), "2026-07-15", "日を書いた規則はそのまま");
+  assert.deepEqual(forPartyKind({ monthsAfter: 0, day: "end", daysAfter: 30 }, "individual"),
+                   { monthsAfter: 0, day: "end", daysAfter: 30 }, "日数の規則はそのまま");
 });

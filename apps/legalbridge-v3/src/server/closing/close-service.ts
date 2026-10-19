@@ -104,7 +104,11 @@ export type CloseBundle = "condition" | "party";
 export interface CloseOverride { amount?: number | null; note?: string | null }
 export type CloseOverrides = Record<number, CloseOverride>;
 
-export interface CloseOptions { bundle?: CloseBundle; overrides?: CloseOverrides }
+export interface CloseOptions {
+  bundle?: CloseBundle; overrides?: CloseOverrides;
+  /** 作る文書の担当者（manual_inputs._ownerStaffId）。計算書の「担当」・検収書の検収者に出る。省けば案件の担当。 */
+  ownerStaffId?: number | null;
+}
 
 export interface CloseDocPlan {
   /** 先頭の条件（条件ごとのときはその条件）。 */
@@ -435,7 +439,7 @@ export class ClosingCloseService {
     assertReasons(rows.filter((r) => r.step === "event"), overrides);
     // 計算書の回（料率）は計算書の道でまとめて締める。
     const statementRows = rows.filter((r) => r.documentId === null && this.viaStatement(r));
-    if (statementRows.length) outcomes.push(...await this.closeStatements(statementRows, plan.bundle, actor));
+    if (statementRows.length) outcomes.push(...await this.closeStatements(statementRows, plan.bundle, actor, options.ownerStaffId ?? null));
     const groups = new Map<string, CloseTarget[]>();
     for (const t of plan.targets) {
       const row = rowOf.get(t.scheduleId);
@@ -448,7 +452,7 @@ export class ClosingCloseService {
 
     for (const list of groups.values()) {
       try {
-        outcomes.push(...await this.closeGroup(list, actor, overrides));
+        outcomes.push(...await this.closeGroup(list, actor, overrides, options.ownerStaffId ?? null));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         for (const t of list) {
@@ -482,7 +486,9 @@ export class ClosingCloseService {
    * 支払（計算書から）。1 枚が落ちても他は進める。回の結果は、その回が載った計算書が
    * 全部できたときだけ ok。
    */
-  private async closeStatements(rows: PeriodRow[], bundle: CloseBundle, actor: string): Promise<CloseOutcome[]> {
+  private async closeStatements(
+    rows: PeriodRow[], bundle: CloseBundle, actor: string, ownerStaffId: number | null = null
+  ): Promise<CloseOutcome[]> {
     const out = new Map<number, CloseOutcome>(rows.map((r) => [r.scheduleId!, {
       scheduleId: r.scheduleId!, conditionId: r.conditionId, conditionName: r.conditionName, seq: r.seq,
       ok: false, eventId: r.eventId, documentId: null, documentNo: null,
@@ -498,7 +504,8 @@ export class ClosingCloseService {
         const made = await this.statements!.issue({
           templateKey: documentFor(doc.rows[0]!.kind).templateKey,
           entries: doc.entries, issuedOn, periodLabel: doc.periodLabel,
-          matterId: matters.size === 1 ? doc.rows[0]!.matter?.id ?? null : null
+          matterId: matters.size === 1 ? doc.rows[0]!.matter?.id ?? null : null,
+          ...(ownerStaffId ? { manualInputs: { _ownerStaffId: ownerStaffId } } : {})
         }, actor);
         for (const r of doc.rows) {
           const o = out.get(r.scheduleId!)!;
@@ -532,7 +539,7 @@ export class ClosingCloseService {
 
   /** 1つの組（条件、または相手先）の回をまとめて進める。 */
   private async closeGroup(
-    targets: CloseTarget[], actor: string, overrides: CloseOverrides
+    targets: CloseTarget[], actor: string, overrides: CloseOverrides, ownerStaffId: number | null = null
   ): Promise<CloseOutcome[]> {
     const rows = await this.rowsFor(targets.map((t) => t.scheduleId));
     const base = (row: PeriodRow): CloseOutcome => ({
@@ -576,7 +583,8 @@ export class ClosingCloseService {
         const draft = await this.issues.createDraft({
           templateKey: documentFor(head.kind).templateKey,
           conditionIds,
-          matterId: matters.size === 1 ? head.matter?.id ?? null : null
+          matterId: matters.size === 1 ? head.matter?.id ?? null : null,
+          ...(ownerStaffId ? { manualInputs: { _ownerStaffId: ownerStaffId } } : {})
         }, actor);
         const issued = await this.issues.issue(draft.id, actor, { issuedOn, eventIds });
         // 実績は条件ごとに結ぶ（結ぶ側は条件の系列の中しか見ない）。
