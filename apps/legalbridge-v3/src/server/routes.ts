@@ -102,6 +102,7 @@ import { EbookSalesImportService, readRows as readEbookSalesRows } from "./impor
 import { MonitoringRepository } from "./monitoring/repository.js";
 import { ReceivableRepository } from "./monitoring/receivables.js";
 import { ContractCheckRepository } from "./monitoring/contract-check.js";
+import { AUDIT_CSV, AuditReportRepository, isAuditCsvSection, parsePeriod } from "./monitoring/audit-report.js";
 import { DailyJob } from "./jobs/daily.js";
 import { buildCompletionView, IntakeFieldError, parseSubmission } from "./integrations/slack-intake.js";
 import { SlackCommandHandler } from "./integrations/slack-commands.js";
@@ -221,6 +222,7 @@ export function createRoutes(database: Transactable) {
   const ringi = new RingiService(database);
   const rpt = new RptService(database);
   const monitoring = new MonitoringRepository(database);
+  const auditReport = new AuditReportRepository(database);
 
   // 外部連携は factory で組む。/internal 側と同じものを使う。
   const adapters = buildAdapters();
@@ -4328,6 +4330,25 @@ export function createRoutes(database: Transactable) {
 
   router.get("/monitoring/outsourcing", asyncRoute(async (_req, res) => {
     res.json({ pipeline: await monitoring.outsourcingPipeline() });
+  }));
+
+  // 監査レポート。期間を区切った遵守状況と使われ方。支払の相手先が並ぶので法務と管理者だけ。
+  router.get("/monitoring/audit-report", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await auditReport.report(parsePeriod(req.query, tokyoToday())));
+  }));
+
+  router.get("/monitoring/audit-report/:section.csv", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const section = String(req.params.section);
+    if (!isAuditCsvSection(section)) {
+      throw new DomainError("NOT_FOUND", `出力できない表です: ${section}`);
+    }
+    const period = parsePeriod(req.query, tokyoToday());
+    const spec = AUDIT_CSV[section];
+    const csv = toCsv(spec.columns, spec.rows(await auditReport.report(period)) as unknown[]);
+    res.setHeader("content-type", "text/csv; charset=utf-8");
+    res.setHeader("content-disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename(`監査_${spec.label}_${period.since}_${period.until}`))}`);
+    res.send(withBom(csv));
   }));
 
   // ---- 運用 ----
