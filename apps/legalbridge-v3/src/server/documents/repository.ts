@@ -94,7 +94,10 @@ const LIST_SELECT = `
   d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
   d.supersedes_id, d.batch_id,
   d.manual_inputs->>'_showRevision' AS show_revision,
-  v.title, v.counterparty, v.condition_count, t.template_key,
+  -- 受取人（共著の取り分）宛ての文書は、相手先を受取人にする。表示の view は 1 本目の条件の相手先
+  -- （共著の代表）を出すので、脇屋さん宛ての計算書が「麻生涼介」と出て中身と食い違っていた。
+  COALESCE(pp.name, v.counterparty) AS counterparty,
+  v.condition_count, t.template_key,
   m.matter_no,
   -- この版を差し替えた新しい版。参照は新→旧の向きしか無いので反転して読む。
   nx.id AS superseded_by_id, nx.document_no AS superseded_by_no,
@@ -109,12 +112,17 @@ const LIST_SELECT = `
   -- 同じ理由で件名も空になる。表示の view は件名が無いと文書番号で埋めるので、
   -- 取込文書は登録時の文書名を先に見る（でないと件名が番号になる）。
   COALESCE(CASE WHEN d.template_version_id IS NULL THEN NULLIF(d.manual_inputs->>'title', '') END,
-           v.title, d.manual_inputs->>'title') AS title,
+           v.title, d.manual_inputs->>'title')
+    -- 件名は 1 本目の条件（代表の条件）の名前なので、受取人宛てなら誰の取り分かを添える。
+    || CASE WHEN pp.id IS NOT NULL AND pp.id IS DISTINCT FROM v.counterparty_id
+            THEN '（' || pp.name || ' の取り分）' ELSE '' END AS title,
   (d.template_version_id IS NULL) AS imported`;
 
 const LIST_FROM = `
   FROM documents d
   LEFT JOIN v_document_display v ON v.document_id = d.id
+  LEFT JOIN parties pp ON pp.id = CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
+                                       THEN (d.manual_inputs->>'_payeePartyId')::bigint END
   LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
   LEFT JOIN document_templates t ON t.id = tv.template_id
   LEFT JOIN matters m ON m.id = d.matter_id
@@ -215,7 +223,8 @@ export class DocumentRepository {
       // 条件明細の番号・名前でも当てる（デイリータスクで「この条件の文書」を探して繋ぐ）。
       where.push(`(COALESCE(d.document_no,'') ILIKE $${i} OR COALESCE(v.title,'') ILIKE $${i}
                    OR COALESCE(d.manual_inputs->>'title','') ILIKE $${i}
-                   OR COALESCE(v.counterparty,'') ILIKE $${i}
+                   OR (pp.id IS NULL AND COALESCE(v.counterparty,'') ILIKE $${i})
+                   OR COALESCE(pp.name,'') ILIKE $${i}
                    OR EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
                                WHERE dc.document_id = d.id
                                  AND (COALESCE(c.condition_no,'') ILIKE $${i} OR COALESCE(c.name,'') ILIKE $${i})))`);
@@ -230,7 +239,8 @@ export class DocumentRepository {
     if (query.batchId) { params.push(query.batchId); where.push(`d.batch_id = $${params.length}`); }
     if (query.partyId) {
       params.push(query.partyId);
-      where.push(`v.counterparty_id IN (SELECT party_id FROM v_party_resolved
+      // 受取人宛ての文書は受取人で当てる（代表の文書として出さない）。
+      where.push(`COALESCE(pp.id, v.counterparty_id) IN (SELECT party_id FROM v_party_resolved
                     WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length}))`);
     }
     if (query.unlinked) {
