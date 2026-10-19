@@ -161,7 +161,7 @@ const PRINTED_DUE_SQL = `CASE WHEN jsonb_typeof(d.rendered_values) = 'object' TH
 const CONDITION_HEAD = `
   SELECT c.id, c.condition_no, c.name, c.kind, c.pricing_model, c.direction, c.currency,
          c.rate_ppm, c.term_start, c.term_end,
-         p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
+         p.id AS party_id, p.name AS party_name,
          w.id AS work_id, w.title AS work_title,
          m.id AS matter_id, m.title AS matter_title,
          (SELECT count(*) FROM condition_schedules s WHERE s.condition_id = c.id) AS period_count
@@ -181,11 +181,12 @@ const PERIOD_SELECT = `
          s.due_on, s.pay_on, s.service_from, s.service_to,
          c.id AS condition_id, c.condition_no, c.name AS condition_name,
          c.kind, c.pricing_model, c.currency, c.payment_terms,
-         p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
+         p.id AS party_id, p.name AS party_name,
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
          d.id AS document_id, d.document_no, d.status AS document_status,
          snd.sent_at AS document_sent_at,
+         p.kind AS party_kind,
          ${PRINTED_DUE_SQL} AS printed_due_on,
          y.id AS payment_id, y.payment_no, y.status AS payment_status, y.paid_on,
          COALESCE(al.amount, 0) AS allocated_amount
@@ -228,11 +229,12 @@ const UNPLANNED_SELECT = `
          NULL::date AS service_from, NULL::date AS service_to,
          c.id AS condition_id, c.condition_no, c.name AS condition_name,
          c.kind, c.pricing_model, c.currency, c.payment_terms,
-         p.id AS party_id, p.name AS party_name, p.kind AS party_kind,
+         p.id AS party_id, p.name AS party_name,
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
          d.id AS document_id, d.document_no, d.status AS document_status,
          snd.sent_at AS document_sent_at,
+         p.kind AS party_kind,
          ${PRINTED_DUE_SQL} AS printed_due_on,
          y.id AS payment_id, y.payment_no, y.status AS payment_status, y.paid_on,
          COALESCE(al.amount, 0) AS allocated_amount
