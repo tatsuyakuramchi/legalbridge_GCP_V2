@@ -8,13 +8,19 @@
 --
 --   ★ 使い方
 --     docker compose run --rm ops sql /v3/diag/compliance-status.sql since=2026-09-27
+--     期間を区切るとき（両端を含む）:
+--     docker compose run --rm ops sql /v3/diag/compliance-status.sql since=2026-06-30 until=2026-09-30
 --
 --     Cloud SQL Studio は \ で始まる行が効かない。先頭の \ の行を消して、
 --     :'since' を '2026-09-27' のように（引用符ごと）置き換えて流す。
+--     :'until' も同じ（区切らないなら '9999-12-31'）。
 --
 --   ★ 読み方の注意
 --     - 「取適法の対象」はシステム上は個人（parties.kind = 'individual'）だけ。
 --       法人は資本金・従業員数を持っていないので判定できず、参考値として出す。
+--     - 移行した支払（legacy_id あり）は登録日が移行日（2026-09-08）になる。
+--       案件・文書は V1 の作成日・発行日を引き継いでいる。依頼（受付箱）と
+--       定期ジョブは V3 で始めたもので、切替（9/26〜27）より前の記録は無い。
 --     - 部署は依頼者のメールで引いた担当者の部署 → 案件の担当者の部署の順。
 --       どちらも引けない案件は「（部署なし）」に入る。
 --     - 支払の種類は割り当てた条件の種類で決める。業務委託（役務・製品）を
@@ -27,6 +33,10 @@
 \if :{?since}
 \else
 \set since '2026-09-27'
+\endif
+\if :{?until}
+\else
+\set until '9999-12-31'
 \endif
 
 SET search_path = v3;
@@ -52,7 +62,7 @@ WITH out_pay AS (
     FROM payments p
     JOIN parties pt ON pt.id = p.party_id
    WHERE p.direction = 'out' AND p.status <> 'canceled'
-     AND p.created_at >= :'since'::date
+     AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
 ),
 po AS (
   SELECT d.*
@@ -61,19 +71,19 @@ po AS (
     JOIN document_templates t         ON t.id = v.template_id
    WHERE t.template_key IN ('purchase_order', 'intl_purchase_order')
      AND d.status IN ('issued', 'superseded')
-     AND d.issued_at >= :'since'::date
+     AND d.issued_at >= :'since'::date AND d.issued_at < :'until'::date + 1
 )
 SELECT :'since'::date                                                         AS 集計開始日,
-       current_date                                                           AS 集計日,
-       (SELECT count(*) FROM matters WHERE created_at >= :'since'::date
+       LEAST(:'until'::date, current_date)                                    AS 集計終了日,
+       (SELECT count(*) FROM matters WHERE created_at >= :'since'::date AND created_at < :'until'::date + 1
                                        AND merged_into_id IS NULL)             AS 案件数,
-       (SELECT count(*) FROM matters WHERE created_at >= :'since'::date
+       (SELECT count(*) FROM matters WHERE created_at >= :'since'::date AND created_at < :'until'::date + 1
                                        AND merged_into_id IS NULL
                                        AND kind = 'outsourcing')               AS うち業務委託,
-       (SELECT count(*) FROM intake_requests WHERE created_at >= :'since'::date) AS 受付件数,
+       (SELECT count(*) FROM intake_requests WHERE created_at >= :'since'::date AND created_at < :'until'::date + 1) AS 受付件数,
        (SELECT count(*) FROM po)                                              AS 発注書発行数,
        (SELECT count(*) FROM documents WHERE status IN ('issued', 'superseded')
-                                         AND issued_at >= :'since'::date)      AS 文書発行数,
+                                         AND issued_at >= :'since'::date AND issued_at < :'until'::date + 1)      AS 文書発行数,
        (SELECT count(*) FROM out_pay)                                         AS 外注支払数,
        (SELECT count(*) FROM out_pay WHERE party_kind = 'individual')         AS うち個人,
        (SELECT count(*) FROM out_pay WHERE party_kind = 'individual' AND verdict = 'ok')         AS 個人_期日適合,
@@ -101,7 +111,7 @@ WITH m AS (
     FROM matters mt
     LEFT JOIN staff os ON os.id = mt.owner_staff_id
     LEFT JOIN staff rs ON lower(rs.email) = lower(mt.requester_email)
-   WHERE mt.created_at >= :'since'::date AND mt.merged_into_id IS NULL
+   WHERE mt.created_at >= :'since'::date AND mt.created_at < :'until'::date + 1 AND mt.merged_into_id IS NULL
 ),
 po AS (
   SELECT d.matter_id, count(*) AS n
@@ -134,7 +144,7 @@ SELECT date_trunc('month', r.created_at)::date              AS 月,
         OR (st.slack_user_id IS NOT NULL AND st.slack_user_id = r.requester_slack_id)
      ORDER BY (lower(st.email) = lower(r.requester_email)) DESC NULLS LAST, st.id
      LIMIT 1) s ON true
- WHERE r.created_at >= :'since'::date
+ WHERE r.created_at >= :'since'::date AND r.created_at < :'until'::date + 1
  GROUP BY 1, 2
  ORDER BY 1 DESC, 依頼数 DESC;
 
@@ -161,7 +171,7 @@ SELECT CASE pt.kind WHEN 'individual' THEN '個人（取適法の対象）' ELSE
   FROM payments p
   JOIN parties pt ON pt.id = p.party_id
  WHERE p.direction = 'out' AND p.status <> 'canceled'
-   AND p.created_at >= :'since'::date
+   AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
  GROUP BY 1, 2, 3
  ORDER BY 1 DESC, 2, 3;
 
@@ -187,7 +197,7 @@ SELECT p.payment_no                                      AS 支払番号,
   FROM payments p
   JOIN parties pt ON pt.id = p.party_id
  WHERE p.direction = 'out' AND p.status <> 'canceled'
-   AND p.created_at >= :'since'::date
+   AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
    AND (p.basis_received_on IS NULL OR p.due_on IS NULL
         OR p.due_on - p.basis_received_on > 60)
  ORDER BY (pt.kind = 'individual') DESC, 日数 DESC NULLS LAST;
@@ -216,7 +226,7 @@ SELECT p.payment_no                                      AS 支払番号,
   LEFT JOIN payment_allocations a ON a.payment_id = p.id
   LEFT JOIN conditions c          ON c.id = a.condition_id
  WHERE p.direction = 'out' AND p.status <> 'canceled'
-   AND p.created_at >= :'since'::date
+   AND p.created_at >= :'since'::date AND p.created_at < :'until'::date + 1
    AND NOT EXISTS (
      SELECT 1
        FROM payment_allocations a2
