@@ -2,6 +2,7 @@ import { DomainError } from "../core/errors.js";
 import { usageBundleLines, type BundleLine } from "../documents/royalty-patch.js";
 import { toMajor } from "./economics.js";
 import type { CalculationPreview } from "./statement-service.js";
+import { withholdingFor } from "./tax.js";
 
 /**
  * 束ねた計算書の1枚ぶん。
@@ -185,14 +186,22 @@ export function bundleTotals(previews: CalculationPreview[]): BundleTotals {
   }
   const sum = (pick: (p: CalculationPreview) => number) =>
     previews.reduce((total, p) => total + pick(p), 0);
+  // 源泉は支払 1 回（＝紙 1 枚）の税込合計に掛ける（支払の側 createFromStatementDocument と同じ）。
+  // 条件ごとに切り捨ててから足すと、条件が多いほど紙が支払より数円少なくなった（2026-10）。
+  const perCondition = sum((p) => p.payment.withholdingTax);
+  const withheld = previews.find((p) => p.payment.withholdingEnabled);
+  const withholdingTax = withheld
+    ? withholdingFor(sum((p) => p.fee.actual_ex_tax) + sum((p) => p.fee.tax_amount), true,
+                     withheld.payment.withholdingParty ?? null).amount
+    : perCondition;
   return {
     currency: currencies[0],
     basis: sum(basisAmountOf),
     netExTax: sum((p) => p.fee.actual_ex_tax),
     tax: sum((p) => p.fee.tax_amount),
     totalIncTax: sum((p) => p.fee.total_inc_tax),
-    withholdingTax: sum((p) => p.payment.withholdingTax),
-    netTransfer: sum((p) => p.payment.netTransfer),
+    withholdingTax,
+    netTransfer: sum((p) => p.payment.netTransfer) + perCondition - withholdingTax,
     netMinor: sum((p) => p.amounts.netMinor)
   };
 }

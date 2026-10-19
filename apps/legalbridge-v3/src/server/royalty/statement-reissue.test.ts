@@ -156,3 +156,21 @@ test("取り分の表示：受取人宛ての計算書で、行に取り分が�
   await service.run({ usageType: "pub_digital", documentIds: [902] }, "tester");
   assert.equal(issuer.issued[0]!.reason, "共著の取り分の計算を記載する");
 });
+
+test("源泉：紙の源泉が 1 枚の税込合計に 1 回掛けた額と違えば出し直す（条件ごとに切り捨てて足した紙）", async () => {
+  const lines = [{ paymentJpy: 295926 }, { paymentJpy: 2928 }];
+  const database = new FakeDatabase((text) => {
+    if (text.includes("FROM documents d")) return [
+      head({ id: 951, document_no: "ARC-ROY-2026-1051-R4", statement_id: 2, condition_id: 8,
+             printed_label: "2025年7月〜2026年6月", period: "2025年7月〜2026年6月", no_share_lines: false,
+             manual_inputs: { rs_bundle_lines: lines, rs_bundle_tax: 29884, rs_bundle_withholding: 33561 } }),
+      head({ id: 952, document_no: "ARC-ROY-2026-1052", statement_id: 5, condition_id: 9,
+             printed_label: "2025年7月〜2026年6月", period: "2025年7月〜2026年6月", no_share_lines: false,
+             manual_inputs: { rs_bundle_lines: lines, rs_bundle_tax: 29884, rs_bundle_withholding: 33564 } })
+    ];
+    if (text.includes("FROM statements s")) return [{ statement_id: 2, event_id: 61, ...ROUND }, { statement_id: 5, event_id: 62, ...ROUND }];
+    return [];
+  });
+  const r = await new StatementPeriodReissueService(database, fakeIssuer() as any).preview({ usageType: "pub_digital" });
+  assert.deepEqual(r.targets.map((t) => [t.documentId, t.reasons]), [[951, ["withholding"]], [952, []]]);
+});

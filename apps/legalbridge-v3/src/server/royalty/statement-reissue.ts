@@ -4,6 +4,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { roundPeriodLabel } from "./annual-closes.js";
 import { INDIVIDUAL_PAY_DAY } from "../conditions/payment-terms.js";
+import { withholdingTax } from "./tax.js";
 import { PUB_STATEMENT_KEY, STATEMENT_KEY, type StatementIssuer } from "./statement-issue.js";
 
 /**
@@ -63,8 +64,10 @@ export interface ReissueTarget {
   message: string | null;
 }
 
-export type ReissueReason = "period" | "staff" | "payday" | "share";
-export const REISSUE_REASON_LABEL: Record<ReissueReason, string> = { period: "対象期間", staff: "担当者", payday: "支払日", share: "取り分の表示" };
+export type ReissueReason = "period" | "staff" | "payday" | "share" | "withholding";
+export const REISSUE_REASON_LABEL: Record<ReissueReason, string> = {
+  period: "対象期間", staff: "担当者", payday: "支払日", share: "取り分の表示", withholding: "源泉"
+};
 
 export interface ReissueOptions {
   usageType: ReissueUsage;
@@ -91,7 +94,8 @@ interface DocPlan {
 export const DEFAULT_REISSUE_REASON = "対象期間の表記を回の期間に揃える";
 const reasonText = (reasons: ReissueReason[]) => {
   const parts = reasons.map((r) => r === "period" ? "対象期間の表記を回の期間に揃える"
-    : r === "staff" ? "担当者を記載する" : r === "share" ? "共著の取り分の計算を記載する" : "支払日を 20 日に改める");
+    : r === "staff" ? "担当者を記載する" : r === "share" ? "共著の取り分の計算を記載する"
+    : r === "withholding" ? "源泉徴収税額を 1 枚の合計で計算し直す" : "支払日を 20 日に改める");
   return parts.join("・") || DEFAULT_REISSUE_REASON;
 };
 /** 月の末日なら同じ月の 20 日（payment-terms.ts の forPartyKind と同じ）。 */
@@ -217,7 +221,7 @@ export class StatementPeriodReissueService {
                                 WHERE bl ? 'sharePct' AND bl ->> 'sharePct' IS NOT NULL)) AS no_share_lines,
               s.id AS statement_id, s.condition_id, s.payee_party_id, s.period, s.net_amount,
               c.usage_type, COALESCE(pp.name, cp.name) AS party_name,
-              COALESCE(pp.kind, cp.kind) AS party_kind, COALESCE(s.payee_party_id, c.counterparty_id) AS pay_party_id
+              COALESCE(pp.kind, cp.kind) AS party_kind, COALESCE(pp.residency, cp.residency) AS party_residency, COALESCE(s.payee_party_id, c.counterparty_id) AS pay_party_id
          FROM documents d
          JOIN document_template_versions tv ON tv.id = d.template_version_id
          JOIN document_templates t ON t.id = tv.template_id
@@ -297,6 +301,17 @@ export class StatementPeriodReissueService {
       const paydayWanted = Boolean(options.individualPayDay) && String(first.party_kind ?? "") === "individual" && payRounds.length > 0;
       if (paydayWanted && !paid) reasons.push("payday");
       if (mine.some((r) => r.payee_party_id) && first.no_share_lines === true) reasons.push("share");
+      // 源泉：紙に刷った源泉が、1 枚の税込合計に 1 回掛けた額と違う（条件ごとに切り捨てて足していた紙）。
+      // 居住者だけ見る（非居住者は条件ごとでも合計でも同じ率なので端数しか違わず、ここでは触らない）。
+      {
+        const m = (first.manual_inputs ?? {}) as Record<string, unknown>;
+        const printed = Number(m.rs_bundle_withholding ?? 0);
+        const lines = Array.isArray(m.rs_bundle_lines) ? m.rs_bundle_lines as Array<Record<string, unknown>> : [];
+        const base = lines.reduce((a, l) => a + Number(l.paymentJpy ?? 0), 0) + Number(m.rs_bundle_tax ?? 0);
+        if (printed > 0 && String(first.party_residency ?? "") !== "non_resident" && withholdingTax(base, true) !== printed) {
+          reasons.push("withholding");
+        }
+      }
       const printedPay = str(first.printed_pay_on);
       const target: ReissueTarget = {
         documentId, documentNo: str(first.document_no), issuedOn: str(first.issued_on),

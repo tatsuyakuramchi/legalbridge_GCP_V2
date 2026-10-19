@@ -3,7 +3,7 @@ import { CHILD_TITLES_SQL, statementProductName, eventScopeLabel } from "./produ
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { calculateFee, type FeeResult } from "./calc.js";
-import { computeRoyaltyPayment, resolveWithholdingEnabled, withholdingPartyOf, type PaymentBreakdown } from "./tax.js";
+import { computeRoyaltyPayment, resolveWithholdingEnabled, withholdingPartyOf, type PaymentBreakdown, type WithholdingParty } from "./tax.js";
 import {
   buildAdjustments, buildFeeTerms, ppmToPct, taxRateFor, toMajor, toMinor,
   type ConditionEconomics, type ReportedResult
@@ -108,7 +108,11 @@ export interface CalculationPreview {
   /** エンジンの結果（主単位）。画面はこれをそのまま表示できる。 */
   fee: FeeResult;
   /** 支払側の内訳。源泉は相手先が個人なら自動で対象になる。 */
-  payment: PaymentBreakdown & { withholdingEnabled: boolean };
+  payment: PaymentBreakdown & {
+    withholdingEnabled: boolean;
+    /** 源泉の税率を決める相手（居住者・租税条約）。束ねた 1 枚の源泉を合計で計算し直すのに使う。 */
+    withholdingParty?: WithholdingParty | null;
+  };
   /** 保存するときの値（最小通貨単位）。 */
   amounts: { grossMinor: number; netMinor: number; taxMinor: number; agOffsetMinor: number; mgTopupMinor: number };
   agConsumedBefore: number;
@@ -708,7 +712,7 @@ export class RoyaltyStatementService {
         taxRatePct: taxRateFor(condition)
       },
       fee,
-      payment: { ...payment, withholdingEnabled },
+      payment: { ...payment, withholdingEnabled, withholdingParty: condition.withholdingParty ?? null },
       amounts: {
         grossMinor: toMinor(fee.gross_ex_tax, currency),
         netMinor: toMinor(fee.actual_ex_tax, currency),
@@ -790,9 +794,10 @@ export class RoyaltyStatementService {
       entityType: p?.kind ? String(p.kind) : share.partyKind,
       residency: p?.residency ?? null
     });
+    const payeeParty = p ? withholdingPartyOf(p) : null;
     const payment = computeRoyaltyPayment({
       subtotalExTax: net, taxRatePct: taxRate, withholdingEnabled,
-      withholdingParty: p ? withholdingPartyOf(p) : null
+      withholdingParty: payeeParty
     });
     // 明細の行も受取人の額に割る。行ごとの端数は、確定のときに合計へ寄せる。
     const events = whole.events.map((e) => ({
@@ -801,7 +806,7 @@ export class RoyaltyStatementService {
     return {
       ...whole,
       fee,
-      payment: { ...payment, withholdingEnabled },
+      payment: { ...payment, withholdingEnabled, withholdingParty: payeeParty },
       amounts: { grossMinor, netMinor, taxMinor: toMinor(taxAmount, currency), agOffsetMinor, mgTopupMinor },
       events,
       payee: { partyId: share.partyId, name: share.partyName, sharePpm: share.sharePpm },
