@@ -500,11 +500,13 @@ type ReissueStatus = "change" | "same" | "no_round" | "amount" | "draft" | "erro
 interface ReissueTarget {
   documentId: number; documentNo: string | null; issuedOn: string | null; templateKey: string;
   partyName: string | null; conditionCount: number; currentLabel: string | null; newLabel: string | null;
+  reasons: Array<"period" | "staff" | "payday">; currentPayOn: string | null; newPayOn: string | null;
   status: ReissueStatus; message: string | null;
-  newDocumentId?: number | null; newDocumentNo?: string | null;
+  newDocumentId?: number | null; newDocumentNo?: string | null; paymentsUpdated?: number;
 }
+const REASON_LABEL = { period: "対象期間", staff: "担当者", payday: "支払日" } as const;
 const REISSUE_STATUS: Record<ReissueStatus, string> = {
-  change: "出し直す", same: "揃っている", no_round: "回が無い", amount: "額が変わる", draft: "下書きあり", error: "出せない"
+  change: "出し直す", same: "直すものなし", no_round: "回が無い", amount: "額が変わる", draft: "下書きあり", error: "出せない"
 };
 
 /**
@@ -518,9 +520,12 @@ function PeriodReissuePanel() {
   const [targets, setTargets] = useState<ReissueTarget[] | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [showAll, setShowAll] = useState(false);
-  const [reason, setReason] = useState("対象期間の表記を回の期間に揃える");
+  /** 空なら直す理由から組む（「対象期間の表記を回の期間に揃える・担当者を記載する」など）。 */
+  const [reason, setReason] = useState("");
   /** 訂正版の担当者。選ばなければ元の計算書の担当のまま。 */
   const [ownerStaffId, setOwnerStaffId] = useState<number | null>(null);
+  /** 個人宛ての計算書の支払日を 20 日にする（回と未払いの支払の期日も直す）。 */
+  const [payDay, setPayDay] = useState(false);
   const [done, setDone] = useState<{ results: ReissueTarget[]; reissued: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -528,7 +533,8 @@ function PeriodReissuePanel() {
   async function tryIt() {
     setBusy(true); setError(null); setDone(null);
     try {
-      const r = await api.post<{ targets: ReissueTarget[] }>("/royalty-ledger/statements/period-reissue/preview", { usageType: usage });
+      const r = await api.post<{ targets: ReissueTarget[] }>("/royalty-ledger/statements/period-reissue/preview",
+        { usageType: usage, ownerStaffId, individualPayDay: payDay });
       setTargets(r.targets);
       setPicked(new Set(r.targets.filter((t) => t.status === "change").map((t) => t.documentId)));
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setTargets(null); }
@@ -536,11 +542,13 @@ function PeriodReissuePanel() {
   }
   async function run() {
     if (!picked.size) return;
-    if (!window.confirm(`${picked.size} 枚の計算書を訂正版で出し直します。元の計算書は差し替え済みになり、番号は改訂の番号になります。相手に送り直す必要があります。よいですか？`)) return;
+    if (!window.confirm(`${picked.size} 枚の計算書を訂正版で出し直します。元の計算書は差し替え済みになり、番号は改訂の番号になります。`
+      + (payDay ? "個人宛ては回の支払日と未払いの支払の期日も 20 日に直します。" : "")
+      + "相手に送り直す必要があります。よいですか？")) return;
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ results: ReissueTarget[]; reissued: number }>("/royalty-ledger/statements/period-reissue",
-        { usageType: usage, documentIds: [...picked], reason, ownerStaffId });
+        { usageType: usage, documentIds: [...picked], reason: reason.trim() || null, ownerStaffId, individualPayDay: payDay });
       setDone(r); setTargets(null); setPicked(new Set());
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -556,8 +564,8 @@ function PeriodReissuePanel() {
   return (
     <div className="subpanel">
       <div className="row" style={{ alignItems: "center", gap: 8 }}>
-        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "出した計算書の対象期間を回の期間に揃える"}</button>
-        <span className="faint">売上のあった月の範囲で期間を出していた計算書を、訂正版でまとめて出し直します</span>
+        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "出した計算書を出し直す（対象期間・担当者・支払日）"}</button>
+        <span className="faint">対象期間を回の期間に揃える・担当者を入れる・個人宛ての支払日を 20 日にする。訂正版でまとめて出し直します</span>
       </div>
       {open && (
         <div className="stack" style={{ marginTop: 8 }}>
@@ -568,13 +576,17 @@ function PeriodReissuePanel() {
                 <option value="pub_print">紙出版</option>
               </select>
             </label>
-            <label className="field" style={{ minWidth: 260 }}><span>訂正の理由</span>
-              <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
-            </label>
-            <div className="field" style={{ minWidth: 260 }}><span>担当者</span>
-              <OwnerStaffPicker value={ownerStaffId} onChange={setOwnerStaffId} disabled={busy}
-                emptyLabel="選ばない（元の計算書の担当のまま）" />
+            <div className="field" style={{ minWidth: 260 }}><span>担当者を入れる</span>
+              <OwnerStaffPicker value={ownerStaffId} onChange={(v) => { setOwnerStaffId(v); setTargets(null); }} disabled={busy}
+                emptyLabel="入れない（元の計算書の担当のまま）" />
             </div>
+            <label className="row" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
+              <input type="checkbox" checked={payDay} disabled={busy} onChange={(e) => { setPayDay(e.target.checked); setTargets(null); }} />
+              個人宛ては支払日を 20 日にする
+            </label>
+            <label className="field" style={{ minWidth: 260 }}><span>訂正の理由（空なら直す中身から）</span>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="対象期間の表記を回の期間に揃える・担当者を記載する" />
+            </label>
             <button className="btn btn-sm" disabled={busy} onClick={() => void tryIt()}>試算</button>
             {targets && !readOnly && (
               <button className="btn btn-sm primary" disabled={busy || !picked.size} onClick={() => void run()}>
@@ -584,16 +596,21 @@ function PeriodReissuePanel() {
             {targets && (
               <label className="row" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
                 <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-                揃っている計算書も出す
+                直すものの無い計算書も出す
               </label>
             )}
             {busy && <span className="faint">処理中…</span>}
           </div>
-          <div className="faint">発行済みの計算書は書き換えず、訂正版を出して元を差し替え済みにします（実績は訂正版に移ります）。条件・受取人・実績・決定日は元のまま、額も変えません。いま計算し直して額が変わる計算書は出し直しません（個別に訂正してください）。支払は作り直しません。出し直した計算書は相手に送り直してください</div>
+          <div className="faint">
+            発行済みの計算書は書き換えず、訂正版を出して元を差し替え済みにします（実績は訂正版に移ります）。条件・受取人・実績・決定日は元のまま、額も変えません。いま計算し直して額が変わる計算書は出し直しません（個別に訂正してください）。支払は作り直しません。出し直した計算書は相手に送り直してください。
+            担当者を選ぶと、担当が違う計算書と、担当の行の無い古いひな形で出した計算書も出し直します。
+            「支払日を 20 日に」は、個人宛てで回の支払日が月の末日（まだ来ていない）の計算書が対象です。回の支払日と、元の計算書から立っている未払いの支払の期日も 20 日に直します。支払済みの計算書は支払日を直しません
+          </div>
           {error && <div className="alert">{error}</div>}
           {done && (
             <div className="notice">
               {done.reissued} 枚を出し直しました
+              {done.results.some((r) => r.paymentsUpdated) && `（支払の期日を直した支払 ${done.results.reduce((n, r) => n + (r.paymentsUpdated ?? 0), 0)} 件）`}
               {done.results.filter((r) => r.newDocumentNo).length > 0 && (
                 <div className="faint" style={{ fontSize: "0.85em" }}>
                   {done.results.filter((r) => r.newDocumentNo).map((r) => `${r.documentNo ?? `#${r.documentId}`} → ${r.newDocumentNo}`).join("、")}
@@ -609,7 +626,7 @@ function PeriodReissuePanel() {
           {targets && (
             <div className="tablewrap">
               <table>
-                <thead><tr><th></th><th>計算書</th><th>決定日</th><th>宛先</th><th>条件</th><th>いまの対象期間</th><th>出し直したあと</th><th>状態</th></tr></thead>
+                <thead><tr><th></th><th>計算書</th><th>決定日</th><th>宛先</th><th>条件</th><th>直すもの</th><th>いまの対象期間</th><th>出し直したあと</th><th>支払期日</th><th>状態</th></tr></thead>
                 <tbody>
                   {shown.map((t) => (
                     <tr key={t.documentId} className={t.status === "change" ? "" : "faint"}>
@@ -619,12 +636,14 @@ function PeriodReissuePanel() {
                       <td>{t.issuedOn ?? "—"}</td>
                       <td>{t.partyName ?? "—"}</td>
                       <td className="num">{t.conditionCount}</td>
+                      <td>{(t.reasons ?? []).map((r) => REASON_LABEL[r]).join("・") || "—"}</td>
                       <td>{t.currentLabel ?? "—"}</td>
                       <td>{t.newLabel ?? "—"}</td>
+                      <td>{t.newPayOn ? `${t.currentPayOn ?? "—"} → ${t.newPayOn}` : (t.currentPayOn ?? "—")}</td>
                       <td>{REISSUE_STATUS[t.status]}{t.message ? <div className="faint" style={{ fontSize: "0.85em" }}>{t.message}</div> : null}</td>
                     </tr>
                   ))}
-                  {!shown.length && <tr><td colSpan={8} className="faint">出し直す計算書はありません</td></tr>}
+                  {!shown.length && <tr><td colSpan={10} className="faint">出し直す計算書はありません</td></tr>}
                 </tbody>
               </table>
             </div>

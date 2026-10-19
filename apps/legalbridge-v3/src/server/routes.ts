@@ -2818,7 +2818,13 @@ export function createRoutes(database: Transactable) {
   const reissueUsage = z.enum(["pub_digital", "pub_print"]).default("pub_digital");
   router.post("/royalty-ledger/statements/period-reissue/preview", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
-      const input = z.object({ usageType: reissueUsage }).parse(req.body ?? {});
+      const input = z.object({
+        usageType: reissueUsage,
+        // 担当者を入れる（担当が違う・担当の行の無い古いひな形の計算書も出し直す）。
+        ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
+        // 個人宛ての計算書の支払日を 20 日にする（回と未払いの支払の期日も直す）。
+        individualPayDay: z.boolean().optional()
+      }).parse(req.body ?? {});
       res.json(await periodReissue.preview(input));
     }));
   router.post("/royalty-ledger/statements/period-reissue", requireRole("admin", "legal"), requireWritable,
@@ -2828,7 +2834,8 @@ export function createRoutes(database: Transactable) {
         documentIds: z.array(z.coerce.number().int().positive()).min(1).max(300),
         reason: z.string().trim().max(500).nullable().optional(),
         // 訂正版の担当者（計算書の「担当」）。省けば元の計算書の担当のまま。
-        ownerStaffId: z.coerce.number().int().positive().nullable().optional()
+        ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
+        individualPayDay: z.boolean().optional()
       }).parse(req.body ?? {});
       res.status(201).json(await periodReissue.run(input, actor(res)));
     }));
