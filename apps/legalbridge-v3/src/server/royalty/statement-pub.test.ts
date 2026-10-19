@@ -66,6 +66,23 @@ test("出版の計算書：回の期間（statementPeriod）があれば、売�
   assert.equal(q.pubPeriodLabel, "2025年7月〜2026年6月");
 });
 
+test("共著の取り分：料率の欄は「15%×20%」、備考に取り分の説明。取り分の無い行はそのまま", () => {
+  const shared = [
+    line({ eventId: 11, period: "2025年8月分", salesJpy: 3000, paymentJpy: 90, sharePct: 20, payeeName: "脇屋彰太",
+           workTitle: "プリンセスウイング サプリメント ヴァルキリーアイランド" }),
+    line({ eventId: 12, period: "2025年10月分", salesJpy: 6000, paymentJpy: 180, sharePct: 20, payeeName: "脇屋彰太",
+           workTitle: "プリンセスウイング サプリメント ヴァルキリーアイランド" })
+  ];
+  const p = publishingStatementPatch(shared, { tax: 27, withholding: 0, netTransfer: null });
+  assert.equal((p.pubWorks as Array<Record<string, unknown>>)[0]!.rate, "15%×20%");
+  assert.equal((p.pubAnnex as Array<{ rows: Array<Record<string, unknown>> }>)[0]!.rows[0]!.rate, "15%×20%");
+  const patch = royaltyStatementPatch({}, { statementMode: "bundle", rs_bundle_lines: shared, notes: "備考です" })!;
+  assert.match(String(patch.notes), /^※ 許諾料は、報告売上 × 料率 に共著の取り分（脇屋彰太 様 20%）を掛けた額です/);
+  assert.match(String(patch.notes), /備考です$/);
+  assert.equal((publishingStatementPatch(LINES, { tax: 0, withholding: 0, netTransfer: null }).pubWorks as Array<Record<string, unknown>>)[0]!.rate, "15%");
+  assert.equal(royaltyStatementPatch({}, { statementMode: "bundle", rs_bundle_lines: LINES })!.notes, undefined);
+});
+
 test("出版でない行だけなら何も足さない。源泉の無い相手は差引の行を出さない", () => {
   assert.deepEqual(publishingStatementPatch([line({ media: null })], { tax: 0, withholding: 0, netTransfer: null }), {});
   const p = publishingStatementPatch([LINES[0]], { tax: 207, withholding: 0, netTransfer: null });

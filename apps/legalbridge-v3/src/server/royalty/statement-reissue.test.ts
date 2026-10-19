@@ -135,3 +135,24 @@ test("支払日：支払済みなら直さない。出し直しに失敗した�
                    [[100, "2026-10-20"], [100, "2026-10-31"]], "元に戻す");
   assert.equal(database.find("UPDATE payments p SET due_on"), undefined, "支払の期日は触らない");
 });
+
+test("取り分の表示：受取人宛ての計算書で、行に取り分が無ければ（前に出した紙）出し直す", async () => {
+  const database = new FakeDatabase((text) => {
+    if (text.includes("FROM documents d")) return [
+      head({ id: 902, document_no: "ARC-ROY-2026-1049-R3", statement_id: 2, condition_id: 8, payee_party_id: 2534,
+             printed_label: "2025年7月〜2026年6月", period: "2025年7月〜2026年6月", no_share_lines: true }),
+      head({ id: 905, document_no: "ARC-ROY-2026-1050", statement_id: 5, condition_id: 9, payee_party_id: 2534,
+             printed_label: "2025年7月〜2026年6月", period: "2025年7月〜2026年6月", no_share_lines: false })
+    ];
+    if (text.includes("FROM statements s")) return [
+      { statement_id: 2, event_id: 61, ...ROUND }, { statement_id: 5, event_id: 62, ...ROUND }
+    ];
+    return [];
+  });
+  const issuer = fakeIssuer();
+  const service = new StatementPeriodReissueService(database, issuer as any);
+  const r = await service.preview({ usageType: "pub_digital" });
+  assert.deepEqual(r.targets.map((t) => [t.documentId, t.status, t.reasons]), [[902, "change", ["share"]], [905, "same", []]]);
+  await service.run({ usageType: "pub_digital", documentIds: [902] }, "tester");
+  assert.equal(issuer.issued[0]!.reason, "共著の取り分の計算を記載する");
+});

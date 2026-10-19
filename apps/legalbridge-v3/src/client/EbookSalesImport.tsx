@@ -500,11 +500,11 @@ type ReissueStatus = "change" | "same" | "no_round" | "amount" | "draft" | "erro
 interface ReissueTarget {
   documentId: number; documentNo: string | null; issuedOn: string | null; templateKey: string;
   partyName: string | null; conditionCount: number; currentLabel: string | null; newLabel: string | null;
-  reasons: Array<"period" | "staff" | "payday">; currentPayOn: string | null; newPayOn: string | null;
+  reasons: Array<"period" | "staff" | "payday" | "share">; currentPayOn: string | null; newPayOn: string | null;
   status: ReissueStatus; message: string | null;
   newDocumentId?: number | null; newDocumentNo?: string | null; paymentsUpdated?: number;
 }
-const REASON_LABEL = { period: "対象期間", staff: "担当者", payday: "支払日" } as const;
+const REASON_LABEL = { period: "対象期間", staff: "担当者", payday: "支払日", share: "取り分の表示" } as const;
 const REISSUE_STATUS: Record<ReissueStatus, string> = {
   change: "出し直す", same: "直すものなし", no_round: "回が無い", amount: "額が変わる", draft: "下書きあり", error: "出せない"
 };
@@ -564,8 +564,8 @@ function PeriodReissuePanel() {
   return (
     <div className="subpanel">
       <div className="row" style={{ alignItems: "center", gap: 8 }}>
-        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "出した計算書を出し直す（対象期間・担当者・支払日）"}</button>
-        <span className="faint">対象期間を回の期間に揃える・担当者を入れる・個人宛ての支払日を 20 日にする。訂正版でまとめて出し直します</span>
+        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "出した計算書を出し直す（対象期間・担当者・支払日・取り分の表示）"}</button>
+        <span className="faint">対象期間を回の期間に揃える・担当者を入れる・個人宛ての支払日を 20 日にする・共著の取り分の計算（料率×取り分）を載せる。訂正版でまとめて出し直します</span>
       </div>
       {open && (
         <div className="stack" style={{ marginTop: 8 }}>

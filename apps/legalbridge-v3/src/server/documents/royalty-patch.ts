@@ -413,6 +413,13 @@ export interface BundleLine {
    * 出版の計算書の対象期間はこれを出す（無ければ載った実績の月の範囲）。period は行ごとの販売月のまま。
    */
   statementPeriod?: string | null;
+  /**
+   * 共著の取り分（A-068）。受取人宛ての計算書の行だけが持つ（20 = 20%）。paymentJpy は
+   * 報告売上 × 料率 にこれを掛けた額。紙の料率の欄に「15%×20%」と出し、備考に説明を足す。
+   */
+  sharePct?: number | null;
+  /** 受取人の名前（取り分の説明に出す）。 */
+  payeeName?: string | null;
 }
 
 export function bundleLinesFrom(source: Data): BundleLine[] {
@@ -425,6 +432,8 @@ export function bundleLinesFrom(source: Data): BundleLine[] {
     methodLabel: String(row.methodLabel ?? ""),
     salesJpy: num(row.salesJpy),
     ratePct: num(row.ratePct),
+    sharePct: row.sharePct === undefined || row.sharePct === null || row.sharePct === "" ? null : num(row.sharePct),
+    payeeName: row.payeeName === undefined || row.payeeName === null ? null : String(row.payeeName),
     paymentJpy: num(row.paymentJpy),
     basisNote: String(row.basisNote ?? ""),
     payerName: String(row.payerName ?? ""),
@@ -750,6 +759,21 @@ function spanLabel(keys: number[]): string {
   return from === to ? from : `${from}〜${to}`;
 }
 const pctText = (value: number) => `${Math.round(value * 100) / 100}%`;
+/** 料率の欄。共著の取り分を掛けた行は「15%×20%」（報告売上 × 料率 × 取り分 ＝ 許諾料）。 */
+const rateText = (l: BundleLine) => l.sharePct ? `${pctText(l.ratePct)}×${pctText(l.sharePct)}` : pctText(l.ratePct);
+
+/**
+ * 共著の取り分の説明（備考の先頭に足す）。取り分を掛けた行が無ければ空。
+ * 「※ 許諾料は、報告売上 × 料率 に共著の取り分（脇屋 彰太 様 20%）を掛けた額です。」
+ */
+export function shareNoteOf(lines: BundleLine[]): string {
+  const shared = lines.filter((l) => l.sharePct);
+  if (!shared.length) return "";
+  const pcts = [...new Set(shared.map((l) => pctText(Number(l.sharePct))))];
+  const who = [...new Set(shared.map((l) => String(l.payeeName ?? "").trim()).filter(Boolean))];
+  const label = `${who.length === 1 ? `${who[0]} 様 ` : ""}${pcts.join("・")}`;
+  return `※ 許諾料は、報告売上 × 料率 に共著の取り分（${label}）を掛けた額です（料率の欄の「×${pcts.join("・×")}」が取り分）。`;
+}
 
 /**
  * 対象期間の見出し。回の期間（statementPeriod）が全部の行で 1 つに揃っていればそれ、揃わなければ
@@ -781,7 +805,7 @@ export function publishingStatementPatch(
 
   const sum = (ls: BundleLine[], pick: (l: BundleLine) => number) => ls.reduce((a, l) => a + pick(l), 0);
   const qty = (l: BundleLine) => Number(l.quantity ?? 0);
-  const rates = (ls: BundleLine[]) => [...new Set(ls.map((l) => pctText(l.ratePct)))].join("・");
+  const rates = (ls: BundleLine[]) => [...new Set(ls.map(rateText))].join("・");
   const numbersOf = (ls: BundleLine[]) => [...new Set(ls.map((l) => String(l.contractNumber ?? "").trim()).filter(Boolean))];
 
   const works = groups.map((g, i) => ({
@@ -809,7 +833,7 @@ export function publishingStatementPatch(
         unitPriceStr: l.unitPrice === null || l.unitPrice === undefined ? "" : fmtYen(l.unitPrice),
         quantityStr: l.quantity ? fmtYen(qty(l)) : "",
         salesStr: fmtYen(l.salesJpy),
-        rate: pctText(l.ratePct),
+        rate: rateText(l),
         feeStr: fmtYen(l.paymentJpy)
       })),
       subtotalQuantityStr: fmtYen(sum(g.lines, qty)),
@@ -873,7 +897,8 @@ export function royaltyStatementPatch(
   const computedLines = bundleLinesFrom(manual);
   if (computedLines.length) {
     const total = manual.rs_bundle_tax;
-    const notes = notesWithStages(manual.notes, manual.rs_stage_notes);
+    const notes = notesWithStages(manual.notes,
+      [shareNoteOf(computedLines), String(manual.rs_stage_notes ?? "").trim()].filter(Boolean).join("\n"));
     const base = bundleLinesPatch({
       lines: computedLines, taxRatePct: rate,
       taxTotal: total === undefined || total === null ? null : num(total)

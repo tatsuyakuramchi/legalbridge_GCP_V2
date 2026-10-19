@@ -63,8 +63,8 @@ export interface ReissueTarget {
   message: string | null;
 }
 
-export type ReissueReason = "period" | "staff" | "payday";
-export const REISSUE_REASON_LABEL: Record<ReissueReason, string> = { period: "対象期間", staff: "担当者", payday: "支払日" };
+export type ReissueReason = "period" | "staff" | "payday" | "share";
+export const REISSUE_REASON_LABEL: Record<ReissueReason, string> = { period: "対象期間", staff: "担当者", payday: "支払日", share: "取り分の表示" };
 
 export interface ReissueOptions {
   usageType: ReissueUsage;
@@ -91,7 +91,7 @@ interface DocPlan {
 export const DEFAULT_REISSUE_REASON = "対象期間の表記を回の期間に揃える";
 const reasonText = (reasons: ReissueReason[]) => {
   const parts = reasons.map((r) => r === "period" ? "対象期間の表記を回の期間に揃える"
-    : r === "staff" ? "担当者を記載する" : "支払日を 20 日に改める");
+    : r === "staff" ? "担当者を記載する" : r === "share" ? "共著の取り分の計算を記載する" : "支払日を 20 日に改める");
   return parts.join("・") || DEFAULT_REISSUE_REASON;
 };
 /** 月の末日なら同じ月の 20 日（payment-terms.ts の forPartyKind と同じ）。 */
@@ -211,6 +211,10 @@ export class StatementPeriodReissueService {
               (d.template_version_id IS DISTINCT FROM t.current_version_id) AS old_template,
               t.template_key,
               EXISTS (SELECT 1 FROM documents x WHERE x.supersedes_id = d.id AND x.status = 'draft') AS has_draft,
+              -- 受取人宛て（共著の取り分）なのに、行に取り分が無い（取り分の表示を入れる前に出した紙）。
+              (jsonb_typeof(d.manual_inputs -> 'rs_bundle_lines') = 'array'
+               AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(d.manual_inputs -> 'rs_bundle_lines') bl
+                                WHERE bl ? 'sharePct' AND bl ->> 'sharePct' IS NOT NULL)) AS no_share_lines,
               s.id AS statement_id, s.condition_id, s.payee_party_id, s.period, s.net_amount,
               c.usage_type, COALESCE(pp.name, cp.name) AS party_name,
               COALESCE(pp.kind, cp.kind) AS party_kind, COALESCE(s.payee_party_id, c.counterparty_id) AS pay_party_id
@@ -292,6 +296,7 @@ export class StatementPeriodReissueService {
       }
       const paydayWanted = Boolean(options.individualPayDay) && String(first.party_kind ?? "") === "individual" && payRounds.length > 0;
       if (paydayWanted && !paid) reasons.push("payday");
+      if (mine.some((r) => r.payee_party_id) && first.no_share_lines === true) reasons.push("share");
       const printedPay = str(first.printed_pay_on);
       const target: ReissueTarget = {
         documentId, documentNo: str(first.document_no), issuedOn: str(first.issued_on),

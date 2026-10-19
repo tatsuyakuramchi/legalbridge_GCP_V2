@@ -95,6 +95,7 @@ export function eventBundleLines(preview: CalculationPreview): BundleLine[] {
     salesJpy: toMajor(e.basis, currency),
     ratePct: e.ratePct ?? c.ratePct,
     paymentJpy: toMajor(e.amount ?? 0, currency),
+    ...shareOf(preview),
     basisNote: [e.period ? `対象期間 ${e.period}` : "", storeOfNote(e.note)].filter(Boolean).join("・"),
     occurredOn: e.occurredOn ?? null,
     quantity: Number(e.quantity ?? 0) > 0
@@ -106,6 +107,13 @@ export function eventBundleLines(preview: CalculationPreview): BundleLine[] {
     store: storeOfNote(e.note) || null,
     period: e.period ?? null
   }));
+}
+
+/** 受取人宛て（共著の取り分）の試算なら、行に取り分を持たせる（額は取り分を掛けたもの）。 */
+function shareOf(preview: CalculationPreview): { sharePct?: number; payeeName?: string } {
+  const p = preview.payee as { name?: string; sharePpm?: number } | null | undefined;
+  if (!p || !p.sharePpm) return {};
+  return { sharePct: p.sharePpm / 10000, payeeName: p.name ?? "" };
 }
 
 /** 出版の利用形態 → 紙に出す媒体名。出版でなければ空。 */
@@ -132,6 +140,7 @@ export function bundleLineFrom(preview: CalculationPreview): BundleLine {
     salesJpy: basisAmountOf(preview),
     ratePct: c.ratePct,
     paymentJpy: preview.fee.actual_ex_tax,
+    ...shareOf(preview),
     basisNote: basisNoteOf(preview),
     occurredOn: preview.occurredOn ?? null,
     quantity: Number(preview.reported.quantity ?? 0) > 0
