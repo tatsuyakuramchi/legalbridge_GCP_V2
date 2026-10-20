@@ -18,6 +18,7 @@ import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
 import { MailTemplatesForm } from "./MailTemplatesForm.js";
 import { TextSnippets } from "./TextSnippets.js";
 import { StatementModels } from "./StatementModels.js";
+import { AuditReport } from "./AuditReport.js";
 
 interface Issue {
   id: number; ruleCode: string; targetType: string; targetId: number;
@@ -64,7 +65,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export type OpsTab = "quality" | "deadlines" | "fixes" | "leftovers" | "exports" | "imports" | "contracts" | "sending" | "snippets" | "statement-models"
-  | "audit" | "integrations" | "settings";
+  | "audit-report" | "audit" | "integrations" | "settings";
 
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
 const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates"]);
@@ -123,6 +124,7 @@ export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab;
         <button aria-selected={tab === "sending"} onClick={() => setTab("sending")}>送付</button>
         <button aria-selected={tab === "snippets"} onClick={() => setTab("snippets")}>定型文</button>
         <button aria-selected={tab === "statement-models"} onClick={() => setTab("statement-models")}>計算書の表示</button>
+        <button aria-selected={tab === "audit-report"} onClick={() => setTab("audit-report")}>監査レポート</button>
         <button aria-selected={tab === "audit"} onClick={() => setTab("audit")}>監査記録</button>
         <button aria-selected={tab === "integrations"} onClick={() => setTab("integrations")}>外部連携</button>
         {settings && <button aria-selected={tab === "settings"} onClick={() => setTab("settings")}>設定</button>}
@@ -234,6 +236,8 @@ export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab;
 
       {tab === "snippets" && <TextSnippets />}
       {tab === "statement-models" && <StatementModels />}
+
+      {tab === "audit-report" && <AuditReport />}
 
       {tab === "audit" && (
         <div className="panel">
