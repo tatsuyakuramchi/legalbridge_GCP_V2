@@ -55,6 +55,7 @@ import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
 import { AgreementService, termInputForCondition } from "./agreements/service.js";
 import { PartyAgreementMapService } from "./agreements/party-map.js";
+import { MasterMergeService } from "./agreements/master-merge.js";
 import { AGREEMENT_CSV_HEADERS, agreementCsvValues } from "./agreements/csv.js";
 import { STATEMENT_MODELS } from "./royalty/statement-model.js";
 import { termHistory } from "./agreements/term-history.js";
@@ -570,6 +571,24 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const body = z.object({ as: z.enum(["master", "standalone"]).nullable().optional() }).parse(req.body ?? {});
       res.status(201).json(await agreementMap.agreementFromDocument(Number(req.params.id), actor(res), { as: body.as ?? null }));
+    }));
+  // 基本契約の二重作成を 1 本に寄せる。試算 → 統合 → 下の決定済み文書を訂正版で出し直す。agreements/master-merge.ts
+  const masterMerge = new MasterMergeService(database, {
+    reissue: (id, reason, who) => issues.reissue(id, reason, who),
+    issue: (id, who, extra) => issues.issue(id, who, extra)
+  });
+  router.get("/agreement-map/merge-masters/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await masterMerge.preview(Number(req.query.fromId), Number(req.query.intoId)));
+  }));
+  router.post("/agreement-map/merge-masters", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ fromId: z.coerce.number().int().positive(), intoId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await masterMerge.merge(input.fromId, input.intoId, actor(res)));
+    }));
+  router.post("/agreement-map/merge-masters/reissue", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ documentIds: z.array(z.coerce.number().int().positive()).min(1).max(200) }).parse(req.body ?? {});
+      res.json(await masterMerge.reissue(input.documentIds, actor(res)));
     }));
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
