@@ -54,8 +54,8 @@ export class MasterMergeService {
           "UPDATE matter_links SET target_ref = $2::text WHERE target_type = 'agreement' AND target_ref = $1::text", [fromId, intoId]);
         await client.query(
           `UPDATE agreements SET status = 'terminated', terminated_on = COALESCE(terminated_on, current_date),
-                  title = '【統合済み → ' || $3 || '】' || title, updated_at = now()
-            WHERE id = $1`, [fromId, intoId, p.into.agreementNo ?? `#${intoId}`]);
+                  title = '【統合済み → ' || $2::text || '】' || title, updated_at = now()
+            WHERE id = $1`, [fromId, p.into.agreementNo ?? `#${intoId}`]);
         await recordAudit(client, {
           actor, action: "agreement.merge_master", targetType: "agreement", targetId: fromId,
           detail: { into: intoId, intoNo: p.into.agreementNo, fromNo: p.from.agreementNo, moves: p.moves, reissue: p.reissue.map((d) => d.id) }

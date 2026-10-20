@@ -38,8 +38,13 @@ test("統合：個別契約・条件・文書・案件を残す側へ付け替�
   assert.deepEqual(d.find("UPDATE documents SET agreement_id = $2 WHERE agreement_id = $1")!.params, [1, 2]);
   assert.ok(d.find("UPDATE matter_links SET target_ref = $2::text"));
   const t = d.find("SET status = 'terminated'")!;
-  assert.deepEqual(t.params, [1, 2, "ARC-LIC-2026-1002"]);
+  assert.deepEqual(t.params, [1, "ARC-LIC-2026-1002"]);
   assert.equal(d.find("INSERT INTO audit_events")!.params[1], "agreement.merge_master");
+  // 渡した引数の数と $n の数が合う（合わないと PostgreSQL が「could not determine data type of parameter」で落ちる）。
+  for (const q of d.queries) {
+    const used = new Set([...q.text.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+    assert.equal(used.size, (q.params ?? []).length, `引数の数が合わない: ${q.text.slice(0, 60)}`);
+  }
 });
 
 test("出し直し：訂正版を元の決定日で決定する。決定済みでなければ飛ばす", async () => {
