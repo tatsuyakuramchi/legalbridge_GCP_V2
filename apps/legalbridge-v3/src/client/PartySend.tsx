@@ -1,3 +1,4 @@
+import { DocPeek } from "./DocPeek.js";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { SendMany } from "./SendMany.js";
@@ -36,6 +37,7 @@ export function PartySend({ map, version, onOpen }: { map: PartyMap; version: nu
   const row = (d: DocumentSummary) => (
     <div key={d.id} className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap", padding: "2px 0" }}>
       <input type="checkbox" checked={picked.has(d.id)} onChange={() => toggle(d.id)} />
+      <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} />
       {onOpen ? <button className="linky code" onClick={() => onOpen("document", d.id)}>{d.documentNo ?? `#${d.id}`}</button> : <span className="code">{d.documentNo}</span>}
       <span>{d.templateLabel ?? ""}</span>
       <span className="faint">{d.title ?? ""}</span>
@@ -83,7 +85,7 @@ export function PartySend({ map, version, onOpen }: { map: PartyMap; version: nu
         )}
         {sending && chosen.length > 0 && (
           <SendMany title={`${map.party.name} へ ${chosen.length} 件を 1 通で送る`}
-            documents={chosen.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty }))}
+            documents={chosen.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty, imported: d.imported, storageUrl: d.storageUrl }))}
             channels={channels} isAdmin={isAdmin} prefillSigners
             onDone={() => { setSending(false); setPicked(new Set()); setReload((v) => v + 1); }}
             onClose={() => setSending(false)} />

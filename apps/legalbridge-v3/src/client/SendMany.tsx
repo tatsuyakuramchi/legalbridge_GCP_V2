@@ -1,3 +1,4 @@
+import { DocPeek } from "./DocPeek.js";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { MAIL_PURPOSES, type MailPurpose } from "../server/ops/mail-templates.js";
@@ -22,7 +23,7 @@ interface Candidate {
   belongsTo: string | null; role: string | null;
 }
 
-interface Doc { id: number; documentNo: string | null; counterparty: string | null }
+interface Doc { id: number; documentNo: string | null; counterparty: string | null; imported?: boolean; storageUrl?: string | null }
 /** 設定の「メールの文面」から選ぶ文面。送付は文書の種類で検収書・計算書・その他に分かれる。 */
 type Purpose = MailPurpose;
 /** 決まった文面。設定で足した文面（custom:<key>）は /mail-purposes から足す。取引先への内容確認だけ記録が party_check。 */
@@ -182,7 +183,9 @@ export function SendMany(
     <div className="panel">
       <div className="panel-hd">
         <h2>{title ?? `選んだ ${documents.length} 件を送る`}</h2>
-        <span className="faint">{parties.join("・")}　{numbers.join("・")}</span>
+        <span className="faint">{parties.join("・")}　{documents.map((d, i) => (
+          <span key={d.id}>{i > 0 && "・"}{d.documentNo ?? `#${d.id}`} <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} /></span>
+        ))}</span>
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>やめる</button>
       </div>
       <div className="panel-bd stack">

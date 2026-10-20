@@ -1,3 +1,4 @@
+import { DocPeek } from "./DocPeek.js";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag, SettlementTag } from "./labels.js";
@@ -1838,7 +1839,7 @@ export function DocumentsWorkspace(
                   </div>
                   {sendingPicked && chosen.length > 0 && (
                     <SendMany title={`${partiesOf[0]} へ ${chosen.length} 件を 1 通で送る`}
-                      documents={chosen.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty }))}
+                      documents={chosen.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty, imported: d.imported, storageUrl: d.storageUrl }))}
                       channels={integrations?.channels ?? []} isAdmin={me?.user?.role === "admin" || me?.user === undefined}
                       onDone={() => { setSendingPicked(false); setPickedDocs(new Set()); void reload(); }}
                       onClose={() => setSendingPicked(false)} />
@@ -1874,6 +1875,7 @@ export function DocumentsWorkspace(
                                   return next;
                                 })} />
                             )}
+                            {d.status === "issued" && <> <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} /></>}
                           </td>
                           <td className="code">
                             {d.documentNo ?? "（未決定）"}
