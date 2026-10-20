@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { CloudSignManual } from "./CloudSignManual.js";
 import { RecipientPicker, type Person } from "./RecipientPicker.js";
+import { ProcessRail, stationStateOf, type Station, type StationTag } from "./ProcessRail.js";
 
 /**
  * 決定した文書を「送る」。本線の 5 駅のうち ②〜⑤ を縦の工程表で出す。
@@ -268,12 +269,28 @@ export function DocumentSend(
   const stepOf = (key: StepKey) => tl?.steps.find((s) => s.key === key) ?? null;
   const opened = open ? stepOf(open) : null;
 
-  /** 工程表の 1 段の印。済＝緑のチェック、飛ばした＝琥珀、いま＝青の番号、未＝灰の番号。 */
-  const mark = (s: Step, i: number) => {
-    const current = tl?.current?.key === s.key;
-    const cls = s.done ? "done" : s.skipped ? "skipped" : current ? "now" : s.passed ? "passed" : "todo";
-    return <span className={`srail-mark ${cls}`} aria-hidden="true">{s.done ? "✓" : s.skipped ? "↷" : i + 1}</span>;
-  };
+  /** 工程ナビ。段（決定・担当者確認・相手方確認・送付・締結）を駅 ②〜⑤ の札にする。① 登録は台帳（済）。 */
+  const railStations: Station[] = (() => {
+    if (!tl) return [];
+    const tagOf = (s: Step): StationTag => ({
+      key: s.key, label: s.name, open: open === s.key, title: sub(s),
+      state: s.done ? "done" : s.skipped ? "skipped" : tl.current?.key === s.key ? "now" : s.optional ? "optional" : "todo",
+      onGo: () => setOpen(s.key)
+    });
+    const station = (no: 2 | 3 | 4 | 5, skippable = false): Station => {
+      const steps = tl.steps.filter((s) => s.station === no);
+      const tags = steps.map(tagOf);
+      const first = steps.find((s) => !s.done && !s.skipped) ?? steps[0];
+      return { no, state: stationStateOf(tags), tags, skippable, open: steps.some((s) => s.key === open),
+               onGo: first ? () => setOpen(first.key) : undefined,
+               detail: steps.length === 1 && steps[0]!.done ? `済 ${day(steps[0]!.at)}` : undefined };
+    };
+    return [
+      { no: 1, state: "done", detail: "条件・契約（台帳）" },
+      station(2), station(3, true), station(4), station(5, true)
+    ];
+  })();
+
   const sub = (s: Step) => {
     const current = tl?.current?.key === s.key;
     if (s.done) return `済 ${day(s.at)}　${s.detail}`;
@@ -423,31 +440,12 @@ export function DocumentSend(
         {sendingWhat && <Sending what={sendingWhat} />}
 
         {tl && (
-          <div className="srail-wrap">
-            {/* 左：工程表。押すとその段を開く。 */}
-            <div className="srail" role="tablist" aria-label="送る流れ">
-              {tl.steps.map((s, i) => {
-                const current = tl.current?.key === s.key;
-                return (
-                  <button key={s.key} type="button" role="tab" aria-selected={open === s.key}
-                          className={`srail-step${current ? " now" : ""}${open === s.key ? " open" : ""}${s.optional ? " optional" : ""}`}
-                          title={s.detail} onClick={() => setOpen(s.key)}>
-                    {mark(s, i)}
-                    <span className="srail-body">
-                      <span className="srail-name">
-                        <span className="srail-station">{STATION[s.station]}</span>{s.name}
-                        {current && <span className="srail-now">いま</span>}
-                      </span>
-                      <span className="srail-sub">{sub(s)}</span>
-                    </span>
-                  </button>
-                );
-              })}
-              {tl.current === null && <div className="faint" style={{ padding: "6px 10px" }}>全部済んでいます</div>}
-            </div>
+          <div className="prail-wrap">
+            {/* 左：工程ナビ（本線 5 駅）。駅の中の札が送る流れの段。押すとその段を開く。 */}
+            <ProcessRail stations={railStations} foot={tl.current === null ? "全部済んでいます" : "済んだ段は押して戻れます。③ と ⑤ は飛ばせます（記録に残ります）"} />
 
             {/* 右：開いた段でやること。 */}
-            <div className="srail-pane">
+            <div className="prail-pane">
               {opened && (
                 <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
                   <b style={{ fontSize: 15 }}>{STATION[opened.station]}　{opened.name}</b>

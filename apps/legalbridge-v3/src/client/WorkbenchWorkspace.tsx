@@ -12,6 +12,7 @@ import type { DocFlow } from "./FlowBar.js";
 import type { PrepareMode, WorkbenchCandidate, WorkbenchPlan } from "../server/workbench/plan-service.js";
 import type { ConditionSummary } from "../server/core/model.js";
 import { MASTER_DOC, PATTERN_LABEL, type WorkbenchPattern } from "../server/workbench/catalog.js";
+import { ProcessRail, type Station, type StationTag } from "./ProcessRail.js";
 
 /**
  * 作業テーブル。文書を「作る・登録する・繋ぐ」のはこの 1 枚だけ。
@@ -272,6 +273,13 @@ function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
           </div>
         </div>
       )}
+      {/* 入口は 3 つ（案件から・取引先から・まとめて）。列はいつも同じ 5 駅（ProcessRail）。 */}
+      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span className="faint">入口は 3 つ：</span>
+        <span className="tag accent">案件から</span><span className="faint">案件・デイリータスクの「作業テーブルで文書を作る」</span>
+        <span className="tag accent">取引先から</span><span className="faint">下の相手先の検索</span>
+        <span className="tag accent">まとめて</span><span className="faint">下の「一括で」。どの入口でも左の工程ナビは同じ 5 駅</span>
+      </div>
       <div className="panel">
         <div className="panel-hd"><h2>作業テーブル</h2><span className="faint">文書を作る・登録する・繋ぐのはここだけ</span></div>
         <div className="panel-bd stack" style={{ gap: 10 }}>
@@ -495,8 +503,45 @@ function Workbench(
   const backLabel = e.kind === "task" ? "やることの一覧に戻る" : e.kind === "matter" ? "案件に戻る" : e.kind === "round" ? "取引管理に戻る"
     : e.kind === "conditions" ? (e.matterId ? "案件に戻る" : "条件明細に戻る") : e.kind === "document" ? "文書に戻る" : "相手先を選び直す";
 
+  // 工程ナビ（本線 5 駅）。① 登録＝相手先・条件・要る文書を決める、② 作る＝作る・登録する、
+  // ③④＝決定した文書の「送る流れ」（文書の画面）、⑤ 記録＝まとめ。済んだ駅は押して戻れる。
+  const issuedDocs = Object.entries(state.results).flatMap(([key, r]) =>
+    r.status === "issued" ? r.documentIds.map((id) => ({ key: `${key}:${id}`, id, label: state.units.find((u) => u.key === key)?.label ?? key })) : []);
+  const stepNo = state.step === "pick" ? 1 : state.step === "work" ? 2 : 5;
+  const unitTag = (u: WorkUnit): StationTag => {
+    const r = state.results[u.key];
+    return { key: u.key, label: u.label, title: r ? `${r.status === "issued" ? "決定済み" : r.status === "draft" ? "下書き" : r.status === "registered" ? "登録済み" : "繋いだ"}` : undefined,
+             state: r ? "done" : state.step === "work" ? "now" : "todo",
+             onGo: r?.documentIds[0] ? () => onOpenDocument(r.documentIds[0]!) : undefined };
+  };
+  const stations: Station[] = [
+    { no: 1, state: stepNo > 1 ? "done" : "now", open: state.step === "pick",
+      detail: ctx?.partyName ? `相手先 ${ctx.partyName}` : undefined,
+      tags: [
+        { key: "party", label: "相手先", state: ctx?.partyName ? "done" : "now" },
+        { key: "conds", label: conditionIds.length ? `条件 ${conditionIds.length} 本` : "条件", state: conditionIds.length ? "done" : stepNo === 1 ? "now" : "todo" },
+        { key: "pick", label: "要る文書を決める", state: stepNo > 1 ? "done" : "now" }
+      ],
+      onGo: stepNo > 1 ? () => patch({ step: "pick" }) : undefined },
+    { no: 2, state: stepNo === 2 ? "now" : stepNo > 2 ? "done" : "todo", open: state.step === "work",
+      detail: state.units.length ? `${Object.keys(state.results).length} / ${state.units.length}` : undefined,
+      tags: state.units.map(unitTag),
+      onGo: state.units.length && stepNo !== 2 ? () => patch({ step: "work" }) : undefined },
+    { no: 3, state: "todo", skippable: true, detail: "決定した文書を、文書の画面の「送る流れ」で担当者・相手方に確かめる",
+      tags: issuedDocs.map((d) => ({ key: d.key, label: `${d.label} → 送る流れ`, state: "now" as const, onGo: () => onOpenDocument(d.id) })) },
+    { no: 4, state: "todo", detail: "メール・CloudSign（文書の画面）" },
+    { no: 5, state: stepNo === 5 ? "now" : "todo", open: state.step === "done", detail: "まとめ・締結の記録",
+      onGo: stepNo === 5 ? () => patch({ step: "done" }) : undefined }
+  ];
+
   return (
     <section className="stack">
+      <div className="prail-wrap">
+      <ProcessRail stations={stations} onBack={back} backLabel={backLabel}
+        entry={ctx ? (ctx.kind === "task" ? "入口：デイリータスク" : ctx.kind === "matter" ? "入口：案件" : ctx.kind === "round" ? "入口：支払文書" : "入口：取引先") : "入口：作業テーブル"}
+        subject={ctx ? `${ctx.partyName ? `${ctx.partyName}　` : ""}${ctx.title ?? ""}` : undefined}
+        foot="済んだ駅は押して戻れます（作ったものは消えません）。③④ は文書を決定すると文書の画面で進みます" />
+      <div className="prail-pane">
       {/* 文脈の帯 */}
       <div className="flow-bar">
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -512,17 +557,6 @@ function Workbench(
                  title="もともとの依頼（件名・本文・相手先・期日・やり取り）を別タブで開く">元の依頼を別タブで見る ↗</a>
             )}
           </>)}
-          <div className="pipe" style={{ flex: "1 1 280px" }}>
-            {WORKBENCH_STEPS.map((name, i) => {
-              const cur = state.step === "pick" ? 0 : state.step === "work" ? 1 : 2;
-              const isDone = i < cur; const now = i === cur;
-              return (
-                <div key={name} className={`pipe-step${now ? " flag" : ""}`} style={isDone ? { background: "var(--ok-soft)", borderColor: "var(--ok)" } : undefined}>
-                  <span className="st">{isDone ? "済" : now ? "いま" : i + 1}</span><span className="nm">{name}</span>
-                </div>
-              );
-            })}
-          </div>
           <button className="btn btn-sm" onClick={back}>← {backLabel}</button>
           <button className="linky" title="いまの作業テーブルを閉じて、相手先から別の文書を始める" onClick={() => onState(null)}>別の作業を始める</button>
         </div>
@@ -552,6 +586,8 @@ function Workbench(
                   taskId={ctx?.taskId ?? null} readOnly={readOnly}
                   onBack={back} backLabel={backLabel} onRestart={() => onState(newWorkbenchState(state.entry))} />
       )}
+      </div>
+      </div>
     </section>
   );
 }

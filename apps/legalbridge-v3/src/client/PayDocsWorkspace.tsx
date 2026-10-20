@@ -7,6 +7,7 @@ import { RoyaltyLedger, type DocBack } from "./RoyaltyLedger.js";
 import { EbookSalesImport } from "./EbookSalesImport.js";
 import type { PayDocRow, PayDocTile, NextAction } from "../server/paydocs/rows.js";
 import type { PayDocsList } from "../server/paydocs/service.js";
+import { ProcessRail, type Station } from "./ProcessRail.js";
 
 /**
  * 支払文書（A-074）。計算書・検収書・役務提供完了通知書を、回ごとに
@@ -525,9 +526,26 @@ function RowDetail({ r, busy, readOnly, onClose, onOpenCondition, onOpenDocument
       detail: r.payment.state === "paid" ? `済 ${r.payment.paidOn ?? ""}` : r.payment.state === "planned" ? `${r.payment.paymentNo ?? ""} 予定 ${r.payment.dueOn ?? ""}`
         : r.payment.state === "nopay" ? "支払なし（0 円）" : "未設定" }
   ];
-  const dot = (s: string) => ({ width: 10, height: 10, borderRadius: "50%", marginTop: 5, flex: "none",
-    background: s === "done" ? "var(--ok)" : s === "now" ? "var(--warn-soft)" : "var(--surface)",
-    border: `2px solid ${s === "done" ? "var(--ok)" : s === "now" ? "var(--warn)" : "var(--line-strong)"}` });
+  const [source, docStep, sendStep, receiptStep, payStep] = steps as [typeof steps[number], typeof steps[number], typeof steps[number], typeof steps[number], typeof steps[number]];
+  const canEvent = !isLedgerRow(r) && (r.source.state === "waiting" || r.source.state === "late" || r.source.state === "plan" || r.doc.state === "make");
+  const railStations: Station[] = [
+    { no: 1, state: source.state, detail: `${source.title}：${source.detail}`,
+      onGo: canEvent && !readOnly ? () => setForm("event") : undefined, open: form === "event" },
+    { no: 2, state: docStep.state, detail: docStep.detail,
+      onGo: r.doc.draftId ? () => onOpenDocument(r.doc.draftId!) : docs[0] ? () => onOpenDocument(docs[0]!.id) : undefined },
+    { no: 3, state: r.doc.state === "draft" ? "now" : r.doc.state === "done" ? "skipped" : "todo", skippable: true,
+      detail: r.doc.state === "draft" ? "下書きを確かめて決定する" : r.doc.state === "done" ? "決定済み（試算は計算書の中で）" : "文書ができてから",
+      onGo: r.doc.draftId ? () => onOpenDocument(r.doc.draftId!) : undefined },
+    { no: 4, state: sendStep.state, detail: sendStep.detail, open: form === "sent",
+      onGo: docs.length > 0 && r.send.state !== "past" && !readOnly ? () => setForm("sent") : undefined },
+    { no: 5, state: payStep.state === "done" && receiptStep.state === "done" ? "done" : (payStep.state === "now" || receiptStep.state === "now") ? "now" : "todo",
+      open: form === "received",
+      tags: [
+        { key: "receipt", label: `受領：${receiptStep.detail}`, state: receiptStep.state, open: form === "received",
+          onGo: docs.length > 0 && !readOnly ? () => setForm("received") : undefined },
+        { key: "pay", label: `${payStep.title}：${payStep.detail}`, state: payStep.state }
+      ] }
+  ];
 
   const reminder = r.next === "remind_report"
     ? `${r.party?.name ?? ""} ご担当者様\n\n${r.condition.name}（${r.label}）のご報告につきまして、締め日 ${r.closeOn ?? ""} から報告期限 ${r.source.reportDueOn ?? ""} を過ぎております。\nお手数ですが、売上・実績のご報告をお送りいただけますでしょうか。`
@@ -542,14 +560,8 @@ function RowDetail({ r, busy, readOnly, onClose, onOpenCondition, onOpenDocument
         <button className="linky" onClick={onClose} aria-label="閉じる">×</button>
       </div>
       <div className="panel-bd stack" style={{ gap: 10 }}>
-        <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
-          {steps.map((s) => (
-            <li key={s.title} style={{ display: "flex", gap: 8 }}>
-              <span style={dot(s.state)} aria-hidden="true" />
-              <div><div style={{ fontWeight: 500 }}>{s.title}</div><div className="faint">{s.detail}</div></div>
-            </li>
-          ))}
-        </ol>
+        {/* 工程ナビ（本線 5 駅）。起点＝① 登録、文書＝② 作る、③ 確かめる＝下書きを確かめて決定、送付＝④、受領・支払＝⑤ 記録。 */}
+        <ProcessRail compact stations={railStations} />
 
         <div className="row" style={{ gap: 6 }}>
           {r.next !== "none" && !["send", "record_receipt", "remind_receipt", "remind_report", "record_event"].includes(r.next) && (
