@@ -26,6 +26,7 @@ import { WorkWriteService } from "./works/write-service.js";
 import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
 import { LeftoverService } from "./ops/leftovers-service.js";
 import { TidyService } from "./ops/tidy-service.js";
+import { HomeStationsService } from "./ops/home-stations.js";
 import { tally } from "./ops/leftovers.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
@@ -4266,6 +4267,15 @@ export function createRoutes(database: Transactable) {
   router.post("/document-sets/missing/run", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
     const who = actor(res);
     res.status(201).json(await missingContractsFor(who).run(missingRunSchema.parse(req.body ?? {}), who));
+  }));
+
+  // ホームの「5 駅で待っているもの」。各画面と同じ道具で数える。ops/home-stations.ts
+  const homeStations = new HomeStationsService(database, {
+    intake: intakeRepo, tasks: dailyTasks, unsent: unsentBundles, missing: { list: () => missingContractsFor("system").list() },
+    paydocs, term: termDefault, notice: noticeFill, statements: statementMerge, tidy
+  });
+  router.get("/home/stations", asyncRoute(async (_req, res) => {
+    res.json(await homeStations.stations());
   }));
 
   router.post("/documents/:id/issue",

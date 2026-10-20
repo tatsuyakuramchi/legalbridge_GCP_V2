@@ -11,6 +11,7 @@ import { TermDefault } from "./TermDefault.js";
 import { NoticeFill } from "./NoticeFill.js";
 import { StatementMerge } from "./StatementMerge.js";
 import { FixesBadge } from "./FixesBadge.js";
+import { HomeBoard, type HomeGo } from "./HomeBoard.js";
 import { PeriodReissuePanel } from "./PeriodReissue.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
@@ -350,8 +351,10 @@ export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab;
 
 /** ホーム。数字はすべて条件を起点に導出する。 */
 export function HomeWorkspace(
-  { onGo, intakeCount = 0, dailyCount = 0 }: {
+  { onGo, onGoTo, intakeCount = 0, dailyCount = 0 }: {
     onGo: (view: "matters" | "money" | "ops" | "drift" | "intake" | "daily" | "workbench", tab?: OpsTab) => void;
+    /** 盤面（入口 3 つ・5 駅）からの行き先。view に加えて 運用のタブ・支払文書の札・整理する を渡す。 */
+    onGoTo: (go: HomeGo) => void;
     /** 受付箱の未処理＋返信あり、デイリータスクの終わっていない作業（左の桁と同じ数）。 */
     intakeCount?: number; dailyCount?: number;
   }
@@ -379,11 +382,15 @@ export function HomeWorkspace(
     <section className="workspace">
       <header className="workspace-head">
         <h1>今日の状況</h1>
-        <p>条件を起点に、期限・消化・整合の三つだけを見る。画面ごとの集計差は生じない。</p>
+        <p>入口は 3 つ（案件から・取引先から・まとめて）、本線は 5 駅（登録 → 作る → 確かめる → 送る → 記録）。駅ごとに待っているものを押して進める。</p>
       </header>
 
-      {/* 初めての人が「どこから始めるか」を探さなくて済むように、入口を 1 つに。
-          左の「作業テーブル」と同じ語で、同じ順番を書く（「案件」から始める案内と二重にしない）。 */}
+      {/* 入口 3 つと、5 駅で待っているもの（docs/v3-tidy.md 工程ナビ）。 */}
+      <HomeBoard onGo={onGoTo} />
+
+      <details>
+        <summary style={{ cursor: "pointer", fontSize: 12.5, color: "var(--muted)" }}>文書を作る入口と、状況の札</summary>
+      <div className="stack" style={{ marginTop: 10 }}>
       <div className="note">
         文書を作るのはここから：<b>作業テーブル</b> で 要る文書を決める → 作る・登録する → まとめ の順に 1 枚で進めます。
         予定・実績・支払は <b>取引管理</b> で
@@ -431,6 +438,8 @@ export function HomeWorkspace(
           </button>
         </div>
       )}
+      </div>
+      </details>
 
       <div className="panel">
         <div className="panel-hd"><h2>次にやること</h2>

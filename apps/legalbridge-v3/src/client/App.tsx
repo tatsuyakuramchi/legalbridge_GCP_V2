@@ -20,6 +20,7 @@ import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
 import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
+import type { PayDocTile } from "../server/paydocs/rows.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
@@ -185,7 +186,7 @@ export function App() {
    */
   const [payAuthor, setPayAuthor] = useState<(AuthorTarget & { nonce: number }) | null>(null);
   // 左のメニューから支払文書を開き直したときは一覧から（作家を持ち越さない）。
-  useEffect(() => { if (view !== "paydocs") setPayAuthor(null); }, [view]);
+  useEffect(() => { if (view !== "paydocs") { setPayAuthor(null); setPayTile(null); } }, [view]);
   const openAuthor = (a: AuthorTarget) => {
     setPayAuthor({ ...a, nonce: Date.now() }); setConditionId(undefined); setFocus(null); setView("paydocs");
   };
@@ -316,6 +317,8 @@ export function App() {
   const [mapParty, setMapParty] = useState<number | undefined>();
   /** 文書の送る流れで開く段（URL から来たとき）。 */
   const [docStep, setDocStep] = useState<string | null>(null);
+  /** 支払文書を開くときの札（ホームの盤面から）。 */
+  const [payTile, setPayTile] = useState<PayDocTile | null>(null);
   /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
   const [pick, setPick] = useState<{ view: View; id: number } | null>(null);
   const pickFor = (v: View) => (id: number | undefined) => setPick(id ? { view: v, id } : null);
@@ -452,6 +455,15 @@ export function App() {
             // ホームから開くのは全社ぶん（札の件数と画面の件数を合わせる）。
             if (v === "drift") setDriftMatter(null);
             setView(v);
+          }} onGoTo={(go) => {
+            // 盤面の札：駅の画面へ。運用のタブ・支払文書の札・整理する の切り替えも渡す。
+            if (!VIEWS.current.has(go.view)) return;
+            setFocus(null); setConditionId(undefined); setTaskCtx(null); setDocFlow(null);
+            setOpsTab(go.tab as OpsTab | undefined);
+            setPayTile((go.tile as PayDocTile | undefined) ?? null);
+            if (go.view === "agreement-map") { setMapMode(go.mode === "tidy" ? "tidy" : "map"); setMapParty(undefined); }
+            if (go.view === "drift") setDriftMatter(null);
+            setView(go.view as View);
           }} />
         )}
         {view === "intake" && (
@@ -480,7 +492,7 @@ export function App() {
             onIssueDocument={issueRound} />
         )}
         {view === "paydocs" && (
-          <PayDocsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+          <PayDocsWorkspace key={`pd${payTile ?? ""}`} initialTile={payTile} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
             onIssueRound={issueRound}
             onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}

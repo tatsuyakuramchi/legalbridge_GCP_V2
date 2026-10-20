@@ -340,6 +340,35 @@ button.prail-tag:hover{background:var(--accent-soft)}
 .prail-pane{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:10px}
 @media (max-width:900px){.prail-wrap{flex-direction:column}.prail{flex-basis:auto;width:100%}}
 
+/* ホームの盤面：入口 3 つ ＋ 5 駅で待っているもの。 */
+.hb{display:flex;flex-direction:column;gap:12px}
+.hb-entries{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.hb-entries{grid-template-columns:minmax(0,1fr)}}
+.hb-entry{display:flex;flex-direction:column;gap:3px;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:12px 14px;cursor:pointer;font:inherit;color:inherit}
+.hb-entry:hover{border-color:var(--accent);background:var(--accent-soft)}
+.hb-entry-k{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.hb-entry-t{font-size:14px;font-weight:700}
+.hb-entry-s{font-size:11.5px;color:var(--muted)}
+.hb-stations{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;align-items:start}
+@media (max-width:1300px){.hb-stations{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:700px){.hb-stations{grid-template-columns:minmax(0,1fr)}}
+.hb-station{border:1px solid var(--line);border-radius:8px;background:var(--surface);display:flex;flex-direction:column;min-width:0}
+.hb-station.has{border-color:var(--line-strong)}
+.hb-station-hd{display:grid;grid-template-columns:auto 1fr auto;gap:4px 8px;align-items:baseline;padding:10px 12px;border-bottom:1px solid var(--line)}
+.hb-no{font-family:var(--mono);font-size:12px;color:var(--faint)}
+.hb-name{font-size:13.5px;font-weight:700}
+.hb-total{font-family:var(--mono);font-size:20px;font-variant-numeric:tabular-nums}
+.hb-station.has .hb-total{color:var(--accent)}
+.hb-hint{grid-column:1 / -1;font-size:11px;color:var(--faint)}
+.hb-cards{display:flex;flex-direction:column;gap:4px;padding:8px}
+.hb-card{display:grid;grid-template-columns:36px minmax(0,1fr);gap:8px;align-items:center;text-align:left;border:1px solid transparent;background:transparent;border-radius:6px;padding:5px 8px;font:inherit;color:var(--muted);cursor:pointer}
+.hb-card.on{color:var(--ink);background:var(--sunken)}
+.hb-card.on:hover{border-color:var(--accent);background:var(--accent-soft)}
+.hb-card:disabled{cursor:default;opacity:.7}
+.hb-card-n{font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums;text-align:right}
+.hb-card.on .hb-card-n{font-weight:700}
+.hb-card-l{font-size:12px;white-space:normal;overflow-wrap:anywhere}
+
 /* 整理する：左に取引先、中に木、右に直し方。印は 4 つ（多重・未登録・欠け・空）。 */
 .tidy-split{display:grid;grid-template-columns:minmax(220px,260px) minmax(0,1fr) minmax(300px,380px);gap:14px;align-items:start}
 @media (max-width:1300px){.tidy-split{grid-template-columns:minmax(0,1fr)}}
