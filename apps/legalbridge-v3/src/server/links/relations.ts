@@ -155,6 +155,15 @@ async function assertExists(client: Queryable, table: string, id: number, name: 
 
 export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> = {
   matter: {
+    agreements: {
+      target: "agreement", label: "契約（合意）", single: false, editable: false,
+      hint: "この案件で扱っている契約。付け外しは契約の側（取引先⇔基本契約・整理する の「案件」）から。",
+      list: async (c, id) => rows(await c.query(
+        `SELECT a.id, a.agreement_no, a.title, a.direction, a.status
+           FROM matter_links ml JOIN agreements a ON a.id::text = ml.target_ref
+          WHERE ml.matter_id = $1 AND ml.target_type = 'agreement'
+          ORDER BY a.id DESC`, [id])).map(asAgreement)
+    },
     conditions: {
       target: "condition", label: "条件明細", single: false, editable: false,
       hint: "この案件が扱う取引条件。契約書（合意）の明細にあたります。",
@@ -406,6 +415,33 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
         await c.query(
           "UPDATE conditions SET agreement_id = NULL WHERE id = $2 AND agreement_id = $1",
           [id, targetId]);
+      }
+    },
+    matters: {
+      target: "matter", label: "案件", single: false, editable: true,
+      hint: "この契約を扱っている案件。番号・件名で探して繋ぐ（案件の「契約」と同じ matter_links）。",
+      list: async (c, id) => rows(await c.query(
+        `SELECT m.id, m.matter_no, m.title, m.kind, m.status
+           FROM matter_links ml JOIN matters m ON m.id = ml.matter_id
+          WHERE ml.target_type = 'agreement' AND ml.target_ref = $1::text
+          ORDER BY m.id`, [id])).map(asMatter),
+      candidates: async (c, id, q) => rows(await c.query(
+        `SELECT m.id, m.matter_no, m.title, m.kind, m.status
+           FROM matters m
+          WHERE ($2 = '' OR m.title ILIKE $2 OR COALESCE(m.matter_no,'') ILIKE $2)
+            AND NOT EXISTS (SELECT 1 FROM matter_links ml
+                             WHERE ml.matter_id = m.id AND ml.target_type = 'agreement' AND ml.target_ref = $1::text)
+          ORDER BY m.id DESC LIMIT 20`, [id, q ? like(q) : ""])).map(asMatter),
+      attach: async (c, id, targetId) => {
+        await assertExists(c, "agreements", id, "契約");
+        await assertExists(c, "matters", targetId, "案件");
+        await c.query(
+          `INSERT INTO matter_links (matter_id, target_type, target_ref, relation)
+           VALUES ($1, 'agreement', $2::text, 'related') ON CONFLICT DO NOTHING`, [targetId, id]);
+      },
+      detach: async (c, id, targetId) => {
+        await c.query(
+          "DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'agreement' AND target_ref = $2::text", [targetId, id]);
       }
     },
     party: {

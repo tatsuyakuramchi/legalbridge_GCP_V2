@@ -638,6 +638,10 @@ function AgreementNode(
           ? <span className="faint">締結 {a.executedOn}</span>
           : a.kind !== "document" && <span className="tag ghost warn">締結日なし</span>}
         {a.terminatedOn && <span className="faint">解除 {a.terminatedOn}</span>}
+        {a.kind !== "document" && (
+          <DocMatter agreementId={a.id} busy={readOnly} onOpen={onOpen}
+                     onChanged={(m) => (m.startsWith("⚠") ? onError(m.slice(1).trim()) : onDocsChanged(m))} />
+        )}
         {a.counterparty.merged && <span className="faint" title="統合前の取引先を指しています（参照は付け替えない決まり）">統合元：{a.counterparty.name}</span>}
         <span className="faint">
           {a.kind === "master"
