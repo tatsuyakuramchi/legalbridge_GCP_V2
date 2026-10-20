@@ -190,3 +190,30 @@ test("当社担当者は文書で選んだ担当（_ownerStaffId）が案件の�
   assert.deepEqual(d.cc.map((p) => p.email), ["chosen@example.com"]);
   assert.equal(db.find("FROM staff WHERE id")!.params[0], 7);
 });
+
+test("何枚かを 1 通で：宛先は 1 枚目から、文書番号・金額は全部をつなぐ。種類が混ざれば「その他の書類」。相手先が違えば止める", async () => {
+  const extras = (rows: any[]) => new FakeDatabase((t, params) => {
+    if (t.includes("array_position")) return rows.filter((r) => (params[0] as number[]).map(Number).includes(r.id));
+    return (build() as any).responder(t, params);
+  });
+  const sameParty = extras([
+    { id: 6, document_no: "ARC-IC-2026-1002", issued_at: "2026-09-30", rendered_values: { grandTotalPayableStr: "55000" },
+      template_key: "inspection_certificate", template_label: "検収書", counterparty_id: 3, counterparty: "株式会社甲" },
+    { id: 7, document_no: "ARC-PO-2026-0003-R2", issued_at: "2026-09-20", rendered_values: {},
+      template_key: "purchase_order", template_label: "発注書", counterparty_id: 3, counterparty: "株式会社甲" }
+  ]);
+  const d = await new MailDraftService(sameParty).draftMany([5, 6, 7], "delivery");
+  assert.equal(d.kind, "general", "検収書と発注書が混ざるので「その他の書類」");
+  assert.deepEqual(d.to.map((p) => p.email), ["keiri@kou.example"], "宛先は 1 枚目の請求先");
+  assert.match(d.subject, /ARC-IC-2026-1001・ARC-IC-2026-1002・ARC-PO-2026-0003/, "番号は全部。訂正版の枝番は出さない");
+  assert.match(d.body, /検収書・発注書/);
+  assert.doesNotMatch(d.body, /¥110,000・¥55,000/, "額の分からない発注書が混ざるので金額は出さない");
+
+  const only = await new MailDraftService(sameParty).draftMany([5, 6], "delivery");
+  assert.equal(only.kind, "inspection", "検収書だけなら検収書の文面");
+  assert.match(only.body, /¥110,000・¥55,000/);
+
+  const other = extras([{ id: 8, document_no: "ARC-IC-2026-1009", issued_at: null, rendered_values: {},
+    template_key: "inspection_certificate", template_label: "検収書", counterparty_id: 4, counterparty: "株式会社乙" }]);
+  await assert.rejects(() => new MailDraftService(other).draftMany([5, 8], "delivery"), /相手先の違う文書は 1 通にまとめられません/);
+});

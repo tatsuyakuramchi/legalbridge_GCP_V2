@@ -4697,6 +4697,14 @@ export function createRoutes(database: Transactable) {
     const purpose = z.enum(["owner_check", "party_check", "contract_unify", "delivery"]).parse(String(req.query.purpose ?? ""));
     res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose));
   }));
+  // 何枚かの文書を 1 通で送る下書き（文面は設定の「メールの文面」から選ぶ）。相手先は揃っていること。
+  router.post("/documents/mail-draft-many", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const input = z.object({
+      documentIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
+      purpose: z.enum(["owner_check", "party_check", "contract_unify", "delivery"])
+    }).parse(req.body ?? {});
+    res.json(await new MailDraftService(database).draftMany(input.documentIds, input.purpose));
+  }));
   // 送り先の候補（CloudSign の署名者・確認者）。取引先の署名者と事業部の担当者を、
   // 案件の無い文書（デイリータスク）でも出す。連絡先は個人の情報なので admin・legal だけ。
   router.get("/documents/:id/recipients", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
@@ -4899,7 +4907,10 @@ export function createRoutes(database: Transactable) {
     body: z.string().trim().min(1).max(20000),
     attachPdf: z.boolean().default(true),
     // 社内確認として送る（相手先へは送っていない扱い）。sendForReview を見よ。
-    internal: z.boolean().default(false)
+    internal: z.boolean().default(false),
+    // 契約書の統一のご案内など、相手先へ内容確認として送るもの。送付済み（gmail.send）にせず
+    // gmail.party_check を残す（未送付の一覧に「内容確認中」で残り、返信をもらったら CloudSign へ）。
+    recordAs: z.enum(["sent", "party_check"]).default("sent")
   });
   router.post("/documents/send-many",
     requireRole("admin", "legal"), requireWritable,
@@ -4927,9 +4938,14 @@ export function createRoutes(database: Transactable) {
                    subject, body: input.body, attachments,
                    threadRef: matterId ? await communications.emailThreadOf(matterId) : null }
       });
-      if (outcome.sent) {
+      if (outcome.sent && input.recordAs === "party_check") {
+        await markPartyChecked(ids, outcome.externalId ?? null,
+                               { subject, to: input.to, cc: input.cc, bcc: input.bcc, purpose: "party_check" }, who);
+      } else if (outcome.sent) {
         await markSent(ids, "gmail", outcome.externalId ?? null,
                        { subject, to: input.to, cc: input.cc, bcc: input.bcc }, who);
+      }
+      if (outcome.sent) {
         if (matterId) {
           await inTransaction(database, async (client) => {
             await recordCommunication(client, {

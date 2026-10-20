@@ -12,6 +12,7 @@ import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { SettledImport } from "./SettledImport.js";
 import { DocumentImport } from "./DocumentImport.js";
+import { SendMany } from "./SendMany.js";
 import { SearchSelect, staffOptions, type SearchOption } from "./SearchSelect.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
@@ -281,6 +282,9 @@ export function DocumentsWorkspace(
   const [listWhileComposing, setListWhileComposing] = useState(false);
   /** 旧版を開いている文書。既定は畳む（いまの版だけを読めるようにする）。 */
   const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
+  /** 一覧で選んで 1 通で送る文書（同じ相手先の決定済みのもの）。 */
+  const [pickedDocs, setPickedDocs] = useState<Set<number>>(new Set());
+  const [sendingPicked, setSendingPicked] = useState(false);
   // 決定した結果。番号だけでなく id も持つ（そのまま開けるように）。
   /** 決定した文書。again は「作成のフォームから決定した」（続けてもう1枚作れる）。 */
   const [issued, setIssued] = useState<{ id: number; documentNo: string; again?: boolean } | null>(null);
@@ -1771,10 +1775,35 @@ export function DocumentsWorkspace(
               )}
             </div>
             <ListCount shown={documents.length} keyword={search} onClear={() => setKeyword("")} />
+            {(() => {
+              // 選んだ文書を 1 通で送る。相手先が揃っていないと送れない（A社への便りに B社の書類が付く）。
+              const chosen = documents.filter((d) => pickedDocs.has(d.id));
+              const partiesOf = [...new Set(chosen.map((d) => d.counterparty ?? "（相手先なし）"))];
+              return (
+                <div className="panel-bd stack" style={{ paddingTop: 0, gap: 6 }}>
+                  <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button className="btn btn-sm" disabled={!chosen.length || partiesOf.length > 1 || sendingPicked}
+                            onClick={() => setSendingPicked(true)}>
+                      選んだ {chosen.length} 件を 1 通で送る
+                    </button>
+                    {!!chosen.length && <button className="btn btn-sm ghost" onClick={() => setPickedDocs(new Set())}>選択を外す</button>}
+                    <span className="faint">決定済みの文書に印を付けて、同じ相手先のものを 1 通に。文面は送る画面で選べます</span>
+                    {partiesOf.length > 1 && <span className="warn">相手先が混ざっています（{partiesOf.join("・")}）。1 つの相手先に揃えてください</span>}
+                  </div>
+                  {sendingPicked && chosen.length > 0 && (
+                    <SendMany title={`${partiesOf[0]} へ ${chosen.length} 件を 1 通で送る`}
+                      documents={chosen.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty }))}
+                      channels={integrations?.channels ?? []} isAdmin={me?.user?.role === "admin" || me?.user === undefined}
+                      onDone={() => { setSendingPicked(false); setPickedDocs(new Set()); void reload(); }}
+                      onClose={() => setSendingPicked(false)} />
+                  )}
+                </div>
+              );
+            })()}
             <div className="tablewrap">
               <table>
                 <thead><tr>
-                  <th>文書番号</th><th>種別</th><th>条件明細 ／ 案件</th><th>状態</th>
+                  <th></th><th>文書番号</th><th>種別</th><th>条件明細 ／ 案件</th><th>状態</th>
                 </tr></thead>
                 <tbody>
                   {heads.map((d) => {
@@ -1790,6 +1819,16 @@ export function DocumentsWorkspace(
                                 e.preventDefault(); setSelected(d.id);
                               }
                             }}>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {d.status === "issued" && (
+                              <input type="checkbox" checked={pickedDocs.has(d.id)} aria-label={`${d.documentNo ?? d.id} を選ぶ`}
+                                onChange={() => setPickedDocs((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
+                                  return next;
+                                })} />
+                            )}
+                          </td>
                           <td className="code">
                             {d.documentNo ?? "（未決定）"}
                             {/* 訂正版の下書きは、どの版を直しているのかが分からないと
@@ -1816,7 +1855,7 @@ export function DocumentsWorkspace(
                         </tr>
                         {older.length > 0 && (
                           <tr>
-                            <td colSpan={4} style={{ paddingTop: 2, paddingBottom: 6 }}>
+                            <td colSpan={5} style={{ paddingTop: 2, paddingBottom: 6 }}>
                               <button className="fold" onClick={(e) => {
                                 e.stopPropagation();
                                 setUnfolded((prev) => {
@@ -1834,6 +1873,7 @@ export function DocumentsWorkspace(
                         {open && older.map((o) => (
                           <tr key={o.id} className={`older${o.id === selected ? " sel" : ""}`}
                               tabIndex={0} onClick={() => setSelected(o.id)}>
+                            <td></td>
                             <td className="code faint">{o.documentNo ?? "（未決定）"}</td>
                             <td className="faint">{o.templateLabel ?? "—"}</td>
                             <td className="faint">同上</td>
@@ -1844,7 +1884,7 @@ export function DocumentsWorkspace(
                     );
                   })}
                   {!documents.length && (
-                    <tr><td colSpan={4} className="faint">
+                    <tr><td colSpan={5} className="faint">
                       {search.trim() ? `「${search}」に一致する文書はありません` : "文書がありません"}
                     </td></tr>
                   )}
