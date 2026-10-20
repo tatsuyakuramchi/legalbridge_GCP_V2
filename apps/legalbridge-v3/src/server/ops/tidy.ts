@@ -3,6 +3,7 @@ import type { MergeCandidate } from "../parties/merge-service.js";
 import type { TermTarget } from "../conditions/term-default.js";
 import type { NoticeTarget } from "../documents/notice-fill.js";
 import type { MergeGroup } from "../royalty/statement-merge.js";
+import { DOCUMENT_PARTY_ROLE_LABEL, type RelatedDocument, type Succession } from "../parties/multi-party.js";
 
 /**
  * 整理する ― 取引先の木を 1 本ずつ直す。
@@ -143,6 +144,10 @@ export interface TidyInput {
   noticeTargets: NoticeTarget[];
   noticeHolders: TidyDocumentHolder[];
   statementGroups: MergeGroup[];
+  /** 型 3：宛名ではなく関係当事者として載っている文書（連名の条件書・3 社契約）。 */
+  relatedDocuments: RelatedDocument[];
+  /** 型 3：この取引先が譲渡人か譲受人の地位承継。 */
+  successions: Succession[];
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -339,6 +344,12 @@ export function buildTidy(input: TidyInput): TidyTree {
   const dealNode = (root: MapNode): TidyNode => {
     const n = agreementNode(root, "deal", issues, map);
     if (root.primary) n.detail = [n.detail, "既定"].filter(Boolean).join("・");
+    for (const sc of input.successions.filter((x) => x.agreementId === root.id && x.state !== "reverted")) {
+      n.detail = [n.detail, sc.state === "pending"
+        ? `承継予定 → ${sc.to.name}（${sc.effectiveOn} から）`
+        : memberSet.has(sc.to.id) ? `${sc.from.name} から承継（${sc.effectiveOn}）` : `承継済み → ${sc.to.name}（${sc.effectiveOn}）`
+      ].filter(Boolean).join("・");
+    }
     for (const child of root.children) {
       const cn = agreementNode(child, "order", issues, map);
       for (const c of condsOf(child.id)) cn.children.push(conditionNode(c));
@@ -428,6 +439,35 @@ export function buildTidy(input: TidyInput): TidyTree {
     const g = node("group", "g-shared", "受取人として（共著の取り分）", { shared: true,
       detail: "相手方（代表）の木にある条件。ここでは自分宛ての計算書・支払だけを見る" });
     for (const c of shared) g.children.push(conditionNode(c));
+    roots.push(g);
+  }
+
+  // 型 3：承継で移った取引（譲渡人の木）。相手方はもう別の取引先なので、ここに足跡だけ残す。
+  const moved = input.successions.filter((x) => x.state === "applied" && memberSet.has(x.from.id) && !memberSet.has(x.to.id));
+  if (moved.length) {
+    const g = node("group", "g-succession", "承継で移った取引", { shared: true,
+      detail: "発効日前の実績・支払文書・支払はこの取引先宛てのまま。契約と条件は譲受人の木にある" });
+    for (const sc of moved) {
+      g.children.push(node("deal", `sc${sc.id}`, sc.agreementTitle || sc.agreementNo || `#${sc.agreementId}`, {
+        id: sc.agreementId, code: sc.agreementNo, shared: true,
+        detail: [`→ ${sc.to.name}（${sc.effectiveOn} から）`, sc.documentNo ? `根拠 ${sc.documentNo}` : null].filter(Boolean).join("・"),
+        entity: { kind: "agreement", id: sc.agreementId }
+      }));
+    }
+    roots.push(g);
+  }
+
+  // 型 3：関係当事者として載っている文書（連名の条件書・3 社契約）。文書は 1 件で、相手方の木にもある。
+  if (input.relatedDocuments.length) {
+    const g = node("group", "g-related", "関係当事者として（連名の文書）", { shared: true,
+      detail: "宛名は相手方。同じ 1 件が相手方の木にもある。多重には数えない" });
+    for (const d of input.relatedDocuments) {
+      g.children.push(node("order", `rd${d.documentId}`, d.title || d.documentNo || `#${d.documentId}`, {
+        id: d.documentId, code: d.documentNo, shared: true,
+        detail: [DOCUMENT_PARTY_ROLE_LABEL[d.role], d.counterpartyName ? `相手方 ${d.counterpartyName}` : null, label(d.status), d.note].filter(Boolean).join("・"),
+        entity: { kind: "document", id: d.documentId }
+      }));
+    }
     roots.push(g);
   }
 

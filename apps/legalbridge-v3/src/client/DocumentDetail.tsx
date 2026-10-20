@@ -2,6 +2,7 @@ import { useState } from "react";
 import { DOCUMENT_STATE_NOTE, StatusTag } from "./labels.js";
 
 import { Relations, type EntityKind } from "./Relations.js";
+import { DocumentParties } from "./DocumentParties.js";
 import { DocumentEvents } from "./DocumentEvents.js";
 import { DocumentSend } from "./DocumentSend.js";
 import { DocumentAttachFile } from "./DocumentImport.js";
@@ -336,6 +337,9 @@ export function DocumentDetail(
         <DocumentEvents documentId={doc.id} documentNo={doc.documentNo}
                         conditions={doc.conditions} onChanged={onChanged} />
       )}
+
+      {/* 連名の条件書・3 社契約：文書は 1 件のまま、関わる取引先を役割つきで持つ（docs/v3-tidy.md 型 3）。 */}
+      <DocumentParties documentId={doc.id} onOpen={onOpen} onChanged={onChanged} />
 
       <Relations kind="document" id={doc.id} initialOpen={openConditions ? "conditions" : undefined}
                  onOpen={onOpen} onChanged={onChanged} />

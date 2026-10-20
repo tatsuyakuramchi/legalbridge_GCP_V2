@@ -28,6 +28,7 @@ import { TidyService } from "./ops/tidy-service.js";
 import { tally } from "./ops/leftovers.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
+import { DocumentPartyService, SuccessionService, DOCUMENT_PARTY_ROLES } from "./parties/multi-party.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
 import { MatterGridService } from "./matters/grid-service.js";
@@ -210,6 +211,9 @@ export function createRoutes(database: Transactable) {
   const workCredits = new WorkCreditService(database);
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
+  // 複数当事者（文書の関係当事者・契約の地位承継）。parties/multi-party.ts
+  const documentParties = new DocumentPartyService(database);
+  const successions = new SuccessionService(database);
   const matterMerge = new MatterMergeService(database);
   const matterGraph = new MatterGraphService(database);
   const receivables = new ReceivableRepository(database);
@@ -2873,7 +2877,8 @@ export function createRoutes(database: Transactable) {
 
   // ---- 整理する：取引先の木を 1 本ずつ直す（docs/v3-tidy.md）----
   const tidy = new TidyService(database, {
-    map: agreementMap, merge: partyMerge, term: termDefault, notice: noticeFill, statements: statementMerge
+    map: agreementMap, merge: partyMerge, term: termDefault, notice: noticeFill, statements: statementMerge,
+    related: documentParties, successions
   });
   router.get("/tidy/parties", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     res.json({ parties: await tidy.parties({
@@ -4724,8 +4729,52 @@ export function createRoutes(database: Transactable) {
   // 送り先の候補（CloudSign の署名者・確認者）。取引先の署名者と事業部の担当者を、
   // 案件の無い文書（デイリータスク）でも出す。連絡先は個人の情報なので admin・legal だけ。
   router.get("/documents/:id/recipients", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
-    res.json(await new MailDraftService(database).recipients(Number(req.params.id)));
+    const id = Number(req.params.id);
+    const r = await new MailDraftService(database).recipients(id);
+    // 連名の文書（関係当事者）の署名者・主担当も署名者の候補に足す（宛名の取引先の次に）。
+    const related = await documentParties.signerCandidates(id);
+    const have = new Set(r.signers.map((x) => x.email.toLowerCase()));
+    const extra = related.filter((x) => !have.has(x.email.toLowerCase()))
+      .map((x) => ({ name: x.name ? `${x.name}（${x.partyName}）` : x.partyName, email: x.email, roles: x.roles, department: x.department }));
+    res.json({ ...r, signers: [...r.signers, ...extra], relatedSigners: extra.length });
   }));
+
+  // ---- 文書の関係当事者（型 3：1 文書・N の関係）----
+  router.get("/documents/:id/parties", asyncRoute(async (req, res) => {
+    res.json({ parties: await documentParties.list(Number(req.params.id)), roles: DOCUMENT_PARTY_ROLES });
+  }));
+  router.put("/documents/:id/parties", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ parties: z.array(z.object({
+        partyId: z.coerce.number().int().positive(),
+        role: z.enum(DOCUMENT_PARTY_ROLES as [string, ...string[]]),
+        note: z.string().max(200).nullable().optional()
+      })).max(50) }).parse(req.body ?? {});
+      res.json({ parties: await documentParties.replace(Number(req.params.id),
+        input.parties.map((p) => ({ partyId: p.partyId, role: p.role as (typeof DOCUMENT_PARTY_ROLES)[number], note: p.note ?? null })),
+        actor(res)) });
+    }));
+
+  // ---- 契約の地位承継（3 社契約）----
+  router.get("/agreements/:id/successions", asyncRoute(async (req, res) => {
+    res.json({ successions: await successions.forAgreement(Number(req.params.id)) });
+  }));
+  router.post("/agreements/:id/successions", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        toPartyId: z.coerce.number().int().positive(),
+        effectiveOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        documentId: z.coerce.number().int().positive().nullable().optional(),
+        note: z.string().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await successions.create(Number(req.params.id), input, actor(res)));
+    }));
+  router.post("/successions/:id/apply", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { res.json(await successions.apply(Number(req.params.id), actor(res))); }));
+  router.post("/successions/:id/revert", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { res.json(await successions.revert(Number(req.params.id), actor(res))); }));
+  router.delete("/successions/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { await successions.remove(Number(req.params.id), actor(res)); res.status(204).end(); }));
 
   router.get("/documents/:id/sends", asyncRoute(async (req, res) => {
     res.json(await sends.timeline(Number(req.params.id)));

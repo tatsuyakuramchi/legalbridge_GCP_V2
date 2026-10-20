@@ -1,6 +1,7 @@
 import { termHistory } from "../agreements/term-history.js";
 import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { scanWorkParts } from "../ops/quality-scan.js";
+import { SuccessionService } from "../parties/multi-party.js";
 import { dateStr, int } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
@@ -58,6 +59,9 @@ export class DailyJob {
     try {
       const applied = await inTransaction(this.database,
         (client) => this.applyScheduledRevisions(client));
+      // 発効日の来た地位承継（契約・条件の相手方の切り替え）。parties/multi-party.ts
+      const successions = await inTransaction(this.database,
+        (client) => new SuccessionService(this.database).applyDue(client));
 
       // データ品質の点検。見つけたものは data_quality_issues に積み、
       // 直ったものは閉じる（運用画面の「未解決の不整合」がそのまま追いつく）。
@@ -70,6 +74,7 @@ export class DailyJob {
           detail: {
             counts: countBy(found),
             quality,
+            successions,
             // 何を見つけたかを残す。あとから「あの日は出ていたか」を追える。
             findings: found.map((f) => ({ kind: f.kind, refNo: f.refNo, dueOn: f.dueOn }))
           }

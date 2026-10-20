@@ -3,6 +3,7 @@ import { api, ApiError, money } from "./api.js";
 import { ListCount, ListSearch, useDebounced } from "./ListTools.js";
 import { StatusTag } from "./labels.js";
 import { Relations, type EntityKind } from "./Relations.js";
+import { Successions } from "./Successions.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import { ConditionCreateForm } from "./ConditionCreateForm.js";
@@ -449,6 +450,11 @@ export function AgreementsWorkspace(
                 </table>
               </div>
             </div>
+
+            {/* 地位承継（3 社契約）：相手方を発効日で切り替える。基本契約・単体契約だけ（個別契約は親と一緒に移る）。 */}
+            {(a.kind === "master" || a.kind === "standalone") && (
+              <Successions agreementId={a.id} counterpartyName={a.counterparty.name} onOpen={onOpen} onChanged={bump} />
+            )}
 
             <Relations kind="agreement" id={a.id} reloadKey={version} onOpen={onOpen} onChanged={bump} />
           </>

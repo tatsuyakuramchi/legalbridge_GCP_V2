@@ -5,6 +5,7 @@ import type { PartyMergeService, MergeCandidate } from "../parties/merge-service
 import type { TermDefaultService, TermTarget } from "../conditions/term-default.js";
 import type { NoticeFillService, NoticeTarget } from "../documents/notice-fill.js";
 import type { StatementMergeService, MergeGroup } from "../royalty/statement-merge.js";
+import type { DocumentPartyService, SuccessionService } from "../parties/multi-party.js";
 import {
   buildTidy, type TidyConditionRow, type TidyDocumentHolder, type TidyEventStat, type TidyPaymentRow,
   type TidyStatementRow, type TidyTree, type MarkKind
@@ -31,6 +32,8 @@ export interface TidyTools {
   term: Pick<TermDefaultService, "preview">;
   notice: Pick<NoticeFillService, "preview">;
   statements: Pick<StatementMergeService, "preview">;
+  related: Pick<DocumentPartyService, "relatedTo">;
+  successions: Pick<SuccessionService, "forParty">;
 }
 
 export class TidyService {
@@ -91,6 +94,9 @@ export class TidyService {
       const [events, statements, payments] = ids.length
         ? await Promise.all([this.events(ids), this.statements(ids), this.payments(ids)])
         : [[], [], []];
+      const [relatedDocuments, successionRows] = await Promise.all([
+        this.tools.related.relatedTo(members), this.tools.successions.forParty(members)
+      ]);
       const memberSet = new Set(members);
       const termTargets: TermTarget[] = termAll.targets.filter((t) => t.partyId != null && memberSet.has(t.partyId));
       const noticeTargets: NoticeTarget[] = noticeAll.targets.filter((t) => t.partyId != null && memberSet.has(t.partyId));
@@ -100,7 +106,8 @@ export class TidyService {
 
       return buildTidy({
         party, members, map, conditions, events, statements, payments,
-        mergeCandidates, termTargets, noticeTargets, noticeHolders, statementGroups
+        mergeCandidates, termTargets, noticeTargets, noticeHolders, statementGroups,
+        relatedDocuments, successions: successionRows
       });
     } catch (error) { throw translate(error); }
   }

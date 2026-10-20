@@ -240,8 +240,12 @@ export class DocumentRepository {
     if (query.partyId) {
       params.push(query.partyId);
       // 受取人宛ての文書は受取人で当てる（代表の文書として出さない）。
-      where.push(`COALESCE(pp.id, v.counterparty_id) IN (SELECT party_id FROM v_party_resolved
-                    WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length}))`);
+      // 関係当事者（連名の文書）としても当てる。
+      where.push(`(COALESCE(pp.id, v.counterparty_id) IN (SELECT party_id FROM v_party_resolved
+                    WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length}))
+                   OR EXISTS (SELECT 1 FROM document_parties xp JOIN v_party_resolved xr ON xr.party_id = xp.party_id
+                               WHERE xp.document_id = d.id
+                                 AND xr.resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length})))`);
     }
     if (query.unlinked) {
       where.push(`NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)`);

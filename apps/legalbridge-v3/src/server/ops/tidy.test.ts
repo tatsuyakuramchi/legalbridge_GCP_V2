@@ -25,7 +25,8 @@ const cond = (id: number, over: Partial<TidyConditionRow> = {}): TidyConditionRo
 const input = (over: Partial<TidyInput> = {}): TidyInput => ({
   party: { id: 1, name: "脇屋", kind: "individual", email: null }, members: [1],
   map: emptyMap(), conditions: [], events: [], statements: [], payments: [],
-  mergeCandidates: [], termTargets: [], noticeTargets: [], noticeHolders: [], statementGroups: [], ...over
+  mergeCandidates: [], termTargets: [], noticeTargets: [], noticeHolders: [], statementGroups: [],
+  relatedDocuments: [], successions: [], ...over
 });
 
 test("型 1：基本契約の下に個別契約、その下に条件・実績・計算書・支払が並ぶ", () => {
@@ -204,4 +205,21 @@ test("「直すところだけ」は印の無い枝を落とす。印は木の�
   const only = marksOnly(tree.roots);
   assert.deepEqual(only.map((n) => n.code), ["ARC-201"]);
   assert.deepEqual(allMarks(tree.roots).map((x) => x.mark.id), ["term:6"]);
+});
+
+test("型 3：関係当事者として載っている文書は別の枝に 1 件として出る。承継は取引の説明と、譲渡人の木の足跡", () => {
+  const sc = { id: 1, agreementId: 100, agreementNo: "ARC-100", agreementTitle: "契約100", from: { id: 1, name: "脇屋" }, to: { id: 9, name: "新社" },
+               effectiveOn: "2026-11-01", documentId: 77, documentNo: "ARC-ASG-1", note: null, appliedAt: null, revertedAt: null, state: "pending" as const };
+  const pending = buildTidy(input({ map: emptyMap({ roots: [root(100)] }), successions: [sc],
+    relatedDocuments: [{ documentId: 77, documentNo: "ARC-ASG-1", title: "承継合意書", status: "issued", issuedOn: null, role: "assignor", note: null, counterpartyName: "新社" }] }));
+  assert.match(pending.roots[1]!.detail ?? "", /承継予定 → 新社（2026-11-01 から）/);
+  const g = pending.roots.find((n) => n.key === "g-related")!;
+  assert.equal(g.children[0]!.shared, true);
+  assert.match(g.children[0]!.detail ?? "", /譲渡人・相手方 新社/);
+  assert.equal(pending.total, 0);
+
+  const applied = buildTidy(input({ map: emptyMap(), successions: [{ ...sc, appliedAt: "2026-11-01T00:00:00Z", state: "applied" }] }));
+  const moved = applied.roots.find((n) => n.key === "g-succession")!;
+  assert.equal(moved.children[0]!.code, "ARC-100");
+  assert.match(moved.children[0]!.detail ?? "", /→ 新社（2026-11-01 から）・根拠 ARC-ASG-1/);
 });

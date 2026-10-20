@@ -11,6 +11,7 @@ import { IndividualPayDay } from "./IndividualPayDay.js";
 import { TermDefault } from "./TermDefault.js";
 import { NoticeFill } from "./NoticeFill.js";
 import { StatementMerge } from "./StatementMerge.js";
+import { FixesBadge } from "./FixesBadge.js";
 import { PeriodReissuePanel } from "./PeriodReissue.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
@@ -114,7 +115,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
       <div className="tabs">
         <button aria-selected={tab === "quality"} onClick={() => setTab("quality")}>データ品質 {issues.length}</button>
         <button aria-selected={tab === "deadlines"} onClick={() => setTab("deadlines")}>期限 {deadlines.length}</button>
-        <button aria-selected={tab === "fixes"} onClick={() => setTab("fixes")}>一括修正</button>
+        <button aria-selected={tab === "fixes"} onClick={() => setTab("fixes")}>一括修正<FixesBadge /></button>
         <button aria-selected={tab === "leftovers"} onClick={() => setTab("leftovers")}>片づけ</button>
         <button aria-selected={tab === "exports"} onClick={() => setTab("exports")}>出力</button>
         <button aria-selected={tab === "imports"} onClick={() => setTab("imports")}>取込</button>
