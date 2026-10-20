@@ -8,6 +8,7 @@ import { CsvBar } from "./CsvBar.js";
 import { CsvImport } from "./CsvImport.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { TidyFlow } from "./TidyFlow.js";
+import { DocMatter } from "./DocMatter.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
@@ -210,6 +211,8 @@ function PartyMapView(
         <span className="faint">
           {o.conditions.length ? `条件 ${o.conditions.length}：${o.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし"}
         </span>
+        <DocMatter documentId={o.id} busy={false} onOpen={onOpen}
+                   onChanged={(m) => (m.startsWith("⚠") ? onError(m.slice(1).trim()) : onChanged(m))} />
         <button className="btn btn-sm" style={{ marginLeft: "auto" }}
                 onClick={() => setPoLink({ documentId: o.id, conditionIds: [] })}>条件を紐づける</button>
       </div>
@@ -418,7 +421,7 @@ function UnlinkedDocuments(
       )}
       <div className="tablewrap">
         <table>
-          <thead><tr><th>文書番号</th><th>種別・件名</th><th>日付</th><th>この文書から立てる</th><th>既にある契約に繋ぐ</th><th></th></tr></thead>
+          <thead><tr><th>文書番号</th><th>種別・件名</th><th>日付</th><th>案件</th><th>この文書から立てる</th><th>既にある契約に繋ぐ</th><th></th></tr></thead>
           <tbody>
             {docs.map((d) => (
               <tr key={d.id}>
@@ -428,6 +431,8 @@ function UnlinkedDocuments(
                 </td>
                 <td>{d.label}{d.title ? `（${d.title}）` : ""}</td>
                 <td className="faint" style={{ whiteSpace: "nowrap" }}>{d.issuedOn ?? "—"}</td>
+                <td><DocMatter documentId={d.id} busy={readOnly || busy === d.id} onOpen={onOpen}
+                               onChanged={(m) => (m.startsWith("⚠") ? onError(m.slice(1).trim()) : onChanged(m))} /></td>
                 <td>
                   {d.role === "master" && (
                     <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
