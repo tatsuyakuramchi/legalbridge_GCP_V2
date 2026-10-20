@@ -973,6 +973,10 @@ export function createRoutes(database: Transactable) {
   router.get("/notice-fill", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     res.json(await noticeFill.preview(staffIdOf(req.query.ownerStaffId)));
   }));
+  // 文書 1 枚の確認（送る流れの ③ 確かめる）：通知先・担当者の欄が空いていないか。
+  router.get("/documents/:id/notice-check", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await noticeFill.previewOne(Number(req.params.id), staffIdOf(req.query.ownerStaffId)));
+  }));
   router.post("/notice-fill", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({

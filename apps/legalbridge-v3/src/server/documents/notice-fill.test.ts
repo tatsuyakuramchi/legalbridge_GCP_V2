@@ -117,3 +117,29 @@ test("基本契約書：甲は入っていて乙（STAFF_NAME）だけ空なら�
   const none = (await new NoticeFillService(database()).preview(null)).targets[0]!;
   assert.match(none.skip ?? "", /担当者を選んでください/);
 });
+
+test("1 枚の確認：通知先の欄のある契約書で空いていれば対象、全部入っていれば filled、種類が違えば applies=false", async () => {
+  const one = (kind: string, status = "issued") => new FakeDatabase((text, params) => {
+    if (text.includes("SELECT d.status, t.template_key FROM documents d")) return [{ status, template_key: kind }];
+    if (text.includes("rendered_values->>'licensorContact'")) {
+      // $3 で 1 枚に絞る。901 だけ空いている。
+      return params[2] === 901 ? [{ id: 901, document_no: "ARC-PUBT-2026-1024", issued_at: "2026-10-08T03:00:00Z",
+        template_key: "pub_license_terms_v3", licensor: "", licensee: null, party_id: 11, open_draft: null }] : [];
+    }
+    if (text.includes("FROM parties p WHERE p.id = ANY")) return [{ id: 11, name: "作家甲", kind: "individual", email: "kou@example.test", phone: null, contacts: [] }];
+    return undefined;
+  });
+  const blank = await new NoticeFillService(one("pub_license_terms_v3")).previewOne(901);
+  assert.equal(blank.applies, true); assert.equal(blank.filled, false);
+  assert.equal(blank.target?.documentId, 901);
+  assert.ok(blank.target?.fills.some((f) => f.field === "許諾者連絡先"));
+  const db901 = one("pub_license_terms_v3");
+  await new NoticeFillService(db901).previewOne(902);
+  assert.equal(db901.find("q WHERE q.id = $3")?.params[2], 902, "1 枚に絞る");
+  const filled = await new NoticeFillService(one("pub_license_terms_v3")).previewOne(902);
+  assert.deepEqual([filled.applies, filled.filled, filled.target], [true, true, null]);
+  const other = await new NoticeFillService(one("royalty_statement_pub")).previewOne(901);
+  assert.equal(other.applies, false);
+  const draft = await new NoticeFillService(one("pub_license_terms_v3", "draft")).previewOne(901);
+  assert.equal(draft.applies, false);
+});

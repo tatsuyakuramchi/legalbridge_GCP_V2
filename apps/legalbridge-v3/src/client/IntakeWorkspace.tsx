@@ -86,9 +86,11 @@ function destinationOf(r: Request): string {
 }
 
 export function IntakeWorkspace(
-  { onOpenMatter, onOpenTask, onCountsChange, initialId }: {
+  { onOpenMatter, onOpenTask, onCountsChange, initialId, onSelectId }: {
     /** この依頼を選んだ状態で開く（検索・作家の台帳から来たとき）。 */
     initialId?: number;
+    /** 選んだ行を親へ知らせる（URL に写す）。 */
+    onSelectId?: (id: number | undefined) => void;
     onOpenMatter?: (matterId: number) => void;
     /** デイリータスクにした依頼の作業を開く。 */
     onOpenTask?: (taskId: number) => void;
@@ -101,6 +103,7 @@ export function IntakeWorkspace(
   const [items, setItems] = useState<Request[] | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

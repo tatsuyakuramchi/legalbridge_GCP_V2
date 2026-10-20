@@ -94,10 +94,33 @@ const line = (p: Person) => joinContactParts({
 export class NoticeFillService {
   constructor(private readonly database: Queryable, private readonly issuer: NoticeReissuer | null = null) {}
 
-  /** 出し直す契約書と、空いた欄に入れる値。ownerStaffId は条件書の乙（当社）の通知先。 */
-  async preview(ownerStaffId: number | null = null): Promise<{ targets: NoticeTarget[]; staff: string | null }> {
+  /**
+   * 1 枚の確認（文書の「確かめる」）。通知先・担当者の欄のある契約書か、空いているか、入れる値。
+   *   applies=false … この種類の文書には通知先の欄が無い
+   *   target=null   … 欄はあるが全部入っている
+   */
+  async previewOne(documentId: number, ownerStaffId: number | null = null): Promise<{ applies: boolean; filled: boolean; target: NoticeTarget | null; staff: string | null }> {
     try {
-      const rows = (await this.database.query(CANDIDATES, [[...TERMS_KEYS, ...MASTER_KEYS], MASTER_KEYS])).rows as Array<Record<string, any>>;
+      const d = await this.database.query(
+        `SELECT d.status, t.template_key FROM documents d
+           JOIN document_template_versions tv ON tv.id = d.template_version_id
+           JOIN document_templates t ON t.id = tv.template_id WHERE d.id = $1`, [documentId]);
+      const row = d.rows[0] as any;
+      const applies = Boolean(row) && [...TERMS_KEYS, ...MASTER_KEYS].includes(String(row.template_key)) && row.status === "issued";
+      if (!applies) return { applies: false, filled: false, target: null, staff: null };
+      const r = await this.preview(ownerStaffId, documentId);
+      const target = r.targets.find((t) => t.documentId === documentId) ?? null;
+      return { applies: true, filled: !target, target, staff: r.staff };
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 出し直す契約書と、空いた欄に入れる値。ownerStaffId は条件書の乙（当社）の通知先。documentId で 1 枚に絞れる。 */
+  async preview(ownerStaffId: number | null = null, documentId: number | null = null): Promise<{ targets: NoticeTarget[]; staff: string | null }> {
+    try {
+      const sql = documentId ? `SELECT * FROM (${CANDIDATES}) q WHERE q.id = $3` : CANDIDATES;
+      const params: unknown[] = [[...TERMS_KEYS, ...MASTER_KEYS], MASTER_KEYS];
+      if (documentId) params.push(documentId);
+      const rows = (await this.database.query(sql, params)).rows as Array<Record<string, any>>;
       const partyIds = [...new Set(rows.map((r) => r.party_id).filter((x) => x != null).map(Number))];
       const people = partyIds.length ? await this.partyWindows(partyIds) : new Map<number, { name: string; person: Person | null }>();
       const staff = ownerStaffId ? await this.staff(ownerStaffId) : null;

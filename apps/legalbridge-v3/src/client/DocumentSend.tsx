@@ -4,6 +4,8 @@ import { CloudSignManual } from "./CloudSignManual.js";
 import { RecipientPicker, type Person } from "./RecipientPicker.js";
 import { ProcessRail, stationStateOf, type Station, type StationTag } from "./ProcessRail.js";
 import { replaceRouteParams } from "./route.js";
+import { OwnerStaffPicker } from "./OwnerStaffPicker.js";
+import type { NoticeTarget } from "../server/documents/notice-fill.js";
 
 /**
  * 決定した文書を「送る」。本線の 5 駅のうち ②〜⑤ を縦の工程表で出す。
@@ -18,7 +20,7 @@ import { replaceRouteParams } from "./route.js";
  * 送れなかったときは理由をそのまま見せる。
  */
 
-type StepKey = "decided" | "owner_check" | "party_check" | "send" | "executed";
+type StepKey = "decided" | "owner_check" | "party_check" | "send" | "executed" | "notice";
 interface Step {
   key: StepKey; station: number; name: string; done: boolean; at: string | null; detail: string;
   skipped: boolean; skipReason: string | null; skippable: boolean; optional?: boolean; passed?: boolean; pending?: string | null;
@@ -124,7 +126,7 @@ export function DocumentSend(
   const [busy, setBusy] = useState(false);
   /** いま送っているもの（印の文言）。 */
   const [sendingWhat, setSendingWhat] = useState<string | null>(null);
-  const STEP_KEYS: StepKey[] = ["decided", "owner_check", "party_check", "send", "executed"];
+  const STEP_KEYS: StepKey[] = ["decided", "owner_check", "party_check", "send", "executed", "notice"];
   const [open, setOpenState] = useState<StepKey | null>(
     initialOpen && (STEP_KEYS as string[]).includes(initialOpen) ? (initialOpen as StepKey) : null);
   /** 段を開く。URL の ?step= にも写す（リンクを貼ればその段が開く）。 */
@@ -167,6 +169,19 @@ export function DocumentSend(
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const modeOf = (ch: string) => channels.find((c) => c.channel === ch)?.mode ?? "off";
+
+  /**
+   * ③ 確かめる の札「担当者・通知先」。通知先の欄のある契約書（基本契約書・条件書）で、
+   * 甲の通知先・乙（当社）の担当者が空いていないか。空いていれば、ここから訂正版で出し直す
+   * （まとめて直すのは 運用 › 一括修正 › 通知先。同じ道具）。
+   */
+  type NoticeCheck = { applies: boolean; filled: boolean; target: NoticeTarget | null; staff: string | null };
+  const [notice, setNotice] = useState<NoticeCheck | null>(null);
+  const [noticeStaff, setNoticeStaff] = useState<number | null>(null);
+  const loadNotice = (staffId: number | null) =>
+    api.get<NoticeCheck>(`/documents/${documentId}/notice-check${staffId ? `?ownerStaffId=${staffId}` : ""}`)
+      .then(setNotice).catch(() => setNotice(null));
+  useEffect(() => { void loadNotice(noticeStaff); }, [documentId, noticeStaff]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load() {
     const t = await api.get<Timeline>(`/documents/${documentId}/sends`);
@@ -304,6 +319,12 @@ export function DocumentSend(
     const station = (no: 2 | 3 | 4 | 5, skippable = false): Station => {
       const steps = tl.steps.filter((s) => s.station === no);
       const tags = steps.map(tagOf);
+      if (no === 3 && notice?.applies) {
+        tags.push({ key: "notice", label: "担当者・通知先", open: open === "notice",
+          state: notice.filled ? "done" : "now",
+          title: notice.filled ? "通知先・担当者は入っています" : "通知先か担当者の欄が空いています",
+          onGo: () => setOpen("notice") });
+      }
       const first = steps.find((s) => !s.done && !s.skipped) ?? steps[0];
       return { no, state: stationStateOf(tags), tags, skippable, open: steps.some((s) => s.key === open),
                onGo: first ? () => setOpen(first.key) : undefined,
@@ -512,6 +533,43 @@ export function DocumentSend(
                     {tl.needsExecution && <span className="faint">契約書は CloudSign で署名依頼し、締結まで進めます</span>}
                   </div>
                   {sendWay === "mail" ? mailForm() : cloudSignPane()}
+                </div>
+              )}
+
+              {open === "notice" && notice && (
+                <div className="stack" style={{ gap: 8 }}>
+                  <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <b style={{ fontSize: 15 }}>確かめる　担当者・通知先</b>
+                    <span className={`tag ${notice.filled ? "ok" : "warn"}`}>{notice.filled ? "入っています" : "空いています"}</span>
+                  </div>
+                  {notice.filled && <div className="faint">甲の通知先と乙（当社）の担当者は本文に入っています。次へ進んでください。</div>}
+                  {!notice.filled && notice.target && (
+                    <>
+                      <div className="faint">空いている欄に次を入れて、訂正版で出し直します（元の締結日・決定日のまま。この版は退いて「訂正版あり」になります）。</div>
+                      {notice.target.fills.length > 0 && (
+                        <div className="dl">{notice.target.fills.map((x) => <div key={x.field}><span className="faint">{x.label}</span>　{x.value}</div>)}</div>
+                      )}
+                      {notice.target.skip && <div className="note warn">{notice.target.skip}</div>}
+                      {(notice.target.skip?.includes("担当者") || notice.target.fills.some((x) => x.label.includes("乙")) || !notice.staff) && (
+                        <div>
+                          <div className="faint">乙（当社）の担当者</div>
+                          <OwnerStaffPicker value={noticeStaff} onChange={setNoticeStaff} disabled={busy} emptyLabel="担当者を選ぶ" />
+                        </div>
+                      )}
+                      <div className="row" style={{ gap: 8 }}>
+                        <button className="btn primary" disabled={busy || !isAdmin || Boolean(notice.target.skip) || !notice.target.fills.length}
+                          onClick={() => void run(async () => {
+                            const r = await api.post<{ reissued: number; results: Array<{ error?: string | null; newDocumentNo?: string | null }> }>(
+                              "/notice-fill", { documentIds: [documentId], ownerStaffId: noticeStaff });
+                            const err = r.results.find((x) => x.error)?.error;
+                            if (err) throw new Error(err);
+                            await loadNotice(noticeStaff);
+                            return `担当者・通知先を入れた訂正版 ${r.results[0]?.newDocumentNo ?? ""} を出しました。この版は退きました。一覧から訂正版を開いて送ってください`;
+                          }, "訂正版を作っています")}>担当者を入れて訂正版を出す</button>
+                        <span className="faint">まとめて直すなら 運用 › 一括修正 › 通知先</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

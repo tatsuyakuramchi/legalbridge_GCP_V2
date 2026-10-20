@@ -316,6 +316,9 @@ export function App() {
   const [mapParty, setMapParty] = useState<number | undefined>();
   /** 文書の送る流れで開く段（URL から来たとき）。 */
   const [docStep, setDocStep] = useState<string | null>(null);
+  /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
+  const [pick, setPick] = useState<{ view: View; id: number } | null>(null);
+  const pickFor = (v: View) => (id: number | undefined) => setPick(id ? { view: v, id } : null);
   /** URL から来た場所を適用している最中（書き戻さない）。 */
   const applyingRoute = useRef(false);
   const VIEWS = useRef(new Set<string>(NAV.flatMap((g) => g.items.map((i) => i.view)).concat(["closing", "deals"])));
@@ -325,6 +328,7 @@ export function App() {
     try {
       if (!r || !VIEWS.current.has(r.view)) { setFocus(null); setView("home"); return; }
       const v = r.view as View;
+      setPick(null);
       setTaskCtx(null); setDocFlow(null); setCompose(null); setDocBack(null);
       if (v === "conditions") { setConditionId(r.id ?? undefined); setConditionSchedule(null); setFocus(null); setView(v); return; }
       if (v === "documents") {
@@ -354,7 +358,8 @@ export function App() {
   const currentRoute = (): Route => {
     const params: Record<string, string> = {};
     let id: number | undefined;
-    if (view === "conditions") id = conditionId;
+    if (pick && pick.view === view) id = pick.id;
+    else if (view === "conditions") id = conditionId;
     else if (view === "documents") { id = openDocument?.id; if (openDocument?.edit) params.draft = "1"; if (docStep) params.step = docStep; }
     else if (view === "ops") { if (opsTab) params.sub = opsTab; }
     else if (view === "agreement-map") { id = mapParty ?? focusFor(view); if (mapMode === "tidy") params.mode = "tidy"; }
@@ -369,7 +374,7 @@ export function App() {
     const cur = window.location.hash;
     if (routePath(formatHash(r)) === routePath(cur) && cur.includes("?")) return;
     pushRoute(r);
-  }, [view, focus, conditionId, openDocument, opsTab, mapMode, mapParty, driftMatter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, focus, pick, conditionId, openDocument, opsTab, mapMode, mapParty, driftMatter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ReadOnlyContext.Provider value={Boolean(me?.readOnly)}>
@@ -453,7 +458,7 @@ export function App() {
           <IntakeWorkspace key={`i${focusFor("intake") ?? 0}`} initialId={focusFor("intake")}
             onOpenMatter={(id) => openEntity("matter", id)}
             onOpenTask={(taskId) => { setFocus({ view: "daily", id: taskId }); setView("daily"); }}
-            onCountsChange={(c) => setIntakeCount(c.new + c.updated)} />
+            onCountsChange={(c) => setIntakeCount(c.new + c.updated)} onSelectId={pickFor("intake")} />
         )}
         {view === "daily" && (
           <DailyTasksWorkspace key={`t${focusFor("daily") ?? 0}`} initialId={focusFor("daily")}
@@ -466,7 +471,7 @@ export function App() {
               setTaskCtx(ctx); setConditionId(undefined);
               startWorkbench({ kind: "task", taskId: ctx.taskId, requestId: ctx.requestId });
             }}
-            onCountsChange={(c) => setDailyCount(c.open)} />
+            onCountsChange={(c) => setDailyCount(c.open)} onSelectId={pickFor("daily")} />
         )}
         {view === "deals" && (
           <DealsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
@@ -508,7 +513,7 @@ export function App() {
             // 案件の「作業テーブルで文書を作る」。取引の型は作業テーブルが案件の種類と条件から推す。
             onOpenTrade={(m) => startWorkbench({ kind: "matter", matterId: m.id })}
             onIssueRound={issueRound}
-            onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
+            onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} onSelectId={pickFor("matters")} />
         )}
         {view === "conditions" && (
           <ConditionsWorkspace key={`${conditionId ?? 0}-${conditionSchedule ?? 0}`}
@@ -518,18 +523,20 @@ export function App() {
                                onIssueRound={issueRound}
                                // 条件を登録したら、その条件で文書を作る画面へ進む（戻る先はその条件）。
                                onCreated={({ conditionIds, templateKey }) =>
-                                 startCompose(conditionIds, [], null, templateKey, null, null, null, conditionFlow(conditionIds[0]))} />
+                                 startCompose(conditionIds, [], null, templateKey, null, null, null, conditionFlow(conditionIds[0]))}
+                               onSelectId={pickFor("conditions")} />
         )}
         {view === "works" && (
           <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("works")}
             onOpenDocument={openDocumentAt}
             onOpen={openEntity} onCompose={startCompose}
-            payDocs={{ onIssueRound: issueRound, onOpenDraft: (id) => openDocumentAt(id, null, null, true), onOpenAuthor: openAuthor }} />
+            payDocs={{ onIssueRound: issueRound, onOpenDraft: (id) => openDocumentAt(id, null, null, true), onOpenAuthor: openAuthor }}
+            onSelectId={pickFor("works")} />
         )}
         {view === "parties" && (
           <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")}
-            onOpen={openEntity} />
+            onOpen={openEntity} onSelectId={pickFor("parties")} />
         )}
         {view === "documents" && (
           <DocumentsWorkspace
@@ -553,7 +560,8 @@ export function App() {
               ? { partyId: agreementPreset.partyId, partyName: agreementPreset.partyName } : null}
             // 契約の画面で条件明細を登録したら、その条件で文書を作る画面へ進む（戻る先はその契約）。
             onCompose={(conditionIds, agreement, templateKey) =>
-              startCompose(conditionIds, [], null, templateKey, null, null, null, agreementFlow(agreement))} />
+              startCompose(conditionIds, [], null, templateKey, null, null, null, agreementFlow(agreement))}
+            onSelectId={pickFor("agreements")} />
         )}
         {view === "agreement-map" && (
           <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? mapParty ?? 0}`}
@@ -567,7 +575,7 @@ export function App() {
         )}
         {view === "ringi" && (
           <RingiWorkspace key={`r${focusFor("ringi") ?? 0}`} initialId={focusFor("ringi")}
-                          onOpen={(kind, id) => openEntity(kind, id)} />
+                          onOpen={(kind, id) => openEntity(kind, id)} onSelectId={pickFor("ringi")} />
         )}
         {view === "rpt" && <RptWorkspace />}
         {view === "money" && <MoneyWorkspace />}
