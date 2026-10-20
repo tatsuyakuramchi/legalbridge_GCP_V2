@@ -437,7 +437,7 @@ export function AgreementsWorkspace(
 // 登録
 // ---------------------------------------------------------------------------
 
-function AgreementCreate({ preset, onDone, onCancel }: {
+export function AgreementCreate({ preset, onDone, onCancel }: {
   preset: CreatePreset;
   /** thenConditions：続けて条件明細の登録欄を開く（条件明細がぶら下がる契約のとき）。 */
   onDone: (id: number, agreementNo: string | null, thenConditions: boolean) => void;

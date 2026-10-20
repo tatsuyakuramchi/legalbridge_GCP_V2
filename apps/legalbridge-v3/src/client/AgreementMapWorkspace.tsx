@@ -7,7 +7,7 @@ import { useReadOnly } from "./read-only.js";
 import { CsvBar } from "./CsvBar.js";
 import { CsvImport } from "./CsvImport.js";
 import { DocumentImport } from "./DocumentImport.js";
-import { TidyWorkspace } from "./TidyWorkspace.js";
+import { TidyFlow } from "./TidyFlow.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
@@ -92,7 +92,7 @@ export function AgreementMapWorkspace(
     </div>
   );
   if (mode === "tidy") {
-    return <TidyWorkspace initialPartyId={partyId} onOpen={onOpen} header={switcher} onPartyChange={setPartyId} />;
+    return <TidyFlow initialPartyId={partyId} onOpen={onOpen} header={switcher} onPartyChange={setPartyId} />;
   }
 
   return (
