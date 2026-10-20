@@ -1,7 +1,7 @@
 # 整理する ― 取引先の木を 1 本ずつ直す
 
 本線（登録 → 作る → 確かめる → 送る → 記録）の外で、台帳を健全にする工程。
-画面は 横断で見る › 整理する。API は `GET /tidy/parties` と `GET /tidy/parties/:id`。
+画面は 横断で見る › 取引先⇔基本契約 › 整理する（見出しの切り替え）。API は `GET /tidy/parties` と `GET /tidy/parties/:id`。
 組み立ては `server/ops/tidy.ts`（純粋）、行集めは `server/ops/tidy-service.ts`、画面は `client/TidyWorkspace.tsx`。
 
 ## 木

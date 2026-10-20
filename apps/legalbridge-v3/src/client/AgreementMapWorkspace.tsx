@@ -7,6 +7,7 @@ import { useReadOnly } from "./read-only.js";
 import { CsvBar } from "./CsvBar.js";
 import { CsvImport } from "./CsvImport.js";
 import { DocumentImport } from "./DocumentImport.js";
+import { TidyWorkspace } from "./TidyWorkspace.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
@@ -57,6 +58,9 @@ export function AgreementMapWorkspace(
   const [notice, setNotice] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const bump = () => setVersion((v) => v + 1);
+  // 「整理する」：同じ取引先の木を、条件から下（実績・支払文書・支払）まで広げて 4 つの印で直す
+  // （docs/v3-tidy.md）。入口はここの見出しの切り替え。左の取引先は共有する。
+  const [mode, setMode] = useState<"map" | "tidy">("map");
 
   useEffect(() => {
     const qs = new URLSearchParams();
@@ -77,8 +81,19 @@ export function AgreementMapWorkspace(
   /** CSV の一括修正を開いているか。 */
   const [csvOpen, setCsvOpen] = useState(false);
 
+  const switcher = (
+    <div className="chips" style={{ marginBottom: 10 }}>
+      <button className="chip" aria-pressed={mode === "map"} onClick={() => setMode("map")}>取引先 ⇔ 基本契約</button>
+      <button className="chip" aria-pressed={mode === "tidy"} onClick={() => setMode("tidy")}>整理する</button>
+    </div>
+  );
+  if (mode === "tidy") {
+    return <TidyWorkspace initialPartyId={partyId} onOpen={onOpen} header={switcher} onPartyChange={setPartyId} />;
+  }
+
   return (
     <section className="workspace">
+      {switcher}
       <header className="workspace-head">
         <h1>取引先 ⇔ 基本契約</h1>
         <p>

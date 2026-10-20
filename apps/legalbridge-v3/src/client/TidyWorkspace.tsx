@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiError } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import { OwnerStaffPicker } from "./OwnerStaffPicker.js";
@@ -22,12 +22,19 @@ import {
 const MARK_CLASS: Record<MarkKind, string> = { dup: "danger", unregistered: "warn", missing: "accent", blank: "ghost" };
 const KINDS: MarkKind[] = ["dup", "unregistered", "missing", "blank"];
 
-export function TidyWorkspace({ initialPartyId, onOpen }: { initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void }) {
+export function TidyWorkspace({ initialPartyId, onOpen, header, onPartyChange }: {
+  initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void;
+  /** 見出しの上に出す切り替え（取引先⇔基本契約 の画面と行き来する）。 */
+  header?: ReactNode;
+  /** 選んだ取引先を親に知らせる（切り替えて戻っても同じ取引先）。 */
+  onPartyChange?: (id: number | undefined) => void;
+}) {
   const [parties, setParties] = useState<TidyPartyRow[]>([]);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
   const [issuesOnly, setIssuesOnly] = useState(true);
-  const [partyId, setPartyId] = useState<number | undefined>(initialPartyId);
+  const [partyId, setPartyIdState] = useState<number | undefined>(initialPartyId);
+  const setPartyId = (id: number | undefined) => { setPartyIdState(id); onPartyChange?.(id); };
   const [tree, setTree] = useState<TidyTree | null>(null);
   const [onlyMarks, setOnlyMarks] = useState(true);
   const [picked, setPicked] = useState<string | null>(null);
@@ -71,6 +78,7 @@ export function TidyWorkspace({ initialPartyId, onOpen }: { initialPartyId?: num
 
   return (
     <section className="workspace">
+      {header}
       <div className="workspace-head">
         <h1>整理する</h1>
         <p>取引先を根に、取引（基本契約 or 独立契約）→ 個別契約 → 条件（作品）→ 実績 → 支払文書 → 支払 の木を 1 本ずつ見る。印を押すと右に直し方が出る。</p>
