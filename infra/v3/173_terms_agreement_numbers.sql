@@ -9,6 +9,7 @@
 --         条件書（出版条件書・個別利用許諾条件書・取り込んだ利用許諾契約書）が 1 本の番号だけ付いているもの。
 --         付け替え先の番号が既に別の契約に使われていれば、そのまま残す。
 --   記録：audit_events に agreement.renumber を残す（元の番号を detail に持つ）。
+--   SQL 文の中には日本語を書かない（PowerShell から流すと文字コードが変わって壊れる）。コメントだけ。
 --
 --   何度流しても同じ（2 回目は対象が無い）。
 -- =====================================================================
@@ -46,10 +47,10 @@ UPDATE agreements a SET agreement_no = r.new_no, updated_at = now()
 
 INSERT INTO audit_events (actor, action, target_type, target_id, detail, occurred_at)
 SELECT 'system', 'agreement.renumber', 'agreement', r.id,
-       jsonb_build_object('from', r.old_no, 'to', r.new_no, 'reason', '条件書の番号にそろえる（173）'), now()
+       jsonb_build_object('from', r.old_no, 'to', r.new_no, 'reason', 'align_to_terms_document_no (173)'), now()
   FROM renumber r;
 
-\echo '--- 付け替えた個別契約・単体契約 ---'
-SELECT old_no, new_no FROM renumber ORDER BY new_no;
-
 COMMIT;
+
+-- renumbered agreements (old -> new). ASCII only: PowerShell may re-encode Japanese on the way in.
+SELECT old_no, new_no FROM renumber ORDER BY new_no;
