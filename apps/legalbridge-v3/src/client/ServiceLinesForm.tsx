@@ -5,6 +5,7 @@ import { searchWorks } from "./MatterAxis.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
 
@@ -119,6 +120,11 @@ export function ServiceLinesForm(
   const [licTermEnd, setLicTermEnd] = useState("");
   const [licRegions, setLicRegions] = useState("全世界");
   const [licLanguages, setLicLanguages] = useState("全言語");
+  // 準委任の時間精算（A-073）。契約形式が準委任のときだけ出す。委託料の行に付く。
+  const [timeOn, setTimeOn] = useState(false);
+  const [hoursIncluded, setHoursIncluded] = useState("");
+  const [overageUnit, setOverageUnit] = useState("");
+  const [shortfallUnit, setShortfallUnit] = useState("");
   // 支払方法
   const [payMode, setPayMode] = useState<"per_delivery" | "periodic" | "lump">("per_delivery");
   const [periodFrom, setPeriodFrom] = useState("");
@@ -139,6 +145,11 @@ export function ServiceLinesForm(
   const expenses = useMemo(() => lines.filter((l) => l.kind === "expense").reduce((a, l) => a + amountOf(l), 0), [lines]);
   const contractorLines = lines.filter((l) => l.kind === "service" && (l.ownership || ownership) === "contractor");
   const hasContractor = contractorLines.length > 0;
+  /** 準委任の委託料の行があるか（行の契約形式、無ければ既定）。時間精算の欄はこのときだけ出す。 */
+  const quasiRows = serviceLines.filter((l) => isQuasiMandate(l.contractForm || contractForm));
+  const hasQuasi = quasiRows.length > 0;
+  const timeSettled = hasQuasi && timeOn;
+  const timeReady = !timeSettled || (num(hoursIncluded) > 0 && overageUnit.trim() !== "");
   // 受注者帰属の行に作品が無いと利用許諾条件が立てられない（サーバは上の作品で補う）。
   const contractorWithoutWork = contractorLines.filter((l) => !rowWork(l) && !workId);
   const licenseWorks = [...new Set(contractorLines.map((l) => rowWork(l) || workId).filter(Boolean))];
@@ -147,7 +158,8 @@ export function ServiceLinesForm(
   const ready = Boolean(partyId) && title.trim() !== "" && serviceLines.length > 0
     && serviceLines.every((l) => l.name.trim() && num(l.unitPrice) >= 0)
     && (!hasContractor || licMode === "none" || contractorWithoutWork.length === 0)
-    && (payMode !== "periodic" || (periodFrom && periodTo));
+    && (payMode !== "periodic" || (periodFrom && periodTo))
+    && timeReady;
   /** 登録ボタンが押せない理由。ボタンの横に出す。 */
   const missing = [
     !partyId ? "受託者" : null,
@@ -156,7 +168,9 @@ export function ServiceLinesForm(
     ...lines.flatMap((l, i) => l.kind !== "service" ? []
       : [!l.name.trim() ? `${i + 1} 行目の品目名` : null, String(l.unitPrice ?? "").trim() === "" ? `${i + 1} 行目の単価` : null]),
     hasContractor && licMode !== "none" && contractorWithoutWork.length > 0 ? "受注者帰属の行の作品" : null,
-    payMode === "periodic" && !(periodFrom && periodTo) ? "定期払いの期間（開始・終了）" : null
+    payMode === "periodic" && !(periodFrom && periodTo) ? "定期払いの期間（開始・終了）" : null,
+    timeSettled && !(num(hoursIncluded) > 0) ? "月間包括枠（時間）" : null,
+    timeSettled && overageUnit.trim() === "" ? "超過単価" : null
   ].filter((m): m is string => Boolean(m));
 
   /**
@@ -214,6 +228,12 @@ export function ServiceLinesForm(
         termStart: text(termStart) ?? null, termEnd: null,
         currency, taxCategory: tax, paymentTerms: text(paymentTerms) ?? null,
         contractForm: text(contractForm) ?? null, deliverableOwnership: ownership || null,
+        // 準委任の時間精算（A-073）。束の既定。準委任の委託料の行に付く（サーバが委託料の行だけに付ける）。
+        ...(timeSettled ? {
+          timeSettlement: true, hoursIncluded: num(hoursIncluded),
+          overageUnitAmount: Math.round(num(overageUnit)),
+          shortfallUnitAmount: shortfallUnit.trim() === "" ? null : Math.round(num(shortfallUnit))
+        } : {}),
         rows: lines_.map((l) => ({
           kind: l.kind, name: text(l.name) ?? null,
           // 定期払いの委託料は定期課金（1 回あたり＝単価×数量）。台帳でも定期と分かり、
@@ -230,6 +250,8 @@ export function ServiceLinesForm(
           contractForm: l.kind === "service" ? (text(l.contractForm) ?? null) : null,
           deliverableOwnership: l.kind === "service" ? (l.ownership || null) : null,
           taxCategory: l.kind === "service" && l.tax ? l.tax : null,
+          // 時間精算は準委任の委託料の行だけ。束の既定が時間精算でも、請負の行には付けない。
+          ...(timeSettled && l.kind === "service" && !isQuasiMandate(l.contractForm || contractForm) ? { timeSettlement: false } : {}),
           // 「上と同じ」は送らない（サーバが上の作品を使う）。
           ...(l.workId === "" ? {} : { workId: l.workId === "none" ? null : int(l.workId) ?? null })
         })),
@@ -457,6 +479,40 @@ export function ServiceLinesForm(
           </div>
         )}
 
+        {hasQuasi && (
+          <div className="note stack" style={{ gap: 8 }}>
+            <b>準委任の精算の仕方</b>
+            <span className="faint">
+              準委任（役務提供）の委託料は、成果物・固定額で精算するか、月間包括枠（コアタイム）と実績時間で精算するかで、
+              持つ情報と決済文書が変わります。対象：{quasiRows.map((l) => `${lines.indexOf(l) + 1} 行目`).join("・")}
+            </span>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <button className="chip" aria-pressed={!timeOn} onClick={() => setTimeOn(false)}>固定額・成果物で精算（検収書）</button>
+              <button className="chip" aria-pressed={timeOn} onClick={() => setTimeOn(true)}>時間精算：月間包括枠 ＋ 実績時間（役務提供完了通知書）</button>
+            </div>
+            {timeOn && (
+              <div className="form-grid">
+                <label className="field"><span>月間包括枠（時間）</span>
+                  <input inputMode="decimal" value={hoursIncluded} placeholder="64" onChange={(e) => setHoursIncluded(e.target.value)} />
+                  <small className="faint">この時間までは行の金額（基本委託料／月）。コアタイム</small></label>
+                <label className="field"><span>超過単価（円／時間・税抜）</span>
+                  <input inputMode="numeric" value={overageUnit} placeholder="3125" onChange={(e) => setOverageUnit(e.target.value)} />
+                  <small className="faint">枠を超えた時間 × 超過単価 を追加精算</small></label>
+                <label className="field"><span>控除単価（円／時間・税抜）</span>
+                  <input inputMode="numeric" value={shortfallUnit} placeholder="空なら減額しない" onChange={(e) => setShortfallUnit(e.target.value)} />
+                  <small className="faint">未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない</small></label>
+                <div className="field wide">
+                  <span className="faint">
+                    時間精算の回は、実績入力で実績時間と月次業務報告書の受領日を入れ、検収書の代わりに役務提供完了通知書を出します。
+                    {payMode !== "periodic" && <>　毎月精算するなら支払方法を「定期払い（毎月）」にしてください。
+                      <button className="linky" type="button" onClick={() => { setPayMode("periodic"); setEvery("1"); }}>定期払い（毎月）にする</button></>}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="note stack" style={{ gap: 8 }}>
           <b>支払方法</b>
           <div className="row" style={{ flexWrap: "wrap" }}>
@@ -473,7 +529,7 @@ export function ServiceLinesForm(
                   発注書には全回を 1 行にまとめて出す（例：全 12 回（毎月）1 回あたり ¥35,000）。回ごとの金額を直すのは条件明細の「予定」</small></label>
             </div>
           )}
-          {payMode === "lump" && <span className="faint">発注書は行ごとに出ますが、検収は全行の納品後に 1 枚の検収書でまとめます（支払文書処理で選ぶ）。</span>}
+          {payMode === "lump" && <span className="faint">発注書は行ごとに出ますが、検収は全行の納品後に 1 枚の検収書でまとめます（支払文書で選ぶ）。</span>}
           <span className="faint">売上連動（ロイヤリティ）は委託料ではなく上の利用許諾条件に料率を持たせ、計算書で回します。</span>
         </div>
 

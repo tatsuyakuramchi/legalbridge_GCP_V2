@@ -60,6 +60,9 @@ export interface EventInput {
   /** 役務提供期間。定期払いの回で使う。 */
   serviceFrom?: string | null;
   serviceTo?: string | null;
+  /** 時間精算の回（A-073）。実績時間と、月次業務報告書の受領日。役務提供完了通知書に出る。 */
+  hours?: number | null;
+  reportReceivedOn?: string | null;
   /** 権利の使い方。利用許諾料計算書はこれで算定の形が決まる。 */
   usageType?: UsageType | null;
   /** 相手へ許諾したアウト条件。再許諾・他社販売で要る。 */
@@ -127,6 +130,9 @@ export interface EventRow {
   contractForm: string | null;
   serviceFrom: string | null;
   serviceTo: string | null;
+  /** 時間精算の回（A-073）。 */
+  hours: number | null;
+  reportReceivedOn: string | null;
   usageType: string | null;
   usageLabel: string | null;
   outConditionId: number | null;
@@ -173,6 +179,9 @@ const AMENDABLE = {
   inspectedOn: { column: "inspected_on", kind: "date", money: false },
   serviceFrom: { column: "service_from", kind: "date", money: false },
   serviceTo: { column: "service_to", kind: "date", money: false },
+  // 時間精算の回（A-073）。実績時間は精算額の根拠なので金額の欄と同じ扱い。
+  hours: { column: "hours", kind: "num", money: true },
+  reportReceivedOn: { column: "report_received_on", kind: "date", money: false },
   period: { column: "period", kind: "text", money: false },
   deliverable: { column: "deliverable", kind: "text", money: false },
   inspectorDept: { column: "inspector_dept", kind: "text", money: false },
@@ -250,7 +259,7 @@ export class ConditionEventService {
                 e.gross_amount, e.deductions, e.amount, e.status, e.note,
                 e.schedule_id, s.label AS schedule_label, s.seq AS schedule_seq,
                 e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
-                e.contract_form, e.service_from, e.service_to,
+                e.contract_form, e.service_from, e.service_to, e.hours, e.report_received_on,
                 e.usage_type, e.out_condition_id, e.unit_amount, e.rate_ppm, e.payment_stage,
                 e.tax_included, e.scope_languages, e.scope_regions,
                 oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
@@ -312,6 +321,8 @@ export class ConditionEventService {
         contractForm: str(row.contract_form),
         serviceFrom: dateStr(row.service_from),
         serviceTo: dateStr(row.service_to),
+        hours: num(row.hours),
+        reportReceivedOn: dateStr(row.report_received_on),
         usageType: str(row.usage_type),
         usageLabel: row.usage_type ? usageTypeLabel(row.usage_type) : null,
         outConditionId: int(row.out_condition_id),
@@ -459,11 +470,11 @@ export class ConditionEventService {
               usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage,
               tax_included, work_id,
               expected_quantity, expected_amount, variance_note, follow_up, follow_up_due_on,
-              scope_languages, scope_regions)
+              scope_languages, scope_regions, hours, report_received_on)
            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
                    $13, $14::date, $15, $16, $17, $18::date, $19::date,
                    $20, $21, $22, $23, $24, $25, $26,
-                   $27, $28, $29, $30, $31::date, $32::text[], $33::text[])
+                   $27, $28, $29, $30, $31::date, $32::text[], $33::text[], $34, $35::date)
            RETURNING id`,
           [conditionId, scheduleId, input.eventType, occurredOn, period,
            input.quantity ?? null, input.sampleQuantity ?? null,
@@ -476,7 +487,9 @@ export class ConditionEventService {
            input.expectedQuantity ?? null,
            input.expectedAmount === null || input.expectedAmount === undefined ? null : Math.round(input.expectedAmount),
            str(input.varianceNote), input.followUp ?? null, input.followUpDueOn || null,
-           scopeList(input.languages), scopeList(input.regions)]);
+           scopeList(input.languages), scopeList(input.regions),
+           input.hours === null || input.hours === undefined ? null : Number(input.hours),
+           input.reportReceivedOn || null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

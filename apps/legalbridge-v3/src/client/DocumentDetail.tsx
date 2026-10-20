@@ -2,9 +2,20 @@ import { useState } from "react";
 import { DOCUMENT_STATE_NOTE, StatusTag } from "./labels.js";
 
 import { Relations, type EntityKind } from "./Relations.js";
+import { DocumentParties } from "./DocumentParties.js";
 import { DocumentEvents } from "./DocumentEvents.js";
 import { DocumentSend } from "./DocumentSend.js";
 import { DocumentAttachFile } from "./DocumentImport.js";
+import { api, ApiError } from "./api.js";
+
+const SENT_VIA_LABEL: Record<string, string> = {
+  gmail: "メール", cloudsign: "CloudSign", post: "郵送", hand: "手渡し", email_other: "別のメール",
+  cloudsign_ui: "CloudSign の画面", past: "過去分", other: "その他"
+};
+const RECEIVED_VIA_LABEL: Record<string, string> = {
+  signed_copy: "署名済みの控え", reply: "メールの返信", verbal: "口頭・電話", confirmed: "相手の確認",
+  cloudsign: "CloudSign 締結", past: "過去分", other: "その他"
+};
 
 /**
  * 文書1件の詳細。
@@ -28,10 +39,15 @@ export interface DocumentRow {
   supersededById: number | null; supersededByNo: string | null;
   issuedAt: string | null; storageUrl: string | null;
   imported: boolean;
+  /** 相手方が付けた文書番号の控え（A-072）。 */
+  counterpartyDocNo?: string | null;
   /** 人が見る段階。下書き → 決定済み → 送信済み（退いた版・無効はそのまま）。 */
   phase: "draft" | "decided" | "sent" | "superseded" | "void";
   sentAt: string | null;
-  sentVia: "gmail" | "cloudsign" | null;
+  /** gmail / cloudsign / post / hand / email_other / cloudsign_ui / past / other（A-074）。 */
+  sentVia: string | null;
+  receivedAt?: string | null;
+  receivedVia?: string | null;
   /**
    * この文書の実績にもう立っている支払（取消済みを除く）。
    * 一覧の行には付かないので、詳細を引いたときだけ入る。
@@ -54,10 +70,54 @@ const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "—");
 const byNo = (versions: DocumentRow[], id: number) =>
   versions.find((v) => v.id === id)?.documentNo ?? `#${id}`;
 
+/**
+ * 相手方が付けた文書番号の控え（A-072）。当社の番号とは別に持ち、
+ * 個別条件書・発注書・検収書・計算書で引用するとき 当社／相手方／両方 を選べる。
+ * 相手方の番号は相手方の文書が届いてから分かるので、決定済みの文書にもあとから控えられる。
+ */
+function CounterpartyNo({ doc, busy, onChanged }: { doc: DocumentRow; busy: boolean; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(doc.counterpartyDocNo ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (doc.status === "void") return null;
+  async function save() {
+    setSaving(true); setError(null);
+    try {
+      await api.put(`/documents/${doc.id}/counterparty-no`, { counterpartyDocNo: value.trim() || null });
+      setEditing(false); onChanged();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setSaving(false); }
+  }
+  if (!editing) {
+    return (
+      <span className="row" style={{ gap: 4, alignItems: "center" }} title="相手方が付けた文書番号の控え。引用するとき 当社番号／相手方番号／両方 を選べます">
+        {doc.counterpartyDocNo
+          ? <span className="faint">相手方番号 <b className="code">{doc.counterpartyDocNo}</b></span>
+          : <span className="faint">相手方番号なし</span>}
+        <button type="button" className="linky" disabled={busy} onClick={() => { setValue(doc.counterpartyDocNo ?? ""); setEditing(true); }}>
+          {doc.counterpartyDocNo ? "直す" : "控える"}
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="row" style={{ gap: 4, alignItems: "center" }}>
+      <input value={value} placeholder="相手方の文書番号" aria-label="相手方の文書番号" style={{ width: 180 }}
+             onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void save(); }} />
+      <button type="button" className="btn btn-sm primary" disabled={saving} onClick={() => void save()}>{saving ? "保存中…" : "保存"}</button>
+      <button type="button" className="btn btn-sm" disabled={saving} onClick={() => setEditing(false)}>やめる</button>
+      {error && <span className="alert">{error}</span>}
+    </span>
+  );
+}
+
 export function DocumentDetail(
   { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
     onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onPayment,
-    isAdmin, onSelect }: {
+    isAdmin, onSelect, openStep }: {
+    /** 送る流れで最初に開く段（URL から）。あれば「送る」も開く。 */
+    openStep?: string | null;
     doc: DocumentRow;
     /** 「下敷きに次を作る」で選べるひな形。 */
     templates: TemplateOption[];
@@ -69,9 +129,11 @@ export function DocumentDetail(
     onChanged: () => void;
     onEditDraft: (id: number) => void;
     onIssueDraft: (id: number) => void;
+    /** 訂正版を作る（作業テーブルの①へ）。 */
     onReissue: (id: number, no: string | null) => void;
     /** この文書を下敷きに、別の（または同じ）ひな形で次の下書きを作る。 */
-    onDerive: (id: number, templateKey: string) => void;
+    /** 下敷きにして次を作る（作業テーブルの①へ。どの文書を作るかはそこで決める）。 */
+    onDerive: (id: number) => void;
     onVoid: (id: number, no: string | null) => void;
     onStore: (id: number) => void;
     /** この書類から支払を立てる。検収書と利用許諾計算書だけが対象。 */
@@ -92,12 +154,8 @@ export function DocumentDetail(
   // 連携が全部 off（予備系）でも「送る」は出す。送信の口が無くても、相手の確認と
   // CloudSign の状態は手で記録できるので、閉じてしまうと段が進められない。
   const canSend = doc.status === "issued";
-  // 「下敷きに次を作る」のひな形を選んでいる最中。
-  const [deriving, setDeriving] = useState(false);
   // 「送る」を開いているか。決定済みなら既定で開く（次にやることがこれ）。
-  const [sending, setSending] = useState(doc.phase === "decided");
-  const [deriveKey, setDeriveKey] = useState("");
-  const pickable = templates.filter((t) => t.category !== "partial");
+  const [sending, setSending] = useState(doc.phase === "decided" || Boolean(openStep));
   // この版を直している最中の下書き。あるあいだは、もう1枚作らせない
   // （発行できるのは1枚だけなので、残りは行き場が無くなる）。
   const pending = versions.find((v) => v.supersedesId === doc.id && v.status === "draft") ?? null;
@@ -120,6 +178,7 @@ export function DocumentDetail(
           <StatusTag kind="document" value={doc.phase} />
           {doc.imported && <span className="tag">取込</span>}
           {doc.imported && doc.status === "draft" && <span className="tag warn">番号のみ・ファイル待ち</span>}
+          <CounterpartyNo doc={doc} busy={busy} onChanged={onChanged} />
         </div>
         <div className="panel-bd stack">
           <div className={`state ${doc.phase}`}>
@@ -129,7 +188,8 @@ export function DocumentDetail(
               <span>
                 {note.detail}
                 {doc.phase === "sent" && doc.sentAt && (
-                  <>　最後に送ったのは {day(doc.sentAt)}（{doc.sentVia === "cloudsign" ? "CloudSign" : "メール"}）。</>
+                  <>　最後に送ったのは {day(doc.sentAt)}（{SENT_VIA_LABEL[doc.sentVia ?? ""] ?? "メール"}）。
+                    {doc.receivedAt && <>受領 {day(doc.receivedAt)}（{RECEIVED_VIA_LABEL[doc.receivedVia ?? ""] ?? "記録あり"}）。</>}</>
                 )}
                 {doc.status === "superseded" && doc.supersededByNo && (
                   <>　現行は <b className="code">{doc.supersededByNo}</b> です。</>
@@ -210,8 +270,8 @@ export function DocumentDetail(
                   : <button className="btn" disabled={busy}
                             onClick={() => void onPayment(doc.id)}>支払を立てる</button>
               )}
-              <button className="btn" disabled={busy}
-                      onClick={() => { setDeriving((v) => !v); setDeriveKey(""); }}>
+              <button className="btn" disabled={busy} title="この文書を下敷きに、次の書類（発注書のあとの検収書など）を作業テーブルで作る。この文書は残る"
+                      onClick={() => onDerive(doc.id)}>
                 下敷きに次を作る
               </button>
               <button className="btn" disabled={busy}
@@ -231,40 +291,13 @@ export function DocumentDetail(
             )}
           </div>
 
-          {/* 下敷きに次を作る。発注書から検収書、契約書から覚書。前の文書は退かない。 */}
-          {deriving && doc.status === "issued" && (
-            <div className="note stack" style={{ gap: 8 }}>
-              <div>
-                <b>この文書を下敷きに、次の書類を作ります。</b>
-                <span className="faint">
-                  　条件明細・案件・手入力を引き継いだ下書きができます。この文書はそのまま残ります
-                  （訂正版とは違い、退きません）。
-                </span>
-              </div>
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                {pickable.map((t) => (
-                  <button key={t.templateKey} type="button" className="chip"
-                          aria-pressed={deriveKey === t.templateKey}
-                          onClick={() => setDeriveKey(t.templateKey)}>{t.label}</button>
-                ))}
-              </div>
-              <div className="row">
-                <button className="btn primary" disabled={busy || !deriveKey}
-                        onClick={() => { onDerive(doc.id, deriveKey); setDeriving(false); }}>
-                  {deriveKey ? `${pickable.find((t) => t.templateKey === deriveKey)?.label} の下書きを作る` : "ひな形を選んでください"}
-                </button>
-                <button className="btn" onClick={() => setDeriving(false)}>やめる</button>
-              </div>
-            </div>
-          )}
-
-          {doc.status === "issued" && !doc.imported && !deriving && (
+          {doc.status === "issued" && !doc.imported && (
             <div className="faint">
               {pending
                 ? "この版を直している下書きがあります。まだ有効なのはこの版で、"
                   + "下書きを決定した瞬間に入れ替わります。下書きを捨ててもこの版は残ります。"
-                : "直すなら「訂正版を作る」。条件明細も実績も引き継いだ下書きができ、決定した瞬間にこの版と入れ替わります。"
-                  + "次の書類（発注書のあとの検収書など）なら「下敷きに次を作る」。この版はそのまま残ります。"}
+                : "直すなら「訂正版を作る」。作業テーブルで理由を書くと、条件明細も実績も引き継いだ下書きができ、決定した瞬間にこの版と入れ替わります。"
+                  + "次の書類（発注書のあとの検収書など）なら「下敷きに次を作る」。作業テーブルで何を作るか決めます。この版はそのまま残ります。"}
             </div>
           )}
 
@@ -295,7 +328,8 @@ export function DocumentDetail(
       {sending && doc.status === "issued" && (
         <DocumentSend documentId={doc.id} documentNo={doc.documentNo} templateLabel={doc.templateLabel}
                       matterId={doc.matterId} channels={integrations?.channels ?? []}
-                      isAdmin={isAdmin ?? true} onChanged={onChanged} onClose={() => setSending(false)} />
+                      isAdmin={isAdmin ?? true} onChanged={onChanged} onClose={() => setSending(false)}
+                      initialOpen={openStep ?? null} />
       )}
 
       {/* 版の履歴。1版しかないときは出さない（枠だけ増えても読むものが無い）。 */}
@@ -336,6 +370,9 @@ export function DocumentDetail(
         <DocumentEvents documentId={doc.id} documentNo={doc.documentNo}
                         conditions={doc.conditions} onChanged={onChanged} />
       )}
+
+      {/* 連名の条件書・3 社契約：文書は 1 件のまま、関わる取引先を役割つきで持つ（docs/v3-tidy.md 型 3）。 */}
+      <DocumentParties documentId={doc.id} onOpen={onOpen} onChanged={onChanged} />
 
       <Relations kind="document" id={doc.id} initialOpen={openConditions ? "conditions" : undefined}
                  onOpen={onOpen} onChanged={onChanged} />

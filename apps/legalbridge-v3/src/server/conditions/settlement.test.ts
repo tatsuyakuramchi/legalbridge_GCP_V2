@@ -30,6 +30,10 @@ test("料率の条件は終わりが無い。動けば進行中、期間が過�
   assert.equal(settlementState({ ...rate, paidAmount: 5000 }, "2026-09-15"), "in_progress");
   assert.equal(settlementState({ ...rate, termEnd: "2026-03-31" }, "2026-09-15"), "expired");
   assert.equal(settlementState({ ...rate, termEnd: "2026-03-31", eventCount: 1 }, "2026-09-15"), "in_progress");
+  // 自動更新する条件は、元の終了日を過ぎても更新後の期間のうちは期間内。止めて満了すれば期間終了。
+  assert.equal(settlementState({ ...rate, termEnd: "2021-03-31", autoRenew: true, renewMonths: 36 }, "2026-09-15"), "open");
+  assert.equal(settlementState({ ...rate, termEnd: "2021-03-31", autoRenew: true, renewMonths: 36,
+                                 renewStoppedOn: "2022-01-01" }, "2026-09-15"), "expired");
 });
 
 test("行から組む：pg の bigint 文字列・Date を受ける", () => {

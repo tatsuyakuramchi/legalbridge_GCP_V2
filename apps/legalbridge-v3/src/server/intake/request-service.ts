@@ -577,6 +577,31 @@ export class IntakeRequestService {
   }
 
   /**
+   * 条件明細を手で繋ぐ（作業テーブルの①②から）。受け付けたときに繋がなかった・
+   * あとから登録した条件を、この依頼（デイリータスク）の条件にする。既に繋いであれば何もしない。
+   */
+  async linkConditions(id: number, conditionIds: number[], actor: string): Promise<{ conditionIds: number[] }> {
+    const ids = [...new Set(conditionIds.filter((n) => Number.isInteger(n) && n > 0))];
+    if (!ids.length) throw new DomainError("VALIDATION", "条件を選んでください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const found = await client.query("SELECT id FROM intake_requests WHERE id = $1", [id]);
+        if (!found.rows.length) throw new DomainError("NOT_FOUND", `依頼 ${id} が見つかりません`);
+        const ok = await client.query("SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [ids]);
+        if (ok.rows.length !== ids.length) throw new DomainError("NOT_FOUND", "見つからない条件が混ざっています");
+        for (const conditionId of ids) {
+          await client.query(
+            `INSERT INTO intake_request_links (request_id, target_type, target_id, created_by)
+             VALUES ($1, 'condition', $2, $3) ON CONFLICT DO NOTHING`, [id, conditionId, actor]);
+        }
+        await recordAudit(client, { actor, action: "intake.link_conditions", targetType: "intake_request", targetId: id,
+                                    detail: { conditionIds: ids } });
+        return { conditionIds: ids };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 文書を手で繋ぐ・外す。自動の引き当て（依頼より後に作った、依頼の条件の文書）に
    * 当たらないとき（依頼の前に作っていた、別の条件で作った）に使う。
    */

@@ -44,6 +44,9 @@ SRC="${CLOUDSDK_CONFIG:-/root/.config/gcloud}/application_default_credentials.js
 
 cp "$SRC" "$OUT"
 chmod 600 "$OUT"
+# app（uid 1000 の node）もメールの署名でこの認証情報を読む（docs/v3-local-gmail.md）。
+# 持ち主を app に合わせる。同期の ops は root なので、持ち主が変わっても読める。
+chown 1000:1000 "$OUT"
 echo
 echo "認証情報を keys/adc.json に置きました。次は同期です:"
 echo "  docker compose run --rm ops sync"

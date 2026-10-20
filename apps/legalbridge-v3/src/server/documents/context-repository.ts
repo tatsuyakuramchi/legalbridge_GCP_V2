@@ -99,12 +99,14 @@ export class DocumentContextRepository {
       }
       // 受取人の計算書・条件書（共著の取り分。A-068）。相手先の欄を全部その人に差し替える。
       // 受取人は載せた条件すべての取り分に入っていること（入っていない人に紙を出さない）。
+      // ただし受取人が相手先の条件（その人単独の作品）は、取り分が無くても載せてよい（人ごとに 1 枚）。
       let payee: { partyId: number; name: string } | null = null;
       if (input.payeePartyId) {
         const found = await this.partyOnly(client, input.payeePartyId);
         if (!found) throw new DomainError("NOT_FOUND", `受取人 ${input.payeePartyId} が見つかりません`);
         for (const c of conditions) {
           const label = c.conditionNo ?? `#${c.id}`;
+          if (!c.shares.length && c.counterpartyId === input.payeePartyId) continue;
           if (!c.shares.length) {
             throw new DomainError("VALIDATION", `条件 ${label} には取り分がありません。受取人は条件の相手先です`);
           }
@@ -333,13 +335,23 @@ export class DocumentContextRepository {
         out.push({ role, name: str(row.name), email: str(row.email), phone: str(row.phone), department: str(row.department) });
       }
     }
-    const p = await client.query("SELECT kind, name, email, phone FROM parties WHERE id = $1", [partyId]);
+    const p = await client.query(
+      `SELECT kind, name, email, phone, to_jsonb(p)->>'representative_name' AS rep_name,
+              to_jsonb(p)->>'representative_title' AS rep_title FROM parties p WHERE id = $1`, [partyId]);
     const party = p.rows[0] as Record<string, any> | undefined;
     if (party && String(party.kind) === "individual") {
       for (const role of ["primary", "signer", "billing"]) {
         if (out.some((x) => x.role === role)) continue;
         out.push({ role, name: str(party.name), email: str(party.email), phone: str(party.phone), department: null });
       }
+    } else if (party && !out.some((x) => x.role === "primary") && str(party.rep_name)) {
+      // 主担当のいない法人は代表者が窓口（条件書の甲の通知先）。部署の位置に肩書を置く。
+      out.push({ role: "primary", name: str(party.rep_name), email: str(party.email), phone: str(party.phone),
+                 department: str(party.rep_title) });
+    } else if (party && !out.length && (str(party.email) || str(party.phone))) {
+      // 代表者も連絡先も無い法人（や種別の無い取引先）は、取引先のメール・電話を窓口にする。
+      // 氏名は入れない（代表者名に会社名が落ちるので）。
+      out.push({ role: "primary", name: null, email: str(party.email), phone: str(party.phone), department: null });
     }
     return out;
   }
@@ -484,7 +496,7 @@ export class DocumentContextRepository {
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.gross_amount, e.deductions, e.amount, e.note,
               e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
-              e.contract_form, e.service_from, e.service_to,
+              e.contract_form, e.service_from, e.service_to, e.hours, e.report_received_on,
               e.expected_amount, e.variance_note,
               e.usage_type, e.out_condition_id, e.scope_languages, e.scope_regions,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
@@ -567,6 +579,9 @@ export class DocumentContextRepository {
         triggerKind: str(row.schedule_trigger_kind),
         serviceFrom: dateStr(row.service_from) ?? dateStr(row.schedule_service_from),
         serviceTo: dateStr(row.service_to) ?? dateStr(row.schedule_service_to),
+        /** 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。 */
+        hours: num(row.hours),
+        reportReceivedOn: dateStr(row.report_received_on),
         note: str(row.note),
         currency,
         /** 検収書がそのまま使う項目。実績に入っていれば文書側で人が入れずに済む。 */
@@ -601,6 +616,7 @@ export class DocumentContextRepository {
       `SELECT c.id, c.condition_no, c.name, c.direction, c.kind, c.currency, c.pricing_model,
               c.rate_ppm, c.unit_amount, c.quantity, c.flat_amount, c.mg_amount, c.ag_amount,
               c.term_start, c.term_end, c.delivery_due, c.tax_category, c.payment_terms, c.contract_form,
+              c.time_settlement, c.hours_included, c.overage_unit_amount, c.shortfall_unit_amount,
               c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
               c.auto_renew, c.renew_months, c.renew_stopped_on,
@@ -670,6 +686,11 @@ export class DocumentContextRepository {
         taxCategory: String(row.tax_category ?? "taxable"),
         paymentTerms: str(row.payment_terms),
         contractForm: str(row.contract_form),
+        /** 準委任の時間精算（A-073）。役務提供完了通知書の明細はここから組む。単価は最小通貨単位。 */
+        timeSettlement: row.time_settlement === true,
+        hoursIncluded: num(row.hours_included),
+        overageUnitAmount: int(row.overage_unit_amount),
+        shortfallUnitAmount: int(row.shortfall_unit_amount),
         cycle: str(row.cycle),
         exclusivity: str(row.exclusivity),
         /** 書類に印字する言い方。列は enum なので、そのまま出すと英語が出る。 */
@@ -809,7 +830,7 @@ export class DocumentContextRepository {
 
   private async matter(client: Queryable, id: number) {
     const r = await client.query(
-      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, m.counterparty_id, s.name AS owner_name
+      `SELECT m.id, m.matter_no, m.title, m.kind, m.work_id, m.counterparty_id, m.business_line, s.name AS owner_name
          FROM matters m LEFT JOIN staff s ON s.id = m.owner_staff_id
         WHERE m.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -820,7 +841,9 @@ export class DocumentContextRepository {
       /** 作品案件の軸（A-044）。条件に作品が無いときの許諾条件の引き先。 */
       workId: int(row.work_id),
       /** 案件の相手先。条件の無い文書（基本契約書）の相手先はここから。 */
-      counterpartyId: int(row.counterparty_id)
+      counterpartyId: int(row.counterparty_id),
+      /** 事業区分（A-050）。担当者が決まらない文書の「担当」に事業名を出すのに使う。 */
+      businessLine: str(row.business_line)
     };
   }
 

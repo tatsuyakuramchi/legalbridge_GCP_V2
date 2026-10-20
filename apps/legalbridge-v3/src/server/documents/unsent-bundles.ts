@@ -27,6 +27,8 @@ export interface UnsentDoc {
   kind: UnsentKind; issuedOn: string | null;
   /** 社内確認として担当者に送った日時（gmail.review。相手先へはまだ送っていない）。 */
   reviewedAt: string | null;
+  /** 取引先へ内容確認として送った日時（gmail.party_check。契約書の統一のご案内など）。まだ「送付」ではないので一覧に残る。 */
+  partyCheckedAt: string | null;
 }
 export interface UnsentBundle {
   partyId: number; partyName: string; partyKind: string | null; email: string | null;
@@ -54,15 +56,16 @@ export class UnsentBundlesService {
                               THEN (d.manual_inputs->>'_payeePartyId')::bigint END,
                          v.counterparty_id) AS party_id,
                 (SELECT max(r.occurred_at) FROM audit_events r
-                  WHERE r.target_type = 'document' AND r.target_id = d.id AND r.action = 'gmail.review') AS reviewed_at
+                  WHERE r.target_type = 'document' AND r.target_id = d.id AND r.action = 'gmail.review') AS reviewed_at,
+                (SELECT max(r.occurred_at) FROM audit_events r
+                  WHERE r.target_type = 'document' AND r.target_id = d.id AND r.action = 'gmail.party_check') AS party_checked_at
            FROM documents d
            JOIN v_document_display v ON v.document_id = d.id
            LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
            LEFT JOIN document_templates t ON t.id = tv.template_id
           WHERE d.status = 'issued' AND t.template_key = ANY($1::text[])
-            AND NOT EXISTS (SELECT 1 FROM audit_events a
-                             WHERE a.target_type = 'document' AND a.target_id = d.id
-                               AND a.action IN ('gmail.send', 'cloudsign.send'))
+            AND NOT d.inbound
+            AND (SELECT dv.sent_at FROM document_delivery(d.id) dv) IS NULL
           ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [BUNDLE_TEMPLATE_KEYS])).rows as Array<Record<string, any>>;
       const partyIds = [...new Set(docs.map((d) => d.party_id).filter((x) => x !== null && x !== undefined).map(Number))];
       const parties = partyIds.length ? (await this.database.query(
@@ -84,7 +87,8 @@ export class UnsentBundlesService {
         const kind = kindOfTemplate(str(d.template_key));
         bundle.docs.push({ id: Number(d.id), documentNo: str(d.document_no), templateKey: str(d.template_key),
                            templateLabel: str(d.template_label), kind, issuedOn: dateStr(d.issued_at),
-                           reviewedAt: d.reviewed_at ? new Date(String(d.reviewed_at)).toISOString() : null });
+                           reviewedAt: d.reviewed_at ? new Date(String(d.reviewed_at)).toISOString() : null,
+                           partyCheckedAt: d.party_checked_at ? new Date(String(d.party_checked_at)).toISOString() : null });
         bundle.counts[kind] += 1;
       }
       const order: Record<UnsentKind, number> = { master: 0, terms: 1, statement: 2, other: 3 };

@@ -16,6 +16,7 @@ import {
   conflictsOf, deliveryDueOf, groupRows, ownershipOfRows, readRows, sameAcross, scheduleLinesFrom,
   settlementsOf, type SettledGroupRows, type SettledPaymentState, type SettledRow
 } from "./settled-batch.js";
+import { currentSequence } from "./numbering.js";
 
 /**
  * 決済済みの一括取込（遡及）。当て込みと実行。
@@ -338,10 +339,7 @@ export class SettledBatchService {
         }
       }
       for (const [year, count] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
-        const seq = await this.database.query(
-          `SELECT current_value FROM document_sequences WHERE prefix = $1 AND year = $2`,
-          [prefix, year]);
-        const current = Number((seq.rows[0] as { current_value?: number } | undefined)?.current_value ?? 0);
+        const current = await currentSequence(this.database, prefix, year);
         const fmt = (n: number) => `ARC-${prefix}-${year}-${String(n).padStart(4, "0")}`;
         out.push({ templateKey, prefix, year, count,
                    from: fmt(current + 1), to: fmt(current + count) });

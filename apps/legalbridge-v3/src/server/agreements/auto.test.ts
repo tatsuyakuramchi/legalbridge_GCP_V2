@@ -79,6 +79,20 @@ test("受取人（共著の取り分）宛ての条件書：合意の相手は�
   assert.equal(db.find("UPDATE conditions SET agreement_id"), undefined, "条件は代表の契約のまま");
 });
 
+test("受取人宛ての訂正版：前の版で立てた受取人の補助文書を引き継いでいれば、それを使い続ける（新しく立てない）", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions c")) return [{ id: 7, counterparty_id: 5, direction: "in", agreement_id: 3, agreement_kind: "master", work_title: null }];
+    if (t.includes("SELECT id, counterparty_id, kind FROM agreements")) return [{ id: 93, counterparty_id: 21, kind: "supplement" }];
+    return [];
+  });
+  const input = { ...base, templateKey: "pub_license_terms_v3", payeePartyId: 21, parentAgreementId: 93 };
+  assert.equal(await ensureAgreementForTerms(db, { ...input, revision: true }, "who"), null);
+  assert.equal(db.find("INSERT INTO agreements"), undefined);
+  assert.equal(db.find("UPDATE documents SET agreement_id"), undefined, "文書の合意（前の版の補助文書）のまま");
+  // 訂正版でなければ、親に選べるのは基本契約だけ。
+  await assert.rejects(() => ensureAgreementForTerms(db, input, "who"), /親に選べるのは基本契約だけ/);
+});
+
 test("受取人宛て：選んだ基本契約が受取人のものでなければ止める。基本契約を選ばなければ受取人との単体契約", async () => {
   const wrong = new FakeDatabase((t) => {
     if (t.includes("FROM conditions c")) return [{ id: 7, counterparty_id: 5, direction: "in", agreement_id: 3, agreement_kind: "master", work_title: null }];

@@ -1,3 +1,4 @@
+import { GoogleAuth } from "google-auth-library";
 import { config } from "../config.js";
 import type { Transactable } from "../core/db.js";
 import {
@@ -26,8 +27,18 @@ const useMemory = () => process.env.DISPATCH_ADAPTERS === "memory";
 const gmailToken = (scope: string) => delegatedToken({
   sender: config.gmailSender, scope,
   keyFilePath: config.driveKeyFilePath || undefined,
-  delegationSa: config.gmailDelegationSa || undefined
+  delegationSa: config.gmailDelegationSa || undefined,
+  // 予備系の PC（GCP の外）は、人のログイン（GOOGLE_APPLICATION_CREDENTIALS）で署名を頼む。
+  ...(process.env.GOOGLE_APPLICATION_CREDENTIALS ? { adcToken: adcAccessToken } : {})
 });
+
+/** 人のログイン（ADC）のアクセストークン。signJwt を呼ぶためだけに使う。 */
+async function adcAccessToken(): Promise<string> {
+  const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+  const token = (await (await auth.getClient()).getAccessToken()).token;
+  if (!token) throw new Error("ログインの認証情報（GOOGLE_APPLICATION_CREDENTIALS）からトークンを取れませんでした");
+  return token;
+}
 
 export function buildAdapters(): Partial<Record<IntegrationChannel, DispatchAdapter>> {
   if (useMemory()) {

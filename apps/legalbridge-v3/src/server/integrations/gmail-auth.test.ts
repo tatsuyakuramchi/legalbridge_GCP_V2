@@ -61,3 +61,21 @@ test("送信元が無ければ呼ばない", async () => {
   await assert.rejects(delegatedToken({ sender: "", scope: GMAIL_SEND_SCOPE, fetchImpl: f.impl })(), /GMAIL_SENDER/);
   assert.equal(f.calls.length, 0);
 });
+
+test("GCP の外（予備系）は、人のログインで指定の SA に署名を頼む。メタデータは見ない", async () => {
+  const f = fakeFetch();
+  const token = await delegatedToken({
+    sender: "legal@example.com", scope: GMAIL_SEND_SCOPE, fetchImpl: f.impl,
+    delegationSa: "delegate@p.iam.gserviceaccount.com", adcToken: async () => "user-token"
+  })();
+  assert.equal(token, "gmail-token");
+  assert.ok(!f.calls.some((c) => c.url.includes("metadata.google.internal")));
+  assert.ok(f.calls.some((c) => c.url.includes("delegate%40p.iam.gserviceaccount.com:signJwt")));
+});
+
+test("GCP の外で署名する SA が無ければ止める", async () => {
+  const f = fakeFetch();
+  await assert.rejects(
+    delegatedToken({ sender: "a@example.com", scope: GMAIL_SEND_SCOPE, fetchImpl: f.impl, adcToken: async () => "t" })(),
+    /GMAIL_DELEGATION_SA/);
+});

@@ -3,10 +3,15 @@ import { StatusTag } from "./labels.js";
 import { CsvBar } from "./CsvBar.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
-import { EbookSalesImport } from "./EbookSalesImport.js";
 import { MissingContracts } from "./MissingContracts.js";
 import { UnsentBundles } from "./UnsentBundles.js";
 import { Leftovers } from "./Leftovers.js";
+import { IndividualPayDay } from "./IndividualPayDay.js";
+import { TermDefault } from "./TermDefault.js";
+import { NoticeFill } from "./NoticeFill.js";
+import { StatementMerge } from "./StatementMerge.js";
+import { FixesBadge } from "./FixesBadge.js";
+import { PeriodReissuePanel } from "./PeriodReissue.js";
 import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
 import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
@@ -59,14 +64,15 @@ const SOURCE_LABEL: Record<string, string> = {
   matter: "案件", agreement: "契約満了", payment: "支払", schedule: "予定", task: "タスク"
 };
 
-export type OpsTab = "quality" | "deadlines" | "leftovers" | "exports" | "imports" | "contracts" | "sending" | "snippets" | "statement-models"
+export type OpsTab = "quality" | "deadlines" | "fixes" | "leftovers" | "exports" | "imports" | "contracts" | "sending" | "snippets" | "statement-models"
   | "audit-report" | "audit" | "integrations" | "settings";
 
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
 const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates"]);
 
-export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
-  const [tab, setTab] = useState<OpsTab>(initialTab ?? "quality");
+export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab; onTabChange?: (tab: OpsTab) => void } = {}) {
+  const [tab, setTabState] = useState<OpsTab>(initialTab ?? "quality");
+  const setTab = (t: OpsTab) => { setTabState(t); onTabChange?.(t); };
   const [issues, setIssues] = useState<Issue[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [settings, setSettings] = useState<Setting[] | null>(null);
@@ -110,6 +116,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
       <div className="tabs">
         <button aria-selected={tab === "quality"} onClick={() => setTab("quality")}>データ品質 {issues.length}</button>
         <button aria-selected={tab === "deadlines"} onClick={() => setTab("deadlines")}>期限 {deadlines.length}</button>
+        <button aria-selected={tab === "fixes"} onClick={() => setTab("fixes")}>一括修正<FixesBadge /></button>
         <button aria-selected={tab === "leftovers"} onClick={() => setTab("leftovers")}>片づけ</button>
         <button aria-selected={tab === "exports"} onClick={() => setTab("exports")}>出力</button>
         <button aria-selected={tab === "imports"} onClick={() => setTab("imports")}>取込</button>
@@ -205,9 +212,25 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
         </div>
       )}
 
+      {tab === "fixes" && (
+        <>
+          <div className="faint" style={{ marginBottom: 8 }}>
+            出したものをまとめて直す道具。どれも <b>試算 → 直す（出し直す）</b> の順で、試算は何も書き換えません。
+            上から順に進めると 条件 → 契約書 → 計算書 → 回 の向きで直ります。
+          </div>
+          <TermDefault />
+          <NoticeFill />
+          <StatementMerge />
+          <div className="panel"><div className="panel-bd"><PeriodReissuePanel /></div></div>
+          <IndividualPayDay />
+        </>
+      )}
       {tab === "leftovers" && <Leftovers />}
 
-      {tab === "imports" && (<><EbookSalesImport /><CsvImport /></>)}
+      {tab === "imports" && (<>
+        {/* 電子書籍売上の取込・年次締めは支払文書の「取込」へ移した（実績の入口なので）。 */}
+        <div className="note">電子書籍売上の取込と年次締めは「支払文書 › 取込（電子書籍売上・年次締め）」に移しました。</div>
+        <CsvImport /></>)}
       {tab === "contracts" && <MissingContracts />}
       {tab === "sending" && <UnsentBundles />}
 
@@ -328,7 +351,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
 /** ホーム。数字はすべて条件を起点に導出する。 */
 export function HomeWorkspace(
   { onGo, intakeCount = 0, dailyCount = 0 }: {
-    onGo: (view: "matters" | "money" | "ops" | "drift" | "intake" | "daily" | "trade", tab?: OpsTab) => void;
+    onGo: (view: "matters" | "money" | "ops" | "drift" | "intake" | "daily" | "workbench", tab?: OpsTab) => void;
     /** 受付箱の未処理＋返信あり、デイリータスクの終わっていない作業（左の桁と同じ数）。 */
     intakeCount?: number; dailyCount?: number;
   }
@@ -360,11 +383,12 @@ export function HomeWorkspace(
       </header>
 
       {/* 初めての人が「どこから始めるか」を探さなくて済むように、入口を 1 つに。
-          左の「取引を進める」と同じ語で、同じ順番を書く（「案件」から始める案内と二重にしない）。 */}
+          左の「作業テーブル」と同じ語で、同じ順番を書く（「案件」から始める案内と二重にしない）。 */}
       <div className="note">
-        初めての取引はここから：<b>取引を進める</b> で 基礎情報 → 基本契約 → 条件明細 → 文書 → 送信 の順に 1 枚で進めます
-        <button className="btn btn-sm primary" style={{ marginLeft: 10 }} onClick={() => onGo("trade")}>
-          取引を進める
+        文書を作るのはここから：<b>作業テーブル</b> で 要る文書を決める → 作る・登録する → まとめ の順に 1 枚で進めます。
+        予定・実績・支払は <b>取引管理</b> で
+        <button className="btn btn-sm primary" style={{ marginLeft: 10 }} onClick={() => onGo("workbench")}>
+          作業テーブル
         </button>
         <button className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => onGo("matters")}>
           案件だけ登録する

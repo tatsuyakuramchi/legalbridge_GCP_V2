@@ -274,42 +274,72 @@ export class MatterLinkService {
   }
 
   /** 文書を案件に付ける。documents.matter_id を直接持つので参照は1本。 */
-  async attachDocument(matterId: number, documentId: number, actor: string) {
+  /**
+   * 文書を案件に繋ぐ。
+   *
+   *   attach    … この案件の文書にする（他の案件に付いていれば止める。付け替えか参照を人が選ぶ）
+   *   reference … 参照として繋ぐ（文書は元の案件に残る。matter_links の document）
+   *   move      … この案件に付け替える（元の案件からは外れる）
+   *
+   * 文書は 1 つの案件にしか付かない。業務委託の基本契約書のように案件をまたぐものは
+   * 案件に付けず、契約の記録に繋ぐ（AgreementService.attachDocument）。
+   */
+  async attachDocument(matterId: number, documentId: number, actor: string, mode: "attach" | "reference" | "move" = "attach") {
     try {
       return await inTransaction(this.database, async (client) => {
         const m = await client.query("SELECT id FROM matters WHERE id = $1", [matterId]);
         if (!m.rows[0]) throw new DomainError("NOT_FOUND", `案件 ${matterId} が見つかりません`);
 
         const d = await client.query(
-          "SELECT id, document_no, matter_id FROM documents WHERE id = $1", [documentId]);
+          "SELECT d.id, d.document_no, d.matter_id, m.matter_no AS other_no FROM documents d LEFT JOIN matters m ON m.id = d.matter_id WHERE d.id = $1", [documentId]);
         const document = d.rows[0] as any;
         if (!document) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
-        if (document.matter_id && Number(document.matter_id) !== matterId) {
+        const other = document.matter_id && Number(document.matter_id) !== matterId ? Number(document.matter_id) : null;
+
+        if (mode === "reference") {
+          if (!other && document.matter_id) return { attached: true, documentId, mode: "attach" as const };
+          await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref, relation)
+             VALUES ($1, 'document', $2::text, 'reference') ON CONFLICT DO NOTHING`, [matterId, documentId]);
+          await recordAudit(client, {
+            actor, action: "matter.reference_document", targetType: "matter", targetId: matterId,
+            detail: { documentId, documentNo: document.document_no, ownerMatterId: other }
+          });
+          return { attached: true, documentId, mode: "reference" as const };
+        }
+        if (other && mode !== "move") {
           throw new DomainError("CONFLICT",
-            `この文書は別の案件（#${document.matter_id}）に付いています。先に外してください`);
+            `この文書は別の案件（${document.other_no ?? `#${other}`}）に付いています。参照として繋ぐか、この案件に付け替えてください`,
+            { otherMatterId: other, otherMatterNo: document.other_no ?? null, documentId });
         }
 
         await client.query("UPDATE documents SET matter_id = $2 WHERE id = $1", [documentId, matterId]);
+        // 付け替えたら、参照として繋いでいた印は要らない。
+        await client.query(
+          "DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'document' AND target_ref = $2::text", [matterId, documentId]);
         await recordAudit(client, {
-          actor, action: "matter.attach_document", targetType: "matter", targetId: matterId,
-          detail: { documentId, documentNo: document.document_no }
+          actor, action: other ? "matter.move_document" : "matter.attach_document", targetType: "matter", targetId: matterId,
+          detail: { documentId, documentNo: document.document_no, ...(other ? { fromMatterId: other } : {}) }
         });
-        return { attached: true, documentId };
+        return { attached: true, documentId, mode: "attach" as const };
       });
     } catch (error) { throw translate(error); }
   }
 
+  /** 案件から外す。この案件の文書なら案件なしに、参照なら参照の印を消す。 */
   async detachDocument(matterId: number, documentId: number, actor: string) {
     try {
       return await inTransaction(this.database, async (client) => {
         const r = await client.query(
           "UPDATE documents SET matter_id = NULL WHERE id = $1 AND matter_id = $2",
           [documentId, matterId]);
-        const removed = (r.rowCount ?? 0) > 0;
+        const ref = await client.query(
+          "DELETE FROM matter_links WHERE matter_id = $1 AND target_type = 'document' AND target_ref = $2::text", [matterId, documentId]);
+        const removed = (r.rowCount ?? 0) > 0 || (ref.rowCount ?? 0) > 0;
         if (removed) {
           await recordAudit(client, {
             actor, action: "matter.detach_document", targetType: "matter", targetId: matterId,
-            detail: { documentId }
+            detail: { documentId, reference: (r.rowCount ?? 0) === 0 }
           });
         }
         return { removed };

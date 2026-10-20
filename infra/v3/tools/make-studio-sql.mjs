@@ -303,6 +303,31 @@ SELECT * FROM (
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
   UNION ALL
+  SELECT 72, '相手方の文書番号（A-072。列 1 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
+  UNION ALL
+  SELECT 74, '支払文書の送付・受領・製造予定・報告期限（A-074。列 2・表 1・関数 1・CHECK 1 で 5 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
+            AND ((table_name='documents' AND column_name='inbound') OR (table_name='conditions' AND column_name='report_due_days')))
+        + (SELECT count(*) FROM information_schema.tables WHERE table_schema='v3' AND table_name='production_plans')
+        + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname='v3' AND p.proname='document_delivery')
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_report_due_days_chk'))::text
+  UNION ALL
+  SELECT 73, '準委任の時間精算（A-073。列 6・CHECK 1 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
+            AND ((table_name='conditions' AND column_name IN ('time_settlement', 'hours_included', 'overage_unit_amount', 'shortfall_unit_amount'))
+              OR (table_name='condition_events' AND column_name IN ('hours', 'report_received_on'))))
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_time_settlement_chk'))::text
+  UNION ALL
+  SELECT 71, '決済の型（A-071。列 4・CHECK 3 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions'
+              AND column_name IN ('settlement_mode', 'settlement_count', 'settlement_cycle', 'settlement_grace_days'))
+          + (SELECT count(*) FROM pg_constraint
+              WHERE conrelid='v3.conditions'::regclass
+                AND conname IN ('conditions_settlement_mode_chk', 'conditions_settlement_cycle_chk', 'conditions_settlement_shape_chk')))::text
+  UNION ALL
   SELECT 70, '共著の分配を誰がするか（A-070。列 1・CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='conditions' AND column_name='distribution')

@@ -25,19 +25,27 @@ const CALC_LABEL: Record<string, string> = {
   SUBSCRIPTION: "サブスク", SUPPLY_QTY: "供給価格×個数×料率"
 };
 
-export type MatrixName = "v3_conds" | "v3_lcs" | "v3_sublicensees" | "v3_special_extras";
+export type MatrixName = "v3_conds" | "v3_lcs" | "v3_sublicensees" | "v3_calc_base_rows" | "v3_special_extras";
+
+/** 算定基準の既定。空のときサーバが入れる定型と同じ（license-terms.ts）。 */
+const CALC_BASE_DEFAULT: Row[] = [
+  { edition: "初版", trigger: "発売日", note: "" },
+  { edition: "2版以降", trigger: "製造日", note: "" }
+];
 
 const text = (v: unknown) => (v == null ? "" : String(v));
 const rates = (row: Row): Record<string, unknown> =>
   row.rates && typeof row.rates === "object" ? row.rates as Record<string, unknown> : {};
 
 export function LicenseTermsMatrix(
-  { deals, materials, sublicensees, extras, seedDeals, seedMaterials, onChange }: {
+  { deals, materials, sublicensees, calcBase, extras, seedDeals, seedMaterials, onChange }: {
     /** いま画面が持っている行。null なら種のまま（まだ直していない）。 */
     deals: Row[] | null;
     materials: Row[] | null;
     /** サブライセンシーと特記事項は V3 のデータから導けないので、種は空。 */
     sublicensees: Row[] | null;
+    /** 算定基準（版 × 基準日）。null なら定型（初版は発売日、2版以降は製造日）。 */
+    calcBase: Row[] | null;
     extras: Row[] | null;
     seedDeals: Row[];
     seedMaterials: Row[];
@@ -48,6 +56,7 @@ export function LicenseTermsMatrix(
   const dealRows = deals ?? seedDeals;
   const materialRows = materials ?? seedMaterials;
   const slRows = sublicensees ?? [];
+  const calcRows = calcBase ?? CALC_BASE_DEFAULT;
   const extraRows = extras ?? [];
   // 載せる形態だけを数える。載せない形態の料率の列は構成要素にも出さない。
   const used = dealRows.filter((d) => d.use !== false);
@@ -100,6 +109,8 @@ export function LicenseTermsMatrix(
     onChange("v3_sublicensees", slRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   const setExtra = (index: number, patch: Row) =>
     onChange("v3_special_extras", extraRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const setCalc = (index: number, patch: Row) =>
+    onChange("v3_calc_base_rows", calcRows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   const slField = (index: number, key: string, label: string, list?: string) => (
     <label className="field">
       <span>{label}</span>
@@ -144,7 +155,8 @@ export function LicenseTermsMatrix(
               <b>取引形態</b>
               <span className="faint">
                 この条件書で許諾するものだけ選びます（{used.length}／{dealRows.length}）。
-                加算型は構成要素の料率の合計が実効料率、非加算型は実効料率をここに入れます
+                料率・MG・AG は条件明細の値をそのまま出します（文書だけ直せない。直すときは条件の改訂で）。
+                載せる形態・地域・言語・数量はここで整えます
               </span>
             </div>
             {dealRows.map((deal, index) => (
@@ -177,8 +189,7 @@ export function LicenseTermsMatrix(
                   {!deal.addon && (
                     <label className="field">
                       <span>実効料率（%）</span>
-                      <input type="number" value={text(deal.fixedRate)}
-                             onChange={(e) => setDeal(index, { fixedRate: e.target.value })} />
+                      <input type="number" value={text(deal.fixedRate)} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                     </label>
                   )}
                   <label className="field">
@@ -198,13 +209,11 @@ export function LicenseTermsMatrix(
                   </label>
                   <label className="field">
                     <span>AG</span>
-                    <input type="number" value={text(deal.ag)}
-                           onChange={(e) => setDeal(index, { ag: e.target.value })} />
+                    <input type="number" value={text(deal.ag)} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                   </label>
                   <label className="field">
                     <span>MG</span>
-                    <input type="number" value={text(deal.mg)}
-                           onChange={(e) => setDeal(index, { mg: e.target.value })} />
+                    <input type="number" value={text(deal.mg)} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                   </label>
                   <label className="field">
                     <span>通貨</span>
@@ -281,8 +290,7 @@ export function LicenseTermsMatrix(
                       {addons.map((d) => (
                         <td key={String(d.id)} className="num">
                           <input type="number" style={{ width: 70 }}
-                                 value={text(rates(row)[String(d.id)])}
-                                 onChange={(e) => setRate(index, d.id, e.target.value)} />
+                                 value={text(rates(row)[String(d.id)])} readOnly title="条件明細の値。直すときは条件の改訂で（文書だけ変えると条件と食い違う）" />
                         </td>
                       ))}
                       <td>
@@ -364,6 +372,36 @@ export function LicenseTermsMatrix(
           <datalist id="v3-deal-names">
             {used.map((d, i) => <option key={i} value={text(d.name)} />)}
           </datalist>
+
+          {/* 算定基準。本文「算定基準日」の行。空のまま決定すると定型が入る。 */}
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row">
+              <b>算定基準</b>
+              <span className="faint">許諾料の算定に用いる数量の基準日（版ごと）</span>
+              {calcBase !== null && (
+                <button className="btn btn-sm" onClick={() => onChange("v3_calc_base_rows", null)}>定型に戻す</button>
+              )}
+              <button className="btn btn-sm" style={{ marginLeft: "auto" }}
+                      onClick={() => onChange("v3_calc_base_rows", [...calcRows, { edition: "", trigger: "", note: "" }])}>
+                行を足す
+              </button>
+            </div>
+            {calcRows.map((row, index) => (
+              <div key={index} className="row">
+                <input style={{ width: 120 }} placeholder="版（初版）" value={text(row.edition)}
+                       onChange={(e) => setCalc(index, { edition: e.target.value })} />
+                <input style={{ width: 140 }} placeholder="基準日（発売日）" value={text(row.trigger)}
+                       onChange={(e) => setCalc(index, { trigger: e.target.value })} />
+                <input style={{ flex: 1 }} placeholder="補足（任意）" value={text(row.note)}
+                       onChange={(e) => setCalc(index, { note: e.target.value })} />
+                <button className="btn btn-sm"
+                        onClick={() => onChange("v3_calc_base_rows", calcRows.filter((_, i) => i !== index))}>
+                  外す
+                </button>
+              </div>
+            ))}
+            {!calcRows.length && <span className="faint">空のまま決定すると定型（初版は発売日、2版以降は製造日）が入ります</span>}
+          </div>
 
           {/* 特記事項。条項の追加。 */}
           <div className="stack" style={{ gap: 6 }}>

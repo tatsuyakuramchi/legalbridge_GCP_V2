@@ -16,8 +16,17 @@
 
 import { accountTypeLabel, bankInfoLine } from "./template-context.js";
 import { baseDocumentNumber } from "./numbering.js";
+import { BUSINESS_LINE_LABEL, type BusinessLine } from "../matters/title.js";
 
 type Ctx = Record<string, any>;
+
+/** 担当者の代わりに出す事業名（事業区分）。分からなければ null。 */
+export function businessUnitOf(c: Ctx): string | null {
+  const line = String(c.matter?.businessLine ?? "") as BusinessLine;
+  if (BUSINESS_LINE_LABEL[line]) return BUSINESS_LINE_LABEL[line];
+  const usages = [...((c.conditions ?? []) as Ctx[]).map((x) => x.usageType), c.condition?.usageType];
+  return usages.some((u) => u === "pub_print" || u === "pub_digital") ? BUSINESS_LINE_LABEL.publishing : null;
+}
 
 /**
  * 文脈の基本契約。文書の文脈は masterAgreement を持つ（context-repository）。
@@ -309,6 +318,9 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   { names: ["STAFF_EMAIL", "inspectorEmail", "申請者メール", "検収者メールアドレス"], own: true,
     get: (c) => c.owner?.email },
   { names: ["STAFF_PHONE", "担当者電話"], own: true, get: (c) => c.owner?.phone },
+  // 担当者が決まらない文書（まとめて締めるの計算書など）の「担当」に出す事業名。担当者が
+  // いれば空（担当者の欄を出す）。案件の事業区分、案件が無ければ出版の条件なら「出版事業」。
+  { names: ["STAFF_UNIT", "担当事業"], own: true, get: (c) => (c.owner ? null : businessUnitOf(c)) },
   // 英語表記（A-049）。海外版の発注書は STAFF_NAME / STAFF_DEPARTMENT をこれで置き換える。
   { names: ["STAFF_NAME_EN", "担当者名（英語）"], own: true, get: (c) => c.owner?.nameEn },
   { names: ["STAFF_DEPARTMENT_EN", "担当者部署（英語）"], own: true, get: (c) => c.owner?.departmentEn },

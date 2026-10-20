@@ -1,5 +1,5 @@
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string, readonly code?: string) {
+  constructor(readonly status: number, message: string, readonly code?: string, readonly detail?: unknown) {
     super(message);
   }
 }
@@ -12,7 +12,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text();
   const body = text ? JSON.parse(text) : {};
   if (!response.ok) {
-    throw new ApiError(response.status, body.error ?? "エラーが発生しました", body.code);
+    throw new ApiError(response.status, body.error ?? "エラーが発生しました", body.code, body.detail);
   }
   return body as T;
 }

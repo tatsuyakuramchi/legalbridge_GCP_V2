@@ -2,7 +2,7 @@ import { inTransaction, type Queryable, type Transactable } from "../core/db.js"
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
-import { parsePaymentTerms, payOnFor } from "./payment-terms.js";
+import { forPartyKind, parsePaymentTerms, payOnFor } from "./payment-terms.js";
 import { readContractForm } from "./contract-form.js";
 
 /**
@@ -119,6 +119,8 @@ export function generateLines(input: {
   amount: number; triggerKind: TriggerKind; labelSuffix?: string;
   /** 支払条件。「検収月の翌月末払い」など。読めれば各回の支払期日を埋める。 */
   paymentTerms?: string | null;
+  /** 支払先の区分（parties.kind）。個人なら末日払いを 20 日にする（forPartyKind）。 */
+  partyKind?: string | null;
   /** 契約形式。全回に同じものを入れる。回ごとに違うなら画面で直す。 */
   contractForm?: string | null;
 }): ScheduleLine[] {
@@ -133,7 +135,7 @@ export function generateLines(input: {
   const suffix = input.labelSuffix ?? "分";
   // 読めない書き方なら null のまま。推測で埋めると、間違った支払期日が
   // 黙って入って気づけない。
-  const terms = parsePaymentTerms(input.paymentTerms);
+  const terms = forPartyKind(parsePaymentTerms(input.paymentTerms), input.partyKind);
 
   // 開始日がその月の末日なら、以降も末日で揃える。「翌月末払い」の契約で
   // 4/30 開始が 5/30・6/30 になると、毎月ずれた期日が並ぶ。
@@ -365,7 +367,9 @@ export class ConditionScheduleService {
              inspectedOn?: string | null;
              inspectorDept?: string | null; inspectorName?: string | null;
              contractForm?: string | null;
-             serviceFrom?: string | null; serviceTo?: string | null },
+             serviceFrom?: string | null; serviceTo?: string | null;
+             /** 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。 */
+             hours?: number | null; reportReceivedOn?: string | null },
     actor: string
   ): Promise<{ eventId: number; scheduleId: number }> {
     // 実績を足す側（ConditionEventService.add）でも同じ回を選べる。
@@ -414,16 +418,18 @@ export class ConditionScheduleService {
               gross_amount, deductions, amount, note, created_by,
               quantity, deliverable, inspected_on, inspector_dept, inspector_name,
               contract_form, service_from, service_to,
-              expected_amount, variance_note)
+              expected_amount, variance_note, hours, report_received_on)
            VALUES ($1, $2, $3, COALESCE($4::date, current_date), $5, $6, 0, $6, $7, $8,
-                   $9, $10, $11::date, $12, $13, $14, $15::date, $16::date, $17, $18)
+                   $9, $10, $11::date, $12, $13, $14, $15::date, $16::date, $17, $18, $19, $20::date)
            RETURNING id`,
           [conditionId, scheduleId, eventType, occurredOn, period, amount,
            str(input.note), actor,
            input.quantity ?? null, str(input.deliverable), str(input.inspectedOn),
            str(input.inspectorDept), str(input.inspectorName),
            contractForm, serviceFrom, serviceTo,
-           expectedAmount, varianceNote]);
+           expectedAmount, varianceNote,
+           input.hours === null || input.hours === undefined ? null : Number(input.hours),
+           input.reportReceivedOn || null]);
         const eventId = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

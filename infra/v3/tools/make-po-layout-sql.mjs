@@ -66,6 +66,26 @@ const TARGETS = [
        (strpos(v.html_source, 'sign-both') > 0) AS signatures,
        (strpos(v.html_source, '■ LICENSE TERMS') > 0) AS license_terms,
        (strpos(v.html_source, '{{> ') > 0) AS terms_partial,`
+  },
+  {
+    no: "170", key: "inspection_certificate", label: "検収書",
+    body: "templates/inspection_certificate_v2_body.html", css: "templates/inspection_certificate_v2_css.txt",
+    mark: 'data-layout="ins-v2-2026-10"', family: 'data-layout="ins-v2',
+    out: "170_inspection_layout_v2.sql",
+    termsPlaceholder: null,
+    title: "検収書のひな形 v2：役務提供完了通知書（169）と同じ段構成に",
+    intro: `--   役務提供完了通知書（169）と同じ考え方で検収書を組み直す。
+--   宛先と当社を横に並べ、件名〜基本契約を「■ 検収概要」の表に、明細は 1 本の表（No.・品目・
+--   発注番号・納品日・数量・単価・金額）、合計は表の下に右寄せの小さな欄（小計・消費税・実費・
+--   お支払額・お支払予定日・振込先）。「支払条件・発注情報」「通知先」の表と、別表の変更履歴は出さない。
+--
+--   ・金額が当初から変わったとき（変更履歴があるとき）だけ「■ 変更内容の確認」の署名欄を出す（従来どおり）。
+--   ・分納をまとめた検収書は「■ 支払済みの分（参考）」に前回までの行を出す。
+--   ・差し込む名前は変えない（delivery_line_items・other_fees・expenses・taxableSubtotalExTaxStr …）。
+--     項目の宣言（variables）も現行版のまま。`,
+    checks: `       (strpos(v.html_source, '■ 検収概要') > 0) AS 検収概要,
+       (strpos(v.html_source, '■ 検収内容') > 0) AS 検収内容,
+       (strpos(v.html_source, 'signature-section') > 0) AS 署名欄,`
   }
 ];
 

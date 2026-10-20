@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { GoogleAuth } from "google-auth-library";
+import { GoogleAuth, Impersonated, type AuthClient } from "google-auth-library";
 
 // 案件ごとの Drive フォルダ連携（作成/一覧）。drive-storage.ts と同じ Workspace SA 認証を用い、
 // 親フォルダ配下に案件フォルダを作成（同名があれば再利用＝冪等）し、中のファイルを一覧する。
@@ -36,14 +36,27 @@ export class LocalMatterDriveFolderService implements MatterDriveFolderService {
 export class GoogleMatterDriveFolderService implements MatterDriveFolderService {
   readonly configured = true;
   private readonly auth: GoogleAuth;
-  constructor(options: { keyFilePath?: string } = {}) {
+  private readonly impersonate: string;
+  private impersonated: Impersonated | null = null;
+  /** impersonate … このサービスアカウントとして使う（予備系の PC。drive-storage.ts と同じ）。 */
+  constructor(options: { keyFilePath?: string; impersonate?: string } = {}) {
     const keyFile = options.keyFilePath?.trim();
     const keyFileUsable = Boolean(keyFile && fs.existsSync(keyFile));
-    this.auth = new GoogleAuth({ ...(keyFileUsable ? { keyFile } : {}), scopes: [DRIVE_SCOPE] });
+    this.impersonate = options.impersonate?.trim() ?? "";
+    this.auth = new GoogleAuth({
+      ...(keyFileUsable ? { keyFile } : {}),
+      scopes: [this.impersonate ? "https://www.googleapis.com/auth/cloud-platform" : DRIVE_SCOPE]
+    });
   }
 
   private async token(): Promise<string> {
-    const client = await this.auth.getClient();
+    if (this.impersonate && !this.impersonated) {
+      this.impersonated = new Impersonated({
+        sourceClient: await this.auth.getClient() as AuthClient, targetPrincipal: this.impersonate,
+        targetScopes: [DRIVE_SCOPE], lifetime: 3600, delegates: []
+      });
+    }
+    const client = this.impersonated ?? await this.auth.getClient();
     const { token } = await client.getAccessToken();
     if (!token) throw new Error("Google Drive access token could not be obtained");
     return token;

@@ -278,6 +278,98 @@ tr.grid-edit td{background:var(--sunken);padding:12px 14px}
 .trace{background:var(--sunken);border:1px solid var(--line);border-radius:7px;
   padding:10px 12px;display:flex;flex-direction:column;gap:5px}
 .trace-line{font-size:11.5px}
+/* 送る流れ：縦の工程表（左）と、開いた段でやること（右）。本線の 5 駅の印。 */
+.srail-wrap{display:flex;gap:16px;align-items:flex-start}
+.srail{flex:0 0 300px;display:flex;flex-direction:column;gap:2px;border:1px solid var(--line);border-radius:8px;padding:6px;background:var(--surface)}
+.srail-step{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:8px 10px;border:1px solid transparent;border-radius:6px;background:transparent;cursor:pointer;font:inherit;color:var(--ink)}
+.srail-step:hover{background:var(--sunken)}
+.srail-step.open{border-color:var(--accent);background:var(--accent-soft)}
+.srail-step.optional{color:var(--muted)}
+.srail-mark{flex:0 0 24px;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-family:var(--mono)}
+.srail-mark.done{background:var(--ok);color:#fff}
+.srail-mark.skipped{background:var(--warn-soft);color:var(--warn);border:1.5px solid var(--warn)}
+.srail-mark.now{background:var(--accent);color:#fff}
+.srail-mark.todo,.srail-mark.passed{border:2px solid var(--line-strong);color:var(--faint)}
+.srail-body{display:flex;flex-direction:column;gap:1px;min-width:0}
+.srail-name{font-weight:700;font-size:12.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.srail-station{font-size:10px;font-weight:500;color:var(--faint);font-family:var(--mono)}
+.srail-now{font-size:10px;padding:0 6px;border-radius:999px;background:var(--accent);color:#fff;font-weight:500}
+.srail-sub{font-size:11px;color:var(--muted);white-space:normal;overflow-wrap:anywhere}
+.srail-pane{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:10px}
+@media (max-width:900px){.srail-wrap{flex-direction:column}.srail{flex-basis:auto;width:100%}}
+
+/* 工程ナビ（本線 5 駅）。作業テーブル・文書の送る流れ・支払文書の回で同じ形。 */
+.prail{flex:0 0 300px;display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--surface)}
+.prail.compact{flex-basis:auto;width:100%}
+.prail-head{display:flex;flex-direction:column;gap:3px;padding:2px 6px 6px;border-bottom:1px solid var(--line)}
+.prail-entry{font-size:11px;color:var(--muted)}
+.prail-subject{font-size:13px;font-weight:700}
+.prail-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.prail-station{position:relative}
+.prail-row{display:flex;gap:9px;align-items:flex-start;width:100%;text-align:left;border:1px solid transparent;background:transparent;
+  border-radius:6px;padding:6px 8px;font:inherit;color:inherit}
+button.prail-row{cursor:pointer}
+button.prail-row:hover{background:var(--accent-soft)}
+.prail-station.open>.prail-row{border-color:var(--ink)}
+.prail-station.now>.prail-row{background:var(--accent-soft)}
+.prail-station.skippable>.prail-row{border-style:dashed;border-color:var(--line-strong)}
+.prail-station.skippable.open>.prail-row{border-color:var(--ink)}
+.prail-mark{flex:0 0 22px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11.5px;font-weight:700;
+  background:var(--sunken);color:var(--muted);margin-top:1px}
+.prail-station.done>.prail-row .prail-mark{background:var(--ok);color:#fff}
+.prail-station.skipped>.prail-row .prail-mark{background:var(--warn);color:#fff}
+.prail-station.now>.prail-row .prail-mark{background:var(--accent);color:#fff}
+.prail-station.optional>.prail-row{opacity:.6}
+.prail-body{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.prail-name{font-size:12.5px;font-weight:700;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.prail-station.todo>.prail-row .prail-name{color:var(--muted);font-weight:500}
+.prail-no{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.prail-now{font-size:10px;padding:0 6px;border-radius:999px;background:var(--accent);color:#fff;font-weight:500}
+.prail-skip{font-size:10px;padding:0 6px;border-radius:999px;background:var(--warn);color:#fff;font-weight:500}
+.prail-detail{font-size:11px;color:var(--muted);white-space:normal;overflow-wrap:anywhere}
+.prail-tags{display:flex;flex-wrap:wrap;gap:4px;padding:0 8px 6px 39px}
+.prail-tag{font:inherit;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line-strong);background:var(--surface);color:var(--muted)}
+button.prail-tag{cursor:pointer}
+button.prail-tag:hover{background:var(--accent-soft)}
+.prail-tag.done{border-color:var(--ok);color:var(--ok)}
+.prail-tag.skipped{border-color:var(--warn);color:var(--warn)}
+.prail-tag.now{border-color:var(--accent);color:var(--accent);font-weight:700}
+.prail-tag.open{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.prail-foot{font-size:11px;color:var(--faint);padding:6px 6px 2px;border-top:1px solid var(--line)}
+.prail-wrap{display:flex;gap:16px;align-items:flex-start}
+.prail-pane{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:10px}
+@media (max-width:900px){.prail-wrap{flex-direction:column}.prail{flex-basis:auto;width:100%}}
+
+/* 整理する：左に取引先、中に木、右に直し方。印は 4 つ（多重・未登録・欠け・空）。 */
+.tidy-split{display:grid;grid-template-columns:minmax(220px,260px) minmax(0,1fr) minmax(300px,380px);gap:14px;align-items:start}
+@media (max-width:1300px){.tidy-split{grid-template-columns:minmax(0,1fr)}}
+.tidy-counts{display:flex;gap:4px;flex-wrap:wrap}
+.tidy-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.tidy-tree{display:flex;flex-direction:column;gap:1px;max-height:70vh;overflow:auto}
+.tidy-row{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;font-size:12.5px;min-height:26px}
+.tidy-row.bad{background:var(--warn-soft)}
+.tidy-row.shared{opacity:.85}
+.tidy-row.group{margin-top:6px;font-weight:700}
+.tidy-caret{border:0;background:none;width:16px;padding:0;color:var(--faint);cursor:pointer;font-size:12px}
+.tidy-caret:disabled{cursor:default}
+.tidy-level{font-size:11px;color:var(--muted);width:56px;flex:0 0 56px}
+.tidy-title{font-size:12.5px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:34ch}
+.tidy-detail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
+.tidy-mark{cursor:pointer;border:1px solid transparent;font-weight:700}
+.tidy-mark[aria-pressed="true"]{outline:2px solid var(--ink);outline-offset:1px}
+.tidy-ok{color:var(--ok);font-size:12px}
+.tidy-progress{display:flex;flex-direction:column;gap:4px;margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.tidy-bar{height:8px;background:var(--sunken);border-radius:4px;overflow:hidden}
+.tidy-bar span{display:block;height:100%;background:var(--ok)}
+.tidy-fix{display:flex;flex-direction:column;gap:12px}
+.tidy-fixpane.danger{border-color:var(--out)}
+.tidy-fixpane.warn{border-color:var(--warn)}
+.tidy-fixpane.accent{border-color:var(--accent)}
+.tidy-help{display:flex;flex-direction:column;gap:6px;font-size:12px}
+.tidy-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tidy-choice{border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;cursor:pointer;font-size:12px}
+.tidy-choice.on{border-color:var(--accent);background:var(--accent-soft)}
+
 
 .field{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px;align-items:center;font-size:12px}
 .field > span{color:var(--muted)}

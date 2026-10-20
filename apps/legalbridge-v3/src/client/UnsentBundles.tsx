@@ -14,7 +14,8 @@ import { RecipientPicker, type Person } from "./RecipientPicker.js";
  * 送っていない扱いで、ここに残る）。担当者の確認が済んだら、相手先へ普通に送る。
  */
 type Kind = "master" | "terms" | "statement" | "other";
-interface Doc { id: number; documentNo: string | null; templateKey: string | null; templateLabel: string | null; kind: Kind; issuedOn: string | null; reviewedAt?: string | null }
+interface Doc { id: number; documentNo: string | null; templateKey: string | null; templateLabel: string | null; kind: Kind; issuedOn: string | null;
+              reviewedAt?: string | null; partyCheckedAt?: string | null }
 interface Bundle { partyId: number; partyName: string; partyKind: string | null; email: string | null; docs: Doc[]; counts: Record<Kind, number> }
 type Channel = { channel: string; mode: "off" | "dry_run" | "live"; configured: boolean };
 const KIND_LABEL: Record<Kind, string> = { master: "基本契約書", terms: "条件書", statement: "計算書", other: "文書" };
@@ -104,6 +105,153 @@ function ReviewSend({ bundles, onDone, onClose }: { bundles: Bundle[]; onDone: (
   );
 }
 
+interface PartyMail {
+  partyId: number; partyName: string;
+  docs: Array<{ id: number; documentNo: string | null; kind: Kind }>;
+  to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
+  subject: string; body: string; mails: number; warnings: string[];
+}
+interface SendPart { documentIds: number[]; documentNos: string[];
+  outcome: { sent: boolean; duplicated?: boolean; gate?: { reasons: string[] } } }
+interface PartyResult { partyName: string; ok: boolean; message: string }
+/** まとめ送りの文面。contract_unify は内容確認なので、送っても一覧に残る（返信をもらって CloudSign へ）。 */
+type MailPurpose = "delivery" | "contract_unify";
+const PURPOSES: Array<{ value: MailPurpose; label: string; hint: string }> = [
+  { value: "delivery", label: "送付", hint: "文書の種類に合った送付の文面（計算書・検収書・その他）。送った文書は一覧から消える" },
+  { value: "contract_unify", label: "契約書の統一のご案内", hint: "契約書案を添付し、問題なければ 2 週間以内の返信をお願いする。送っても一覧に残り、返信をもらったら CloudSign で送る" }
+];
+
+/**
+ * 選んだ相手先へ、相手先ごとに 1 通でまとめて送る（取引先へ）。宛先・件名・本文は設定の
+ * 「メールの文面」から相手先ごとに組んだものを先に見せる。1 相手先ずつ順に送り、結果を相手先ごとに出す。
+ */
+function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
+  partyIds: number[]; kinds: Kind[]; gmailMode: string; onDone: () => void; onClose: () => void;
+}) {
+  const [mails, setMails] = useState<PartyMail[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [results, setResults] = useState<PartyResult[]>([]);
+  const [open, setOpen] = useState<number | null>(null);
+  const [purpose, setPurpose] = useState<MailPurpose>("delivery");
+
+  useEffect(() => {
+    let live = true;
+    setMails(null); setError(null); setResults([]);
+    api.post<{ mails: PartyMail[] }>("/documents/unsent-bundles/preview", { partyIds, kinds, purpose })
+      .then((r) => { if (live) setMails(r.mails); })
+      .catch((e) => { if (live) setError(e instanceof ApiError ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [partyIds.join(","), kinds.join(","), purpose]);
+
+  const ready = (mails ?? []).filter((m) => m.to.length);
+  const docCount = ready.reduce((n, m) => n + m.docs.length, 0);
+  const mailCount = ready.reduce((n, m) => n + m.mails, 0);
+
+  async function send() {
+    if (busy || !ready.length) return;
+    if (!window.confirm(`${ready.length} 相手先へ、${mailCount} 通（${docCount} 枚）を送ります。取引先に届きます。よいですか？`)) return;
+    setBusy(true); setResults([]);
+    const out: PartyResult[] = [];
+    for (const [i, m] of ready.entries()) {
+      setProgress(`${i + 1} / ${ready.length}　${m.partyName}`);
+      try {
+        const r = await api.post<{ parts: SendPart[] }>("/documents/unsent-bundles/send", { partyId: m.partyId, kinds, purpose });
+        const sent = r.parts.filter((p) => p.outcome.sent).reduce((n, p) => n + p.documentIds.length, 0);
+        const dup = r.parts.some((p) => p.outcome.duplicated);
+        const blocked = r.parts.find((p) => !p.outcome.sent && !p.outcome.duplicated);
+        out.push({
+          partyName: m.partyName, ok: !blocked,
+          message: blocked
+            ? (blocked.outcome.gate?.reasons ?? []).join("・") || "送れませんでした"
+            : `${sent} 枚を送りました${dup ? "（同じ内容をもう送っていた分は送っていません）" : ""}`
+        });
+      } catch (e) {
+        out.push({ partyName: m.partyName, ok: false, message: e instanceof ApiError ? e.message : String(e) });
+      }
+      setResults([...out]);
+    }
+    setProgress(null); setBusy(false);
+    onDone();
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-hd">
+        <h2>選んだ相手先へまとめて送る（取引先へ）</h2>
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={busy} onClick={onClose}>閉じる</button>
+      </div>
+      <div className="panel-bd stack">
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <span className="faint">文面：</span>
+          {PURPOSES.map((p) => (
+            <button key={p.value} className="chip" aria-pressed={purpose === p.value} title={p.hint}
+                    disabled={busy} onClick={() => setPurpose(p.value)}>{p.label}</button>
+          ))}
+        </div>
+        {purpose === "delivery" ? (
+          <div className="faint">
+            相手先ごとに 1 通（{KIND_LABEL_LIST(kinds)}を全部添付。20 枚を超える相手先は分けて送ります）。宛先は相手先の請求先 → 主担当 →
+            連絡先の全員、Cc は設定の「いつも入れる cc」。件名・本文は運用 → 設定 →「メールの文面」から組んでいます。
+            送った文書はこの一覧から消えます。
+          </div>
+        ) : (
+          <div className="faint">
+            相手先ごとに 1 通（{KIND_LABEL_LIST(kinds)}を全部添付）で、契約書案の内容確認をお願いします。宛先は相手先の主担当 →
+            連絡先の全員、Cc は設定の「いつも入れる cc」。文面は運用 → 設定 →「メールの文面」の「契約書の統一（書面化）のご案内」。
+            送っても「送付」にはならず、この一覧に「内容確認中」で残ります。返信をもらったら、相手先の「CloudSign」から署名依頼を送ってください。
+            {kinds.some((k) => k === "statement" || k === "other") && "　※ 種類で「基本契約書」「条件書」だけに絞ると、契約書案だけを添付します。"}
+          </div>
+        )}
+        {gmailMode !== "live" && (
+          <div className="alert">いまメールは{gmailMode === "dry_run" ? "検証モード（送らずに中身だけ確かめる）" : "止めて"}あります。相手先には届きません</div>
+        )}
+        {error && <div className="alert">{error}</div>}
+        {!mails && !error && <div className="faint">宛先と文面を組んでいます…</div>}
+        {mails && (
+          <div className="tablewrap"><table>
+            <thead><tr><th>相手先</th><th>宛先</th><th>Cc</th><th>件名</th><th>枚数</th><th>結果・注意</th></tr></thead>
+            <tbody>{mails.map((m) => {
+              const r = results.find((x) => x.partyName === m.partyName);
+              return (
+                <tr key={m.partyId} className={m.to.length ? "" : "faint"}>
+                  <td>{m.partyName}</td>
+                  <td>{m.to.map((p) => <div key={p.email}>{p.name ? `${p.name} ` : ""}<span className="faint">{p.email}</span></div>)}</td>
+                  <td className="faint">{m.cc.map((p) => p.email).join("、")}</td>
+                  <td>
+                    {m.subject}
+                    <div><a href="#" onClick={(e) => { e.preventDefault(); setOpen(open === m.partyId ? null : m.partyId); }}>
+                      {open === m.partyId ? "本文を閉じる" : "本文を見る"}</a></div>
+                    {open === m.partyId && <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.85em" }}>{m.body}</pre>}
+                  </td>
+                  <td className="num">{m.docs.length}{m.mails > 1 ? `（${m.mails} 通）` : ""}</td>
+                  <td>
+                    {r && <div><span className={`tag ${r.ok ? "ok" : "warn"}`}>{r.ok ? "済" : "未"}</span> {r.message}</div>}
+                    {m.warnings.map((w) => <div key={w} className="faint" style={{ fontSize: "0.85em" }}>{w}</div>)}
+                  </td>
+                </tr>
+              );
+            })}
+            {!mails.length && <tr><td colSpan={6} className="faint">選んだ相手先に、この種類の未送付の文書がありません</td></tr>}
+            </tbody>
+          </table></div>
+        )}
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <button className="btn primary" disabled={busy || !ready.length} onClick={() => void send()}>
+            {busy ? "送っています…" : `${ready.length} 相手先へ送る（${mailCount} 通・${docCount} 枚）`}
+          </button>
+          {progress && <span className="faint">{progress}　（1 通ずつ PDF を作って送っています）</span>}
+          {mails && mails.length > ready.length && <span className="faint">宛先の無い {mails.length - ready.length} 相手先は送りません</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const KIND_LABEL_LIST = (kinds: Kind[]) => kinds.map((k) => KIND_LABEL[k]).join("・");
+const ALL_KINDS: Kind[] = ["master", "terms", "statement", "other"];
+
 export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number) => void }) {
   const [bundles, setBundles] = useState<Bundle[] | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -115,6 +263,10 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
   /** 社内確認でまとめて送る相手先。 */
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [reviewing, setReviewing] = useState(false);
+  /** 取引先へまとめて送る。 */
+  const [partySending, setPartySending] = useState(false);
+  /** 出す文書の種類。まとめ送り・1 通の送り・社内確認はこの種類だけを載せる。 */
+  const [kinds, setKinds] = useState<Kind[]>(ALL_KINDS);
 
   async function load() {
     setBusy(true); setError(null);
@@ -128,7 +280,13 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
     api.get<{ user?: { role: string } }>("/me").then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => undefined);
   }, []);
 
-  const current = sending ? bundles?.find((b) => b.partyId === sending.partyId) ?? null : null;
+  // 種類で絞った一覧。絞った種類の文書が無い相手先は出さない。
+  const shown: Bundle[] | null = bundles
+    ? bundles.map((b) => ({ ...b, docs: b.docs.filter((d) => kinds.includes(d.kind)) })).filter((b) => b.docs.length)
+    : null;
+  const pickedShown = (shown ?? []).filter((b) => picked.has(b.partyId));
+  const gmailMode = channels.find((c) => c.channel === "gmail")?.mode ?? "off";
+  const current = sending ? shown?.find((b) => b.partyId === sending.partyId) ?? null : null;
   const sendDocs = current
     ? (sending!.way === "cloudsign" ? current.docs.filter((d) => d.kind === "master" || d.kind === "terms") : current.docs)
     : [];
@@ -142,16 +300,32 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
       <div className="panel-bd stack">
         <div className="row" style={{ gap: 8, alignItems: "center" }}>
           <button className="btn btn-sm ghost" disabled={busy} onClick={() => void load()}>読み直す</button>
-          <button className="btn btn-sm" disabled={!picked.size || reviewing || !!sending}
+          <span className="faint">種類</span>
+          {ALL_KINDS.map((k) => (
+            <button key={k} className="chip" aria-pressed={kinds.includes(k)} disabled={reviewing || partySending || !!sending}
+              onClick={() => setKinds((prev) => prev.includes(k) ? (prev.length > 1 ? prev.filter((x) => x !== k) : prev) : [...prev, k])}>
+              {KIND_LABEL[k]}
+            </button>
+          ))}
+          <button className="btn btn-sm" disabled={!pickedShown.length || reviewing || partySending || !!sending}
+            onClick={() => { setNotice(null); setPartySending(true); }}>
+            選んだ {pickedShown.length} 相手先へまとめて送る（取引先へ）
+          </button>
+          <button className="btn btn-sm" disabled={!pickedShown.length || reviewing || partySending || !!sending}
             onClick={() => { setNotice(null); setReviewing(true); }}>
-            選んだ {picked.size} 相手先を担当者に社内確認で送る
+            選んだ {pickedShown.length} 相手先を担当者に社内確認で送る
           </button>
           <span className="faint">メールは全部を添付して内容確認。CloudSign は契約書（基本契約書・条件書）だけを 1 封筒で署名依頼。送った記録が付いた文書はここから消える</span>
         </div>
         {error && <div className="alert">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
-        {reviewing && bundles && (
-          <ReviewSend bundles={bundles.filter((b) => picked.has(b.partyId))}
+        {partySending && (
+          <PartySend partyIds={pickedShown.map((b) => b.partyId)} kinds={kinds} gmailMode={gmailMode}
+            onDone={() => { void load(); }}
+            onClose={() => { setPartySending(false); setPicked(new Set()); }} />
+        )}
+        {reviewing && shown && (
+          <ReviewSend bundles={pickedShown}
             onDone={() => { void load(); }}
             onClose={() => { setReviewing(false); setPicked(new Set()); }} />
         )}
@@ -167,11 +341,11 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
         <div className="tablewrap">
           <table>
             <thead><tr>
-              <th><input type="checkbox" aria-label="全部選ぶ" checked={!!bundles?.length && picked.size === bundles.length}
-                onChange={(e) => setPicked(e.target.checked ? new Set((bundles ?? []).map((b) => b.partyId)) : new Set())} /></th>
+              <th><input type="checkbox" aria-label="全部選ぶ" checked={!!shown?.length && pickedShown.length === shown.length}
+                onChange={(e) => setPicked(e.target.checked ? new Set((shown ?? []).map((b) => b.partyId)) : new Set())} /></th>
               <th>相手先</th><th>メール</th><th>文書</th><th></th></tr></thead>
             <tbody>
-              {(bundles ?? []).map((b) => (
+              {(shown ?? []).map((b) => (
                 <tr key={b.partyId}>
                   <td><input type="checkbox" aria-label={`${b.partyName} を選ぶ`} checked={picked.has(b.partyId)}
                     onChange={(e) => { const n = new Set(picked); if (e.target.checked) n.add(b.partyId); else n.delete(b.partyId); setPicked(n); }} /></td>
@@ -186,6 +360,7 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
                           : (d.documentNo ?? `#${d.id}`)}
                         {d.issuedOn && <span className="faint">　{d.issuedOn}</span>}
                         {d.reviewedAt && <span className="tag" title={`社内確認で送付 ${d.reviewedAt.slice(0, 16).replace("T", " ")}`}>　社内確認済</span>}
+                        {d.partyCheckedAt && <span className="tag" title={`取引先へ内容確認で送付 ${d.partyCheckedAt.slice(0, 16).replace("T", " ")}。返信をもらったら CloudSign へ`}>　内容確認中</span>}
                       </div>
                     ))}
                   </td>
@@ -193,17 +368,17 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
                     <button className="btn btn-sm" disabled={!!sending} onClick={() => { setNotice(null); setSending({ partyId: b.partyId, way: "mail" }); }}>
                       メールで 1 通に（{b.docs.length} 枚）
                     </button>
-                    {(b.counts.master + b.counts.terms) > 0 && (
+                    {b.docs.filter((d) => d.kind === "master" || d.kind === "terms").length > 0 && (
                       <button className="btn btn-sm" disabled={!!sending || !isAdmin} style={{ marginLeft: 6 }}
                         title={isAdmin ? "" : "CloudSign は admin だけ"}
                         onClick={() => { setNotice(null); setSending({ partyId: b.partyId, way: "cloudsign" }); }}>
-                        CloudSign（契約書 {b.counts.master + b.counts.terms} 枚）
+                        CloudSign（契約書 {b.docs.filter((d) => d.kind === "master" || d.kind === "terms").length} 枚）
                       </button>
                     )}
                   </td>
                 </tr>
               ))}
-              {bundles && !bundles.length && <tr><td colSpan={5} className="faint">未送付の文書はありません</td></tr>}
+              {shown && !shown.length && <tr><td colSpan={5} className="faint">{bundles?.length ? "この種類の未送付の文書はありません" : "未送付の文書はありません"}</td></tr>}
             </tbody>
           </table>
         </div>

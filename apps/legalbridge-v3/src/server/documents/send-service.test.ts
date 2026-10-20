@@ -10,31 +10,42 @@ const build = (events: Array<Record<string, unknown>>, agreement: string | null 
                templateKey = "individual_license_terms_v4") =>
   new FakeDatabase((t) => {
     if (t.includes("FROM documents d LEFT JOIN agreements")) {
-      return [{ id: 5, status: "issued", agreement_id: agreement ? 8 : null, agreement_status: agreement,
-                template_key: templateKey }];
+      return [{ id: 5, status: "issued", issued_at: "2026-08-30T03:00:00Z", issued_by: "kuramochi",
+                agreement_id: agreement ? 8 : null, agreement_status: agreement, template_key: templateKey }];
     }
     if (t.includes("FROM audit_events")) return events;
     return undefined;
   });
 
-test("何も送っていなければ、まず内容確認のメール（任意なので飛ばして CloudSign へも行ける）", async () => {
+test("決定しただけなら、次は担当者確認。5 駅（決定・担当者確認・相手方確認・送付・締結）で、確認と締結は飛ばせる", async () => {
   const t = await new DocumentSendService(build([])).timeline(5);
-  assert.deepEqual(t.steps.map((s) => s.done), [false, false, false, false]);
-  assert.equal(t.current?.key, "mail");
-  assert.equal(t.steps[0].optional, true);
-  assert.equal(t.steps[3].optional, false, "条件書は締結まで");
+  assert.deepEqual(t.steps.map((s) => s.key), ["decided", "owner_check", "party_check", "send", "executed"]);
+  assert.deepEqual(t.steps.map((s) => s.done), [true, false, false, false, false]);
+  assert.deepEqual(t.steps.map((s) => s.station), [2, 3, 3, 4, 5]);
+  assert.equal(t.current?.key, "owner_check");
+  assert.deepEqual(t.steps.map((s) => s.skippable), [false, true, true, false, true]);
+  assert.equal(t.steps[4].optional, false, "条件書は締結まで");
+  assert.equal(t.needsExecution, true);
 });
 
 test("発注書（合意に繋がらない）には締結の段を求めない。署名依頼を送れば完了", async () => {
   const fresh = await new DocumentSendService(build([], null, "purchase_order")).timeline(5);
-  assert.equal(fresh.steps[3].optional, true);
-  assert.match(fresh.steps[3].detail, /締結の記録は持ちません/);
-  assert.equal(fresh.current?.key, "mail");
+  assert.equal(fresh.steps[4].optional, true);
+  assert.match(fresh.steps[4].detail, /締結の記録は持ちません/);
+  assert.equal(fresh.current?.key, "owner_check");
   const sent = await new DocumentSendService(build([
     { occurred_at: "2026-10-01T00:00:00Z", action: "cloudsign.send", actor: "k", detail: { recipient: "a@x", externalId: "c1" } }
   ], null, "purchase_order")).timeline(5);
   assert.equal(sent.current, null, "締結を待たない");
-  assert.equal(sent.steps[2].done, true);
+  assert.equal(sent.steps[3].done, true);
+  assert.equal(sent.steps[1].passed, true, "確認を通らずに送った");
+  // 締結の無い文書は、メールで送れば ④ 送付が済。
+  const mailed = await new DocumentSendService(build([
+    { occurred_at: "2026-10-01T00:00:00Z", action: "gmail.send", actor: "k", detail: { recipient: "a@x" } }
+  ], null, "royalty_statement_pub")).timeline(5);
+  assert.equal(mailed.steps[3].done, true);
+  assert.match(mailed.steps[3].detail, /メールで送付/);
+  assert.equal(mailed.current, null);
 });
 
 test("送信・確認・署名依頼の記録から段が埋まる", async () => {
@@ -43,11 +54,11 @@ test("送信・確認・署名依頼の記録から段が埋まる", async () =>
     ev("document.confirmed", "2026-09-02T00:00:00Z", { via: "メールの返信", note: "問題なし" }),
     ev("cloudsign.send", "2026-09-03T00:00:00Z", { recipient: "asai@example.test", externalId: "cs-9" })
   ])).timeline(5);
-  assert.deepEqual(t.steps.map((s) => s.done), [true, true, true, false]);
-  assert.match(t.steps[0].detail, /asai@example.test へ送付/);
-  assert.match(t.steps[1].detail, /メールの返信で確認をもらった：問題なし/);
-  assert.match(t.steps[2].detail, /CloudSign #cs-9/);
+  assert.deepEqual(t.steps.map((s) => s.done), [true, false, true, true, false]);
+  assert.match(t.steps[2].detail, /メールの返信で確認をもらった：問題なし/);
+  assert.match(t.steps[3].detail, /CloudSign #cs-9/);
   assert.equal(t.current?.key, "executed");
+  assert.equal(t.steps[1].passed, true, "担当者確認は通らなかった");
   assert.equal(t.events.length, 3);
 });
 
@@ -56,14 +67,14 @@ test("締結は合意の状態から見る。webhook が反映した日時を根
     ev("cloudsign.send", "2026-09-03T00:00:00Z", { recipient: "a@b.test", externalId: "cs-9" }),
     ev("cloudsign.applied", "2026-09-05T00:00:00Z", { documentId: 5, applied: true, status: "executed" }, "system")
   ], "executed")).timeline(5);
-  assert.equal(t.steps[3].done, true);
-  assert.equal(t.steps[3].at, "2026-09-05T00:00:00.000Z");
+  assert.equal(t.steps[4].done, true);
+  assert.equal(t.steps[4].at, "2026-09-05T00:00:00.000Z");
   assert.equal(t.current, null, "全部済んだ");
 });
 
 test("合意に繋がっていない文書は、締結を記録できないと言う", async () => {
   const t = await new DocumentSendService(build([], null)).timeline(5);
-  assert.match(t.steps[3].detail, /合意に繋がっていない/);
+  assert.match(t.steps[4].detail, /合意に繋がっていない/);
 });
 
 test("相手の確認は決定済みの文書にだけ記録し、案件のやり取りにも残す", async () => {
@@ -166,8 +177,8 @@ test("手で記録した署名依頼と締結は、段の説明に「手で記�
     ev("cloudsign.send", "2026-09-10T00:00:00Z", { recipient: "asai@example.test", manual: true }),
     ev("cloudsign.applied", "2026-09-12T00:00:00Z", { documentId: 5, applied: true, status: "executed", manual: true })
   ], "executed")).timeline(5);
-  assert.match(t.steps[2].detail, /システム外で送付/);
-  assert.match(t.steps[3].detail, /手で記録/);
+  assert.match(t.steps[3].detail, /システム外で送付/);
+  assert.match(t.steps[4].detail, /手で記録/);
   assert.equal(t.hasAgreement, true);
 });
 
@@ -186,14 +197,55 @@ test("未送信に戻すと cloudsign.applied（status=unsent・manual）が残�
   assert.ok(db.find("INSERT INTO matter_communications"), "やり取りにも残す");
 });
 
-test("社内確認として担当者に送った（gmail.review）だけなら、内容確認のメールは済にしない。送った先は出す", async () => {
+test("社内確認として担当者に送った（gmail.review）なら、担当者確認が済。次は相手方確認", async () => {
   const t = await new DocumentSendService(build([
     ev("gmail.review", "2026-10-08T00:00:00Z", { recipient: "tanto@arclight.test", internal: true })
   ])).timeline(5);
-  assert.equal(t.steps[0].done, false, "相手先にはまだ送っていない");
-  assert.match(t.steps[0].detail, /社内確認で tanto@arclight\.test へ送付済み.*相手先にはまだ送っていない/);
-  assert.equal(t.current?.key, "mail");
+  assert.equal(t.steps[1].done, true);
+  assert.match(t.steps[1].detail, /tanto@arclight\.test へ社内確認メール/);
+  assert.equal(t.steps[3].done, false, "相手先にはまだ送っていない");
+  assert.equal(t.current?.key, "party_check");
   const db = build([]);
   await new DocumentSendService(db).timeline(5);
   assert.match(db.find("FROM audit_events")!.text, /'gmail\.review'/, "社内確認の記録も読む");
+});
+
+test("取引先へ内容確認で送った（gmail.party_check）なら、相手方確認は返事待ち。返事を記録すれば済、次は送付", async () => {
+  const t = await new DocumentSendService(build([
+    ev("gmail.party_check", "2026-10-19T00:00:00Z", { recipient: "kou@example.test", bulk: true })
+  ])).timeline(5);
+  assert.equal(t.steps[2].done, false);
+  assert.match(t.steps[2].pending ?? "", /kou@example\.test へ内容確認メール送付済み（返事待ち）/);
+  assert.equal(t.current?.key, "party_check");
+  const replied = await new DocumentSendService(build([
+    ev("gmail.party_check", "2026-10-19T00:00:00Z", { recipient: "kou@example.test" }),
+    ev("document.confirmed", "2026-10-20T00:00:00Z", { via: "メールの返信" })
+  ])).timeline(5);
+  assert.equal(replied.steps[2].done, true);
+  assert.equal(replied.current?.key, "send");
+});
+
+test("飛ばす：記録が残り、工程表に「飛ばした（理由）」。次の段が「いま」。本当に進めばそちらが勝つ", async () => {
+  const t = await new DocumentSendService(build([
+    ev("document.step_skipped", "2026-10-19T00:00:00Z", { step: "owner_check", reason: "電話で確認済み" }),
+    ev("document.step_skipped", "2026-10-19T00:01:00Z", { step: "party_check" })
+  ])).timeline(5);
+  assert.equal(t.steps[1].skipped, true);
+  assert.equal(t.steps[1].skipReason, "電話で確認済み");
+  assert.match(t.steps[1].detail, /飛ばした（kuramochi：電話で確認済み）/);
+  assert.equal(t.steps[2].skipped, true);
+  assert.equal(t.current?.key, "send");
+  const later = await new DocumentSendService(build([
+    ev("document.step_skipped", "2026-10-19T00:00:00Z", { step: "owner_check" }),
+    ev("gmail.review", "2026-10-20T00:00:00Z", { recipient: "tanto@arclight.test" })
+  ])).timeline(5);
+  assert.equal(later.steps[1].done, true);
+  assert.equal(later.steps[1].skipped, false, "送ったのでもう飛ばしていない");
+
+  const db = new FakeDatabase((t) => t.includes("SELECT id, document_no, status FROM documents") ? [{ id: 5, document_no: "D-5", status: "issued" }] : undefined);
+  await new DocumentSendService(db).skip(5, { step: "executed", reason: "紙で締結" }, "k");
+  const audit = db.find("INSERT INTO audit_events")!;
+  assert.equal(audit.params[1], "document.step_skipped");
+  assert.deepEqual(JSON.parse(String(audit.params[5])).step, "executed");
+  await assert.rejects(() => new DocumentSendService(db).skip(5, { step: "send" as any }, "k"), /飛ばせません/);
 });

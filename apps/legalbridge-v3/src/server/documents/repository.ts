@@ -20,6 +20,8 @@ export interface DocumentSummary {
   title: string | null;
   /** 外で作られた文書。ひな形が無いので、作り直しも再レンダリングもできない。 */
   imported: boolean;
+  /** 相手方が付けた文書番号の控え（A-072）。無ければ null。 */
+  counterpartyDocNo: string | null;
   counterparty: string | null;
   matterId: number | null;
   matterNo: string | null;
@@ -45,7 +47,15 @@ export interface DocumentSummary {
   phase: DocumentPhase;
   /** 最後に送った日時と経路。送っていなければ null。 */
   sentAt: string | null;
-  sentVia: "gmail" | "cloudsign" | null;
+  /** gmail / cloudsign / post / hand / email_other / past / other（documents/delivery.ts）。 */
+  sentVia: string | null;
+  /** 相手が受け取ったと確かめた日時と経路（署名済みの控え・返信・CloudSign 締結など）。 */
+  receivedAt: string | null;
+  receivedVia: string | null;
+  /** 過去分（一括で送付済み扱い）。 */
+  past: boolean;
+  /** 相手から受け取った文書（取込）。送付・受領を追わない。 */
+  inbound: boolean;
   /** 一括作成の束。CSV から作った文書だけ持つ。 */
   batchId: number | null;
 }
@@ -92,13 +102,16 @@ export interface TemplateSource {
 
 const LIST_SELECT = `
   d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
-  d.supersedes_id, d.batch_id,
+  d.supersedes_id, d.batch_id, d.counterparty_doc_no,
   d.manual_inputs->>'_showRevision' AS show_revision,
-  v.title, v.counterparty, v.condition_count, t.template_key,
+  -- 受取人（共著の取り分）宛ての文書は、相手先を受取人にする。表示の view は 1 本目の条件の相手先
+  -- （共著の代表）を出すので、脇屋さん宛ての計算書が「麻生涼介」と出て中身と食い違っていた。
+  COALESCE(pp.name, v.counterparty) AS counterparty,
+  v.condition_count, t.template_key,
   m.matter_no,
   -- この版を差し替えた新しい版。参照は新→旧の向きしか無いので反転して読む。
   nx.id AS superseded_by_id, nx.document_no AS superseded_by_no,
-  snd.sent_at, snd.sent_via,
+  snd.sent_at, snd.sent_via, snd.received_at, snd.received_via, snd.past, d.inbound,
   -- 条件明細は件数ではなく番号で出す。件数だけでは何に紐づくか分からない。
   (SELECT array_agg(json_build_object('id', c.id, 'conditionNo', c.condition_no)
                     ORDER BY dc.line_no)
@@ -109,12 +122,17 @@ const LIST_SELECT = `
   -- 同じ理由で件名も空になる。表示の view は件名が無いと文書番号で埋めるので、
   -- 取込文書は登録時の文書名を先に見る（でないと件名が番号になる）。
   COALESCE(CASE WHEN d.template_version_id IS NULL THEN NULLIF(d.manual_inputs->>'title', '') END,
-           v.title, d.manual_inputs->>'title') AS title,
+           v.title, d.manual_inputs->>'title')
+    -- 件名は 1 本目の条件（代表の条件）の名前なので、受取人宛てなら誰の取り分かを添える。
+    || CASE WHEN pp.id IS NOT NULL AND pp.id IS DISTINCT FROM v.counterparty_id
+            THEN '（' || pp.name || ' の取り分）' ELSE '' END AS title,
   (d.template_version_id IS NULL) AS imported`;
 
 const LIST_FROM = `
   FROM documents d
   LEFT JOIN v_document_display v ON v.document_id = d.id
+  LEFT JOIN parties pp ON pp.id = CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
+                                       THEN (d.manual_inputs->>'_payeePartyId')::bigint END
   LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
   LEFT JOIN document_templates t ON t.id = tv.template_id
   LEFT JOIN matters m ON m.id = d.matter_id
@@ -126,11 +144,8 @@ const LIST_FROM = `
   ) nx ON true
   -- 送った記録。送信は audit_events に1本で残しているので、そこから最後の1件を引く。
   LEFT JOIN LATERAL (
-    SELECT a.occurred_at AS sent_at, split_part(a.action, '.', 1) AS sent_via
-      FROM audit_events a
-     WHERE a.target_type = 'document' AND a.target_id = d.id
-       AND a.action IN ('gmail.send', 'cloudsign.send')
-     ORDER BY a.occurred_at DESC LIMIT 1
+    SELECT dv.sent_at, dv.sent_via, dv.received_at, dv.received_via, dv.past
+      FROM document_delivery(d.id) dv
   ) snd ON true`;
 
 /** 状態と送信の有無から、人が見る段階を決める。 */
@@ -152,6 +167,7 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     templateLabel: str(row.template_label),
     title: str(row.title),
     imported: row.imported === true,
+    counterpartyDocNo: str(row.counterparty_doc_no),
     counterparty: str(row.counterparty),
     matterId: int(row.matter_id),
     matterNo: str(row.matter_no),
@@ -165,7 +181,11 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     storageUrl: str(row.storage_url),
     phase: phaseOf(String(row.status), row.sent_at),
     sentAt: row.sent_at ? new Date(String(row.sent_at)).toISOString() : null,
-    sentVia: row.sent_via === "gmail" || row.sent_via === "cloudsign" ? row.sent_via : null,
+    sentVia: str(row.sent_via),
+    receivedAt: row.received_at ? new Date(String(row.received_at)).toISOString() : null,
+    receivedVia: str(row.received_via),
+    past: row.past === true,
+    inbound: row.inbound === true,
     batchId: int(row.batch_id)
   };
 }
@@ -214,8 +234,10 @@ export class DocumentRepository {
       // 条件も付いていない取り込み文書は表示名が文書番号に落ちるので、名前で探せなかった。
       // 条件明細の番号・名前でも当てる（デイリータスクで「この条件の文書」を探して繋ぐ）。
       where.push(`(COALESCE(d.document_no,'') ILIKE $${i} OR COALESCE(v.title,'') ILIKE $${i}
+                   OR COALESCE(d.counterparty_doc_no,'') ILIKE $${i}
                    OR COALESCE(d.manual_inputs->>'title','') ILIKE $${i}
-                   OR COALESCE(v.counterparty,'') ILIKE $${i}
+                   OR (pp.id IS NULL AND COALESCE(v.counterparty,'') ILIKE $${i})
+                   OR COALESCE(pp.name,'') ILIKE $${i}
                    OR EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
                                WHERE dc.document_id = d.id
                                  AND (COALESCE(c.condition_no,'') ILIKE $${i} OR COALESCE(c.name,'') ILIKE $${i})))`);
@@ -230,8 +252,13 @@ export class DocumentRepository {
     if (query.batchId) { params.push(query.batchId); where.push(`d.batch_id = $${params.length}`); }
     if (query.partyId) {
       params.push(query.partyId);
-      where.push(`v.counterparty_id IN (SELECT party_id FROM v_party_resolved
-                    WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length}))`);
+      // 受取人宛ての文書は受取人で当てる（代表の文書として出さない）。
+      // 関係当事者（連名の文書）としても当てる。
+      where.push(`(COALESCE(pp.id, v.counterparty_id) IN (SELECT party_id FROM v_party_resolved
+                    WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length}))
+                   OR EXISTS (SELECT 1 FROM document_parties xp JOIN v_party_resolved xr ON xr.party_id = xp.party_id
+                               WHERE xp.document_id = d.id
+                                 AND xr.resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $${params.length})))`);
     }
     if (query.unlinked) {
       where.push(`NOT EXISTS (SELECT 1 FROM document_conditions dc WHERE dc.document_id = d.id)`);

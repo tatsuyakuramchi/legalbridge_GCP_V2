@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, mediaSharesText, payeeRateText, payeeShareText, percentText,
-  pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, rowBlockerOf, sharesText
+  pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, renewUnitOf, rowBlockerOf, sharesText
 } from "./pub-terms.js";
 import { pubMediaOf, pubMediaOfScopes } from "../core/pub-media.js";
 
@@ -110,6 +110,21 @@ test("期間・地域・言語・更新の文案は条件と合意から", () =>
   assert.equal(out["終了通知期限"], "3か月");
 });
 
+test("3 年・3 年ごとに更新を入れた条件なら、第３条の更新の単位も 3 年。作品の行に更新の回数", () => {
+  const renewing = { ...context, conditions: context.conditions.map((c) => ({
+    ...c, termStart: "2018-04-01", termEnd: "2021-03-31", autoRenew: true, renewMonths: 36 })) };
+  assert.equal(renewUnitOf(renewing.conditions), "3年");
+  assert.equal(pubTermsSuggestions(renewing)["更新期間"], "3年");
+  const patch = pubTermsPatch(renewing, { "締結日": "2026-10-19" });
+  assert.equal(patch.renewPeriod, "3年");
+  assert.equal(patch.autoRenew, true);
+  assert.equal((patch.titles as Array<{ term: string }>)[0]!.term, "2018.4.1〜2027.3.31（更新 2回）");
+  // 単位が揃わない・自動更新しないなら決めない（欄の値か既定の 1 年）。
+  assert.equal(renewUnitOf([{ autoRenew: true, termEnd: "2021-03-31", renewMonths: 36 },
+                            { autoRenew: true, termEnd: "2021-03-31", renewMonths: 12 }]), "");
+  assert.equal(renewUnitOf(context.conditions), "");
+});
+
 test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・翻訳版・一覧", () => {
   const patch = pubTermsPatch(context, {
     "締結日": "2026-10-01", "許諾開始日": "2026-10-01", "許諾終了日": "2031-09-30",
@@ -170,9 +185,17 @@ test("翻訳版の欄が空なら翻訳版の行を出さない。署名欄は�
 test("項目の宣言：一覧は array で手入力に回らない。既定値のある欄が揃っている", () => {
   const titles = PUB_TERMS_VARIABLES.find((v) => v.name === PUB_TITLES_FIELD);
   assert.equal(titles?.type, "array");
-  for (const name of ["紙の支払時期", "電子の集計期間", "電子の支払時期", "翻訳版の支払時期", "更新期間", "終了通知期限"]) {
+  for (const name of ["紙の支払時期", "電子の集計期間", "電子の支払時期", "翻訳版の支払時期"]) {
     assert.ok(PUB_TERMS_VARIABLES.find((v) => v.name === name)?.default, name);
   }
+  // 更新の単位・通知期限は欄に既定を持たない（条件・契約の文案が既定に負けないように）。本文が 1年・1か月で補う。
+  for (const name of ["更新期間", "終了通知期限"]) {
+    assert.equal(PUB_TERMS_VARIABLES.find((v) => v.name === name)?.default, undefined, name);
+  }
+  const bare = pubTermsPatch({ ...context, agreement: {} }, {});
+  assert.equal(bare.renewPeriod, "1年");
+  assert.equal(bare.noticeBefore, "1か月");
+  assert.equal(pubTermsPatch(context, {}).noticeBefore, "3か月", "契約の通知月数");
   assert.equal(new Set(PUB_TERMS_VARIABLES.map((v) => v.name)).size, PUB_TERMS_VARIABLES.length, "名前の重複なし");
 });
 
@@ -306,4 +329,49 @@ test("紙と電子で按分が違う作品：共同著作の行に両方、受�
   assert.equal(payeeShareText({ partyId: 21 }, print, digital), "甲の取り分 紙 60%・電子 66.6667%");
   assert.equal(payeeRateText({ partyId: 21 }, print), "6%（全体 10%）");
   assert.equal(payeeRateText({ partyId: 21 }, digital), "10%（全体 15%）");
+});
+
+// ---- 支払の表は条件明細の支払条件から ------------------------------------
+
+test("条件明細の支払条件から 電子の集計期間・支払時期、紙・翻訳版の支払時期を読む", async () => {
+  const { readPubPaymentTerms } = await import("./pub-terms.js");
+  assert.deepEqual(readPubPaymentTerms("毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。", "digital"),
+    { period: "7月1日〜翌年6月30日", pay: "10月末日" });
+  assert.deepEqual(readPubPaymentTerms("毎年1月1日～12月31日を集計期間とし、翌年3月末日までに支払う", "digital"),
+    { period: "1月1日〜12月31日", pay: "翌年3月末日" });
+  assert.deepEqual(readPubPaymentTerms("都度払い（刊行日を含む月の翌月末日払い）", "print"), { pay: "翌月末日" });
+  assert.deepEqual(readPubPaymentTerms("刷部数確定の都度、翌々月20日までに支払う。", "print"), { pay: "翌々月20日" });
+  assert.deepEqual(readPubPaymentTerms("乙が再許諾先から対価を受領した日の翌々月末日までに支払う", "translation"), { pay: "翌々月末日" });
+  assert.deepEqual(readPubPaymentTerms("毎年1月1日〜6月30日及び7月1日〜12月31日を集計期間とし、各集計期間の末日の翌々月末日までに支払う。", "digital"),
+    { period: "1月1日〜6月30日及び7月1日〜12月31日", pay: "各集計期間の末日の翌々月末日" });
+  assert.equal(readPubPaymentTerms("年2回", "digital"), null);
+});
+
+test("紙面の支払の表は条件明細の支払条件に連動し、欄の手入力より勝つ", () => {
+  const conds = [
+    { ...context.conditions[0], usageType: "pub_print", paymentTerms: "都度払い（刊行日を含む月の翌月末日払い）" },
+    { ...context.conditions[1], usageType: "pub_digital", paymentTerms: "毎年1月1日〜12月31日を集計期間とし、翌年3月末日までに支払う。" }
+  ];
+  const ctx = { ...context, conditions: conds };
+  const patch = pubTermsPatch(ctx, { "電子の集計期間": "7月1日〜翌年6月30日", "電子の支払時期": "10月末日" });
+  assert.equal(patch.digitalPeriod, "1月1日〜12月31日");
+  assert.equal(patch.payDigital, "翌年3月末日");
+  assert.equal(patch.payPrint, "翌月末日");
+  assert.equal(patch["電子の集計期間"], "1月1日〜12月31日", "欄も条件明細の値（計算）になる");
+  assert.deepEqual(pubTermsWarnings(ctx).filter((w) => /支払/.test(w.message)), []);
+});
+
+test("支払条件が読めない・食い違うときは警告し、読めなければ欄（空なら既定）で出る", () => {
+  const conds = [
+    { ...context.conditions[1], usageType: "pub_digital", paymentTerms: "年2回払い" },
+    { ...context.conditions[0], id: 5, conditionNo: "CL-X1", usageType: "pub_print", paymentTerms: "都度、翌月末日までに支払う" },
+    { ...context.conditions[2], id: 6, conditionNo: "CL-X2", usageType: "pub_print", paymentTerms: "都度、翌々月末日までに支払う" }
+  ];
+  const ctx = { ...context, conditions: conds };
+  const patch = pubTermsPatch(ctx, { "電子の支払時期": "11月末日" });
+  assert.equal(patch.payDigital, "11月末日", "読めなければ欄の手入力");
+  assert.equal(patch.digitalPeriod, "7月1日〜翌年6月30日", "欄も空なら既定");
+  const messages = pubTermsWarnings(ctx).map((w) => w.message).join("\n");
+  assert.match(messages, /支払の表の語を読めません：CL-2026-00452（年2回払い）/);
+  assert.match(messages, /紙の支払時期が条件明細ごとに違います/);
 });

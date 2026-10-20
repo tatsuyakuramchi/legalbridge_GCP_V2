@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import type { CloseBundle, CloseOverrides, ClosePreview, CloseResult } from "./closing-types.js";
+import { OwnerStaffPicker } from "./OwnerStaffPicker.js";
 
 /**
  * まとめて締める。試算 → 実行 → 結果。
@@ -30,7 +31,9 @@ export function ClosingRun({ scheduleIds, onRan, onResult, onDone, onCancel, onO
   // 締める前に直した額。入れた欄を離れたときに試算へ反映する。
   const [overrides, setOverrides] = useState<CloseOverrides>({});
   const [applied, setApplied] = useState<CloseOverrides>({});
-  const body = () => ({ scheduleIds, bundle: bundle ?? "condition", overrides: applied });
+  // 作る文書の担当者（計算書の「担当」・検収書の検収者）。選ばなければ案件の担当。
+  const [ownerStaffId, setOwnerStaffId] = useState<number | null>(null);
+  const body = () => ({ scheduleIds, bundle: bundle ?? "condition", overrides: applied, ownerStaffId });
 
   // 開いた時点で引く。ここでもう一度「まとめて締める」を出すと、押した人には
   // 同じ帯が2枚並んで見えて、1回目が効かなかったように読める。
@@ -110,6 +113,15 @@ export function ClosingRun({ scheduleIds, onRan, onResult, onDone, onCancel, onO
             </span>
           </div>
         )}
+
+        <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <strong>担当者</strong>
+          <div style={{ minWidth: 260 }}>
+            <OwnerStaffPicker value={ownerStaffId} onChange={setOwnerStaffId} disabled={busy}
+              emptyLabel="選ばない（案件の担当。無ければ事業名）" />
+          </div>
+          <span className="faint">作る計算書の「担当」に部署・名前・メール・電話が出ます（検収書は検収者）</span>
+        </div>
 
         <AmountFixes preview={p} overrides={overrides} busy={busy}
           onChange={setOverrides} onApply={(next) => setApplied(next)} />

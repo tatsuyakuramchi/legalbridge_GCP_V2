@@ -18,6 +18,8 @@ import { driftOf, driftSummary, FIELD_LABEL, type Drift, type DriftPart }
  * しかなかった。段で絞れば止まっている行だけが残る。
  *
  * ここは読む画面。押すとその段の画面へ移る（作る・開くは既存の口を使う）。
+ * 回の操作（実績を入れる・決済文書を作る・支払を立てる）はここではせず、取引管理へ送る
+ * （取引管理が 予定 → 実績 → 決済文書 → 支払 を 1 か所で持つ）。
  */
 
 const FILTERS: GridFilter[] =
@@ -75,8 +77,8 @@ function DocCell(
 }
 
 function Row(
-  { row, picked, onPick, onOpenCondition, onOpenDocument, onCompose, onRecordEvent,
-    onOpenPayments, onEdit, editing, indent }: {
+  { row, picked, onPick, onOpenCondition, onOpenDocument, onCompose, onOpenDeals,
+    onEdit, editing, indent }: {
     row: GridRow;
     picked: boolean;
     onPick: (on: boolean) => void;
@@ -84,9 +86,8 @@ function Row(
     onOpenDocument?: (documentId: number) => void;
     onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null,
                  templateKey?: string | null) => void;
-    onRecordEvent?: (conditionId: number) => void;
-    /** 支払タブへ移る。支払はここでは起こさず、既存の口へ渡す。 */
-    onOpenPayments?: () => void;
+    /** 取引管理をその条件で開く。実績・決済文書・支払はそこで進める。 */
+    onOpenDeals?: (conditionId: number) => void;
     /** まとめて直す欄を開く・閉じる（管理者のときだけ渡す）。 */
     onEdit?: () => void;
     editing?: boolean;
@@ -139,11 +140,13 @@ function Row(
         <DriftTag drift={drift} part="order" />
       </td>
       <td>
+        {/* 実績・決済文書・支払の操作は取引管理で（回ごとに 予定 → 実績 → 決済文書 → 支払 を持つ）。
+            ここは件数と直近を見せ、押すと取引管理をこの条件で開く。 */}
         {row.events.count
           ? <>
               <div>
-                {onRecordEvent
-                  ? <button className="linky" onClick={() => onRecordEvent(row.conditionId)}>
+                {onOpenDeals
+                  ? <button className="linky" title="取引管理をこの条件で開く" onClick={() => onOpenDeals(row.conditionId)}>
                       {row.events.count} 件
                     </button>
                   : `${row.events.count} 件`}
@@ -151,16 +154,14 @@ function Row(
               <div className="faint">直近 {row.events.latestOn ?? "—"}</div>
               <DriftTag drift={drift} part="event" />
             </>
-          : onRecordEvent
-            ? <button className="btn btn-sm" onClick={() => onRecordEvent(row.conditionId)}>記録する</button>
+          : onOpenDeals
+            ? <button className="btn btn-sm" title="取引管理をこの条件で開いて実績を入れる" onClick={() => onOpenDeals(row.conditionId)}>取引管理で入れる</button>
             : <span className="faint">—</span>}
       </td>
       <td>
-        {/* 検収書・計算書は実績から作る。実績が無いうちは作れないので、
-            押すと実績タブへ移る（そこで実績を選んで作る）。 */}
-        <DocCell doc={row.settlementDoc} make="実績から作る" onOpen={onOpenDocument}
-                 onMake={row.events.count && onRecordEvent
-                   ? () => onRecordEvent(row.conditionId) : undefined} />
+        {/* 検収書・計算書は実績から作る。取引管理の回から作業テーブルへ渡す。 */}
+        <DocCell doc={row.settlementDoc} make="取引管理で作る" onOpen={onOpenDocument}
+                 onMake={onOpenDeals ? () => onOpenDeals(row.conditionId) : undefined} />
         <DriftTag drift={drift} part="settlementDoc" />
       </td>
       <td>
@@ -170,10 +171,10 @@ function Row(
               <div style={{ marginTop: 3 }}><StatusTag kind="payment" value={row.payment.status} /></div>
               <DriftTag drift={drift} part="payment" />
             </>
-          : onOpenPayments
+          : onOpenDeals
             ? <button className="btn btn-sm"
-                      title="支払タブへ移る。検収書・計算書から起こすか、条件に宛てて起こす"
-                      onClick={onOpenPayments}>起こす</button>
+                      title="取引管理をこの条件で開く。支払は決済文書から立てる"
+                      onClick={() => onOpenDeals(row.conditionId)}>取引管理で立てる</button>
             : <span className="faint">—</span>}
       </td>
       <td style={{ whiteSpace: "nowrap" }}>
@@ -189,8 +190,7 @@ function Row(
 }
 
 export function MatterGrid(
-  { matterId, partyId, reloadKey, onOpenCondition, onOpenDocument, onCompose, onRecordEvent,
-    onOpenPayments, onFixDrift }: {
+  { matterId, partyId, reloadKey, onOpenCondition, onOpenDocument, onCompose, onOpenDeals, onFixDrift }: {
     matterId: number;
     /** 取引先で絞っているとき。工程表もそれに合わせる。 */
     partyId?: number | null;
@@ -199,10 +199,8 @@ export function MatterGrid(
     onOpenDocument?: (documentId: number) => void;
     onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null,
                  templateKey?: string | null) => void;
-    /** 実績タブをその条件で開く。検収書・計算書もそこから作る。 */
-    onRecordEvent?: (conditionId: number) => void;
-    /** 支払タブを開く。 */
-    onOpenPayments?: () => void;
+    /** 取引管理をその条件で開く（実績・検収書・計算書・支払はそこで進める）。 */
+    onOpenDeals?: (conditionId: number) => void;
     /** 「金額の直し」をこの案件で絞って開く。食い違いがあるときだけ出す。 */
     onFixDrift?: () => void;
   }
@@ -280,7 +278,7 @@ export function MatterGrid(
              return next;
            })}
            onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
-           onCompose={onCompose} onRecordEvent={onRecordEvent} onOpenPayments={onOpenPayments}
+           onCompose={onCompose} onOpenDeals={onOpenDeals}
            editing={open}
            onEdit={isAdmin ? () => { setNotice(null); setEditing(open ? null : r.conditionId); } : undefined} />,
       open ? (

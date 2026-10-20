@@ -34,6 +34,12 @@ import { prefixForKind } from "./import-kinds.js";
  * もらってから attachFile でファイルを付けて発行済みにする。
  */
 
+/** 相手から受け取る種類の文書（取込の既定）。当社が出す文書（発注書・検収書・計算書）は含めない。 */
+const INBOUND_KIND = /請求書|発注請書|請書|納品書|見積書|領収書|報告書|受領書/;
+export function isInboundKind(kind: string | null | undefined): boolean {
+  return INBOUND_KIND.test(String(kind ?? ""));
+}
+
 export interface ImportInput {
   /** 文書名。相手方から届いた契約書の題名など。 */
   title: string;
@@ -45,8 +51,15 @@ export interface ImportInput {
   /** 受領日・締結日。空なら今日。 */
   receivedOn?: string | null;
   note?: string | null;
+  /** 相手方が付けた文書番号の控え（A-072）。引用するとき 当社／相手方／両方 を選べる。 */
+  counterpartyDocNo?: string | null;
   /** デイリータスクの依頼。付けると依頼に繋がり、作業の進み具合に数えられる。 */
   requestId?: number | null;
+  /**
+   * 相手から受け取った文書か（A-074）。送付・受領を追わない。空なら種別から決める
+   * （請求書・発注請書・納品書・見積書・領収書・報告書は受け取ったもの）。
+   */
+  inbound?: boolean | null;
   file: { filename: string; mimeType: string; data: Buffer };
 }
 
@@ -57,6 +70,7 @@ export interface ReserveInput {
   matterId?: number | null;
   agreementId?: number | null;
   requestId?: number | null;
+  counterpartyDocNo?: string | null;
 }
 
 export interface AttachInput {
@@ -148,11 +162,12 @@ export class DocumentImportService {
         const documentNo = await this.assignNumber(client, documentKind);
         const inserted = await client.query(
           `INSERT INTO documents
-             (document_no, template_version_id, matter_id, agreement_id, status, manual_inputs)
-           VALUES ($1, NULL, $2, $3, 'draft', $4::jsonb)
+             (document_no, template_version_id, matter_id, agreement_id, status, manual_inputs, counterparty_doc_no)
+           VALUES ($1, NULL, $2, $3, 'draft', $4::jsonb, $5)
            RETURNING id`,
           [documentNo, input.matterId ?? null, input.agreementId ?? null,
-           JSON.stringify({ title, documentKind, imported: true, reserved: true, reservedBy: actor })]);
+           JSON.stringify({ title, documentKind, imported: true, reserved: true, reservedBy: actor }),
+           String(input.counterpartyDocNo ?? "").trim() || null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
         await this.linkConditions(client, id, conditionIds);
         await this.linkRequest(client, id, input.requestId, actor);
@@ -236,9 +251,9 @@ export class DocumentImportService {
         const inserted = await client.query(
           `INSERT INTO documents
              (document_no, template_version_id, matter_id, agreement_id, status,
-              manual_inputs, storage_url, issued_at, issued_by)
+              manual_inputs, storage_url, issued_at, issued_by, counterparty_doc_no, inbound)
            VALUES ($1, NULL, $2, $3, 'issued', $4::jsonb, $5,
-                   COALESCE($6::date, current_date), $7)
+                   COALESCE($6::date, current_date), $7, $8, $9)
            RETURNING id`,
           [documentNo, input.matterId ?? null, input.agreementId ?? null,
            JSON.stringify({
@@ -246,7 +261,9 @@ export class DocumentImportService {
              note: input.note ?? null, filename, mimeType, bytes: data.length,
              imported: true
            }),
-           stored.webViewLink, input.receivedOn ?? null, actor]);
+           stored.webViewLink, input.receivedOn ?? null, actor,
+           String(input.counterpartyDocNo ?? "").trim() || null,
+           input.inbound ?? isInboundKind(input.documentKind)]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await this.linkConditions(client, id, conditionIds);

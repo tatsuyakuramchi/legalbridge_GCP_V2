@@ -12,6 +12,7 @@ import { LineItemsEditor, type Row } from "./LineItems.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { SettledImport } from "./SettledImport.js";
 import { DocumentImport } from "./DocumentImport.js";
+import { SendMany } from "./SendMany.js";
 import { SearchSelect, staffOptions, type SearchOption } from "./SearchSelect.js";
 import { StatementBreakdown, type StatementLine, type StatementTotals } from "./StatementLines.js";
 import { LicenseTermsMatrix } from "./LicenseTermsMatrix.js";
@@ -20,6 +21,7 @@ import { Working } from "./Working.js";
 import { BLANK_INPUT_KEY, blankedNames } from "../server/documents/binding.js";
 import { PUB_TERMS_TEMPLATE_HINT } from "../server/documents/pub-terms.js";
 import type { DocumentRefs } from "../server/agreements/party-map.js";
+import { REF_NO_MODES, refNoModeOf } from "../server/documents/cite-no.js";
 
 interface TemplateRow {
   id: number; templateKey: string; label: string; category: string | null; numberPrefix: string | null;
@@ -173,7 +175,7 @@ function Refs(
 const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, openNonce, onOpen, onBack, flow }: {
+  { start, openDocumentId, openNonce, openAsDraft, openStep, onSelectDocument, onOpen, onBack, flow, onOpenWorkbench, onOpenWorkbenchFor }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /** デイリータスクから来たとき、その元の依頼。作った文書を依頼に繋ぐ。 */
               requestId?: number | null;
@@ -191,6 +193,10 @@ export function DocumentsWorkspace(
               supersedesId?: number | null; supersedesExtraIds?: number[]; reason?: string | null };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
+    /** 送る流れで開く段（URL から）。 */
+    openStep?: string | null;
+    /** 一覧で文書を選んだ（URL に写す）。 */
+    onSelectDocument?: (id: number) => void;
     /** 押すたびに増える番号。同じ文書をもう一度開く合図。 */
     openNonce?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -201,6 +207,12 @@ export function DocumentsWorkspace(
      * 一覧は出さない（この 1 枚を作って送る画面にする）。左の「文書」から開いたときは無い。
      */
     flow?: DocFlow | null;
+    /** 「新しく文書を作る」の行き先。文書を作るのは作業テーブル（一括も作業テーブルの一括モード）。 */
+    onOpenWorkbench?: (bulk?: "orders" | "settled") => void;
+    /** 訂正版・下敷きは作業テーブルの①で決める。文書と入り方を渡す。 */
+    onOpenWorkbenchFor?: (documentId: number, mode: "revise" | "derive") => void;
+    /** 開く文書を、詳細ではなく「直す」状態（フォーム）で開く（作業テーブルで作った訂正版・下敷きの下書き）。 */
+    openAsDraft?: boolean;
   } = {}
 ) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -260,10 +272,24 @@ export function DocumentsWorkspace(
   const [agreementId, setAgreementId] = useState<number | null>(null);
   /** 文書フォームで選ぶ値（基本契約・発注書番号・個別契約番号）。取引先⇔基本契約のマップと同じ引き方。 */
   const [refs, setRefs] = useState<DocumentRefs | null>(null);
+  /** 相手方番号の控えがある引用先（番号の出し方を選ばせるかの判断と、説明に出す）。 */
+  const theirNos = useMemo(() => {
+    const out: Array<{ ours: string; theirs: string }> = [];
+    const seen = new Set<string>();
+    const add = (ours: string | null | undefined, theirs: string | null | undefined) => {
+      if (!ours || !theirs || seen.has(ours)) return;
+      seen.add(ours); out.push({ ours, theirs });
+    };
+    for (const a of refs?.masters ?? []) add(a.agreementNo, a.counterpartyRefNo);
+    for (const d of [...(refs?.linkedOrders ?? []), ...(refs?.purchaseOrders ?? []), ...(refs?.terms ?? [])]) add(d.documentNo, d.counterpartyNo);
+    return out;
+  }, [refs]);
   /** 検収書の「発注番号」。空なら同じ条件から出ている発注書を自動で辿る。manual_inputs._parentPoNo。 */
   const [parentPoNo, setParentPoNo] = useState("");
   /** 計算書の「契約番号」の個別契約。空なら決定済みの条件書を自動で使う。manual_inputs._termsNo。 */
   const [termsNo, setTermsNo] = useState("");
+  /** 引用する番号の出し方（当社／相手方／両方）。manual_inputs._refNoMode。A-072 */
+  const [refNoMode, setRefNoMode] = useState<"ours" | "theirs" | "both">("ours");
   /** 案件が決まっているとき、その案件の条件だけを候補に出す（既定）。 */
   const [scopeToMatter, setScopeToMatter] = useState(true);
   /** 差し替え済み（改訂前）の版も候補に出すか。既定は出さない。 */
@@ -281,6 +307,9 @@ export function DocumentsWorkspace(
   const [listWhileComposing, setListWhileComposing] = useState(false);
   /** 旧版を開いている文書。既定は畳む（いまの版だけを読めるようにする）。 */
   const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
+  /** 一覧で選んで 1 通で送る文書（同じ相手先の決定済みのもの）。 */
+  const [pickedDocs, setPickedDocs] = useState<Set<number>>(new Set());
+  const [sendingPicked, setSendingPicked] = useState(false);
   // 決定した結果。番号だけでなく id も持つ（そのまま開けるように）。
   /** 決定した文書。again は「作成のフォームから決定した」（続けてもう1枚作れる）。 */
   const [issued, setIssued] = useState<{ id: number; documentNo: string; again?: boolean } | null>(null);
@@ -357,6 +386,7 @@ export function DocumentsWorkspace(
   useEffect(() => {
     if (!openDocumentId) return;
     setSelected(openDocumentId);
+    if (openAsDraft) void openDraft(openDocumentId);
     // openNonce も見る。一覧へ戻ってから同じ文書を開き直すと ID が変わらず、
     // ここが走らないので一覧のままになっていた。
   }, [openDocumentId, openNonce]);
@@ -410,12 +440,15 @@ export function DocumentsWorkspace(
       setDocuments(list);
       setConditions(c.conditions);
       setIntegrations(i);
-      if (!templateKey) {
-        const wanted = start?.templateKey
-          && t.templates.some((x) => x.templateKey === start.templateKey)
-          ? start.templateKey : null;
-        if (wanted ?? t.templates[0]) setTemplateKey(wanted ?? t.templates[0].templateKey);
-      }
+      // ひな形の既定。開き直した下書き（openDraft）が先にひな形を入れていることがあるので、
+      // この関数が持つ古い templateKey ではなく、いまの値を見て空のときだけ入れる。
+      // 以前は訂正版の下書きを開いた直後にここが走り、発注書の下書きなのにひな形が
+      // 一覧の先頭（支払通知書）に替わっていた（下書きはひな形を変えられないので直せない）。
+      const wanted = start?.templateKey
+        && t.templates.some((x) => x.templateKey === start.templateKey)
+        ? start.templateKey : null;
+      const fallback = wanted ?? t.templates[0]?.templateKey ?? "";
+      if (fallback) setTemplateKey((cur) => cur || fallback);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
@@ -533,9 +566,10 @@ export function DocumentsWorkspace(
   const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}),
                                   ...(parentPoNo ? { _parentPoNo: parentPoNo } : {}),
                                   ...(termsNo ? { _termsNo: termsNo } : {}),
+                                  ...(refNoMode !== "ours" ? { _refNoMode: refNoMode } : {}),
                                   // 訂正版だけ。新規の文書に印は無い。
                                   ...(reviseCtx ? { _showRevision: showRevision ? "1" : "0" } : {}) }),
-                         [manual, lines, ownerStaffId, parentPoNo, termsNo, reviseCtx, showRevision]);
+                         [manual, lines, ownerStaffId, parentPoNo, termsNo, refNoMode, reviseCtx, showRevision]);
 
   // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
   const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
@@ -710,6 +744,7 @@ export function DocumentsWorkspace(
         setLines(carried.arrays);
         if (carried.ownerStaffId) setOwnerStaffId(carried.ownerStaffId);
         if (carried.parentPoNo) setParentPoNo(carried.parentPoNo);
+        setRefNoMode(carried.refNoMode);
         if (carried.termsNo) setTermsNo(carried.termsNo);
       }
     });
@@ -721,15 +756,26 @@ export function DocumentsWorkspace(
   // **手入力では取り直さない。** 取り直すと入力欄が作り直されて、日本語の
   // 変換中に確定させられる（一文字打つたびに勝手に確定する）。項目の一覧は
   // ひな形と条件と実績だけで決まるので、打っている間は動かさなくてよい。
+  //
+  // ただし、選び直しで自動の値が変わるもの（当社担当者・発注書番号・個別契約番号・番号の出し方・
+  // 受取人）は渡す。渡さないと、当社担当者を替えても「発注元（自社）」の担当者名・部署・電話・
+  // メールが前の人のままに見えた（紙は替わっているのに、項目の一覧が古い）。
+  const chosenJson = JSON.stringify({
+    ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}),
+    ...(parentPoNo ? { _parentPoNo: parentPoNo } : {}),
+    ...(termsNo ? { _termsNo: termsNo } : {}),
+    ...(refNoMode !== "ours" ? { _refNoMode: refNoMode } : {}),
+    ...(payeePartyId ? { _payeePartyId: payeePartyId } : {})
+  });
   useEffect(() => {
     if (!templateKey) { setSpec(null); setRendered(null); return; }
     let live = true;
     api.post<PreviewResponse>("/documents/preview",
-      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: {}, agreementId, matterId, requestId, documentId: draft?.id ?? null })
+      { templateKey, conditionIds: picked, eventIds: pickedEvents, manualInputs: JSON.parse(chosenJson), agreementId, matterId, requestId, documentId: draft?.id ?? null })
       .then((r) => { if (live) { setSpec(r); setSpecKey(templateKey); } })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id, chosenJson]);
 
   // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
   useEffect(() => {
@@ -995,24 +1041,6 @@ export function DocumentsWorkspace(
     finally { setBusy(false); }
   }
 
-  /**
-   * 下敷きにして次を作る。発注書から検収書、契約書から覚書、同じ発注のもう1枚。
-   * 前の文書は退かない。できた下書きをそのままフォームに載せる。
-   */
-  async function derive(id: number, templateKey: string) {
-    setBusy(true); setError(null); setIssued(null);
-    try {
-      const r = await api.post<{ id: number }>(`/documents/${id}/derive`, { templateKey });
-      await reload();
-      await openDraft(r.id);
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
-  }
-
-  /**
-   * 下書きを上のフォームに載せる。ひな形・条件・手入力をそのまま引き継ぐ。
-   * 作り直した下書きを直して発行するには、ここを通る。
-   */
   async function openDraft(id: number) {
     setError(null); setIssued(null); setBusy(true);
     try {
@@ -1040,9 +1068,10 @@ export function DocumentsWorkspace(
       setOwnerStaffId(Number(d.manualInputs?._ownerStaffId) > 0 ? Number(d.manualInputs._ownerStaffId) : "");
       setParentPoNo(String(d.manualInputs?._parentPoNo ?? ""));
       setTermsNo(String(d.manualInputs?._termsNo ?? ""));
+      setRefNoMode(refNoModeOf(d.manualInputs?._refNoMode));
       setShowRevision(String(d.manualInputs?._showRevision ?? "1") !== "0");
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
-        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo" || k === "_showRevision") continue;
+        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo" || k === "_refNoMode" || k === "_showRevision") continue;
         if (Array.isArray(v)) arrays[k] = v as Row[];
         else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
@@ -1194,17 +1223,18 @@ export function DocumentsWorkspace(
       <div className="stack">
         {!flow && !composing && !draft && !bulk && (
           <div className="row">
-            <button className="btn primary" onClick={() => setComposing(true)}>
-              新しく文書を作る
+            <button className="btn primary" onClick={() => (onOpenWorkbench ? onOpenWorkbench() : setComposing(true))}
+                    title="文書を作る・登録する・繋ぐのは作業テーブルで">
+              新しく文書を作る（作業テーブルへ）
             </button>
             {/* 何がまとまるのか分からない名前だった。CSV から作れるのは
                 発注書だけなので、そう書く。 */}
-            <button className="btn" onClick={() => { setBulk(true); setSettled(false); }}>
+            <button className="btn" onClick={() => (onOpenWorkbench ? onOpenWorkbench("orders") : (setBulk(true), setSettled(false)))}>
               ↑ 発注書をまとめて作る
             </button>
             {/* 上は「これから出す紙」、こちらは「もう終わった取引」。
                 同じ CSV の口でも作るものが違うので、入口から分ける。 */}
-            <button className="btn" onClick={() => { setSettled(true); setBulk(false); }}>
+            <button className="btn" onClick={() => (onOpenWorkbench ? onOpenWorkbench("settled") : (setSettled(true), setBulk(false)))}>
               ↑ 検収済みをまとめて入れる
             </button>
             <span className="faint">
@@ -1389,6 +1419,25 @@ export function DocumentsWorkspace(
                     </button>
                   )}
                 </div>
+                {/* 引用する番号の出し方（A-072）。基本契約・発注書・個別契約のどれかに相手方番号の控えが
+                    あるときだけ出す。控えが無ければ当社番号しか出せないので、選ばせない。 */}
+                {picked.length > 0 && partyId && theirNos.length > 0 && (
+                  <label className="field" style={{ marginTop: 6 }}>
+                    <span>番号の出し方</span>
+                    <span className="stack" style={{ gap: 2 }}>
+                      <div className="chips" role="radiogroup" aria-label="番号の出し方">
+                        {REF_NO_MODES.map((m) => (
+                          <button key={m.value} type="button" className="chip" role="radio" aria-checked={refNoMode === m.value}
+                                  aria-pressed={refNoMode === m.value} title={m.hint} onClick={() => setRefNoMode(m.value)}>{m.label}</button>
+                        ))}
+                      </div>
+                      <small className="faint">
+                        引用する番号（基本契約番号・発注書番号・個別契約番号）を、当社の番号で出すか、相手方が付けた番号で出すか、両方並べるか。
+                        控えがあるもの：{theirNos.map((t) => `${t.ours} → ${t.theirs}`).join("、")}。控えの無い番号は当社番号のまま
+                      </small>
+                    </span>
+                  </label>
+                )}
                 {/* 基本契約。発注書の準拠条項と「基本契約名 / 番号」はここから出る。
                     条件に契約が付いていれば黙ってそれを使うが、付いていない条件や
                     別の契約に基づく発注では人が選ぶ。 */}
@@ -1605,6 +1654,7 @@ export function DocumentsWorkspace(
             <LicenseTermsMatrix
               deals={lines.v3_conds ?? null} materials={lines.v3_lcs ?? null}
               sublicensees={lines.v3_sublicensees ?? null}
+              calcBase={lines.v3_calc_base_rows ?? null}
               extras={lines.v3_special_extras ?? null}
               seedDeals={spec?.lines.find((l) => l.name === "v3_conds")?.rows ?? []}
               seedMaterials={spec?.lines.find((l) => l.name === "v3_lcs")?.rows ?? []}
@@ -1771,10 +1821,35 @@ export function DocumentsWorkspace(
               )}
             </div>
             <ListCount shown={documents.length} keyword={search} onClear={() => setKeyword("")} />
+            {(() => {
+              // 選んだ文書を 1 通で送る。相手先が揃っていないと送れない（A社への便りに B社の書類が付く）。
+              const chosen = documents.filter((d) => pickedDocs.has(d.id));
+              const partiesOf = [...new Set(chosen.map((d) => d.counterparty ?? "（相手先なし）"))];
+              return (
+                <div className="panel-bd stack" style={{ paddingTop: 0, gap: 6 }}>
+                  <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button className="btn btn-sm" disabled={!chosen.length || partiesOf.length > 1 || sendingPicked}
+                            onClick={() => setSendingPicked(true)}>
+                      選んだ {chosen.length} 件を 1 通で送る
+                    </button>
+                    {!!chosen.length && <button className="btn btn-sm ghost" onClick={() => setPickedDocs(new Set())}>選択を外す</button>}
+                    <span className="faint">決定済みの文書に印を付けて、同じ相手先のものを 1 通に。文面は送る画面で選べます</span>
+                    {partiesOf.length > 1 && <span className="warn">相手先が混ざっています（{partiesOf.join("・")}）。1 つの相手先に揃えてください</span>}
+                  </div>
+                  {sendingPicked && chosen.length > 0 && (
+                    <SendMany title={`${partiesOf[0]} へ ${chosen.length} 件を 1 通で送る`}
+                      documents={chosen.map((d) => ({ id: d.id, documentNo: d.documentNo, counterparty: d.counterparty }))}
+                      channels={integrations?.channels ?? []} isAdmin={me?.user?.role === "admin" || me?.user === undefined}
+                      onDone={() => { setSendingPicked(false); setPickedDocs(new Set()); void reload(); }}
+                      onClose={() => setSendingPicked(false)} />
+                  )}
+                </div>
+              );
+            })()}
             <div className="tablewrap">
               <table>
                 <thead><tr>
-                  <th>文書番号</th><th>種別</th><th>条件明細 ／ 案件</th><th>状態</th>
+                  <th></th><th>文書番号</th><th>種別</th><th>条件明細 ／ 案件</th><th>状態</th>
                 </tr></thead>
                 <tbody>
                   {heads.map((d) => {
@@ -1790,6 +1865,16 @@ export function DocumentsWorkspace(
                                 e.preventDefault(); setSelected(d.id);
                               }
                             }}>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {d.status === "issued" && (
+                              <input type="checkbox" checked={pickedDocs.has(d.id)} aria-label={`${d.documentNo ?? d.id} を選ぶ`}
+                                onChange={() => setPickedDocs((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
+                                  return next;
+                                })} />
+                            )}
+                          </td>
                           <td className="code">
                             {d.documentNo ?? "（未決定）"}
                             {/* 訂正版の下書きは、どの版を直しているのかが分からないと
@@ -1816,7 +1901,7 @@ export function DocumentsWorkspace(
                         </tr>
                         {older.length > 0 && (
                           <tr>
-                            <td colSpan={4} style={{ paddingTop: 2, paddingBottom: 6 }}>
+                            <td colSpan={5} style={{ paddingTop: 2, paddingBottom: 6 }}>
                               <button className="fold" onClick={(e) => {
                                 e.stopPropagation();
                                 setUnfolded((prev) => {
@@ -1834,6 +1919,7 @@ export function DocumentsWorkspace(
                         {open && older.map((o) => (
                           <tr key={o.id} className={`older${o.id === selected ? " sel" : ""}`}
                               tabIndex={0} onClick={() => setSelected(o.id)}>
+                            <td></td>
                             <td className="code faint">{o.documentNo ?? "（未決定）"}</td>
                             <td className="faint">{o.templateLabel ?? "—"}</td>
                             <td className="faint">同上</td>
@@ -1844,7 +1930,7 @@ export function DocumentsWorkspace(
                     );
                   })}
                   {!documents.length && (
-                    <tr><td colSpan={4} className="faint">
+                    <tr><td colSpan={5} className="faint">
                       {search.trim() ? `「${search}」に一致する文書はありません` : "文書がありません"}
                     </td></tr>
                   )}
@@ -1873,13 +1959,14 @@ export function DocumentsWorkspace(
               onOpen={onOpen} onChanged={() => void reload()}
               onEditDraft={(id) => void openDraft(id)}
               onIssueDraft={(id) => void issueDraft(id)}
-              onReissue={(id, no) => void reissue(id, no)}
-              onDerive={(id, key) => void derive(id, key)}
+              onReissue={(id, no) => (onOpenWorkbenchFor ? onOpenWorkbenchFor(id, "revise") : void reissue(id, no))}
+              onDerive={(id) => (onOpenWorkbenchFor ? onOpenWorkbenchFor(id, "derive") : setError("下敷きにして次を作るのは作業テーブルからです"))}
               onVoid={(id, no) => void voidDocument(id, no)}
               onStore={(id) => void store(id)}
               isAdmin={me?.user?.role === "admin" || me?.user === undefined}
               onLinkCondition={() => setLinkConditions(true)}
               openConditions={linkConditions}
+              openStep={current.id === openDocumentId ? openStep ?? null : null}
               onSelect={setSelected} />
           )}
           </div>
@@ -1897,10 +1984,10 @@ export function DocumentsWorkspace(
  */
 export function carryOverInputs(manual: Record<string, unknown>): {
   values: Record<string, string>; arrays: Record<string, Row[]>;
-  ownerStaffId: number | null; parentPoNo: string; termsNo: string;
+  ownerStaffId: number | null; parentPoNo: string; termsNo: string; refNoMode: "ours" | "theirs" | "both";
 } {
   const computed = new Set(["statementMode", "rs_bundle_lines", "rs_bundle_tax", "rs_stage_notes",
-                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo", "_showRevision"]);
+                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo", "_refNoMode", "_showRevision"]);
   const values: Record<string, string> = {};
   const arrays: Record<string, Row[]> = {};
   for (const [k, v] of Object.entries(manual)) {
@@ -1911,6 +1998,7 @@ export function carryOverInputs(manual: Record<string, unknown>): {
   return {
     values, arrays,
     ownerStaffId: Number(manual._ownerStaffId) > 0 ? Number(manual._ownerStaffId) : null,
-    parentPoNo: String(manual._parentPoNo ?? ""), termsNo: String(manual._termsNo ?? "")
+    parentPoNo: String(manual._parentPoNo ?? ""), termsNo: String(manual._termsNo ?? ""),
+    refNoMode: refNoModeOf(manual._refNoMode)
   };
 }

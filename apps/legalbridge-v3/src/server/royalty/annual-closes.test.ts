@@ -99,6 +99,20 @@ test("一括：電子出版の有効な料率条件を拾い、試算は書か�
   assert.deepEqual(only.targets.map((t) => t.conditionId), [5, 6]);
 });
 
+test("相手先が個人の条件は、立てる回の支払日（末日）を同じ月の 20 日にする", async () => {
+  const db = new FakeDatabase((text) => {
+    if (text.includes("c.usage_type = $1")) {
+      return [{ id: 5, condition_no: "CL-5", name: "A", payment_terms: null, work_title: "作品A", party_name: "作家A" },
+              { id: 6, condition_no: "CL-6", name: "B", payment_terms: null, work_title: "作品B", party_name: "出版社B" }];
+    }
+    if (text.includes("p.kind = 'individual'")) return [{ id: 5 }];
+    return undefined;
+  });
+  const svc = new AnnualCloseService(db, { schedules: { list: async () => ({ lines: [] }), replace: async () => ({}) } });
+  const r = await svc.preview({ usageType: "pub_digital", from: "2025-07-01", count: 1 });
+  assert.deepEqual(r.targets.map((t) => [t.conditionId, t.adding[0]!.payOn]), [[5, "2026-10-20"], [6, "2026-10-31"]]);
+});
+
 test("浮いた実績のある条件だけに絞れる", async () => {
   const db = new FakeDatabase((text) => {
     if (text.includes("c.usage_type = $1")) {
@@ -118,4 +132,20 @@ test("浮いた実績のある条件だけに絞れる", async () => {
   assert.deepEqual(only.targets.map((t) => t.conditionId), [5]);
   assert.equal(only.targets[0].adding[0].label, "2025年3月〜2026年8月");
   assert.deepEqual([only.targets[0].attaching, only.attaching], [1, 1]);
+});
+
+test("年 2 回・年 4 回の回：年数 × 回数を立て、条件の集計期間の区切りに合わせる", async () => {
+  const { digitalPaymentTerms, DIGITAL_CYCLE_DEFAULTS } = await import("../conditions/pub-digital-cycle.js");
+  const half = digitalPaymentTerms(DIGITAL_CYCLE_DEFAULTS.half_year);
+  const lines = annualLines({ from: "2025-08-01", count: 1, paymentTerms: half, usageType: "pub_digital",
+                              cycle: "half_year", cycleStartMonth: 1 }, []);
+  assert.deepEqual(lines.map((l) => [l.serviceFrom, l.serviceTo, l.payOn, l.label]), [
+    ["2025-07-01", "2025-12-31", "2026-02-28", "2025年7〜12月"],
+    ["2026-01-01", "2026-06-30", "2026-08-31", "2026年1〜6月"]
+  ]);
+  const quarter = annualLines({ from: "2026-01-01", count: 1, paymentTerms: digitalPaymentTerms(DIGITAL_CYCLE_DEFAULTS.quarter),
+                                usageType: "pub_digital", cycle: "quarter", cycleStartMonth: 1 }, []);
+  assert.equal(quarter.length, 4);
+  assert.deepEqual(quarter.map((l) => l.dueOn), ["2026-03-31", "2026-06-30", "2026-09-30", "2026-12-31"]);
+  assert.equal(quarter[0].payOn, "2026-05-31");
 });

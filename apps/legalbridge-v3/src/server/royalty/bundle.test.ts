@@ -124,3 +124,16 @@ test("共著の受取人宛ては宛先で見る：自分の条件と共著者�
 test("1件も無ければ断る", () => {
   assert.throws(() => bundleTotals([]), (e: unknown) => e instanceof DomainError);
 });
+
+test("源泉は 1 枚の税込合計に 1 回掛ける（条件ごとに切り捨ててから足さない。支払と同じ額）", () => {
+  const p = (net: number, tax: number, wh: number) => ({
+    condition: { currency: "JPY", counterpartyId: 2534 }, payee: null, events: [], reported: {},
+    fee: { actual_ex_tax: net, tax_amount: tax, total_inc_tax: net + tax },
+    payment: { withholdingTax: wh, netTransfer: net + tax - wh, withholdingEnabled: true, withholdingParty: null },
+    amounts: { netMinor: net }
+  }) as any;
+  // 295,926 → 税 29,592 → 源泉 33,235 ／ 2,928 → 税 292 → 源泉 328。別々なら 33,563、1 回なら 33,564。
+  const t = bundleTotals([p(295926, 29592, 33235), p(2928, 292, 328)]);
+  assert.equal(t.withholdingTax, 33564);
+  assert.equal(t.netTransfer, 295926 + 29592 + 2928 + 292 - 33564);
+});

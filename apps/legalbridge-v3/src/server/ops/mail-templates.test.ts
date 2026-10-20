@@ -47,3 +47,14 @@ test("いつも入れる cc はメールアドレスだけ。カンマ区切り�
   assert.deepEqual(parseMailTemplates({ partyCc: "keiri@example.com, keiri@example.com" }).value.partyCc, ["keiri@example.com"]);
   assert.ok(parseMailTemplates({ partyCc: ["経理"] }).errors.some((e) => /メールアドレスの形ではありません/.test(e)));
 });
+
+test("契約書の統一のご案内：相手先を差し込み、2 週間以内の返信をお願いする", () => {
+  const r = renderMail(DEFAULT_MAIL_TEMPLATES.templates.contract_unify, "（署名）", {
+    相手先: "作家甲", 会社名: "株式会社アークライト"
+  });
+  assert.equal(r.subject, "【株式会社アークライト】利用許諾契約書（統一書式）のご確認のお願い");
+  assert.match(r.body, /^作家甲 様\n/);
+  assert.match(r.body, /作家甲様とのお取引について/);
+  assert.match(r.body, /本メールの受信から2週間以内に/);
+  assert.match(r.body, /（署名）$/);
+});

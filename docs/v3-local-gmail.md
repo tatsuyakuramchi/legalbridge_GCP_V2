@@ -1,0 +1,225 @@
+# 予備系（ローカル版）からメール（Gmail）を送る・Drive に保存する・CloudSign で送る
+
+本番が止まっている間、予備系で決定した文書を予備系から相手へ送るための設定。
+既定はメールを止めている（`GMAIL_MODE=off`）。使うときだけ開ける。
+
+送った記録も予備系の DB に残るので、**予備系で書く記録（`ops backup-begin`）を始めてから**送ること。
+復旧後に `ops backup-export` で本番へ持ち帰ると、本番にも「送った」記録が入る
+（`docs/v3-backup-merge.md`）。記録を始めずに送ると、本番には送った跡が残らない。
+
+## しくみ
+
+本番の V3 と同じく、Workspace のドメイン全体委任で送信元（`GMAIL_SENDER`）の代理として送る。
+署名に使うサービスアカウント（`GMAIL_DELEGATION_SA`）も本番と同じものを使う。
+
+本番（Cloud Run）はそのサービスアカウントとして動くので鍵が要らない。予備系の PC は GCP の外なので、
+**人のログイン（`keys/adc.json`）でそのサービスアカウントに署名を頼む**。組織ポリシーで
+サービスアカウントの鍵が作れなくても使える。
+
+要るもの:
+
+| 何 | どこで | 一度だけ |
+|---|---|---|
+| 本番と同じ送信元・署名用 SA の値 | Cloud Shell で読む（下の 1） | ○ |
+| ログインする人に、署名用 SA の「サービス アカウント トークン作成者」 | Cloud Console の IAM（下の 2） | ○ |
+| 人のログイン `keys/adc.json` | 予備系の PC（同期で使っているものと同じ） | ○（期限が切れたら取り直す） |
+
+ドメイン全体委任は本番の設定をそのまま使うので、Workspace 側の作業は要らない。
+
+## 1. 本番の値を読む（Cloud Shell）
+
+```bash
+gcloud run services describe legalbridge-v3 --region=asia-northeast1 \
+  --format='value(spec.template.spec.containers[0].env)' | tr ';' '\n' | grep -E 'GMAIL_SENDER|GMAIL_DELEGATION_SA'
+```
+
+`GMAIL_SENDER`（送信元のアドレス）と `GMAIL_DELEGATION_SA`（`…@…iam.gserviceaccount.com` または
+`…-compute@developer.gserviceaccount.com`）を控える。`GMAIL_DELEGATION_SA` が出なければ、
+本番は実行中の SA で署名している。その SA は次で分かる:
+
+```bash
+gcloud run services describe legalbridge-v3 --region=asia-northeast1 \
+  --format='value(spec.template.spec.serviceAccountName)'
+```
+
+## 2. ログインする人に署名の権限を付ける（Cloud Console・一度だけ）
+
+IAM と管理 → サービス アカウント → 1 で控えた SA → 「権限」→「アクセス権を付与」で、
+予備系の PC でログインする人（自分の Google アカウント）に
+**サービス アカウント トークン作成者（roles/iam.serviceAccountTokenCreator）** を付ける。
+
+Cloud Shell なら:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding <GMAIL_DELEGATION_SA> \
+  --member="user:<ログインする人のアドレス>" --role="roles/iam.serviceAccountTokenCreator"
+```
+
+この権限は「その SA として署名できる」強いものなので、付ける人を絞る。
+
+## 3. 予備系の PC で設定する（PowerShell、infra\local で）
+
+1. 人のログインが無ければ取る（同期で使っていればそのままでよい）:
+   ```powershell
+   docker compose run --rm login
+   ```
+   `keys\adc.json` ができる。
+
+2. `.env` に足す（`.env.example` の末尾にひな形がある）。まずは **dry_run**（送らずに中身だけ見る）で:
+   ```
+   GMAIL_MODE=dry_run
+   GMAIL_SENDER=<1 で控えた送信元>
+   GMAIL_DELEGATION_SA=<1 で控えた SA>
+   GMAIL_ADC_PATH=/keys/adc.json
+   DISPATCH_ALLOWLIST=<自分のアドレス>
+   READ_ONLY=false
+   ```
+   `READ_ONLY=true` のままだとメールは送られない（読み取り専用の予備系からは送らない）。
+
+3. app を上げ直す:
+   ```powershell
+   docker compose up -d app
+   ```
+
+## 4. 試してから開ける
+
+1. **dry_run** のまま、文書の送付画面で送る操作をする。「検証モードのため送信しません」と出て、
+   宛先・件名・本文・添付が見えれば設定は読めている。
+2. `.env` を `GMAIL_MODE=live` にして `docker compose up -d app`。`DISPATCH_ALLOWLIST` に自分の
+   アドレスだけを入れたまま、自分宛てに 1 通送る。届くこと、送信元が本番と同じこと、PDF が付いていることを確かめる。
+3. 問題が無ければ `DISPATCH_ALLOWLIST=` を空にして `docker compose up -d app`（宛先の制限を外す）。
+
+## 終わったら
+
+本番が戻ったら、予備系のメールを止める:
+
+```
+GMAIL_MODE=off
+READ_ONLY=true
+```
+
+```powershell
+docker compose up -d app
+```
+
+そのあと `docs/v3-backup-merge.md` の手順で本番へ持ち帰る。
+
+## Drive へ保存する（任意）
+
+既定では、予備系で作った PDF などは手元の `infra\local\data\files` に置かれ、本番へ持ち帰るときに
+本文から作り直す。予備系からも本番と同じ Drive のフォルダへ保存したいときは、次を足す。
+**本番が Drive に使っているサービスアカウントになりすまして**保存するので、フォルダ・共有・
+ファイルの持ち主は本番と同じになる。
+
+1. 本番の値を読む（Cloud Shell）:
+   ```bash
+   gcloud run services describe legalbridge-v3 --region=asia-northeast1 \
+     --format='value(spec.template.spec.containers[0].env)' | tr ';' '\n' \
+     | grep -E 'GOOGLE_DRIVE_FOLDER_ID|DRIVE_ENVIRONMENT_TAG|DRIVE_MATTER_PARENT_FOLDER_ID|GOOGLE_SERVICE_ACCOUNT_KEY_PATH'
+   gcloud run services describe legalbridge-v3 --region=asia-northeast1 \
+     --format='value(spec.template.spec.serviceAccountName)'
+   ```
+   `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` が出なければ、本番は実行中の SA（2 行目）で Drive を使っている。
+   それを `DRIVE_IMPERSONATE_SA` にする。出た場合は、その鍵の SA（鍵の `client_email`）を使う。
+2. その SA に、ログインする人の Token Creator を付ける（メールと同じ SA なら 2 で付け済み）。
+3. `.env` に足して `docker compose up -d app`:
+   ```
+   DRIVE_STORAGE=drive
+   GOOGLE_DRIVE_FOLDER_ID=<本番の値>
+   DRIVE_ENVIRONMENT_TAG=<本番の値>
+   DRIVE_MATTER_PARENT_FOLDER_ID=<本番の値。無ければ空>
+   DRIVE_IMPERSONATE_SA=<1 の SA>
+   GMAIL_ADC_PATH=/keys/adc.json
+   ```
+   `GMAIL_ADC_PATH`（人のログイン）はメールを開けないときも要る。
+4. 決定済みの文書で「Drive に保存」を押し、本番の Drive のフォルダにファイルができること、
+   画面のリンクが `https://drive.google.com/…` になることを確かめる。
+
+Drive に保存した文書は、本番へ持ち帰ったあともそのリンクのまま使える（ローカルにしか無い
+`/local-files/` のリンクだけが持ち帰りで外される）。戻すときは `DRIVE_STORAGE=local`。
+
+## CloudSign で送る（任意）
+
+既定では予備系から CloudSign へは送らない（`CLOUDSIGN_MODE=off`）。そのときは CloudSign の画面から直接
+送り、文書の「CloudSign の状態を記録」で送った・締結したを手で入れる。予備系から本番と同じ CloudSign の
+アカウントへ署名依頼を作りたいときは、次を足す。
+
+CloudSign は client_id だけでつながる（人のログイン `keys/adc.json` は要らない）。
+
+1. 本番の client_id を読む（Cloud Shell）:
+   ```bash
+   gcloud secrets versions access latest --secret=cloudsign-client-id --project legalbridge-488506
+   ```
+   これは CloudSign のアカウントの鍵なので、`.env` 以外（チャット・メール・リポジトリ）に貼らない。
+
+2. `.env` に足す（`.env.example` の末尾にひな形がある）。まずは **dry_run** で:
+   ```
+   CLOUDSIGN_MODE=dry_run
+   CLOUDSIGN_CLIENT_ID=<1 の値>
+   DISPATCH_ALLOWLIST=<自分のアドレス>
+   READ_ONLY=false
+   ```
+   `CLOUDSIGN_AUTO_SEND` は既定（false）のままにする。CloudSign に下書きができるだけで、相手には
+   届かない。中身を CloudSign の画面で確かめてから、そこで送信する。
+
+3. `docker compose up -d app` → 署名依頼の操作で「検証モードのため送信しません」と宛先・書類が出ること。
+
+4. `CLOUDSIGN_MODE=live` にして上げ直し、自分を署名者にした 1 件で CloudSign に下書きができることを確かめる
+   （確かめたら CloudSign の画面で消す）。問題が無ければ `DISPATCH_ALLOWLIST=` を空にする。
+
+**気をつけること**
+
+- **本番と同じアカウントを使う。** 本番と予備系の両方から同じ文書を送ると、二重に依頼が出る。
+  予備系から送るのは本番が止まっている間だけ。メールと同じく `ops backup-begin` のあとで送る
+  （送った記録が本番へ持ち帰られる）。
+- **締結の知らせ（webhook）は予備系に届かない。** CloudSign は知らせを、アカウントに登録した URL
+  （本番）へ送る。本番が止まっている間の知らせは失われる。次のどちらかで補う。
+  - **手で記録する（勧める）**：相手が締結したら、文書の「CloudSign の状態を記録」で「締結した」と締結日を入れる。
+    本番が戻ってから、止まっていた間に締結したものを CloudSign の画面で見て記録してもよい。
+  - **トンネルで受ける**：`docker compose --profile tunnel up -d` で外からの口を開け、`.env` に
+    `WEBHOOK_TOKEN=<長い乱数>` を足して上げ直す。CloudSign の設定で webhook の URL を一時的に
+    `https://<トンネルのホスト>/internal/webhooks/cloudsign?key=<WEBHOOK_TOKEN>` に替える
+    （`/internal/` は人のログインの外で、合言葉で守る）。Cloudflare Access を掛けているなら、
+    Access 側でも `/internal/webhooks/*` をログインなし（Bypass）にする。
+    **本番が戻ったら、webhook の URL を必ず本番に戻す。**
+- 終わったら `CLOUDSIGN_MODE=off`（`WEBHOOK_TOKEN` も空に）にして `docker compose up -d app`。
+
+## うまくいかないとき
+
+| 画面・ログに出る言葉 | 見るところ |
+|---|---|
+| 接続情報が設定されていません | `GMAIL_SENDER` が空。`.env` と `docker compose up -d app` |
+| 読み取り専用で動作しています | `READ_ONLY=false` にしていない |
+| 検証中の宛先許可リストに入っていません | `DISPATCH_ALLOWLIST` に無い宛先（cc・bcc も含む） |
+| GMAIL_DELEGATION_SA（署名に使う SA）が要ります | `.env` の `GMAIL_DELEGATION_SA` が空 |
+| ログインの認証情報…からトークンを取れませんでした | `keys\adc.json` が無いか期限切れ。`docker compose run --rm login` で取り直す |
+| Drive の保存で「権限がありません（403）」 | なりすました SA が本番のフォルダに入れない。`DRIVE_IMPERSONATE_SA` が本番の Drive の SA と同じか |
+| `unable to impersonate`（403） | ログインした人に、`DRIVE_IMPERSONATE_SA` の Token Creator が付いていない |
+| `EACCES: permission denied, open '/keys/adc.json'` | app が認証情報を読めない（古い login で作ったファイル）。`docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json` |
+| `invalid_grant`・`reauth related error (invalid_rapt)` | 組織の再認証ポリシーでログインが切れた。ログインし直して写す（下の「ログインし直す」）。app の上げ直しは要らない |
+| CloudSign のトークンを取得できませんでした・CloudSign（401・403） | `CLOUDSIGN_CLIENT_ID` が違う（本番の `cloudsign-client-id` と同じか） |
+| CloudSign には送信する書類が必要です | 文書の PDF ができていない。先に決定して PDF を作る |
+| JWT に署名できませんでした（403…） | 2 の権限がログインした人に付いていない（付けてから数分かかることがある） |
+| 代理トークンを得られませんでした（unauthorized_client） | 署名用 SA が本番と違う（ドメイン全体委任が付いていない SA）。1 の値を見直す |
+
+アプリのログは `docker compose logs -f app`。
+
+### ログインし直す
+
+組織の再認証ポリシーで、人のログインは一定時間（組織の設定。たとえば 1 日）で切れる。
+切れると `invalid_rapt` で送れなくなるので、予備系で送る日は最初にログインし直しておく（同期も同じ認証情報を使う）。
+
+PC の gcloud が Google につながる環境なら:
+
+```powershell
+gcloud auth application-default login --project legalbridge-488506
+Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" keys\adc.json -Force
+docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json
+```
+
+PC の gcloud が `Failed to establish a new connection`（社内の通信の制限）で落ちるなら、コンテナでログインする:
+
+1. PowerShell ①（infra\local）で `docker compose run --rm login`。`Enter the output of the above command:` で待つ
+2. ① に出た `gcloud auth application-default login --remote-bootstrap="…"` を、**別の PowerShell ②** に丸ごと貼って実行（`y` → ブラウザで許可）
+3. ② の最後に出る `https://localhost:8085/?state=…&code=…` を ① に貼って Enter
+4. 「認証情報を keys/adc.json に置きました」と出れば完了。`(Get-Item keys\adc.json).LastWriteTime` が今になっていること

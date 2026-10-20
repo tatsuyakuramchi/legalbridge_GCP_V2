@@ -4,6 +4,7 @@ import { dateStr, int, inTransaction, str, type Transactable } from "./core/db.j
 import { DomainError, statusFor } from "./core/errors.js";
 import { recordAudit } from "./core/audit.js";
 import { buildZip, safeFileName, type ZipEntry } from "./core/zip.js";
+import { matterLinesText, parseMonthlyReport, reportWarnings } from "./conditions/monthly-report.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
 import { ConditionWriteService } from "./conditions/write-service.js";
@@ -24,9 +25,11 @@ import { isStatementTemplate } from "./documents/template-context.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
 import { LeftoverService } from "./ops/leftovers-service.js";
+import { TidyService } from "./ops/tidy-service.js";
 import { tally } from "./ops/leftovers.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
+import { DocumentPartyService, SuccessionService, DOCUMENT_PARTY_ROLES } from "./parties/multi-party.js";
 import { MatterRepository } from "./matters/repository.js";
 import { MatterMergeService } from "./matters/merge-service.js";
 import { MatterGridService } from "./matters/grid-service.js";
@@ -74,9 +77,15 @@ import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
 import { AnnualCloseService } from "./royalty/annual-closes.js";
 import { StatementPeriodReissueService } from "./royalty/statement-reissue.js";
+import { IndividualPayDayService } from "./conditions/individual-pay-day.js";
+import { TermDefaultService } from "./conditions/term-default.js";
+import { NoticeFillService } from "./documents/notice-fill.js";
+import { StatementMergeService } from "./royalty/statement-merge.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
+import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner } from "./documents/unsent-send.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
+import { citeContractRef, loadCounterpartyNos, refNoModeOf } from "./documents/cite-no.js";
 import { PUB_STATEMENT_KEY, StatementIssuer } from "./royalty/statement-issue.js";
 import { applyLineLabels, stageNotesOf } from "./documents/royalty-patch.js";
 import { conditionContracts, contractCandidates } from "./conditions/contracts.js";
@@ -112,6 +121,13 @@ import {
   buildAdapters, buildBacklogReader, buildDispatch, buildMailSource, buildSlackViews
 } from "./integrations/factory.js";
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
+import { intakeViewHtml } from "./intake/view-page.js";
+import { WorkbenchPlanService } from "./workbench/plan-service.js";
+import { DealsService } from "./deals/service.js";
+import { PayDocsService } from "./paydocs/service.js";
+import { periodicLines } from "./conditions/write-service.js";
+import { payDateFromTerms } from "./conditions/payment-terms.js";
+import { SETTLEMENT_CYCLE_MONTHS } from "./conditions/settlement-mode.js";
 import { IntakeRequestService } from "./intake/request-service.js";
 import { DailyTaskRepository, type DailyTab } from "./tasks/repository.js";
 import { TaskWriteService } from "./tasks/write-service.js";
@@ -183,10 +199,14 @@ export function createRoutes(database: Transactable) {
     chosen: { agreementId?: number | null; manualInputs?: Record<string, unknown> } = {}
   ) => {
     const termsNo = String(chosen.manualInputs?._termsNo ?? "").trim() || null;
+    // 番号の出し方（当社／相手方／両方。A-072）。
+    const mode = refNoModeOf(chosen.manualInputs?._refNoMode);
+    const nos = mode === "ours" ? new Map<string, string>() : await loadCounterpartyNos(database,
+      { agreementIds: [chosen.agreementId], conditionIds: previews.map((p) => p.condition.id), numbers: [termsNo] });
     const out: ReturnType<typeof bundleLinesFor> = [];
     for (const p of previews) {
-      const ref = await inContractRef(database, p.condition.id,
-        { masterAgreementId: chosen.agreementId ?? null, termsNo, payeePartyId: p.payee?.partyId ?? null });
+      const ref = citeContractRef(mode, nos, await inContractRef(database, p.condition.id,
+        { masterAgreementId: chosen.agreementId ?? null, termsNo, payeePartyId: p.payee?.partyId ?? null }));
       out.push(...withInContract(bundleLinesFor(p), ref));
     }
     return out;
@@ -205,6 +225,9 @@ export function createRoutes(database: Transactable) {
   const workCredits = new WorkCreditService(database);
   const partyWrites = new PartyWriteService(database);
   const partyMerge = new PartyMergeService(database);
+  // 複数当事者（文書の関係当事者・契約の地位承継）。parties/multi-party.ts
+  const documentParties = new DocumentPartyService(database);
+  const successions = new SuccessionService(database);
   const matterMerge = new MatterMergeService(database);
   const matterGraph = new MatterGraphService(database);
   const receivables = new ReceivableRepository(database);
@@ -251,6 +274,150 @@ export function createRoutes(database: Transactable) {
   });
   // 作業テーブル（デイリータスク・案件の中の作業。A-064）。
   const dailyTasks = new DailyTaskRepository(database, intakeRepo);
+  // 作業テーブル（文書を作る・登録する・繋ぐ 1 枚の画面）の材料。
+  const workbench = new WorkbenchPlanService(database, { matters, conditions, documents, agreements, intake: intakeRepo });
+  router.get("/workbench/plan", asyncRoute(async (req, res) => {
+    const q = z.object({
+      taskId: z.coerce.number().int().positive().optional(),
+      requestId: z.coerce.number().int().positive().optional(),
+      matterId: z.coerce.number().int().positive().optional(),
+      partyId: z.coerce.number().int().positive().optional(),
+      workIds: z.string().optional(),
+      // 取引管理の回から（決済文書を作る）。
+      conditionId: z.coerce.number().int().positive().optional(),
+      scheduleId: z.coerce.number().int().positive().optional(),
+      eventId: z.coerce.number().int().positive().optional(),
+      conditionIds: z.string().optional(),
+      pattern: z.enum(["game_in", "game_out", "pub_in", "pub_out", "service", "other"]).optional(),
+      // 文書の画面から（訂正版・下敷き）。
+      documentId: z.coerce.number().int().positive().optional(),
+      documentMode: z.enum(["revise", "derive"]).optional()
+    }).parse(req.query);
+    res.json(await workbench.plan({
+      taskId: q.taskId ?? null, requestId: q.requestId ?? null, matterId: q.matterId ?? null, partyId: q.partyId ?? null,
+      conditionId: q.conditionId ?? null, scheduleId: q.scheduleId ?? null, eventId: q.eventId ?? null,
+      conditionIds: String(q.conditionIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
+      workIds: String(q.workIds ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
+      pattern: q.pattern ?? null,
+      documentId: q.documentId ?? null, documentMode: q.documentMode ?? null
+    }));
+  }));
+  // 支払文書（A-074）：回ごとの 起点 → 文書 → 送付 → 受領 → 支払 を 1 本の表で。
+  const paydocs = new PayDocsService(database);
+  const idList = z.array(z.coerce.number().int().positive()).min(1).max(500);
+  router.get("/paydocs", asyncRoute(async (req, res) => {
+    const q = z.object({
+      view: z.enum(["todo", "all", "past"]).default("todo"),
+      tile: z.enum(["wait", "make", "draft", "unsent", "await", "overdue", "nopay"]).optional(),
+      trigger: z.enum(["active", "passive"]).optional(),
+      templateKey: z.string().trim().max(60).optional(),
+      month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+      partyId: z.coerce.number().int().positive().optional(),
+      matterId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      conditionId: z.coerce.number().int().positive().optional(),
+      q: z.string().trim().max(100).optional()
+    }).parse(req.query);
+    res.json(await paydocs.list({ ...q, tile: q.tile ?? null, trigger: q.trigger ?? null }));
+  }));
+  router.get("/paydocs/by-work", asyncRoute(async (req, res) => {
+    const { ids } = z.object({ ids: z.string().max(2000) }).parse(req.query);
+    const workIds = ids.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 300);
+    const counts = await paydocs.countsByWork(workIds);
+    res.json({ works: [...counts.entries()].map(([id, c]) => ({ id, ...c })) });
+  }));
+  router.post("/paydocs/sent", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentIds: idList, via: z.string(), on: z.string().optional().nullable(),
+                         memo: z.string().max(500).optional().nullable() }).parse(req.body ?? {});
+    res.json(await paydocs.markSent(b.documentIds, b, actor(res)));
+  }));
+  router.post("/paydocs/sent/clear", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentId: z.coerce.number().int().positive(), reason: z.string().max(500).optional().nullable() })
+      .parse(req.body ?? {});
+    res.json(await paydocs.clearSent(b.documentId, b.reason ?? null, actor(res)));
+  }));
+  router.post("/paydocs/received", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentIds: idList, via: z.string(), on: z.string().optional().nullable(),
+                         memo: z.string().max(500).optional().nullable() }).parse(req.body ?? {});
+    res.json(await paydocs.recordReceipt(b.documentIds, b, actor(res)));
+  }));
+  router.post("/paydocs/received/clear", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentId: z.coerce.number().int().positive(), reason: z.string().max(500).optional().nullable() })
+      .parse(req.body ?? {});
+    res.json(await paydocs.clearReceipt(b.documentId, b.reason ?? null, actor(res)));
+  }));
+  router.post("/paydocs/inbound", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ documentId: z.coerce.number().int().positive(), inbound: z.boolean() }).parse(req.body ?? {});
+    res.json(await paydocs.setInbound(b.documentId, b.inbound, actor(res)));
+  }));
+  router.get("/paydocs/past", asyncRoute(async (req, res) => {
+    const { cutoff } = z.object({ cutoff: z.string().optional() }).parse(req.query);
+    const preview = await paydocs.pastPreview(cutoff ?? null);
+    res.json({ ...preview, sample: await paydocs.pastSample(preview.cutoff, 30) });
+  }));
+  router.post("/paydocs/past", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({ cutoff: z.string().optional().nullable(), receipt: z.boolean().default(true) }).parse(req.body ?? {});
+    res.json(await paydocs.markPast(b, actor(res)));
+  }));
+  router.get("/paydocs/plan-candidates", asyncRoute(async (req, res) => {
+    const q = z.object({ workId: z.coerce.number().int().positive().optional(),
+                         partyId: z.coerce.number().int().positive().optional() }).parse(req.query);
+    res.json({ candidates: await paydocs.planCandidates(q) });
+  }));
+  router.post("/paydocs/plans", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = z.object({
+      conditionId: z.coerce.number().int().positive(), plannedOn: z.string(),
+      quantity: z.coerce.number().nonnegative().optional().nullable(), label: z.string().max(200).optional().nullable(),
+      note: z.string().max(500).optional().nullable(), sourceDocumentId: z.coerce.number().int().positive().optional().nullable()
+    }).parse(req.body ?? {});
+    res.json(await paydocs.addPlan(b, actor(res)));
+  }));
+  router.post("/paydocs/plans/:id/drop", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    res.json(await paydocs.dropPlan(id, actor(res)));
+  }));
+  // 取引管理：条件明細 × 回 を 1 本の表で（予定 → 実績 → 決済文書 → 支払）。
+  const deals = new DealsService(database);
+  router.get("/deals", asyncRoute(async (req, res) => {
+    const q = z.object({
+      view: z.enum(["due", "late", "pay", "all"]).default("due"),
+      partyId: z.coerce.number().int().positive().optional(),
+      matterId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      conditionId: z.coerce.number().int().positive().optional(),
+      kind: z.enum(["service", "license"]).optional(),
+      q: z.string().trim().max(100).optional()
+    }).parse(req.query);
+    res.json(await deals.list({ partyId: q.partyId ?? null, matterId: q.matterId ?? null, workId: q.workId ?? null,
+                                conditionId: q.conditionId ?? null, kind: q.kind ?? null, q: q.q ?? null }, q.view));
+  }));
+  /**
+   * 期間で決まる型の回を、周期と契約期間から並べる（A-071）。
+   * 以前は「算定期間を並べる」の画面で周期と開始日を手で選んでいた。型に周期を持たせたので、
+   * 回は型から出す。金額は定額・定期課金なら 1 回あたりの額、料率は 0（報告が来るまで決まらない）。
+   * 既に回があるときは何もしない（延長で足すのは条件の改訂から）。
+   */
+  router.post("/deals/schedule", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { conditionId } = z.object({ conditionId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      const c = await conditions.find(conditionId);
+      if (!c) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
+      if (c.settlementMode !== "term_bound" || !c.settlementCycle) {
+        throw new DomainError("VALIDATION", "回を型から並べられるのは「期間で決まる」型だけです。条件の決済の型を確かめてください");
+      }
+      if (!c.termStart || !c.termEnd) throw new DomainError("VALIDATION", "契約期間（開始・終了）を条件に入れてから並べてください");
+      const existing = await database.query("SELECT count(*)::int AS n FROM condition_schedules WHERE condition_id = $1", [conditionId]);
+      if (Number((existing.rows[0] as { n: number }).n) > 0) {
+        throw new DomainError("CONFLICT", "この条件には既に回が並んでいます。延長で足すときは条件の改訂（期間）から");
+      }
+      const months = SETTLEMENT_CYCLE_MONTHS[c.settlementCycle];
+      const amount = c.pricingModel === "fixed" || c.pricingModel === "subscription" ? (c.flatAmount ?? 0) : 0;
+      const lines = periodicLines(c.termStart, c.termEnd, months, amount, c.name)
+        .map((l) => ({ ...l, payOn: payDateFromTerms(l.dueOn ?? "", c.paymentTerms) }));
+      if (!lines.length) throw new DomainError("VALIDATION", "契約期間から回を組めませんでした（開始日と終了日を確かめてください）");
+      const result = await conditionSchedules.replace(conditionId, lines, actor(res));
+      res.status(201).json({ lines: lines.length, result });
+    }));
   const taskWrites = new TaskWriteService(database,
     (requestId, text, actor) => intakeRequests.notifyRequester(requestId, text, actor));
   const backlogPull = new BacklogPullJob(database, buildBacklogReader(), () => ({
@@ -259,7 +426,8 @@ export function createRoutes(database: Transactable) {
   const matterFolders = new MatterFolderStorageService(
     database,
     config.driveMatterParentFolderId
-      ? new GoogleMatterDriveFolderService({ keyFilePath: config.driveKeyFilePath || undefined })
+      ? new GoogleMatterDriveFolderService({ keyFilePath: config.driveKeyFilePath || undefined,
+                                             impersonate: (process.env.DRIVE_IMPERSONATE_SA ?? "").trim() || undefined })
       : new LocalMatterDriveFolderService(),
     config.driveMatterParentFolderId
   );
@@ -390,10 +558,17 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.json(await agreementMap.orderAgreementToDocument(Number(req.params.id), actor(res)));
     }));
+  // 基本契約なしの発注書を、基本契約の下に入れる（発注書の条件明細を基本契約に載せる）。
+  router.post("/agreement-map/orders/:id/master", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const body = z.object({ agreementId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await agreementMap.orderUnderMaster(Number(req.params.id), body.agreementId, actor(res)));
+    }));
   // 契約に繋がっていない基本契約書・条件書から契約を立てる（番号・件名は文書のまま）。
   router.post("/agreement-map/documents/:id/agreement", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      res.status(201).json(await agreementMap.agreementFromDocument(Number(req.params.id), actor(res)));
+      const body = z.object({ as: z.enum(["master", "standalone"]).nullable().optional() }).parse(req.body ?? {});
+      res.status(201).json(await agreementMap.agreementFromDocument(Number(req.params.id), actor(res), { as: body.as ?? null }));
     }));
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
@@ -724,12 +899,19 @@ export function createRoutes(database: Transactable) {
         Number(req.params.matterId), Number(req.params.id), actor(res)));
     }));
 
-  const attachDocSchema = z.object({ documentId: z.number().int().positive() });
+  // mode：attach（この案件の文書に。他の案件に付いていれば CONFLICT）／reference（参照。元の案件に残す）／move（付け替え）
+  const attachDocSchema = z.object({ documentId: z.number().int().positive(), mode: z.enum(["attach", "reference", "move"]).optional() });
   router.post("/matters/:id/documents",
     requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const { documentId } = attachDocSchema.parse(req.body ?? {});
-      res.json(await matterLinks.attachDocument(Number(req.params.id), documentId, actor(res)));
+      const { documentId, mode } = attachDocSchema.parse(req.body ?? {});
+      res.json(await matterLinks.attachDocument(Number(req.params.id), documentId, actor(res), mode ?? "attach"));
+    }));
+  // 文書を契約の記録に繋ぐ（基本契約書を「既にある文書」として使うとき。案件には付けない）。
+  router.post("/agreements/:id/documents", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { documentId } = z.object({ documentId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await agreements.attachDocument(Number(req.params.id), documentId, actor(res)));
     }));
 
   router.delete("/matters/:id/documents/:documentId",
@@ -768,6 +950,48 @@ export function createRoutes(database: Transactable) {
     }) });
   }));
 
+  // 許諾期間の入っていない条件に「3 年・3 年ごとに自動更新」を入れ、決定済みの条件書を訂正版で出し直す。
+  // 試算してから直す。conditions/term-default.ts。/conditions/:id より前に置く（:id に取られる）。
+  const termDefault = new TermDefaultService(database, {
+    reissue: (id, reason, who) => issues.reissue(id, reason, who),
+    issue: (id, who, extra) => issues.issue(id, who, extra)
+  });
+  router.get("/conditions/term-default", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await termDefault.preview());
+  }));
+  router.post("/conditions/term-default", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(2000) }).parse(req.body ?? {});
+      res.status(201).json(await termDefault.run(input.conditionIds, actor(res)));
+    }));
+  // 通知先の空いた契約書（出版の基本契約書・条件書）を、通知先を入れて訂正版で出し直す。documents/notice-fill.ts
+  const noticeFill = new NoticeFillService(database, {
+    reissue: (id, reason, who) => issues.reissue(id, reason, who),
+    issue: (id, who, extra) => issues.issue(id, who, extra)
+  });
+  const staffIdOf = (v: unknown) => z.coerce.number().int().positive().nullable().optional().parse(v === "" ? null : v) ?? null;
+  router.get("/notice-fill", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await noticeFill.preview(staffIdOf(req.query.ownerStaffId)));
+  }));
+  router.post("/notice-fill", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        documentIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        ownerStaffId: z.coerce.number().int().positive().nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await noticeFill.run(input.documentIds, input.ownerStaffId ?? null, actor(res)));
+    }));
+  router.get("/conditions/term-default/reissue", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await termDefault.reissueTargets());
+  }));
+  router.post("/conditions/term-default/reissue", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        documentIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        reason: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await termDefault.reissue(input.documentIds, actor(res), input.reason));
+    }));
   /**
    * 条件を CSV で書き出す。見出しは取込（license_conditions）と同じなので、
    * 書き出して直してそのまま取り込める。絞り込みは一覧と同じものを受ける。
@@ -907,13 +1131,18 @@ export function createRoutes(database: Transactable) {
   }));
   router.get("/intake", asyncRoute(async (req, res) => {
     const tab = String(req.query.state ?? "new");
-    if (!["new", "on_hold", "updated", "all"].includes(tab)) {
-      throw new DomainError("VALIDATION", "state は new / on_hold / updated / all のいずれかです");
+    if (!["new", "on_hold", "updated", "all", "direct"].includes(tab)) {
+      throw new DomainError("VALIDATION", "state は new / on_hold / updated / all / direct のいずれかです");
     }
     res.json({ items: await intakeRepo.list(tab as IntakeTab) });
   }));
   router.get("/intake/:id", asyncRoute(async (req, res) => {
     res.json(await intakeRepo.find(Number(req.params.id)));
+  }));
+  // 依頼の原票を別タブで見る（読むだけの 1 枚）。作業テーブルで条件明細を登録しながら見比べる。
+  router.get("/intake/:id/view", asyncRoute(async (req, res) => {
+    const d = await intakeRepo.find(Number(req.params.id));
+    res.type("html").send(intakeViewHtml({ request: d.request, replies: d.replies, conditions: d.conditions }));
   }));
   const intakeKind = z.enum(["work", "outsourcing", "single"]);
   const intakeDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional();
@@ -965,6 +1194,12 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       if (!input.documentId && !input.documentNo) throw new DomainError("VALIDATION", "文書番号を入れてください");
       res.json(await intakeRequests.linkDocument(Number(req.params.id), input, actor(res)));
+    }));
+  // 条件明細を依頼に繋ぐ（作業テーブルから。登録した条件・この相手先の既存の条件）。
+  router.post("/intake/:id/conditions", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(100) }).parse(req.body ?? {});
+      res.json(await intakeRequests.linkConditions(Number(req.params.id), input.conditionIds, actor(res)));
     }));
   router.delete("/intake/:id/documents/:documentId", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -1120,6 +1355,24 @@ export function createRoutes(database: Transactable) {
     }
     await assignAccountOwner(database, id, staffId, actor(res));
     res.json({ ok: true, staffId });
+  }));
+
+  // 相手方が付けた文書番号の控え（A-072）。当社番号とは別に持ち、引用するときに選べる。
+  // 決定済みの文書にもあとから控えられる（相手方の番号は相手方の文書が届いてから分かる）。
+  router.put("/documents/:id/counterparty-no", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    const { counterpartyDocNo } = z.object({ counterpartyDocNo: z.string().trim().max(120).nullable() }).parse(req.body ?? {});
+    const value = counterpartyDocNo?.trim() || null;
+    const r = await database.query(
+      `UPDATE documents SET counterparty_doc_no = $2 WHERE id = $1
+       RETURNING document_no, (SELECT counterparty_doc_no FROM documents WHERE id = $1) AS before`, [id, value]);
+    if (!r.rows.length) throw new DomainError("NOT_FOUND", `文書 ${id} が見つかりません`);
+    await recordAudit(database, {
+      actor: actor(res), action: "document.counterparty_no", targetType: "document", targetId: id,
+      detail: { documentNo: (r.rows[0] as { document_no: string | null }).document_no, counterpartyDocNo: value }
+    });
+    res.json({ ok: true, counterpartyDocNo: value });
   }));
 
   // 束ね1つ分の Excel。groupKey は preview の key をそのまま渡す。
@@ -1776,6 +2029,20 @@ export function createRoutes(database: Transactable) {
    * 自動更新（A-039）。期間そのものは termStart / termEnd。
    * 更新した回数は持たない（終了日・単位・基準日から数える）。
    */
+  // 準委任の時間精算（A-073）。要る値の組み合わせはサービス側（normalizeTimeSettlement）で確かめる。
+  const timeSettlementFields = {
+    timeSettlement: z.boolean().nullable().optional(),
+    hoursIncluded: z.coerce.number().min(0).max(999999).nullable().optional(),
+    overageUnitAmount: z.coerce.number().int().min(0).nullable().optional(),
+    shortfallUnitAmount: z.coerce.number().int().min(0).nullable().optional()
+  };
+  // 決済の型（A-071）。要る値の組み合わせはサービス側（normalizeSettlementRule）で確かめる。
+  const settlementRuleFields = {
+    settlementMode: z.enum(["once", "fixed_count", "term_bound", "open"]).nullable().optional(),
+    settlementCount: z.coerce.number().int().min(1).max(1000).nullable().optional(),
+    settlementCycle: z.enum(["month", "quarter", "half_year", "year"]).nullable().optional(),
+    settlementGraceDays: z.coerce.number().int().min(0).max(3650).nullable().optional()
+  };
   const renewalFields = {
     autoRenew: z.boolean().nullable().optional(),
     renewMonths: z.coerce.number().int().min(1).max(120).nullable().optional(),
@@ -1816,7 +2083,9 @@ export function createRoutes(database: Transactable) {
     paymentTerms: z.string().trim().max(500).nullable().optional(),
     // 契約形式（請負・委任など）。支払条件とは別の欄。
     contractForm: z.string().trim().max(60).nullable().optional(),
+    ...timeSettlementFields,
     cycle: z.string().trim().max(60).nullable().optional(),
+    ...settlementRuleFields,
     notes: z.string().trim().max(4000).nullable().optional(),
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
@@ -1844,7 +2113,12 @@ export function createRoutes(database: Transactable) {
    */
   const publishingTermsSchema = z.object({
     ratePct: z.coerce.number().min(0).max(100),
-    exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
+    exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
+    // 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。pub-digital-cycle.ts。
+    cycle: z.enum(["year", "half_year", "quarter"]).nullable().optional(),
+    startMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
+    payMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
+    payDay: z.union([z.literal("end"), z.coerce.number().int().min(1).max(28)]).nullable().optional()
   }).nullable().optional();
   const publishingTranslationSchema = z.object({
     ratePct: z.coerce.number().min(0).max(100),
@@ -1905,6 +2179,9 @@ export function createRoutes(database: Transactable) {
     sublicensable: z.boolean().nullable().optional(),
     sublicenseConsentDefault: z.enum(["covered", "required"]).nullable().optional(),
     statementTiming: z.enum(["periodic", "event"]).nullable().optional(),
+    // 決済の型（A-071）。束で 1 つ。
+    settlementMode: z.enum(["once", "fixed_count", "term_bound", "open"]).nullable().optional(),
+    settlementCycle: z.enum(["month", "quarter", "half_year", "year"]).nullable().optional(),
     rows: z.array(z.object({
       usageType: z.enum(
         CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),
@@ -1936,6 +2213,7 @@ export function createRoutes(database: Transactable) {
     paymentTerms: z.string().trim().max(300).nullable().optional(),
     contractForm: z.string().trim().max(60).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
+    ...timeSettlementFields,
     rows: z.array(z.object({
       kind: z.enum(["service", "expense", "fee"]),
       name: z.string().trim().max(300).nullable().optional(),
@@ -1950,7 +2228,8 @@ export function createRoutes(database: Transactable) {
       contractForm: z.string().trim().max(60).nullable().optional(),
       deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
       workId: z.coerce.number().int().positive().nullable().optional(),
-      taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional()
+      taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional(),
+      ...timeSettlementFields
     })).min(1).max(60),
     license: z.object({
       mode: z.enum(["separate", "included", "free", "none"]),
@@ -2034,6 +2313,7 @@ export function createRoutes(database: Transactable) {
     deliveryDue: z.string().date().nullable().optional(),
     paymentTerms: z.string().trim().max(300).nullable().optional(),
     contractForm: z.string().trim().max(60).nullable().optional(),
+    ...timeSettlementFields,
     taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
     workId: z.coerce.number().int().positive().nullable().optional(),
@@ -2046,6 +2326,8 @@ export function createRoutes(database: Transactable) {
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
     orderNo: z.string().trim().max(60).nullable().optional(),
     usageType: usageTypeSchema,
+    ...settlementRuleFields,
+    reportDueDays: z.coerce.number().int().min(0).max(366).nullable().optional(),
     // 直接編集のときだけ通る（サービス側で確かめる）。
     kind: z.enum(["license", "product", "service", "expense", "fee"]).optional(),
     pricingModel: z.enum(["fixed", "unit_rate", "revenue_rate", "subscription", "none"]).optional()
@@ -2169,6 +2451,7 @@ export function createRoutes(database: Transactable) {
         everyMonths: input.everyMonths ?? 1, amount: input.amount,
         triggerKind: input.triggerKind ?? "periodic", labelSuffix: input.labelSuffix,
         paymentTerms: input.paymentTerms ?? condition?.paymentTerms ?? null,
+        partyKind: condition?.counterparty?.kind ?? null,
         // 契約形式も条件が持っている。組んだ全回に同じものを入れる。
         contractForm: condition?.contractForm ?? null
       }) });
@@ -2215,7 +2498,9 @@ export function createRoutes(database: Transactable) {
     overrides: z.record(z.string(), z.object({
       amount: z.coerce.number().positive().nullable().optional(),
       note: z.string().max(500).nullable().optional()
-    })).optional()
+    })).optional(),
+    // 作る文書の担当者（計算書の「担当」・検収書の検収者）。省けば案件の担当。
+    ownerStaffId: z.coerce.number().int().positive().nullable().optional()
   });
   router.post("/closing/preview",
     requireRole("admin", "legal"),
@@ -2276,8 +2561,38 @@ export function createRoutes(database: Transactable) {
     deliverable: z.string().trim().max(2000).nullable().optional(),
     inspectedOn: z.string().date().nullable().optional(),
     inspectorDept: z.string().trim().max(120).nullable().optional(),
-    inspectorName: z.string().trim().max(120).nullable().optional()
+    inspectorName: z.string().trim().max(120).nullable().optional(),
+    // 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。役務提供完了通知書に出る。
+    hours: z.coerce.number().min(0).max(999999).nullable().optional(),
+    reportReceivedOn: z.string().date().nullable().optional()
   };
+
+  /**
+   * 月次業務報告書（Excel）を読む（A-073）。実績入力の欄を埋めるための読み取りだけで、何も書かない。
+   * 実績時間・提出日・案件別の実績・経費明細を返し、Excel の設定値（基本枠・基本報酬・基準単価）が
+   * 条件明細と違えば警告する（正は条件明細）。回（scheduleId）を渡せば対象月も突き合わせる。
+   */
+  router.post("/conditions/:id/report-import",
+    requireRole("admin", "legal"),
+    express.raw({ type: () => true, limit: "26mb" }),
+    asyncRoute(async (req, res) => {
+      const condition = await conditions.find(Number(req.params.id));
+      if (!condition) throw new DomainError("NOT_FOUND", `条件 ${req.params.id} が見つかりません`);
+      const scheduleId = req.query.scheduleId ? Number(req.query.scheduleId) : null;
+      const round = scheduleId
+        ? ((await database.query("SELECT service_from, service_to FROM condition_schedules WHERE id = $1 AND condition_id = $2",
+                                  [scheduleId, condition.id])).rows[0] as { service_from: unknown; service_to: unknown } | undefined)
+        : undefined;
+      let report;
+      try {
+        report = parseMonthlyReport(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+      } catch (e) {
+        throw new DomainError("VALIDATION", `月次業務報告書として読めません：${(e as Error).message}`);
+      }
+      const warnings = reportWarnings(report, condition,
+        round ? { serviceFrom: dateStr(round.service_from), serviceTo: dateStr(round.service_to) } : null);
+      res.json({ report, warnings, matterLines: matterLinesText(report) });
+    }));
 
   // 予定明細を実績に移す。予定と実績を繋ぐのは condition_events.schedule_id
   // だけで、これまで書く処理が無かった。
@@ -2481,6 +2796,8 @@ export function createRoutes(database: Transactable) {
     deliverable: z.string().trim().max(2000).nullable().optional(),
     inspectorDept: z.string().trim().max(120).nullable().optional(),
     inspectorName: z.string().trim().max(120).nullable().optional(),
+    hours: z.coerce.number().min(0).max(999999).nullable().optional(),
+    reportReceivedOn: z.string().date().nullable().optional(),
     varianceNote: z.string().trim().max(2000).nullable().optional(),
     followUp: z.string().trim().max(2000).nullable().optional(),
     followUpDueOn: z.string().date().nullable().optional(),
@@ -2567,9 +2884,11 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = eventDocSchema.parse(req.body ?? {});
       const conditionId = Number(req.params.id);
+      // 実績を渡さないと、検収書の納品日・検収日・明細が条件の総額 1 行になる。
       const draft = await issues.createDraft({
         templateKey: input.templateKey, conditionIds: [conditionId],
-        matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {}
+        matterId: input.matterId ?? null, manualInputs: input.manualInputs ?? {},
+        eventIds: input.eventIds
       }, actor(res));
       // 発行は必須項目が埋まっていないと弾かれる。下書きを残すと、
       // 押し直すたびに使われない行が積もるので、その場で捨てる。
@@ -2799,12 +3118,55 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.status(201).json(await annualCloses.run(annualSchema.parse(req.body ?? {}), actor(res)));
     }));
+  // 個人への支払日を 20 日に揃える（すでに立っている回）。試算してから直す。conditions/individual-pay-day.ts
+  const individualPayDay = new IndividualPayDayService(database);
+  router.get("/schedules/individual-pay-day", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await individualPayDay.preview());
+  }));
+  router.post("/schedules/individual-pay-day", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ scheduleIds: z.array(z.coerce.number().int().positive()).min(1).max(2000) }).parse(req.body ?? {});
+      res.status(201).json(await individualPayDay.run(input.scheduleIds, actor(res)));
+    }));
+  // 同じ人・同じ回の計算書が 2 枚（受取人としての分と本人の分）に分かれたものを 1 枚にまとめる。
+  // 未払いの支払は取り消して 1 本に立て直す。royalty/statement-merge.ts
+  const statementMerge = new StatementMergeService(database, statementIssuer, payments);
+  router.get("/royalty-ledger/statements/merge", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    res.json(await statementMerge.preview());
+  }));
+  router.post("/royalty-ledger/statements/merge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ keys: z.array(z.string().min(1).max(200)).min(1).max(500) }).parse(req.body ?? {});
+      res.json(await statementMerge.run(input.keys, actor(res)));
+    }));
+
+  // ---- 整理する：取引先の木を 1 本ずつ直す（docs/v3-tidy.md）----
+  const tidy = new TidyService(database, {
+    map: agreementMap, merge: partyMerge, term: termDefault, notice: noticeFill, statements: statementMerge,
+    related: documentParties, successions
+  });
+  router.get("/tidy/parties", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json({ parties: await tidy.parties({
+      keyword: String(req.query.q ?? ""), issuesOnly: String(req.query.issues ?? "") === "1"
+    }) });
+  }));
+  router.get("/tidy/parties/:id", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const tree = await tidy.forParty(Number(req.params.id));
+    if (!tree) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(tree);
+  }));
   // 出した計算書の対象期間を回の期間に揃えて、訂正版で一括で出し直す。試算してから出す。
   const periodReissue = new StatementPeriodReissueService(database, statementIssuer);
   const reissueUsage = z.enum(["pub_digital", "pub_print"]).default("pub_digital");
   router.post("/royalty-ledger/statements/period-reissue/preview", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
-      const input = z.object({ usageType: reissueUsage }).parse(req.body ?? {});
+      const input = z.object({
+        usageType: reissueUsage,
+        // 担当者を入れる（担当が違う・担当の行の無い古いひな形の計算書も出し直す）。
+        ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
+        // 個人宛ての計算書の支払日を 20 日にする（回と未払いの支払の期日も直す）。
+        individualPayDay: z.boolean().optional()
+      }).parse(req.body ?? {});
       res.json(await periodReissue.preview(input));
     }));
   router.post("/royalty-ledger/statements/period-reissue", requireRole("admin", "legal"), requireWritable,
@@ -2812,7 +3174,10 @@ export function createRoutes(database: Transactable) {
       const input = z.object({
         usageType: reissueUsage,
         documentIds: z.array(z.coerce.number().int().positive()).min(1).max(300),
-        reason: z.string().trim().max(500).nullable().optional()
+        reason: z.string().trim().max(500).nullable().optional(),
+        // 訂正版の担当者（計算書の「担当」）。省けば元の計算書の担当のまま。
+        ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
+        individualPayDay: z.boolean().optional()
       }).parse(req.body ?? {});
       res.status(201).json(await periodReissue.run(input, actor(res)));
     }));
@@ -3084,7 +3449,9 @@ export function createRoutes(database: Transactable) {
     receivedOn: z.string().date().optional(),
     note: z.string().trim().max(2000).optional(),
     filename: z.string().trim().max(300).optional(),
-    requestId: z.coerce.number().int().positive().optional()
+    requestId: z.coerce.number().int().positive().optional(),
+    counterpartyDocNo: z.string().trim().max(120).optional(),
+    inbound: z.enum(["0", "1"]).optional()
   });
   router.post("/documents/import",
     requireRole("admin", "legal"), requireWritable,
@@ -3097,6 +3464,8 @@ export function createRoutes(database: Transactable) {
         title: q.title, documentKind: q.documentKind ?? null,
         conditionIds: ids, matterId: q.matterId ?? null, agreementId: q.agreementId ?? null,
         receivedOn: q.receivedOn ?? null, note: q.note ?? null, requestId: q.requestId ?? null,
+        counterpartyDocNo: q.counterpartyDocNo ?? null,
+        inbound: q.inbound === undefined ? null : q.inbound === "1",
         file: {
           filename: q.filename ?? q.title,
           mimeType: String(req.headers["content-type"] ?? "").split(";")[0].trim(),
@@ -3115,14 +3484,16 @@ export function createRoutes(database: Transactable) {
     conditionIds: z.array(z.coerce.number().int().positive()).max(50).optional(),
     matterId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
-    requestId: z.coerce.number().int().positive().nullable().optional()
+    requestId: z.coerce.number().int().positive().nullable().optional(),
+    counterpartyDocNo: z.string().trim().max(120).nullable().optional()
   });
   router.post("/documents/reserve", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const b = reserveSchema.parse(req.body ?? {});
       res.status(201).json(await documentImports.reserve({
         title: b.title, documentKind: b.documentKind, conditionIds: b.conditionIds ?? [],
-        matterId: b.matterId ?? null, agreementId: b.agreementId ?? null, requestId: b.requestId ?? null
+        matterId: b.matterId ?? null, agreementId: b.agreementId ?? null, requestId: b.requestId ?? null,
+        counterpartyDocNo: b.counterpartyDocNo ?? null
       }, actor(res)));
     }));
   const attachQuerySchema = z.object({
@@ -3367,6 +3738,55 @@ export function createRoutes(database: Transactable) {
   router.get("/documents/unsent-bundles", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
     res.json(await unsentBundles.list());
   }));
+
+  // 選んだ相手先へ、相手先ごとに 1 通でまとめて送る（取引先へ。documents/unsent-send.ts）。
+  // 下書き（宛先・件名・本文）を先に見せ、画面が相手先ごとに 1 件ずつ send を呼ぶ（途中で切れない・
+  // 相手先ごとに結果を出す）。/documents/:id/send より先に登録する（unsent-bundles を :id に取られる）。
+  const unsentSend = new UnsentSendPlanner(database);
+  const unsentKinds = z.array(z.enum(["master", "terms", "statement", "other"])).min(1);
+  // 文面。contract_unify（契約書の統一のご案内）は内容確認なので、送っても「送付済み」にしない。
+  const unsentPurpose = z.enum(["delivery", "contract_unify"]).default("delivery");
+  router.post("/documents/unsent-bundles/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const input = z.object({
+      partyIds: z.array(z.coerce.number().int().positive()).min(1).max(500), kinds: unsentKinds, purpose: unsentPurpose
+    }).parse(req.body ?? {});
+    res.json({ mails: await unsentSend.plan(input.partyIds, input.kinds, input.purpose) });
+  }));
+  router.post("/documents/unsent-bundles/send", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        partyId: z.coerce.number().int().positive(), kinds: unsentKinds, purpose: unsentPurpose
+      }).parse(req.body ?? {});
+      // 送る直前に組み直す（見せたあとに別の画面で送っていれば、その文書は入らない）。
+      const [mail] = await unsentSend.plan([input.partyId], input.kinds, input.purpose);
+      if (!mail) throw new DomainError("NOT_FOUND", "この相手先に未送付の文書がありません（もう送ったか、種類が違います）");
+      if (!mail.to.length) throw new DomainError("VALIDATION", `${mail.partyName}：メールアドレスの登録がありません`);
+      const who = actor(res);
+      const to = mail.to.map((p) => p.email);
+      const cc = mail.cc.map((p) => p.email);
+      const parts: Array<{ documentIds: number[]; documentNos: string[]; outcome: Awaited<ReturnType<typeof dispatch.dispatch>> }> = [];
+      for (let start = 0; start < mail.docs.length; start += UNSENT_PER_MAIL) {
+        const docs = mail.docs.slice(start, start + UNSENT_PER_MAIL);
+        const loaded = [];
+        for (const d of docs) loaded.push(await pdfOf(d.id));
+        const ids = loaded.map((x) => x.document.id);
+        const subject = mail.mails > 1 ? `${mail.subject}（${start / UNSENT_PER_MAIL + 1}/${mail.mails}）` : mail.subject;
+        const outcome = await dispatch.dispatch({
+          channel: "gmail", targetType: "documents", targetId: ids[0]!, actor: who,
+          request: { recipient: to.join(", "), cc, bcc: [], subject, body: mail.body,
+                     attachments: loaded.map((x) => x.attachment) }
+        });
+        if (outcome.sent && input.purpose === "contract_unify") {
+          await markPartyChecked(ids, outcome.externalId ?? null, { subject, to, cc, bulk: true, purpose: input.purpose }, who);
+        } else if (outcome.sent) {
+          await markSent(ids, "gmail", outcome.externalId ?? null, { subject, to, cc, bcc: [], bulk: true }, who);
+        }
+        parts.push({ documentIds: ids, documentNos: docs.map((d) => d.documentNo ?? `#${d.id}`), outcome });
+        // 止められた（検証モード・読み取り専用・許可リストなど）なら、残りも同じなので打ち切る。
+        if (!outcome.sent && !outcome.duplicated) break;
+      }
+      res.json({ partyId: mail.partyId, partyName: mail.partyName, parts });
+    }));
 
   router.get("/documents/:id", asyncRoute(async (req, res) => {
     const detail = await documents.find(Number(req.params.id));
@@ -3796,7 +4216,9 @@ export function createRoutes(database: Transactable) {
           title: z.string().trim().max(200).nullable().optional(),
           manualInputs: z.record(z.string(), z.unknown()).default({})
         }).nullable().optional(),
-        docs: z.array(setDocSchema).max(10).default([])
+        docs: z.array(setDocSchema).max(10).default([]),
+        /** 共著の受取人宛て。落とすと条件書が代表宛てになり、受取人の基本契約の下に置かれない。 */
+        payeePartyId: z.coerce.number().int().positive().nullable().optional()
       }).parse(req.body ?? {});
       const who = actor(res);
       res.json(await issueDocumentSet({
@@ -3809,7 +4231,7 @@ export function createRoutes(database: Transactable) {
         issue: (id) => issueOne(id, [], who) as unknown as Promise<{ documentNo?: string | null }>,
         createAgreement: (x) => agreements.create(x, who)
       }, { domain: input.domain, counterpartyId: input.counterpartyId, matterId: input.matterId ?? null,
-           master: input.master ?? null, docs: input.docs }, who));
+           master: input.master ?? null, docs: input.docs, payeePartyId: input.payeePartyId ?? null }, who));
     }));
 
   // 契約書の無い相手先（出版）を一覧し、基本契約＋出版条件書をまとめて起こす（docs/royalty-shares.md §5.5）。
@@ -3957,67 +4379,18 @@ export function createRoutes(database: Transactable) {
         matterId: z.coerce.number().int().positive().nullable().optional(),
         manualInputs: z.record(z.string(), z.unknown()).optional()
       }).parse(req.body ?? {});
-      const conditionId = Number(req.params.id);
-      // 先に試算する。渡さないと本文の金額欄が全部空のまま発行される
-      // （計算書だけが「紙は出るが数字が無い」状態になっていた）。
-      const preview = await royalty.preview({
-        conditionId, period: input.period, occurredOn: input.occurredOn,
-        eventType: input.eventType, reported: input.reported, eventIds: input.eventIds,
-        payeePartyId: input.payeePartyId ?? null
-      });
-      // 取り分のある条件は受取人を決めてから出す（紙の宛名と支払先がその人になる）。
-      if (preview.shares && !preview.payee) {
-        throw new DomainError("VALIDATION",
-          `取り分のある条件です。受取人を選んでください（${preview.shares.map((x) => `${x.name} ${x.sharePpm / 10000}%`).join("・")}）`);
-      }
-      // 実績の束から出したときは、導いた報告値と期間で本文を作る。
-      const computed = royaltyForDocument(preview, preview.reported);
-      // 利用形態の付いた実績は、本文も行ごとに出す。製品名（作品名）・方式・
-      // 許諾地域は行ごとに違い、合計だけの1行では相手に何の計算か伝わらない。
-      const usageEvents = (preview.events ?? []).filter((e) => e.usageType);
-      const manualInputs = {
-        ...(input.manualInputs ?? {}),
-        ...(preview.payee ? { _payeePartyId: preview.payee.partyId } : {}),
-        ...(usageEvents.length
-          ? { statementMode: "multi",
-              rs_bundle_lines: applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {}),
-              rs_bundle_tax: preview.fee.tax_amount,
-              rs_stage_notes: stageNotesOf(preview.events ?? []) }
-          : {})
-      };
-      // 出版（紙・電子）の条件なら出版専用の計算書（作品ごとの要約＋別紙の明細）。本文は焼き付けた
-      // 行から組むので、出版専用にするときは行と税・源泉も焼き付ける。
-      const pubLines = applyLineLabels(await statementLines([preview], input), input.manualInputs ?? {});
-      const templateKey = await statementIssuer.templateFor(input.templateKey, pubLines);
-      if (templateKey === PUB_STATEMENT_KEY && !Array.isArray(manualInputs.rs_bundle_lines)) {
-        Object.assign(manualInputs, {
-          statementMode: "multi", rs_bundle_lines: pubLines, rs_bundle_tax: preview.fee.tax_amount,
-          rs_stage_notes: stageNotesOf(preview.events ?? [])
-        });
-      }
-      if (templateKey === PUB_STATEMENT_KEY) {
-        Object.assign(manualInputs, {
-          rs_bundle_withholding: preview.payment.withholdingTax, rs_bundle_net_transfer: preview.payment.netTransfer
-        });
-      }
-      const draft = await issues.createDraft({
-        templateKey, conditionIds: [conditionId],
-        matterId: input.matterId ?? null, manualInputs
+      // 条件 1 本の計算書も、束ね（/statement-documents）と同じ手順で出す
+      // （royalty/statement-issue.ts）。以前はここに別の実装があり、受領情報の見出しや
+      // 出版専用のひな形への切り替えがこの経路だけ抜けていた。
+      const out = await statementIssuer.issue({
+        templateKey: input.templateKey,
+        entries: [{ conditionId: Number(req.params.id), period: input.period, occurredOn: input.occurredOn,
+                    eventType: input.eventType, reported: input.reported, eventIds: input.eventIds,
+                    payeePartyId: input.payeePartyId ?? null }],
+        matterId: input.matterId ?? null, requestId: null, agreementId: null,
+        manualInputs: input.manualInputs ?? {}, supersedes: [], reason: null
       }, actor(res));
-      let issued;
-      try {
-        issued = await issues.issue(draft.id, actor(res),
-          { royalty: computed, eventIds: input.eventIds ?? [] });
-      } catch (error) {
-        await issues.void(draft.id, "発行できなかったため破棄", actor(res)).catch(() => undefined);
-        throw error;
-      }
-      const statement = await royalty.finalize({
-        conditionId, period: preview.period, occurredOn: preview.occurredOn,
-        eventType: input.eventType, reported: preview.reported, eventIds: input.eventIds,
-        documentId: issued.id, payeePartyId: preview.payee?.partyId ?? null
-      }, actor(res));
-      res.status(201).json({ document: issued, ...statement });
+      res.status(201).json({ document: out.document, statements: out.statements, totals: out.totals, lines: out.lines });
     }));
 
   /**
@@ -4582,17 +4955,69 @@ export function createRoutes(database: Transactable) {
   /**
    * 送るメールの下書き（宛先・件名・本文）。文面は設定（mail_templates）から取る。
    * purpose = owner_check（担当者への確認）／party_check（取引先への内容確認）／
-   *           delivery（取引先への送付。検収書・利用許諾計算書は専用の文面）
+   *           contract_unify（契約書の統一のご案内）／delivery（取引先への送付。検収書・利用許諾計算書は専用の文面）
    */
   router.get("/documents/:id/mail-draft", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
-    const purpose = z.enum(["owner_check", "party_check", "delivery"]).parse(String(req.query.purpose ?? ""));
+    const purpose = z.enum(["owner_check", "party_check", "contract_unify", "delivery"]).parse(String(req.query.purpose ?? ""));
     res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose));
+  }));
+  // 何枚かの文書を 1 通で送る下書き（文面は設定の「メールの文面」から選ぶ）。相手先は揃っていること。
+  router.post("/documents/mail-draft-many", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const input = z.object({
+      documentIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
+      purpose: z.enum(["owner_check", "party_check", "contract_unify", "delivery"])
+    }).parse(req.body ?? {});
+    res.json(await new MailDraftService(database).draftMany(input.documentIds, input.purpose));
   }));
   // 送り先の候補（CloudSign の署名者・確認者）。取引先の署名者と事業部の担当者を、
   // 案件の無い文書（デイリータスク）でも出す。連絡先は個人の情報なので admin・legal だけ。
   router.get("/documents/:id/recipients", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
-    res.json(await new MailDraftService(database).recipients(Number(req.params.id)));
+    const id = Number(req.params.id);
+    const r = await new MailDraftService(database).recipients(id);
+    // 連名の文書（関係当事者）の署名者・主担当も署名者の候補に足す（宛名の取引先の次に）。
+    const related = await documentParties.signerCandidates(id);
+    const have = new Set(r.signers.map((x) => x.email.toLowerCase()));
+    const extra = related.filter((x) => !have.has(x.email.toLowerCase()))
+      .map((x) => ({ name: x.name ? `${x.name}（${x.partyName}）` : x.partyName, email: x.email, roles: x.roles, department: x.department }));
+    res.json({ ...r, signers: [...r.signers, ...extra], relatedSigners: extra.length });
   }));
+
+  // ---- 文書の関係当事者（型 3：1 文書・N の関係）----
+  router.get("/documents/:id/parties", asyncRoute(async (req, res) => {
+    res.json({ parties: await documentParties.list(Number(req.params.id)), roles: DOCUMENT_PARTY_ROLES });
+  }));
+  router.put("/documents/:id/parties", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({ parties: z.array(z.object({
+        partyId: z.coerce.number().int().positive(),
+        role: z.enum(DOCUMENT_PARTY_ROLES as [string, ...string[]]),
+        note: z.string().max(200).nullable().optional()
+      })).max(50) }).parse(req.body ?? {});
+      res.json({ parties: await documentParties.replace(Number(req.params.id),
+        input.parties.map((p) => ({ partyId: p.partyId, role: p.role as (typeof DOCUMENT_PARTY_ROLES)[number], note: p.note ?? null })),
+        actor(res)) });
+    }));
+
+  // ---- 契約の地位承継（3 社契約）----
+  router.get("/agreements/:id/successions", asyncRoute(async (req, res) => {
+    res.json({ successions: await successions.forAgreement(Number(req.params.id)) });
+  }));
+  router.post("/agreements/:id/successions", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        toPartyId: z.coerce.number().int().positive(),
+        effectiveOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        documentId: z.coerce.number().int().positive().nullable().optional(),
+        note: z.string().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await successions.create(Number(req.params.id), input, actor(res)));
+    }));
+  router.post("/successions/:id/apply", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { res.json(await successions.apply(Number(req.params.id), actor(res))); }));
+  router.post("/successions/:id/revert", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { res.json(await successions.revert(Number(req.params.id), actor(res))); }));
+  router.delete("/successions/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => { await successions.remove(Number(req.params.id), actor(res)); res.status(204).end(); }));
 
   router.get("/documents/:id/sends", asyncRoute(async (req, res) => {
     res.json(await sends.timeline(Number(req.params.id)));
@@ -4727,6 +5152,28 @@ export function createRoutes(database: Transactable) {
   };
 
   /**
+   * 取引先へ内容確認として送ったことを、文書ごとに記録する（gmail.party_check）。
+   *
+   * 契約書の統一のご案内のように、契約書案を送って返信をもらってから CloudSign で締結する
+   * もの。相手先には届いているが「送付」ではないので gmail.send にはしない（未送付の一覧に残り、
+   * 返信をもらったらそこから CloudSign で送る）。送る画面の「内容確認のメール」の段は済になる。
+   */
+  const markPartyChecked = async (
+    ids: number[], externalId: string | null, detail: Record<string, unknown>, who: string
+  ) => {
+    await inTransaction(database, async (client) => {
+      for (const id of ids) {
+        await recordAudit(client, {
+          actor: who, action: "gmail.party_check", targetType: "document", targetId: id,
+          idempotencyKey: `gmail.party_check:${externalId ?? "none"}:${id}`,
+          detail: { ...detail, recipient: (detail.to as string[] | undefined)?.join(", ") ?? null,
+                    externalId, documentIds: ids }
+        });
+      }
+    });
+  };
+
+  /**
    * 社内確認として送る（担当者に送って中身を見てもらう）。
    *
    * 送信そのものは別の対象（document_review）で記録する。文書の「送信済み」は
@@ -4768,7 +5215,10 @@ export function createRoutes(database: Transactable) {
     body: z.string().trim().min(1).max(20000),
     attachPdf: z.boolean().default(true),
     // 社内確認として送る（相手先へは送っていない扱い）。sendForReview を見よ。
-    internal: z.boolean().default(false)
+    internal: z.boolean().default(false),
+    // 契約書の統一のご案内など、相手先へ内容確認として送るもの。送付済み（gmail.send）にせず
+    // gmail.party_check を残す（未送付の一覧に「内容確認中」で残り、返信をもらったら CloudSign へ）。
+    recordAs: z.enum(["sent", "party_check"]).default("sent")
   });
   router.post("/documents/send-many",
     requireRole("admin", "legal"), requireWritable,
@@ -4796,9 +5246,14 @@ export function createRoutes(database: Transactable) {
                    subject, body: input.body, attachments,
                    threadRef: matterId ? await communications.emailThreadOf(matterId) : null }
       });
-      if (outcome.sent) {
+      if (outcome.sent && input.recordAs === "party_check") {
+        await markPartyChecked(ids, outcome.externalId ?? null,
+                               { subject, to: input.to, cc: input.cc, bcc: input.bcc, purpose: "party_check" }, who);
+      } else if (outcome.sent) {
         await markSent(ids, "gmail", outcome.externalId ?? null,
                        { subject, to: input.to, cc: input.cc, bcc: input.bcc }, who);
+      }
+      if (outcome.sent) {
         if (matterId) {
           await inTransaction(database, async (client) => {
             await recordCommunication(client, {
@@ -4906,6 +5361,17 @@ export function createRoutes(database: Transactable) {
         note: z.string().trim().max(2000).nullable().optional()
       }).parse(req.body ?? {});
       res.json(await sends.confirm(Number(req.params.id), input, actor(res)));
+    }));
+
+  // 工程を飛ばす（担当者確認・相手方確認・締結）。理由は任意。
+  router.post("/documents/:id/skip",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        step: z.enum(["owner_check", "party_check", "executed"]),
+        reason: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await sends.skip(Number(req.params.id), input, actor(res)));
     }));
 
   /**
@@ -5207,7 +5673,9 @@ export function buildDrive(): DriveStorage | null {
     : config.driveFolderId
       ? new GoogleDriveStorage(config.driveFolderId, {
           keyFilePath: config.driveKeyFilePath || undefined,
-          environmentTag: config.driveEnvironmentTag
+          environmentTag: config.driveEnvironmentTag,
+          // 予備系の PC は、人のログインで本番の SA になりすまして同じフォルダへ保存する。
+          impersonate: (process.env.DRIVE_IMPERSONATE_SA ?? "").trim() || undefined
         })
       : null;
 }

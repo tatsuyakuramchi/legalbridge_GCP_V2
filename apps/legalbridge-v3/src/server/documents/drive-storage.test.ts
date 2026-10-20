@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { driveError, driveFileIdFromLink, driveViewLink } from "./drive-storage.js";
+import { driveError, driveFileIdFromLink, driveViewLink, GoogleDriveStorage } from "./drive-storage.js";
 
 // documents.storage_url は webViewLink をそのまま持つ。形式が数種類あるため
 // ID の取り出しを固定しておく（再保存で既存ファイルを見つけるのに使う）。
@@ -40,4 +40,33 @@ test("Drive の失敗は画面で読める文言にする", async () => {
 test("元の応答は detail に残す（原因を追えるように）", async () => {
   const e = await driveError("upload", new Response('{"error":"quota"}', { status: 429 }));
   assert.match(JSON.stringify((e as any).detail), /quota/);
+});
+
+test("予備系（DRIVE_IMPERSONATE_SA）は、人のログインで本番の SA の短期トークンを頼み、それで Drive を使う", async () => {
+  const asked: Array<{ url: string; data: unknown }> = [];
+  // 人のログインの代わり。IAM Credentials の generateAccessToken に答える。
+  const source = {
+    getAccessToken: async () => ({ token: "user-token" }),
+    request: async (opts: { url: string; data: unknown }) => {
+      asked.push({ url: String(opts.url), data: opts.data });
+      return { data: { accessToken: "sa-token", expireTime: new Date(Date.now() + 3600_000).toISOString() } };
+    }
+  };
+  const drive = new GoogleDriveStorage("folder123", {
+    impersonate: "runtime@p.iam.gserviceaccount.com", impersonateSource: source as never
+  });
+  const realFetch = globalThis.fetch;
+  let auth = "";
+  globalThis.fetch = (async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+    auth = String(init?.headers?.Authorization ?? "");
+    return new Response(JSON.stringify({ files: [] }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    assert.equal(await drive.findByDocumentId(1), null);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(auth, "Bearer sa-token", "Drive は SA のトークンで呼ぶ");
+  assert.match(asked[0]!.url, /runtime@p\.iam\.gserviceaccount\.com:generateAccessToken/);
+  assert.deepEqual((asked[0]!.data as { scope: string[] }).scope, ["https://www.googleapis.com/auth/drive"]);
 });

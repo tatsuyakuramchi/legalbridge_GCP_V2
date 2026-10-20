@@ -7,6 +7,7 @@ import { useReadOnly } from "./read-only.js";
 import { CsvBar } from "./CsvBar.js";
 import { CsvImport } from "./CsvImport.js";
 import { DocumentImport } from "./DocumentImport.js";
+import { TidyWorkspace } from "./TidyWorkspace.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
@@ -41,8 +42,10 @@ const canBeOrder = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title" | "do
   isOrderAgreement(a) || a.kind === "document" || (a.kind === "standalone" && a.domain === "service");
 
 export function AgreementMapWorkspace(
-  { initialPartyId, onOpen, onRegisterAgreement }: {
+  { initialPartyId, onOpen, onRegisterAgreement, initialMode, onModeChange, onPartyChange }: {
     initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void;
+    /** URL から来た切り替え（マップ／整理する）と、切り替え・取引先の変更を親（URL）へ知らせる。 */
+    initialMode?: "map" | "tidy"; onModeChange?: (mode: "map" | "tidy") => void; onPartyChange?: (id: number | undefined) => void;
     /** 契約の登録へ（相手先を入れた状態で開く）。契約の無い取引先から始めるとき。 */
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
   }
@@ -51,12 +54,17 @@ export function AgreementMapWorkspace(
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
   const [issuesOnly, setIssuesOnly] = useState(false);
-  const [partyId, setPartyId] = useState<number | undefined>(initialPartyId);
+  const [partyId, setPartyIdState] = useState<number | undefined>(initialPartyId);
+  const setPartyId = (id: number | undefined) => { setPartyIdState(id); onPartyChange?.(id); };
   const [map, setMap] = useState<PartyMap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const bump = () => setVersion((v) => v + 1);
+  // 「整理する」：同じ取引先の木を、条件から下（実績・支払文書・支払）まで広げて 4 つの印で直す
+  // （docs/v3-tidy.md）。入口はここの見出しの切り替え。左の取引先は共有する。
+  const [mode, setModeState] = useState<"map" | "tidy">(initialMode ?? "map");
+  const setMode = (m: "map" | "tidy") => { setModeState(m); onModeChange?.(m); };
 
   useEffect(() => {
     const qs = new URLSearchParams();
@@ -77,8 +85,19 @@ export function AgreementMapWorkspace(
   /** CSV の一括修正を開いているか。 */
   const [csvOpen, setCsvOpen] = useState(false);
 
+  const switcher = (
+    <div className="chips" style={{ marginBottom: 10 }}>
+      <button className="chip" aria-pressed={mode === "map"} onClick={() => setMode("map")}>取引先 ⇔ 基本契約</button>
+      <button className="chip" aria-pressed={mode === "tidy"} onClick={() => setMode("tidy")}>整理する</button>
+    </div>
+  );
+  if (mode === "tidy") {
+    return <TidyWorkspace initialPartyId={partyId} onOpen={onOpen} header={switcher} onPartyChange={setPartyId} />;
+  }
+
   return (
     <section className="workspace">
+      {switcher}
       <header className="workspace-head">
         <h1>取引先 ⇔ 基本契約</h1>
         <p>
@@ -166,6 +185,20 @@ function PartyMapView(
   /** 発注書を紐づける欄（文書か条件を選んだ状態で開く）。 */
   const [poLink, setPoLink] = useState<{ documentId: number | null; conditionIds: number[] } | null>(null);
   const orders = map.orders ?? [];
+  /** 基本契約なしの発注書を入れられる基本契約（この取引先の基本契約）。 */
+  const masters = map.roots.filter((r) => r.kind === "master");
+  const [underChoice, setUnderChoice] = useState<Record<number, string>>({});
+  const [underBusy, setUnderBusy] = useState<number | null>(null);
+  async function putUnder(o: MapOrder) {
+    const agreementId = Number(underChoice[o.id] ?? masters[0]?.id ?? 0);
+    if (!agreementId) return;
+    setUnderBusy(o.id);
+    try {
+      const r = await api.post<{ conditionsLinked: number; agreementNo: string | null }>(`/agreement-map/orders/${o.id}/master`, { agreementId });
+      onChanged(`${o.documentNo ?? `#${o.id}`} を ${r.agreementNo ?? "基本契約"} の下に入れました（条件明細 ${r.conditionsLinked} 本を基本契約に載せました）`);
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setUnderBusy(null); }
+  }
   const orderView = (o: MapOrder) => (
     <div key={`o${o.id}`} className="amap-node">
       <div className="amap-line">
@@ -268,7 +301,23 @@ function PartyMapView(
             <span className="faint">発注書の約款で取引しているもの。基本契約を結んだら、その下に入ります（条件を紐づけ直すと基本契約に載ります）</span>
           </div>
           <div className="panel-bd amap-children" style={{ marginLeft: 0 }}>
-            {orders.filter((o) => o.masterId === null).map(orderView)}
+            {orders.filter((o) => o.masterId === null).map((o) => (
+              <div key={`m${o.id}`}>
+                {orderView(o)}
+                {masters.length > 0 && o.conditions.length > 0 && (
+                  <div className="row" style={{ gap: 6, margin: "2px 0 8px 12px", alignItems: "center" }}>
+                    <span className="faint">基本契約の下に入れる：</span>
+                    <select value={underChoice[o.id] ?? String(masters[0].id)}
+                            onChange={(e) => setUnderChoice((c) => ({ ...c, [o.id]: e.target.value }))}>
+                      {masters.map((m) => <option key={m.id} value={m.id}>{m.agreementNo ?? `#${m.id}`} {m.title}</option>)}
+                    </select>
+                    <button className="btn btn-sm primary" disabled={underBusy === o.id}
+                            title="この発注書に載っている条件明細を基本契約に載せます（別の契約に載っている条件は動かしません）"
+                            onClick={() => void putUnder(o)}>入れる</button>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -330,11 +379,11 @@ function UnlinkedDocuments(
   // 条件書を立てない（先に立てると単体契約になり、あとで個別契約にし直す手間が出る）。
   const hasMaster = map.roots.some((r) => r.kind === "master");
   const masterDocLeft = docs.some((d) => d.role === "master");
-  async function create(doc: UnlinkedDocument) {
+  async function create(doc: UnlinkedDocument, as: "master" | "standalone" | null = null) {
     setBusy(doc.id);
     try {
       const r = await api.post<{ agreementNo: string; kind: string; parentNo: string | null; conditionsLinked: number }>(
-        `/agreement-map/documents/${doc.id}/agreement`, {});
+        `/agreement-map/documents/${doc.id}/agreement`, as ? { as } : {});
       const what = r.kind === "master" ? "基本契約" : r.kind === "supplement" ? `${r.parentNo ?? "基本契約"} の下の個別契約` : "単体契約";
       onChanged(`${doc.documentNo ?? `#${doc.id}`} から${what}を立てました（番号 ${r.agreementNo}${r.conditionsLinked ? `・条件明細 ${r.conditionsLinked} 本を${r.kind === "supplement" ? "基本契約に" : ""}載せました` : ""}）。締結日は「編集」で入れてください`);
     } catch (e) { onError((e as ApiError).message); }
@@ -361,7 +410,8 @@ function UnlinkedDocuments(
       {docs.some((d) => d.role) && (
         <div className="panel-bd" style={{ paddingBottom: 0 }}>
           <div className="note">
-            基本契約書・条件書は「この文書から立てる」で契約にできます（番号・件名は文書のまま）。<b>基本契約書 → 条件書</b> の順に押すと、
+            基本契約書・業務委託契約書・条件書は「この文書から立てる」で契約にできます（番号・件名は文書のまま）。
+            業務委託契約書は、継続取引の土台なら「基本契約として立てる」、その取引だけで完結するなら「単体契約として立てる」を選びます。<b>基本契約書 → 条件書</b> の順に押すと、
             条件書は基本契約の下の個別契約になり、条件書に載っている条件明細も基本契約に載ります。基本契約が無ければ条件書は単体契約になります。
           </div>
         </div>
@@ -380,8 +430,14 @@ function UnlinkedDocuments(
                 <td className="faint" style={{ whiteSpace: "nowrap" }}>{d.issuedOn ?? "—"}</td>
                 <td>
                   {d.role === "master" && (
-                    <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || busy === d.id}
-                            onClick={() => void create(d)}>基本契約として立てる</button>
+                    <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                      <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || busy === d.id}
+                              title="この文書を基本契約にします。以後の発注書・条件書はこの下に入ります"
+                              onClick={() => void create(d, "master")}>基本契約として立てる</button>
+                      <button className="btn btn-sm" style={{ whiteSpace: "nowrap" }} disabled={readOnly || busy === d.id}
+                              title="この取引だけで完結する契約（単体契約）にします。載っている条件明細を直接持ちます"
+                              onClick={() => void create(d, "standalone")}>単体契約として立てる</button>
+                    </div>
                   )}
                   {d.role === "terms" && (
                     !hasMaster && masterDocLeft

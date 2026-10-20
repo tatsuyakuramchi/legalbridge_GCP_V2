@@ -61,11 +61,11 @@ export interface PaymentRow {
  * 読めない文言（「30日以内」など。締め日が決まらない）は使わない。
  */
 export function dueFromPaymentTerms(
-  basis: string | null, terms: Array<string | null | undefined>
+  basis: string | null, terms: Array<string | null | undefined>, partyKind?: string | null
 ): string | null {
   if (!basis) return null;
   const days = terms
-    .map((t) => payDateFromTerms(basis, t))
+    .map((t) => payDateFromTerms(basis, t, partyKind))
     .filter((d): d is string => Boolean(d))
     .sort();
   return days[days.length - 1] ?? null;
@@ -457,7 +457,8 @@ export class PaymentService {
 
         // 受取人ごとの計算書（取り分）は、同じ実績に受取人の数だけ支払が立つ。
         // 二重払いの検査は、その受取人への支払だけで見る。
-        const payeePartyId = rows.every((r) => r.payee_party_id) ? Number(rows[0].payee_party_id) : null;
+        // 受取人としての分と本人の条件が 1 枚に載る計算書（人ごとに 1 枚）も、その人への支払だけで見る。
+        const payeePartyId = rows.some((r) => r.payee_party_id) ? Number(rows[0].counterparty_id) : null;
         const duplicated = await client.query(
           `SELECT ${BLOCKING_PAYMENT_SQL}
              FROM payments p
@@ -518,7 +519,7 @@ export class PaymentService {
           .filter((d): d is string => Boolean(d)).sort();
         const dueOn = options.dueOn ?? printedDueOn
           ?? payOns[payOns.length - 1]
-          ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)))
+          ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)), str(rows[0]?.party_kind))
           ?? dueLimitFrom(basis);
         // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。
         const withholding = withholdingFor(net + tax, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;

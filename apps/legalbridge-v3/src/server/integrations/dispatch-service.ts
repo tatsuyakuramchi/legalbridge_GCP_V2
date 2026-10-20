@@ -7,6 +7,10 @@ import { attachmentsOf, everyRecipient } from "./adapters.js";
 import type { DispatchAdapter, DispatchRequest } from "./adapters.js";
 import { applyInbound } from "./inbound-handlers.js";
 
+const CHANNEL_LABEL: Record<IntegrationChannel, string> = {
+  slack: "Slack", gmail: "メール（Gmail）", cloudsign: "CloudSign", backlog: "Backlog"
+};
+
 export interface DispatchOutcome {
   channel: IntegrationChannel;
   /** 送ったか。ゲートで止まった場合は false。 */
@@ -109,7 +113,18 @@ export class DispatchService {
       };
     }
 
-    const receipt = await adapter!.send(input.request);
+    // 外へ送る段の失敗（認証・署名・宛先の拒否など）は、理由をそのまま画面へ返す。
+    // 投げっぱなしにすると「サーバ内部でエラー」になり、何を直せばよいか分からない。
+    let receipt: Awaited<ReturnType<DispatchAdapter["send"]>>;
+    try {
+      receipt = await adapter!.send(input.request);
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      const message = (error as Error)?.message ?? String(error);
+      console.error("dispatch send failed", { channel: input.channel, targetType: input.targetType,
+                                              targetId: input.targetId, message });
+      throw new DomainError("UNAVAILABLE", `${CHANNEL_LABEL[input.channel]}で送れませんでした：${message}`);
+    }
 
     try {
       await this.record(input, {

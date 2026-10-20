@@ -130,7 +130,7 @@ export function MatterFlow(
             </div>
           : flow.steps.some((s) => s.optional && !s.done)
             ? <div className="trace-line" style={{ marginTop: 4, color: "var(--warn)" }}>
-                工程は全部済。付帯する契約が終わるまで案件は開いたまま（回は支払文書処理で回す）
+                工程は全部済。付帯する契約が終わるまで案件は開いたまま（回は支払文書で回す）
               </div>
             : <div className="trace-line" style={{ marginTop: 4, color: "var(--ok)" }}>
                 すべて揃っています。案件を完了にできます

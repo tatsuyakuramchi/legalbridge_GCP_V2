@@ -6,6 +6,7 @@
  *
  *   owner_check … 担当者（依頼した事業部の人）への確認。この内容で相手に出してよいか
  *   party_check … 取引先への内容確認。問題なければ CloudSign で締結へ
+ *   contract_unify … 契約書の統一書式（書面化）のご案内。契約書案を添付し、問題なければ返信をもらって CloudSign へ
  *   inspection  … 検収書の送付（取引先へ）
  *   royalty     … 利用許諾計算書の送付（取引先へ）
  *   general     … その他の書類の送付（取引先へ）
@@ -15,9 +16,9 @@
 
 export const MAIL_TEMPLATES_KEY = "mail_templates";
 
-export type MailTemplateKind = "owner_check" | "party_check" | "inspection" | "royalty" | "general";
+export type MailTemplateKind = "owner_check" | "party_check" | "contract_unify" | "inspection" | "royalty" | "general";
 /** 送る画面で選ぶ「何のメールか」。送付は文書の種類で inspection / royalty / general に分かれる。 */
-export type MailPurpose = "owner_check" | "party_check" | "delivery";
+export type MailPurpose = "owner_check" | "party_check" | "contract_unify" | "delivery";
 
 export interface MailTemplate { subject: string; body: string }
 export interface MailTemplates {
@@ -31,6 +32,7 @@ export interface MailTemplates {
 export const MAIL_TEMPLATE_KINDS: Array<{ kind: MailTemplateKind; label: string; hint: string }> = [
   { kind: "owner_check", label: "担当者への確認", hint: "依頼した事業部の担当者へ。相手に出す前に内容を確かめてもらう" },
   { kind: "party_check", label: "取引先への内容確認", hint: "取引先へ。問題なければ CloudSign で締結に進む" },
+  { kind: "contract_unify", label: "契約書の統一（書面化）のご案内", hint: "取引先へ。統一書式の契約書案を添付し、問題なければ 2 週間以内に返信をもらって CloudSign で締結に進む" },
   { kind: "inspection", label: "検収書の送付", hint: "取引先へ。検収書を送る" },
   { kind: "royalty", label: "利用許諾計算書の送付", hint: "取引先へ。利用許諾料の計算書を送る" },
   { kind: "general", label: "その他の書類の送付", hint: "取引先へ。上のどれにも当たらない書類" }
@@ -81,6 +83,32 @@ export const DEFAULT_MAIL_TEMPLATES: MailTemplates = {
         "■ 文書番号：{文書番号}\n\n" +
         "修正のご希望がございましたら、お手数ですが修正箇所をお知らせください。\n\n" +
         "何卒よろしくお願い申し上げます。\n\n{署名}"
+    },
+    contract_unify: {
+      subject: "【{会社名}】利用許諾契約書（統一書式）のご確認のお願い",
+      body:
+        "{相手先} 様\n\nいつも大変お世話になっております。\n" +
+        "株式会社アークライト 経営管理本部 法務部の倉持でございます。\n\n" +
+        "平素より弊社商品にご尽力を賜り、心より御礼申し上げます。\n\n" +
+        "さて、当社では現在、著作物の利用許諾料（印税）をお支払いしている皆様との契約書面について、" +
+        "内容の整理と書式の統一を進めております。\n" +
+        "これまで契約書のお取り交わしがないままお支払いを続けていた方もいらっしゃいます。" +
+        "当社の手続が行き届かず、ご迷惑をおかけしましたことをお詫び申し上げます。" +
+        "また、すでに契約を締結いただいている皆様にも、契約内容をより分かりやすく管理するため、" +
+        "統一書式でのお取り交わしをお願いしております。\n\n" +
+        "つきましては、{相手先}様とのお取引について、統一書式による契約書案をご用意いたしました。\n\n" +
+        "【契約書案の主な内容】\n" +
+        "1. これまでのお取引条件（利用許諾料の料率・お支払い時期等）を、統一書式にて書面化したものです。\n" +
+        "2. 契約の効力は、著作物の利用を開始した時点に遡って適用される形としております。\n" +
+        "3. これまでにお支払い済みの利用許諾料は、本契約に基づくお支払いとして取り扱います。\n" +
+        "4. すでに契約を締結いただいている場合は、従前の契約は本契約に置き換わります。\n\n" +
+        "契約書案を本メールに添付しております。\n" +
+        "内容をご確認のうえ、問題がございませんでしたら、本メールの受信から2週間以内に、" +
+        "その旨を本メールへのご返信にてお知らせください。\n" +
+        "ご返信をいただいた後、電子契約サービス（クラウドサイン）より、ご署名のご案内をお送りいたします。\n\n" +
+        "契約書案の内容が、これまでのご認識や既存の契約内容と異なる点、ご不明な点がございましたら、" +
+        "ご遠慮なく本メールへのご返信にてお知らせください。個別にご説明・調整させていただきます。\n\n" +
+        "お手数をおかけいたしますが、何卒よろしくお願い申し上げます。\n\n{署名}"
     },
     inspection: {
       subject: "【{会社名}】検収書のご送付（{文書番号}）",

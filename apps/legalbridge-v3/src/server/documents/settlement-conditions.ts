@@ -23,7 +23,8 @@ type Row = Record<string, unknown>;
 /** この処理が効くひな形。発注書と検収書は同じ行（other_fees / expenses）を持つ。 */
 const SETTLEMENT_TEMPLATES = new Set([
   "purchase_order", "intl_purchase_order",
-  "inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate"
+  "inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate",
+  "service_completion_notice"
 ]);
 
 const text = (v: unknown) => String(v ?? "").trim();
@@ -151,7 +152,8 @@ export interface SettlementEventRow {
 
 /** 実績まで立てるひな形。発注書は実績の出どころではない（行は条件になるだけ）。 */
 const EVENT_TEMPLATES = new Set([
-  "inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate"
+  "inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate",
+  "service_completion_notice"
 ]);
 
 /**

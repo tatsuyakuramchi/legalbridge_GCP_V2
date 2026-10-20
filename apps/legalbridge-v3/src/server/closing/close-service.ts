@@ -10,6 +10,7 @@ import { documentFor, needsReport, notYet } from "./state.js";
 import { loadDistribution, loadShares } from "../royalty/shares.js";
 import type { StatementIssuer } from "../royalty/statement-issue.js";
 import { roundPeriodLabel } from "../royalty/annual-closes.js";
+import { currentSequence } from "../documents/numbering.js";
 
 export { roundPeriodLabel };
 
@@ -34,7 +35,7 @@ export { roundPeriodLabel };
 
 /** 計算書の道で締める回。料率（売上報告ベース）の許諾。 */
 export const isStatementRow = (row: Pick<PeriodRow, "kind" | "pricingModel">): boolean =>
-  documentFor(row.kind).templateKey === "royalty_statement" && needsReport(row.pricingModel);
+  documentFor(row).templateKey === "royalty_statement" && needsReport(row.pricingModel);
 
 /** 計算書 1 枚ぶん。宛先（受取人か相手先）・載る条件と実績・回。 */
 export interface StatementDocPlan {
@@ -103,7 +104,11 @@ export type CloseBundle = "condition" | "party";
 export interface CloseOverride { amount?: number | null; note?: string | null }
 export type CloseOverrides = Record<number, CloseOverride>;
 
-export interface CloseOptions { bundle?: CloseBundle; overrides?: CloseOverrides }
+export interface CloseOptions {
+  bundle?: CloseBundle; overrides?: CloseOverrides;
+  /** 作る文書の担当者（manual_inputs._ownerStaffId）。計算書の「担当」・検収書の検収者に出る。省けば案件の担当。 */
+  ownerStaffId?: number | null;
+}
 
 export interface CloseDocPlan {
   /** 先頭の条件（条件ごとのときはその条件）。 */
@@ -222,7 +227,7 @@ function assertReasons(rows: PeriodRow[], overrides: CloseOverrides) {
  */
 export function bundleKey(row: PeriodRow, bundle: CloseBundle): string {
   if (bundle === "condition") return `c:${row.conditionId}`;
-  return `p:${row.party?.id ?? `c${row.conditionId}`}:${documentFor(row.kind).templateKey}:${row.currency || "JPY"}`;
+  return `p:${row.party?.id ?? `c${row.conditionId}`}:${documentFor(row).templateKey}:${row.currency || "JPY"}`;
 }
 
 /** その回で記録する（した）額。直した額 → 実績 → 予定。 */
@@ -277,11 +282,13 @@ export class ClosingCloseService {
       if (!eventIds.length) continue;
       for (const payee of payeesOf.get(row.conditionId) ?? [null]) {
         const to = payee ?? row.party;
-        // 受取人として載る分と、自分が相手先の条件は別の紙（受取人宛ての紙は載る条件すべてに取り分が要る）。
+        // 相手先ごとなら人ごとに 1 枚。受取人として載る分（共著の取り分）と、その人が相手先の条件
+        // （単独の作品）を同じ紙に載せる。前は別の紙にしていて、同じ回に計算書も支払も 2 本になった。
         const key = bundle === "party"
-          ? `s:${to?.id ?? `c${row.conditionId}`}:${payee ? "payee" : "party"}:${row.currency || "JPY"}`
+          ? `s:${to?.id ?? `c${row.conditionId}`}:${row.currency || "JPY"}`
           : `s:c${row.conditionId}:${payee?.id ?? 0}`;
-        const doc = docs.get(key) ?? { key, party: to, payeePartyId: payee?.id ?? null, rows: [], entries: [], periodLabel: null };
+        const doc = docs.get(key) ?? { key, party: to, payeePartyId: null, rows: [], entries: [], periodLabel: null };
+        if (payee) doc.payeePartyId = payee.id;
         if (!doc.rows.includes(row)) doc.rows.push(row);
         const entry = doc.entries.find((x) => x.conditionId === row.conditionId);
         if (entry) entry.eventIds.push(...eventIds);
@@ -362,7 +369,7 @@ export class ClosingCloseService {
           conditionId: head.conditionId, conditionName: head.conditionName,
           conditionIds: [...conditions.keys()], conditionNames: [...conditions.values()],
           party: head.party,
-          templateKey: documentFor(head.kind).templateKey,
+          templateKey: documentFor(head).templateKey,
           documentLabel: head.documentLabel,
           scheduleIds: list.map((r) => r.scheduleId!),
           // 1枚に数回を載せるときは、いちばん遅い締め日で決定する。
@@ -383,7 +390,7 @@ export class ClosingCloseService {
           conditionId: head.conditionId, conditionName: head.conditionName,
           conditionIds: [...conditions.keys()], conditionNames: [...conditions.values()],
           party: plan.party,
-          templateKey: documentFor(head.kind).templateKey,
+          templateKey: documentFor(head).templateKey,
           documentLabel: plan.payeePartyId ? `${head.documentLabel}（受取人 ${plan.party?.name ?? ""}）` : head.documentLabel,
           scheduleIds: plan.rows.map((r) => r.scheduleId!),
           issuedOn: plan.rows.map((r) => r.closingOn).filter((d): d is string => !!d).sort().at(-1) ?? null,
@@ -434,7 +441,7 @@ export class ClosingCloseService {
     assertReasons(rows.filter((r) => r.step === "event"), overrides);
     // 計算書の回（料率）は計算書の道でまとめて締める。
     const statementRows = rows.filter((r) => r.documentId === null && this.viaStatement(r));
-    if (statementRows.length) outcomes.push(...await this.closeStatements(statementRows, plan.bundle, actor));
+    if (statementRows.length) outcomes.push(...await this.closeStatements(statementRows, plan.bundle, actor, options.ownerStaffId ?? null));
     const groups = new Map<string, CloseTarget[]>();
     for (const t of plan.targets) {
       const row = rowOf.get(t.scheduleId);
@@ -447,7 +454,7 @@ export class ClosingCloseService {
 
     for (const list of groups.values()) {
       try {
-        outcomes.push(...await this.closeGroup(list, actor, overrides));
+        outcomes.push(...await this.closeGroup(list, actor, overrides, options.ownerStaffId ?? null));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         for (const t of list) {
@@ -481,7 +488,9 @@ export class ClosingCloseService {
    * 支払（計算書から）。1 枚が落ちても他は進める。回の結果は、その回が載った計算書が
    * 全部できたときだけ ok。
    */
-  private async closeStatements(rows: PeriodRow[], bundle: CloseBundle, actor: string): Promise<CloseOutcome[]> {
+  private async closeStatements(
+    rows: PeriodRow[], bundle: CloseBundle, actor: string, ownerStaffId: number | null = null
+  ): Promise<CloseOutcome[]> {
     const out = new Map<number, CloseOutcome>(rows.map((r) => [r.scheduleId!, {
       scheduleId: r.scheduleId!, conditionId: r.conditionId, conditionName: r.conditionName, seq: r.seq,
       ok: false, eventId: r.eventId, documentId: null, documentNo: null,
@@ -497,7 +506,8 @@ export class ClosingCloseService {
         const made = await this.statements!.issue({
           templateKey: documentFor(doc.rows[0]!.kind).templateKey,
           entries: doc.entries, issuedOn, periodLabel: doc.periodLabel,
-          matterId: matters.size === 1 ? doc.rows[0]!.matter?.id ?? null : null
+          matterId: matters.size === 1 ? doc.rows[0]!.matter?.id ?? null : null,
+          ...(ownerStaffId ? { manualInputs: { _ownerStaffId: ownerStaffId } } : {})
         }, actor);
         for (const r of doc.rows) {
           const o = out.get(r.scheduleId!)!;
@@ -531,7 +541,7 @@ export class ClosingCloseService {
 
   /** 1つの組（条件、または相手先）の回をまとめて進める。 */
   private async closeGroup(
-    targets: CloseTarget[], actor: string, overrides: CloseOverrides
+    targets: CloseTarget[], actor: string, overrides: CloseOverrides, ownerStaffId: number | null = null
   ): Promise<CloseOutcome[]> {
     const rows = await this.rowsFor(targets.map((t) => t.scheduleId));
     const base = (row: PeriodRow): CloseOutcome => ({
@@ -573,9 +583,10 @@ export class ClosingCloseService {
         .filter((d): d is string => !!d).sort().at(-1) ?? null;
       try {
         const draft = await this.issues.createDraft({
-          templateKey: documentFor(head.kind).templateKey,
+          templateKey: documentFor(head).templateKey,
           conditionIds,
-          matterId: matters.size === 1 ? head.matter?.id ?? null : null
+          matterId: matters.size === 1 ? head.matter?.id ?? null : null,
+          ...(ownerStaffId ? { manualInputs: { _ownerStaffId: ownerStaffId } } : {})
         }, actor);
         const issued = await this.issues.issue(draft.id, actor, { issuedOn, eventIds });
         // 実績は条件ごとに結ぶ（結ぶ側は条件の系列の中しか見ない）。
@@ -673,10 +684,7 @@ export class ClosingCloseService {
         byYear.set(year, (byYear.get(year) ?? 0) + 1);
       }
       for (const [year, count] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
-        const seq = await this.database.query(
-          "SELECT current_value FROM document_sequences WHERE prefix = $1 AND year = $2",
-          [prefix, year]);
-        const current = Number((seq.rows[0] as { current_value?: number } | undefined)?.current_value ?? 0);
+        const current = await currentSequence(this.database, prefix, year);
         const fmt = (n: number) => `ARC-${prefix}-${year}-${String(n).padStart(4, "0")}`;
         out.push({ templateKey, label: list[0]!.documentLabel, prefix, year, count,
                    from: fmt(current + 1), to: fmt(current + count) });

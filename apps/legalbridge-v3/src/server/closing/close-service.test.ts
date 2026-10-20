@@ -296,6 +296,28 @@ test("料率の回：試算は報告売上ではなく料率を掛けた額。�
   assert.equal(view.summary.payments, 3);
 });
 
+test("人ごとに 1 枚：受取人として載る分（共著の取り分）と、その人が相手先の条件を同じ計算書に載せる", async () => {
+  // 条件 7 は相手先 3（単独）。条件 8 は相手先 31 で、取り分は 31 が 80%・3 が 20%。
+  const rows = [royaltyRaw(), royaltyRaw({ schedule_id: 200, condition_id: 8, condition_name: "作品B｜電子出版", event_id: 61,
+                                           party_id: 31, party_name: "共著者甲" })];
+  const fake = royaltyDb(rows);
+  const base = fake.query.bind(fake);
+  (fake as any).query = async (text: string, params: unknown[] = []) => text.includes("WITH series AS")
+    ? { rows: Number(params[0]) === 8
+        ? [{ party_id: 31, party_name: "共著者甲", party_kind: "individual", share_ppm: 800000, sort_order: 0, note: null },
+           { party_id: 3, party_name: "受託者名", party_kind: "individual", share_ppm: 200000, sort_order: 1, note: null }]
+        : [], rowCount: 0 }
+    : base(text, params);
+  const issuer = fakeIssuer();
+  const service = new ClosingCloseService(fake, now, undefined, undefined, undefined, fakePayments() as any).useStatements(issuer as any);
+  const view = await service.preview([100, 200], { bundle: "party" });
+  assert.equal(view.summary.documents, 2, "受託者名 1 枚（単独＋取り分）と共著者甲 1 枚");
+  const result = await service.run([100, 200], "tester", { bundle: "party" });
+  assert.equal(result.ok, 2, JSON.stringify(result.outcomes));
+  const mine = issuer.issued.find((x) => x.entries.some((e: any) => e.conditionId === 7))!;
+  assert.deepEqual(mine.entries.map((e: any) => [e.conditionId, e.payeePartyId]), [[7, null], [8, 3]]);
+});
+
 test("料率の回：締めると計算書の道で発行し、支払は計算書から立てる（検収書の道を通らない）", async () => {
   const rows = [royaltyRaw()];
   const issuer = fakeIssuer();
@@ -358,4 +380,15 @@ test("計算書の対象期間は回で決める：集計期間があれば最�
   assert.equal(result.ok, 1, JSON.stringify(result.outcomes));
   assert.equal(issuer.issued[0].entries[0].period, "2025年7月〜2026年6月");
   assert.equal(issuer.issued[0].periodLabel, "2025年7月〜2026年6月");
+});
+
+test("まとめて締めるで担当者を選べば、計算書の担当（_ownerStaffId）にする。選ばなければ渡さない", async () => {
+  const picked = fakeIssuer();
+  await new ClosingCloseService(royaltyDb([royaltyRaw()]), now, undefined, undefined, undefined, fakePayments() as any)
+    .useStatements(picked as any).run([100], "tester", { ownerStaffId: 12 });
+  assert.deepEqual(picked.issued[0].manualInputs, { _ownerStaffId: 12 });
+  const none = fakeIssuer();
+  await new ClosingCloseService(royaltyDb([royaltyRaw()]), now, undefined, undefined, undefined, fakePayments() as any)
+    .useStatements(none as any).run([100], "tester");
+  assert.equal(none.issued[0].manualInputs, undefined);
 });

@@ -41,7 +41,8 @@ export const paymentDocLabel = (purpose: DailyPurpose) =>
 
 /** 検収書のテンプレート。graph-service・template-context と同じ集合。 */
 export const INSPECTION_TEMPLATE_KEYS = [
-  "inspection_certificate", "intl_inspection_certificate", "acceptance_certificate", "delivery_note"
+  "inspection_certificate", "intl_inspection_certificate", "acceptance_certificate", "delivery_note",
+  "service_completion_notice"
 ];
 
 /**
@@ -370,9 +371,7 @@ export async function loadProgress(
 
   const sent = ids.length
     ? (await q.query(
-        `SELECT min(occurred_at) AS at FROM audit_events
-          WHERE target_type = 'document' AND target_id = ANY($1::bigint[])
-            AND action IN ('gmail.send', 'cloudsign.send')`, [ids])).rows[0] as any
+        `SELECT min(dv.sent_at) AS at FROM unnest($1::bigint[]) AS i(id), document_delivery(i.id) dv`, [ids])).rows[0] as any
     : null;
 
   const pay = ids.length

@@ -2,7 +2,7 @@ import { dateStr, inTransaction, int, str, type Queryable, type Transactable } f
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
-import { parsePaymentTerms, payOnFor } from "../conditions/payment-terms.js";
+import { forPartyKind, parsePaymentTerms, payOnFor } from "../conditions/payment-terms.js";
 import { basisOf, type UsageType } from "./usage-type.js";
 import { ppmToPct } from "./economics.js";
 import { roundRoyalty } from "./rounding.js";
@@ -27,8 +27,14 @@ import { roundRoyalty } from "./rounding.js";
 export type Timing = "periodic" | "event";
 export type Bundle = "per_work" | "per_party";
 
-/** 出し方の既定。紙出版は刷ごと（イベント式）、それ以外は締めで回る（時限式）。 */
-export function timingOf(explicit: unknown, usageType: unknown): Timing {
+/**
+ * 出し方。条件の決済の型（A-071）があればそこから決める：回数無制限（出来事のたび）＝イベント式、
+ * それ以外（一回きり・回数固定・期間で決まる）＝時限式。型が無い条件だけ、旧 statement_timing →
+ * 利用形態（紙出版は刷ごと）の順で推す。
+ */
+export function timingOf(explicit: unknown, usageType: unknown, settlementMode?: unknown): Timing {
+  if (settlementMode === "open") return "event";
+  if (settlementMode === "once" || settlementMode === "fixed_count" || settlementMode === "term_bound") return "periodic";
   if (explicit === "periodic" || explicit === "event") return explicit;
   return usageType === "pub_print" ? "event" : "periodic";
 }
@@ -149,6 +155,8 @@ export function buildRounds(input: {
   skips: Array<{ conditionId: number; scheduleId: number }>;
   outs: OutLite[];
   plans?: PlanLite[];
+  /** 作家（台帳の取引先）の区分。個人なら支払条件の末日払いを 20 日にする（forPartyKind）。 */
+  partyKind?: string | null;
   /** 1作品の中で見ているか。作家でまとめないときも、1作品の中は支払日でまとめる。 */
   bundle: Bundle | "single_work";
   /**
@@ -185,7 +193,7 @@ export function buildRounds(input: {
         parts.push({ conditionId: c.id, scheduleId: null, eventId: list[0].id,
           label: list.find((e) => e.period)?.period ?? null,
           periodFrom: on, closeOn: on,
-          payOn: payOnFor(on, parsePaymentTerms(c.paymentTerms)), events: list, skipped: false,
+          payOn: payOnFor(on, forPartyKind(parsePaymentTerms(c.paymentTerms), input.partyKind)), events: list, skipped: false,
           expected: [], state: list.every((e) => e.documentId) ? "issued" : "reported" });
       }
       continue;
@@ -455,7 +463,7 @@ export class RoyaltyLedgerService {
       const cr = await q.query(
         `SELECT c.id, c.condition_no, c.name, c.usage_type, c.work_id, w.title AS work_title,
                 c.agreement_id, a.agreement_no, c.pricing_model, c.rate_ppm, c.unit_amount,
-                c.mg_amount, c.ag_amount, c.currency, c.payment_terms, c.statement_timing,
+                c.mg_amount, c.ag_amount, c.currency, c.payment_terms, c.statement_timing, c.settlement_mode,
                 c.target_party_id, tp.name AS target_party_name,
                 COALESCE(c.series_id, c.id) AS series
            FROM conditions c
@@ -567,20 +575,20 @@ export class RoyaltyLedgerService {
         pricingModel: String(c.pricing_model), ratePpm: int(c.rate_ppm), unitAmount: int(c.unit_amount),
         mgAmount: int(c.mg_amount), agAmount: int(c.ag_amount), currency: String(c.currency ?? "JPY"),
         paymentTerms: str(c.payment_terms),
-        timing: timingOf(c.statement_timing, c.usage_type), timingExplicit: Boolean(c.statement_timing),
+        timing: timingOf(c.statement_timing, c.usage_type, c.settlement_mode),
+        timingExplicit: Boolean(c.statement_timing) || Boolean(c.settlement_mode),
         schedules: schedules.filter((s) => s.conditionId === Number(c.id)).length,
         targetPartyId: int(c.target_party_id), targetPartyName: str(c.target_party_name)
       }));
 
-      const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today,
+      const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today, partyKind: str(p.kind),
         bundle: workId ? "single_work" : bundle, splitByModel: !mixModels });
 
       // 文書・送付・支払。
       const docIds = [...new Set(events.map((e) => e.documentId).filter((x): x is number => !!x))];
       const docs = docIds.length ? (await q.query(
         `SELECT d.id, d.document_no, d.status,
-                EXISTS (SELECT 1 FROM audit_events a WHERE a.target_type = 'document' AND a.target_id = d.id
-                         AND a.action IN ('gmail.send', 'cloudsign.send')) AS sent,
+                (SELECT dv.sent_at IS NOT NULL FROM document_delivery(d.id) dv) AS sent,
                 COALESCE((SELECT sum(s.net_amount) FROM statements s WHERE s.document_id = d.id), 0) AS net
            FROM documents d WHERE d.id = ANY($1::bigint[])`, [docIds])).rows as any[] : [];
       const eventIds = events.map((e) => e.id);
@@ -943,12 +951,22 @@ export class RoyaltyLedgerService {
     } catch (error) { throw translate(error); }
   }
 
-  /** 計算書の出し方（時限式／イベント式）。null で既定（利用形態から）に戻す。 */
+  /**
+   * 計算書の出し方（時限式／イベント式）。出し方は決済の型（A-071）から決まるので、
+   * ここで変えると型も書き換える：イベント式＝回数無制限、時限式＝期間で決まる（周期は無ければ四半期）。
+   * null は旧 statement_timing を消すだけ（型はそのまま）。
+   */
   async setTiming(conditionId: number, timing: Timing | null, actor: string) {
     try {
       return await inTransaction(this.database, async (client) => {
         const r = await client.query(
-          `UPDATE conditions SET statement_timing = $2, updated_at = now() WHERE id = $1 RETURNING id`,
+          `UPDATE conditions
+              SET statement_timing = $2,
+                  settlement_mode = CASE WHEN $2 = 'event' THEN 'open' WHEN $2 = 'periodic' THEN 'term_bound' ELSE settlement_mode END,
+                  settlement_count = CASE WHEN $2 IS NULL THEN settlement_count END,
+                  settlement_cycle = CASE WHEN $2 = 'periodic' THEN COALESCE(settlement_cycle, 'quarter') WHEN $2 = 'event' THEN NULL ELSE settlement_cycle END,
+                  updated_at = now()
+            WHERE id = $1 RETURNING id`,
           [conditionId, timing]);
         if (!r.rows[0]) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
         await recordAudit(client, { actor, action: "royalty.timing", targetType: "condition",

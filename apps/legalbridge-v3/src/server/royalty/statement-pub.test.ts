@@ -7,6 +7,7 @@ import { FakeDatabase } from "../core/fake-db.js";
 import { publishingStatementPatch, royaltyStatementPatch, type BundleLine } from "../documents/royalty-patch.js";
 import { renderDocumentHtml } from "../documents/render.js";
 import { isPublishingBundle, PUB_STATEMENT_KEY, StatementIssuer } from "./statement-issue.js";
+import { businessUnitOf, resolveLegacyVariable } from "../documents/legacy-variables.js";
 import { isRoyaltyStatementKey } from "../documents/settlement-docs.js";
 
 /** 出版の行（電子 2 作品・紙 1 作品）。額は行ごとに切り捨て済み（事業部の Excel と同じ）。 */
@@ -63,6 +64,23 @@ test("出版の計算書：回の期間（statementPeriod）があれば、売�
   // 1 枚の対象期間を渡されればそれ。
   const q = publishingStatementPatch(LINES, { tax: 0, withholding: 0, netTransfer: null }, "2025年7月〜2026年6月");
   assert.equal(q.pubPeriodLabel, "2025年7月〜2026年6月");
+});
+
+test("共著の取り分：料率の欄は「15%×20%」、備考に取り分の説明。取り分の無い行はそのまま", () => {
+  const shared = [
+    line({ eventId: 11, period: "2025年8月分", salesJpy: 3000, paymentJpy: 90, sharePct: 20, payeeName: "脇屋彰太",
+           workTitle: "プリンセスウイング サプリメント ヴァルキリーアイランド" }),
+    line({ eventId: 12, period: "2025年10月分", salesJpy: 6000, paymentJpy: 180, sharePct: 20, payeeName: "脇屋彰太",
+           workTitle: "プリンセスウイング サプリメント ヴァルキリーアイランド" })
+  ];
+  const p = publishingStatementPatch(shared, { tax: 27, withholding: 0, netTransfer: null });
+  assert.equal((p.pubWorks as Array<Record<string, unknown>>)[0]!.rate, "15%×20%");
+  assert.equal((p.pubAnnex as Array<{ rows: Array<Record<string, unknown>> }>)[0]!.rows[0]!.rate, "15%×20%");
+  const patch = royaltyStatementPatch({}, { statementMode: "bundle", rs_bundle_lines: shared, notes: "備考です" })!;
+  assert.match(String(patch.notes), /^※ 許諾料は、報告売上 × 料率 に共著の取り分（脇屋彰太 様 20%）を掛けた額です/);
+  assert.match(String(patch.notes), /備考です$/);
+  assert.equal((publishingStatementPatch(LINES, { tax: 0, withholding: 0, netTransfer: null }).pubWorks as Array<Record<string, unknown>>)[0]!.rate, "15%");
+  assert.equal(royaltyStatementPatch({}, { statementMode: "bundle", rs_bundle_lines: LINES })!.notes, undefined);
 });
 
 test("出版でない行だけなら何も足さない。源泉の無い相手は差引の行を出さない", () => {
@@ -181,4 +199,37 @@ test("発行：試算 → 行と源泉を焼き付けた下書き → 決定日�
   (failing as any).lines = async () => LINES;
   await assert.rejects(failing.issue({ entries: [{ conditionId: 7, eventIds: [1] }] }, "t"), /結べない/);
   assert.ok(calls.some(([k, v]) => k === "void" && v === 56));
+});
+
+test("ひな形 r4（166）：作成者の下に担当者（部署・名前・メール・電話）。担当者が決まらなければ事業名、どちらも無ければ出さない", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const r3 = readFileSync(path.resolve(here, "../../../../../infra/v3/165_royalty_statement_pub_r3.sql"), "utf8").split("$html$")[1]!;
+  const sql = readFileSync(path.resolve(here, "../../../../../infra/v3/166_royalty_statement_pub_r4_staff.sql"), "utf8");
+  // 166 と同じ置き換え（SQL の文字列をそのまま読む）。
+  const lit = (s: string) => s.split("' || chr(10) || '").join("\n").split("'\n           || '").join("");
+  const from = lit(/'(  \{\{#if COMPANY_INVOICE_NO\}\}登録番号 \{\{COMPANY_INVOICE_NO\}\}\{\{\/if\}\}' \|\| chr\(10\) \|\| '<\/div>)',\n/.exec(sql)![1]!);
+  const to = lit(/,\n           '(  \{\{#if COMPANY_INVOICE_NO\}\}登録番号[\s\S]*?<\/div>)'\),/.exec(sql)![1]!);
+  assert.ok(r3.includes(from), "r3 の本文に置き換える欄がある");
+  const html = r3.replace("<!-- royalty_statement_pub r3 -->", "<!-- royalty_statement_pub r4 -->").replace(from, to);
+  const values = {
+    ...royaltyStatementPatch({}, { rs_bundle_lines: LINES, rs_bundle_tax: 30155, rs_bundle_withholding: 0, rs_bundle_net_transfer: 331709 })!,
+    DOC_NO: "ARC-ROY-2026-1035", documentDate: "2026-06-30", PAYMENT_DATE: "2026-10-20",
+    VENDOR_NAME: "岩﨑 亮馬", VENDOR_SUFFIX: "様", COMPANY_NAME: "株式会社アークライト", COMPANY_ADDRESS: "東京都千代田区"
+  };
+  const staff = renderDocumentHtml(html, { ...values, STAFF_NAME: "倉持 達也", STAFF_DEPARTMENT: "法務部",
+                                                STAFF_EMAIL: "legal@arclight.test", STAFF_PHONE: "03-0000-0000", STAFF_UNIT: "" });
+  assert.ok(staff.includes("担当　法務部　倉持 達也　legal@arclight.test　TEL 03-0000-0000"));
+  const unit = renderDocumentHtml(html, { ...values, STAFF_NAME: "", STAFF_UNIT: "出版事業" });
+  assert.ok(unit.includes("担当　出版事業") && !unit.includes("担当　法務部"));
+  const none = renderDocumentHtml(html, { ...values, STAFF_NAME: "", STAFF_UNIT: "" });
+  assert.ok(!none.includes("担当　"));
+  assert.ok(!/{{|}}/.test(staff + unit + none), "差し込み漏れ");
+});
+
+test("担当者の代わりの事業名：案件の事業区分、案件が無ければ出版の条件は「出版事業」。担当者がいれば出さない", () => {
+  assert.equal(businessUnitOf({ matter: { businessLine: "boardgame" } }), "ボードゲーム事業");
+  assert.equal(businessUnitOf({ conditions: [{ usageType: "pub_digital" }] }), "出版事業");
+  assert.equal(businessUnitOf({ conditions: [{ usageType: "self_sales" }] }), null);
+  assert.ok(!resolveLegacyVariable("STAFF_UNIT", { owner: { name: "倉持" }, conditions: [{ usageType: "pub_print" }] }));
+  assert.equal(resolveLegacyVariable("STAFF_UNIT", { owner: null, conditions: [{ usageType: "pub_print" }] }), "出版事業");
 });

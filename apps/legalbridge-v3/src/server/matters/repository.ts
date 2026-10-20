@@ -127,7 +127,18 @@ export class MatterRepository {
       // 出版は作品 80 点・条件 170 本で1案件になる。100 だと条件タブに出ない
       // 条件ができ、案件から実績も支払も立てられなくなる。
       this.conditions.list({ matterId: id, limit: 500 }),
-      this.documents("d.matter_id = $1", [id]),
+      // この案件の文書と、参照として繋いだ文書（別の案件のもの）と、この案件の条件が載っている
+      // 基本契約の文書（基本契約書は案件をまたぐので案件には付かない。契約の記録から辿る）。
+      this.documents(
+        `d.matter_id = $1
+         OR d.id IN (SELECT target_ref::bigint FROM matter_links WHERE matter_id = $1 AND target_type = 'document' AND target_ref ~ '^[0-9]+$')
+         OR (d.agreement_id IN (SELECT COALESCE(pa.id, x.id) FROM matter_links ml
+                                  JOIN conditions c ON ml.target_type = 'condition' AND c.id::text = ml.target_ref
+                                  JOIN agreements x ON x.id = c.agreement_id
+                                  LEFT JOIN agreements pa ON pa.id = x.parent_id
+                                 WHERE ml.matter_id = $1)
+             AND (t.template_key IN ('license_master', 'service_master')
+                  OR COALESCE(d.manual_inputs->>'documentKind', '') LIKE '%基本契約%'))`, [id]),
       this.payments(id),
       this.communications(id),
       this.links(id),
@@ -140,6 +151,12 @@ export class MatterRepository {
           WHERE ml.matter_id = $1 ORDER BY ml.id`, [id])
     ]);
     const summary = mapSummary(row);
+    // 参照の文書：別の案件の文書を参照として繋いだもの（link）か、条件が載っている基本契約の
+    // 文書（agreement。契約の記録から辿る）。この案件の文書なら null。
+    const refIds = new Set(links.filter((l) => l.targetType === "document").map((l) => Number(l.targetRef)));
+    const documentsWithRef = documents.map((d) => ({
+      ...d, reference: d.matterId === id ? null : refIds.has(d.id) ? "link" as const : "agreement" as const
+    }));
     const works = [
       ...(summary.work ? [summary.work] : []),
       ...(extraWorks.rows as any[])
@@ -152,7 +169,7 @@ export class MatterRepository {
       works,
       remarks: str(row.remarks),
       driveFolderUrl: str(row.drive_folder_url),
-      conditions, documents, payments, communications, links, tasks,
+      conditions, documents: documentsWithRef, payments, communications, links, tasks,
       ...family, agreements
     };
   }
@@ -252,8 +269,8 @@ export class MatterRepository {
 
   private async documents(where: string, params: unknown[]) {
     const r = await this.database.query(
-      `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label,
-              v.counterparty, v.counterparty_id, t.template_key, a.status AS agreement_status,
+      `SELECT d.id, d.document_no, d.status, d.issued_at, v.template_label, d.matter_id,
+              v.counterparty, v.counterparty_id, t.template_key, a.status AS agreement_status, a.agreement_no,
               snd.sent_at, snd.sent_via
          FROM documents d
          LEFT JOIN v_document_display v ON v.document_id = d.id
@@ -262,11 +279,7 @@ export class MatterRepository {
          LEFT JOIN agreements a ON a.id = d.agreement_id
          -- 送った記録（文書の一覧と同じ引き方）。案件の文書タブで CloudSign の段を出す。
          LEFT JOIN LATERAL (
-           SELECT x.occurred_at AS sent_at, split_part(x.action, '.', 1) AS sent_via
-             FROM audit_events x
-            WHERE x.target_type = 'document' AND x.target_id = d.id
-              AND x.action IN ('gmail.send', 'cloudsign.send')
-            ORDER BY x.occurred_at DESC LIMIT 1
+           SELECT dv.sent_at, dv.sent_via FROM document_delivery(d.id) dv
          ) snd ON true
         WHERE ${where}
         ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, params);
@@ -283,7 +296,9 @@ export class MatterRepository {
       issuedAt: d.issued_at ? new Date(String(d.issued_at)).toISOString() : null,
       sentAt: d.sent_at ? new Date(String(d.sent_at)).toISOString() : null,
       sentVia: str(d.sent_via),
-      agreementStatus: str(d.agreement_status)
+      agreementStatus: str(d.agreement_status),
+      matterId: int(d.matter_id),
+      agreementNo: str(d.agreement_no)
     }));
   }
 

@@ -65,6 +65,17 @@ const show = (v: unknown): string => {
 };
 
 /** 区分の見出し。V1 の field_schema は "I. 基本情報" のように番号を持っている。 */
+/**
+ * 欄がどちらの当事者のものか。相手先（VENDOR_・先方・発注先・受注者・受託者・許諾者・被許諾者…）か、
+ * 当社（STAFF_・当社・発注元・委託者・検収者…）か。どちらとも読めなければ null（候補を絞らない）。
+ */
+export function sideOf(name: string, label: string): "vendor" | "ours" | null {
+  const t = `${name} ${label}`;
+  if (/VENDOR|LICENSOR|LICENSEE|CONTRACTOR|先方|相手|発注先|受注者|受託者|許諾者|被許諾者|取引先|Licensor|Licensee/i.test(t)) return "vendor";
+  if (/STAFF|OWNER|COMPANY|当社|自社|発注元|委託者|検収者|社内/i.test(t)) return "ours";
+  return null;
+}
+
 export function groupsOf(fields: FormField[]): Array<{ name: string; fields: FormField[] }> {
   const order: string[] = [];
   const by = new Map<string, FormField[]>();
@@ -175,8 +186,14 @@ export function DocumentFields(
               const value = f.name in manual ? manual[f.name] : show(f.value);
               const blank = !String(value ?? "").trim();
               const want = kindFor(f.name, f.label, f.type);
+              // 相手先の欄（先方担当・発注先・受注者…）に当社の担当者の候補を出さない。
+              // 候補の先頭が「担当者名（当社）」で、先方担当者名の欄に当社の担当が入っていた。
+              // 逆に当社側の欄（発注元・当社担当…）には取引先の担当者を出さない。
+              const side = sideOf(f.name, f.label);
               const fits = candidates.filter((c) => (!want || c.kind === want)
-                && (!c.forFields || c.forFields.includes(f.name)));
+                && (!c.forFields || c.forFields.includes(f.name))
+                && !(side === "vendor" && c.source === "担当")
+                && !(side === "ours" && c.source === "取引先" && /の(氏名|部署|メール|電話)$/.test(c.label)));
               const inline = want === "date" || want === "amount";
               const open = inline || opened.has(f.name);
               return (

@@ -2,6 +2,14 @@ import { dateStr, int, str, type Transactable } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { USAGE_NAME_LABEL } from "./naming.js";
 import type { ConditionUsageType } from "../core/condition-usage.js";
+import { CYCLE_CSV, payDayLabel, readDigitalCycle } from "./pub-digital-cycle.js";
+
+/** 電子出版の集計のしかたの 4 列。電子出版以外と、支払条件が読めない条件は空。 */
+function digitalCycleCells(usageType: unknown, paymentTerms: unknown): string[] {
+  if (usageType !== "pub_digital") return ["", "", "", ""];
+  const c = readDigitalCycle(paymentTerms);
+  return c ? [CYCLE_CSV[c.cycle], String(c.startMonth), String(c.payMonth), payDayLabel(c.payDay)] : ["", "", "", ""];
+}
 
 /** 許諾料の扱い（A-048）の CSV 表記。取込（imports/service.ts の FEE_BASIS）と対。 */
 const LICENSE_FEE_BASIS_CSV: Record<string, string> = {
@@ -37,7 +45,10 @@ export const CONDITION_EXPORT_HEADERS = [
   "条件番号", "作品コード", "作品名", "許諾者コード", "許諾者", "契約番号",
   "取引モデル", "料率", "独占", "MG", "AG", "別途合意", "許諾料の扱い", "開始日", "終了日",
   "自動更新", "更新の単位", "更新停止日", "通貨",
-  "支払条件", "地域", "言語", "備考", "状態"
+  "支払条件",
+  // 電子出版の集計のしかた（pub-digital-cycle.ts）。支払条件の文から読んで出す。取込でここを直すと支払条件の文と決済の型が入れ替わる。
+  "集計のしかた", "集計開始月", "支払月", "支払日",
+  "地域", "言語", "備考", "状態"
 ] as const;
 
 /**
@@ -211,6 +222,7 @@ export class ConditionExportService {
         dateStr(x.renew_stopped_on) ?? "",
         str(x.currency) ?? "",
         str(x.payment_terms) ?? "",
+        ...digitalCycleCells(x.usage_type, x.payment_terms),
         str(x.regions) ?? "",
         str(x.languages) ?? "",
         str(x.notes) ?? "",

@@ -13,8 +13,9 @@ import {
  * 宛先は「何のメールか」で決める。
  *   owner_check … 依頼した事業部の担当者（案件の依頼者）へ。法務の担当を cc
  *   party_check … 取引先の主担当（無ければ連絡先の全員）へ。依頼者を cc
+ *   contract_unify … 契約書の統一（書面化）のご案内。宛先・cc は party_check と同じ
  *   delivery    … 取引先の請求先（無ければ主担当）へ。依頼者を cc
- * 取引先へのメール（party_check・delivery）には、設定の「いつも入れる cc」も足す。
+ * 取引先へのメール（party_check・contract_unify・delivery）には、設定の「いつも入れる cc」も足す。
  * 下書きを返すだけで送らない。人が画面で直してから送る。
  *
  * 案件の無い文書（デイリータスクで作ったもの。A-064）は、繋がっている依頼と作業から
@@ -116,13 +117,17 @@ export class MailDraftService {
   private async loadContext(documentId: number) {
       const head = await this.database.query(
         `SELECT d.id, d.document_no, d.status, d.issued_at, d.matter_id, d.rendered_values,
-                v.counterparty, v.counterparty_id, t.template_key,
+                -- 受取人（共著の取り分）宛ての文書は、相手先を受取人にする（代表の連絡先に送らない）。
+                COALESCE(pp.name, v.counterparty) AS counterparty, COALESCE(pp.id, v.counterparty_id) AS counterparty_id,
+                t.template_key,
                 COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
                 NULLIF(d.manual_inputs->>'_ownerStaffId', '')::bigint AS manual_owner_staff_id,
                 d.manual_inputs->>'_showRevision' AS show_revision,
                 m.matter_no, m.title AS matter_title, m.owner_staff_id, m.requester_email, m.requester_slack_id
            FROM documents d
            LEFT JOIN v_document_display v ON v.document_id = d.id
+           LEFT JOIN parties pp ON pp.id = CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
+                                                THEN (d.manual_inputs->>'_payeePartyId')::bigint END
            LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
            LEFT JOIN document_templates t ON t.id = tv.template_id
            LEFT JOIN matters m ON m.id = d.matter_id
@@ -158,9 +163,40 @@ export class MailDraftService {
       return { doc, origin, counterpartyId, counterpartyName, owner, requester, contacts, partyEmail };
   }
 
-  async draft(documentId: number, purpose: MailPurpose): Promise<MailDraft> {
+  /**
+   * 何枚かの文書を 1 通で送る下書き。宛先・cc は 1 枚目の文書から（取引先の主担当や担当者）、
+   * 文書番号・文書名・金額は全部を「・」でつなぐ。相手先の違う文書は混ぜられない。
+   * 送付（delivery）の文面は、種類が揃っていればその種類、混ざれば「その他の書類」。
+   */
+  async draftMany(documentIds: number[], purpose: MailPurpose): Promise<MailDraft> {
+    const ids = [...new Set(documentIds.map(Number))];
+    if (!ids.length) throw new DomainError("VALIDATION", "文書を選んでください");
+    return this.draft(ids[0]!, purpose, ids.slice(1));
+  }
+
+  async draft(documentId: number, purpose: MailPurpose, extraIds: number[] = []): Promise<MailDraft> {
     try {
-      const { doc, origin, counterpartyName, owner, requester, contacts, partyEmail } = await this.loadContext(documentId);
+      const { doc, origin, counterpartyName, owner, requester, contacts, partyEmail, counterpartyId } = await this.loadContext(documentId);
+      // 2 枚目以降。相手先が違えば止める（A社への便りに B社の書類が付く）。
+      const extras = extraIds.length ? (await this.database.query(
+        `SELECT d.id, d.document_no, d.issued_at, d.rendered_values, d.manual_inputs->>'_showRevision' AS show_revision,
+                t.template_key, COALESCE(v.template_label, d.manual_inputs->>'documentKind') AS template_label,
+                COALESCE(pp.id, v.counterparty_id) AS counterparty_id, COALESCE(pp.name, v.counterparty) AS counterparty
+           FROM documents d
+           LEFT JOIN v_document_display v ON v.document_id = d.id
+           LEFT JOIN parties pp ON pp.id = CASE WHEN d.manual_inputs->>'_payeePartyId' ~ '^[0-9]+$'
+                                                THEN (d.manual_inputs->>'_payeePartyId')::bigint END
+           LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+           LEFT JOIN document_templates t ON t.id = tv.template_id
+          WHERE d.id = ANY($1::bigint[])
+          ORDER BY array_position($1::bigint[], d.id)`, [extraIds])).rows as Array<Record<string, any>> : [];
+      if (extras.length !== extraIds.length) throw new DomainError("NOT_FOUND", "選んだ文書の一部が見つかりません");
+      const mixed = extras.filter((e) => (e.counterparty_id ? Number(e.counterparty_id) : null) !== counterpartyId);
+      if (mixed.length) {
+        throw new DomainError("VALIDATION",
+          `相手先の違う文書は 1 通にまとめられません（${[counterpartyName, ...mixed.map((e) => String(e.counterparty ?? "（相手先なし）"))].join("・")}）`);
+      }
+      const all = [doc, ...extras];
 
       const settings = await this.database.query(
         "SELECT key, value FROM settings WHERE key = ANY($1::text[])", [[MAIL_TEMPLATES_KEY, "company_profile"]]);
@@ -203,19 +239,24 @@ export class MailDraftService {
       }
       cc = cc.filter((c) => !to.some((t) => t.email.toLowerCase() === c.email.toLowerCase()));
 
-      const kind = templateKindOf(purpose, str(doc.template_key));
+      // 送付の文面は文書の種類で選ぶ。混ざっていれば「その他の書類」。
+      const kinds = [...new Set(all.map((d) => templateKindOf(purpose, str(d.template_key))))];
+      const kind = kinds.length === 1 ? kinds[0]! : "general";
+      // 紙と同じ番号（訂正版の枝番は出さず、改訂の印は選んだときだけ）。何枚かなら「・」でつなぐ。
+      const numberOf = (d: Record<string, any>) => d.document_no
+        ? printedDocumentNumber(String(d.document_no), showRevisionOf({ _showRevision: d.show_revision })) : "";
+      const amounts = all.map((d) => amountOf((d.rendered_values ?? {}) as Record<string, unknown>));
+      const latest = all.map((d) => dateStr(d.issued_at)).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
       const rendered = renderMail(templates.templates[kind], templates.signature, {
         相手先: counterpartyName,
         宛名: to.length === 1 ? to[0].name ?? "" : "",
-        // 紙と同じ番号（訂正版の枝番は出さず、改訂の印は選んだときだけ）。
-        文書番号: doc.document_no
-          ? printedDocumentNumber(String(doc.document_no), showRevisionOf({ _showRevision: doc.show_revision }))
-          : "",
-        文書名: str(doc.template_label) ?? "書類",
+        文書番号: all.map(numberOf).filter(Boolean).join("・"),
+        文書名: [...new Set(all.map((d) => str(d.template_label) ?? "書類"))].join("・"),
         案件番号: origin?.no ?? "",
         案件名: origin?.title ?? "",
-        金額: amountOf((doc.rendered_values ?? {}) as Record<string, unknown>),
-        発行日: japaneseDate(dateStr(doc.issued_at)),
+        // 1 枚でも額が分からなければ空（取り違えを避ける）。
+        金額: amounts.every(Boolean) ? amounts.join("・") : "",
+        発行日: latest ? japaneseDate(latest) : "",
         会社名: company
       });
       if (kind !== "owner_check" && !company) warnings.push("自社情報の会社名が空です（運用 → 設定 → 自社情報）");

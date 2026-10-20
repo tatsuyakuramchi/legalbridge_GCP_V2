@@ -6,6 +6,7 @@ import type {
 } from "../core/model.js";
 import { loadShares } from "../royalty/shares.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./settlement.js";
+import { isSettlementCycle, isSettlementMode } from "./settlement-mode.js";
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
@@ -91,6 +92,16 @@ export interface ConditionListQuery {
 export class ConditionRepository {
   constructor(private readonly database: Transactable) {}
 
+  /** id の並びで一覧の形を返す（作業テーブルが、依頼に繋いだ条件をそのまま出すため）。 */
+  async findMany(ids: number[]): Promise<ConditionSummary[]> {
+    if (!ids.length) return [];
+    try {
+      const r = await this.database.query(
+        `SELECT ${SUMMARY_COLUMNS} ${SUMMARY_JOINS} WHERE c.id = ANY($1::bigint[]) ORDER BY c.id`, [ids]);
+      return r.rows.map(mapSummary);
+    } catch (error) { throw translate(error); }
+  }
+
   async list(query: ConditionListQuery = {}): Promise<ConditionSummary[]> {
     const where: string[] = query.includeVoid ? ["true"] : ["c.status <> 'void'"];
     const params: unknown[] = [];
@@ -140,6 +151,8 @@ export class ConditionRepository {
               c.distribution,
               c.target_party_id, tp.name AS target_party_name,
               c.tax_category, c.payment_terms, c.contract_form, c.cycle, c.notes,
+              c.settlement_mode, c.settlement_count, c.settlement_cycle, c.settlement_grace_days, c.report_due_days,
+              c.time_settlement, c.hours_included, c.overage_unit_amount, c.shortfall_unit_amount,
               c.spec, c.deliverable_ownership, c.order_no,
               pc.condition_no AS parent_condition_no,
               wp.name AS work_part_name
@@ -182,7 +195,16 @@ export class ConditionRepository {
       taxCategory: row.tax_category ?? "taxable",
       paymentTerms: str(row.payment_terms),
       contractForm: str(row.contract_form),
+      timeSettlement: row.time_settlement === true,
+      hoursIncluded: num(row.hours_included),
+      overageUnitAmount: int(row.overage_unit_amount),
+      shortfallUnitAmount: int(row.shortfall_unit_amount),
       cycle: str(row.cycle),
+      settlementMode: isSettlementMode(row.settlement_mode) ? row.settlement_mode : null,
+      settlementCount: int(row.settlement_count),
+      settlementCycle: isSettlementCycle(row.settlement_cycle) ? row.settlement_cycle : null,
+      settlementGraceDays: int(row.settlement_grace_days),
+      reportDueDays: int(row.report_due_days),
       notes: str(row.notes),
       spec: str(row.spec),
       orderNo: str(row.order_no),

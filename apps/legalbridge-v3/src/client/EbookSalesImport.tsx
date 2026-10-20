@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { useDebounced } from "./ListTools.js";
+import { OwnerStaffPicker } from "./OwnerStaffPicker.js";
 
 /**
  * 電子書籍売上の取込（A-069。docs/royalty-shares.md §5）。
@@ -178,7 +179,7 @@ export function EbookSalesImport() {
         </div>
         {error && <div className="alert">{error}</div>}
         <AnnualClosesPanel />
-        <PeriodReissuePanel />
+        <div className="faint">出した計算書の出し直し（対象期間・担当者・支払日・取り分の表示・源泉）は 運用 → 一括修正 にあります</div>
         {read && (
           <div className="faint">
             読んだシート：{read.sheets.map((s) => `${s.name}（${s.rows} 行${s.note ? `・${s.note}` : ""}）`).join("、")}
@@ -266,7 +267,7 @@ export function EbookSalesImport() {
                             {g.condition.shares.length > 0 && <> · 取り分 {g.condition.shares.join("・")}</>}
                             {g.round
                               ? <> · 回 {g.round.label ?? `#${g.round.id}`}</>
-                              : <> · <span className="warn" title="年 1 回の締めを立てると、支払文書処理でまとめて締められます">回なし</span></>}
+                              : <> · <span className="warn" title="年 1 回の締めを立てると、支払文書の「まとめて締める」で計算書にできます">回なし</span></>}
                           </div>
                         )}
                         {g.status === "unresolved" && !readOnly && g.cid && read && (
@@ -364,6 +365,7 @@ function WorkPicker(
 // ---------------------------------------------------------------------------
 
 interface AnnualTarget {
+  cycle?: "year" | "half_year" | "quarter";
   conditionId: number; conditionNo: string | null; name: string; workTitle: string | null; partyName: string | null;
   paymentTerms: string | null; existing: number;
   adding: Array<{ seq: number; label: string | null; dueOn: string | null; payOn: string | null; serviceFrom?: string | null; serviceTo?: string | null }>;
@@ -424,8 +426,8 @@ function AnnualClosesPanel() {
   return (
     <div className="subpanel">
       <div className="row" style={{ alignItems: "center", gap: 8 }}>
-        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "年 1 回の締めをまとめて立てる"}</button>
-        <span className="faint">取込の実績を付ける回。立てておくと、支払文書処理の「まとめて締める」で計算書を一括で作れます</span>
+        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "集計期間の締めをまとめて立てる（年 1・2・4 回）"}</button>
+        <span className="faint">取込の実績を付ける回。立てておくと、支払文書の「まとめて締める」で計算書を一括で作れます（1 人ずつなら「作家の報告と計算書」から）</span>
       </div>
       {open && (
         <div className="stack" style={{ marginTop: 8 }}>
@@ -438,7 +440,7 @@ function AnnualClosesPanel() {
             </label>
             <label className="field"><span>立て方</span>
               <select value={mode} onChange={(e) => { setMode(e.target.value as "yearly" | "span"); reset(); }}>
-                <option value="yearly">毎年（12 か月ずつ）</option>
+                <option value="yearly">条件の集計期間どおり（年 1 回・年 2 回・年 4 回）</option>
                 <option value="span">期間を指定（1 回だけ）</option>
               </select>
             </label>
@@ -465,18 +467,19 @@ function AnnualClosesPanel() {
               </button>
             )}
           </div>
-          <div className="faint">締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません。回より先に取り込んで浮いている売上の実績（「予定が無いのに実績がある」）は、発生日を集計期間に含む回に付け直します。「期間を指定」は移行時に浮いた実績をまとめて 1 回の支払で精算するためのもので、以後は「毎年」で立ててください</div>
+          <div className="faint">回の長さは条件ごとの集計のしかた（支払条件の文、読めなければ決済の型）で決まります。年 2 回なら 1 年に 2 回、年 4 回なら 4 回立て、開始日は条件の集計期間の区切りに合わせます。締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません。回より先に取り込んで浮いている売上の実績（「予定が無いのに実績がある」）は、発生日を集計期間に含む回に付け直します。「期間を指定」は移行時に浮いた実績をまとめて 1 回の支払で精算するためのもので、以後は「毎年」で立ててください</div>
           {error && <div className="alert">{error}</div>}
           {done && <div className="notice">{done.written ?? 0} 本の条件に回を立てました（飛ばした条件 {done.skipped}）{done.attached ? `。浮いていた実績 ${done.attached} 件を回に付け直しました` : ""}</div>}
           {preview && (
             <div className="tablewrap">
               <table>
-                <thead><tr><th>作品</th><th>条件</th><th>相手先</th><th>いまの回</th><th>立てる回</th><th>支払期日</th><th>付け直す実績</th></tr></thead>
+                <thead><tr><th>作品</th><th>条件</th><th>集計</th><th>相手先</th><th>いまの回</th><th>立てる回</th><th>支払期日</th><th>付け直す実績</th></tr></thead>
                 <tbody>
                   {preview.targets.map((t) => (
                     <tr key={t.conditionId} className={t.adding.length || t.attaching ? "" : "faint"}>
                       <td>{t.workTitle ?? "—"}</td>
                       <td className="code">{t.conditionNo ?? `#${t.conditionId}`}<div className="faint" style={{ fontSize: "0.85em" }}>{t.name}</div></td>
+                      <td>{({ year: "年1回", half_year: "年2回", quarter: "年4回" } as Record<string, string>)[t.cycle ?? "year"]}</td>
                       <td>{t.partyName ?? "—"}</td>
                       <td className="num">{t.existing}</td>
                       <td>{t.adding.length ? t.adding.map((l) => `${l.label}（締め ${l.dueOn}）`).join("、") : (t.skipped ?? "—")}</td>
@@ -484,140 +487,7 @@ function AnnualClosesPanel() {
                       <td className="num">{t.attaching || ""}{t.unattached ? <span className="tag out" title="どの回の集計期間にも入らない実績。期間を広げるか、条件明細で回を付けてください">期間外 {t.unattached}</span> : null}</td>
                     </tr>
                   ))}
-                  {!preview.targets.length && <tr><td colSpan={7} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type ReissueStatus = "change" | "same" | "no_round" | "amount" | "draft" | "error";
-interface ReissueTarget {
-  documentId: number; documentNo: string | null; issuedOn: string | null; templateKey: string;
-  partyName: string | null; conditionCount: number; currentLabel: string | null; newLabel: string | null;
-  status: ReissueStatus; message: string | null;
-  newDocumentId?: number | null; newDocumentNo?: string | null;
-}
-const REISSUE_STATUS: Record<ReissueStatus, string> = {
-  change: "出し直す", same: "揃っている", no_round: "回が無い", amount: "額が変わる", draft: "下書きあり", error: "出せない"
-};
-
-/**
- * 出した計算書の対象期間を、回の期間（「2025年7月〜2026年6月」）に揃えて訂正版で出し直す。
- * まとめて締めるの計算書は売上のあった月の範囲で期間を出していて、作品・受取人ごとにばらついていた。
- */
-function PeriodReissuePanel() {
-  const readOnly = useReadOnly();
-  const [open, setOpen] = useState(false);
-  const [usage, setUsage] = useState<"pub_digital" | "pub_print">("pub_digital");
-  const [targets, setTargets] = useState<ReissueTarget[] | null>(null);
-  const [picked, setPicked] = useState<Set<number>>(new Set());
-  const [showAll, setShowAll] = useState(false);
-  const [reason, setReason] = useState("対象期間の表記を回の期間に揃える");
-  const [done, setDone] = useState<{ results: ReissueTarget[]; reissued: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function tryIt() {
-    setBusy(true); setError(null); setDone(null);
-    try {
-      const r = await api.post<{ targets: ReissueTarget[] }>("/royalty-ledger/statements/period-reissue/preview", { usageType: usage });
-      setTargets(r.targets);
-      setPicked(new Set(r.targets.filter((t) => t.status === "change").map((t) => t.documentId)));
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setTargets(null); }
-    finally { setBusy(false); }
-  }
-  async function run() {
-    if (!picked.size) return;
-    if (!window.confirm(`${picked.size} 枚の計算書を訂正版で出し直します。元の計算書は差し替え済みになり、番号は改訂の番号になります。相手に送り直す必要があります。よいですか？`)) return;
-    setBusy(true); setError(null);
-    try {
-      const r = await api.post<{ results: ReissueTarget[]; reissued: number }>("/royalty-ledger/statements/period-reissue",
-        { usageType: usage, documentIds: [...picked], reason });
-      setDone(r); setTargets(null); setPicked(new Set());
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setBusy(false); }
-  }
-  const toggle = (id: number) => setPicked((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-  const shown = (targets ?? []).filter((t) => showAll || t.status !== "same");
-  const failed = done?.results.filter((r) => r.status === "error") ?? [];
-
-  return (
-    <div className="subpanel">
-      <div className="row" style={{ alignItems: "center", gap: 8 }}>
-        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "出した計算書の対象期間を回の期間に揃える"}</button>
-        <span className="faint">売上のあった月の範囲で期間を出していた計算書を、訂正版でまとめて出し直します</span>
-      </div>
-      {open && (
-        <div className="stack" style={{ marginTop: 8 }}>
-          <div className="row" style={{ flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
-            <label className="field"><span>媒体</span>
-              <select value={usage} onChange={(e) => { setUsage(e.target.value as "pub_digital" | "pub_print"); setTargets(null); }}>
-                <option value="pub_digital">電子出版</option>
-                <option value="pub_print">紙出版</option>
-              </select>
-            </label>
-            <label className="field" style={{ minWidth: 260 }}><span>訂正の理由</span>
-              <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
-            </label>
-            <button className="btn btn-sm" disabled={busy} onClick={() => void tryIt()}>試算</button>
-            {targets && !readOnly && (
-              <button className="btn btn-sm primary" disabled={busy || !picked.size} onClick={() => void run()}>
-                {picked.size} 枚を出し直す
-              </button>
-            )}
-            {targets && (
-              <label className="row" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
-                <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-                揃っている計算書も出す
-              </label>
-            )}
-            {busy && <span className="faint">処理中…</span>}
-          </div>
-          <div className="faint">発行済みの計算書は書き換えず、訂正版を出して元を差し替え済みにします（実績は訂正版に移ります）。条件・受取人・実績・決定日は元のまま、額も変えません。いま計算し直して額が変わる計算書は出し直しません（個別に訂正してください）。支払は作り直しません。出し直した計算書は相手に送り直してください</div>
-          {error && <div className="alert">{error}</div>}
-          {done && (
-            <div className="notice">
-              {done.reissued} 枚を出し直しました
-              {done.results.filter((r) => r.newDocumentNo).length > 0 && (
-                <div className="faint" style={{ fontSize: "0.85em" }}>
-                  {done.results.filter((r) => r.newDocumentNo).map((r) => `${r.documentNo ?? `#${r.documentId}`} → ${r.newDocumentNo}`).join("、")}
-                </div>
-              )}
-              {failed.length > 0 && (
-                <div className="alert" style={{ marginTop: 6 }}>
-                  出せなかった計算書：{failed.map((r) => `${r.documentNo ?? `#${r.documentId}`}（${r.message ?? ""}）`).join("、")}
-                </div>
-              )}
-            </div>
-          )}
-          {targets && (
-            <div className="tablewrap">
-              <table>
-                <thead><tr><th></th><th>計算書</th><th>決定日</th><th>宛先</th><th>条件</th><th>いまの対象期間</th><th>出し直したあと</th><th>状態</th></tr></thead>
-                <tbody>
-                  {shown.map((t) => (
-                    <tr key={t.documentId} className={t.status === "change" ? "" : "faint"}>
-                      <td><input type="checkbox" disabled={t.status !== "change"} checked={picked.has(t.documentId)}
-                                 onChange={() => toggle(t.documentId)} aria-label={`${t.documentNo ?? t.documentId} を出し直す`} /></td>
-                      <td className="code">{t.documentNo ?? `#${t.documentId}`}</td>
-                      <td>{t.issuedOn ?? "—"}</td>
-                      <td>{t.partyName ?? "—"}</td>
-                      <td className="num">{t.conditionCount}</td>
-                      <td>{t.currentLabel ?? "—"}</td>
-                      <td>{t.newLabel ?? "—"}</td>
-                      <td>{REISSUE_STATUS[t.status]}{t.message ? <div className="faint" style={{ fontSize: "0.85em" }}>{t.message}</div> : null}</td>
-                    </tr>
-                  ))}
-                  {!shown.length && <tr><td colSpan={8} className="faint">出し直す計算書はありません</td></tr>}
+                  {!preview.targets.length && <tr><td colSpan={8} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
                 </tbody>
               </table>
             </div>

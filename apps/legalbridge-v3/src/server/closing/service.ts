@@ -42,8 +42,10 @@ export interface CandidateRow {
   needsReport: boolean;
   /** 料率（百万分率）。料率の条件を並べるときに画面に出す。 */
   ratePpm: number | null;
-  /** その条件の決済文書の呼び名（検収書／計算書）。 */
+  /** その条件の決済文書の呼び名（検収書／役務提供完了通知書／計算書）。 */
   documentLabel: string;
+  /** 準委任の時間精算（A-073）。決済文書が役務提供完了通知書になる。 */
+  timeSettlement: boolean;
   party: { id: number; name: string } | null;
   work: { id: number; name: string } | null;
   matter: { id: number; title: string } | null;
@@ -65,6 +67,8 @@ export interface PeriodRow {
   kind: string;
   pricingModel: string;
   currency: string;
+  /** 準委任の時間精算（A-073）。決済文書が役務提供完了通知書になる。 */
+  timeSettlement: boolean;
   party: { id: number; name: string } | null;
   matter: { id: number; title: string } | null;
   seq: number | null;
@@ -160,7 +164,7 @@ const PRINTED_DUE_SQL = `CASE WHEN jsonb_typeof(d.rendered_values) = 'object' TH
 /** 条件の輪郭。候補一覧でも、回の一覧の頭でも同じものを出す。 */
 const CONDITION_HEAD = `
   SELECT c.id, c.condition_no, c.name, c.kind, c.pricing_model, c.direction, c.currency,
-         c.rate_ppm, c.term_start, c.term_end,
+         c.rate_ppm, c.term_start, c.term_end, c.time_settlement,
          p.id AS party_id, p.name AS party_name,
          w.id AS work_id, w.title AS work_title,
          m.id AS matter_id, m.title AS matter_title,
@@ -180,12 +184,13 @@ const PERIOD_SELECT = `
   SELECT s.id AS schedule_id, s.seq, s.label, s.planned_amount,
          s.due_on, s.pay_on, s.service_from, s.service_to,
          c.id AS condition_id, c.condition_no, c.name AS condition_name,
-         c.kind, c.pricing_model, c.currency, c.payment_terms,
+         c.kind, c.pricing_model, c.currency, c.payment_terms, c.time_settlement,
          p.id AS party_id, p.name AS party_name,
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
          d.id AS document_id, d.document_no, d.status AS document_status,
          snd.sent_at AS document_sent_at,
+         p.kind AS party_kind,
          ${PRINTED_DUE_SQL} AS printed_due_on,
          y.id AS payment_id, y.payment_no, y.status AS payment_status, y.paid_on,
          COALESCE(al.amount, 0) AS allocated_amount
@@ -207,10 +212,8 @@ const PERIOD_SELECT = `
     LEFT JOIN documents d ON d.id = e.document_id AND d.status <> 'void'
     -- 送った記録（文書の一覧と同じ出どころ）。「③ 送る」が済んだかを見る。
     LEFT JOIN LATERAL (
-      SELECT a.occurred_at AS sent_at FROM audit_events a
-       WHERE a.target_type = 'document' AND a.target_id = d.id
-         AND a.action IN ('gmail.send', 'cloudsign.send')
-       ORDER BY a.occurred_at DESC LIMIT 1
+      -- 送付は document_delivery に 1 本化（A-074。郵送・CloudSign の画面・過去分も数える）。
+      SELECT dv.sent_at FROM document_delivery(d.id) dv
     ) snd ON true
     LEFT JOIN LATERAL (
       SELECT a.amount, a.payment_id FROM payment_allocations a
@@ -227,12 +230,13 @@ const UNPLANNED_SELECT = `
          e.occurred_on AS due_on, NULL::date AS pay_on,
          NULL::date AS service_from, NULL::date AS service_to,
          c.id AS condition_id, c.condition_no, c.name AS condition_name,
-         c.kind, c.pricing_model, c.currency, c.payment_terms,
+         c.kind, c.pricing_model, c.currency, c.payment_terms, c.time_settlement,
          p.id AS party_id, p.name AS party_name,
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
          d.id AS document_id, d.document_no, d.status AS document_status,
          snd.sent_at AS document_sent_at,
+         p.kind AS party_kind,
          ${PRINTED_DUE_SQL} AS printed_due_on,
          y.id AS payment_id, y.payment_no, y.status AS payment_status, y.paid_on,
          COALESCE(al.amount, 0) AS allocated_amount
@@ -248,10 +252,8 @@ const UNPLANNED_SELECT = `
     LEFT JOIN documents d ON d.id = e.document_id AND d.status <> 'void'
     -- 送った記録（文書の一覧と同じ出どころ）。「③ 送る」が済んだかを見る。
     LEFT JOIN LATERAL (
-      SELECT a.occurred_at AS sent_at FROM audit_events a
-       WHERE a.target_type = 'document' AND a.target_id = d.id
-         AND a.action IN ('gmail.send', 'cloudsign.send')
-       ORDER BY a.occurred_at DESC LIMIT 1
+      -- 送付は document_delivery に 1 本化（A-074。郵送・CloudSign の画面・過去分も数える）。
+      SELECT dv.sent_at FROM document_delivery(d.id) dv
     ) snd ON true
     LEFT JOIN LATERAL (
       SELECT a.amount, a.payment_id FROM payment_allocations a
@@ -508,7 +510,8 @@ function headRow(row: any): CandidateRow {
     currency: String(row.currency ?? "JPY"),
     needsReport: needsReport(row.pricing_model),
     ratePpm: int(row.rate_ppm),
-    documentLabel: documentFor(kind).label,
+    timeSettlement: row.time_settlement === true,
+    documentLabel: documentFor({ kind, timeSettlement: row.time_settlement === true }).label,
     party: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
     work: row.work_id ? { id: Number(row.work_id), name: String(row.work_title ?? "") } : null,
     matter: row.matter_id ? { id: Number(row.matter_id), title: String(row.matter_title ?? "") } : null,
@@ -535,7 +538,8 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     schedulePayOn: dateStr(row.pay_on),
     printedDueOn: printedDue(row.printed_due_on),
     paymentTerms: str(row.payment_terms),
-    basisOn: closingOn ?? dateStr(row.event_on)
+    basisOn: closingOn ?? dateStr(row.event_on),
+    partyKind: str(row.party_kind)
   });
   return {
     scheduleId: int(row.schedule_id),
@@ -545,6 +549,7 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     kind,
     pricingModel: String(row.pricing_model ?? "none"),
     currency: String(row.currency ?? "JPY"),
+    timeSettlement: row.time_settlement === true,
     party: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
     matter: row.matter_id ? { id: Number(row.matter_id), title: String(row.matter_title ?? "") } : null,
     seq: int(row.seq),
@@ -559,7 +564,7 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     documentId,
     documentNo: str(row.document_no),
     documentStatus: str(row.document_status),
-    documentLabel: documentFor(kind).label,
+    documentLabel: documentFor({ kind, timeSettlement: row.time_settlement === true }).label,
     documentSentAt: row.document_sent_at ? new Date(String(row.document_sent_at)).toISOString() : null,
     paymentId,
     paymentNo: str(row.payment_no),
@@ -567,7 +572,7 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     paidOn: dateStr(row.paid_on),
     paidAmount: Number(row.allocated_amount ?? 0),
     step,
-    state: stateLabel({ step, pricingModel: row.pricing_model, kind, closingOn, today }),
+    state: stateLabel({ step, pricingModel: row.pricing_model, kind, timeSettlement: row.time_settlement === true, closingOn, today }),
     due,
     monthKey: monthKeyOf(closingOn),
     // 浮いた実績に締め日は無い（due_on に実績日を入れてある）。実績日からの
