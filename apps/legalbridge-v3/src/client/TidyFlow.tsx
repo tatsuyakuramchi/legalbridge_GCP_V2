@@ -12,6 +12,7 @@ import { DocumentImport } from "./DocumentImport.js";
 import { TidyWorkspace } from "./TidyWorkspace.js";
 import type { LooseCondition, MapAgreement, MapNode, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
 import type { DocumentSummary } from "../server/documents/repository.js";
+import type { LinkItem } from "./Relations.js";
 
 /**
  * 整理する ― 取引先ごとに、上から順に台帳をそろえる（本線 ① 登録する の中の順番）。
@@ -138,6 +139,7 @@ export function TidyFlow({ initialPartyId, onOpen, header, onPartyChange }: {
                                  return `${d.documentNo ?? `#${d.id}`} を ${root.agreementNo ?? ""} に繋ぎました`;
                                })}
                                onImported={() => { setNotice("外の文書を登録しました"); bump(); }}
+                               onNotice={(m) => { if (m.startsWith("⚠")) setError(m.slice(1).trim()); else setNotice(m); }}
                                onNext={() => setStep(4)} />
               )}
               {step === 4 && map && partyId && root && (
@@ -165,6 +167,63 @@ function docsOf(root: MapNode, map: PartyMap): Array<{ key: string; label: strin
 }
 
 // ---------------------------------------------------------------------
+
+/**
+ * 文書の案件。いま付いている案件を出し、「案件を繋ぐ」で番号・件名から探して決める（1 文書 1 案件）。
+ * /links/document/:id/matter（つながりの画面と同じ道具）。
+ */
+function DocMatter({ documentId, busy, onOpen, onChanged }: {
+  documentId: number; busy: boolean; onOpen?: (kind: EntityKind, id: number) => void; onChanged: (msg: string) => void;
+}) {
+  const [current, setCurrent] = useState<LinkItem | null | undefined>(undefined);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    api.get<{ relations: Array<{ relation: string; items: LinkItem[] }> }>(`/links/document/${documentId}`)
+      .then((r) => setCurrent(r.relations.find((x) => x.relation === "matter")?.items[0] ?? null))
+      .catch(() => setCurrent(null));
+  }, [documentId, version]);
+  const search = async (q: string) => {
+    const r = await api.get<{ candidates: LinkItem[] }>(`/links/document/${documentId}/matter/candidates?q=${encodeURIComponent(q.trim())}`);
+    return r.candidates.map((c) => ({ value: String(c.id), label: `${c.code ?? ""}　${c.label}`.trim(), hint: c.note }));
+  };
+  async function attach(targetId: number, label: string) {
+    setSaving(true);
+    try {
+      await api.post(`/links/document/${documentId}/matter`, { targetId });
+      setEditing(false); setVersion((v) => v + 1); onChanged(`案件 ${label} に繋ぎました`);
+    } catch (e) { onChanged(`⚠ ${e instanceof ApiError ? e.message : String(e)}`); }
+    finally { setSaving(false); }
+  }
+  async function detach() {
+    if (!current) return;
+    setSaving(true);
+    try {
+      await api.del(`/links/document/${documentId}/matter/${current.id}`);
+      setVersion((v) => v + 1); onChanged(`案件 ${current.code ?? ""} から外しました`);
+    } catch (e) { onChanged(`⚠ ${e instanceof ApiError ? e.message : String(e)}`); }
+    finally { setSaving(false); }
+  }
+  if (current === undefined) return <span className="faint">案件…</span>;
+  return (
+    <span className="row" style={{ gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <span className="faint">案件：</span>
+      {current
+        ? (onOpen ? <button className="linky code" onClick={() => onOpen("matter", current.id)}>{current.code ?? `#${current.id}`}</button> : <span className="code">{current.code}</span>)
+        : <span className="tag ghost">なし</span>}
+      {!editing && <button className="btn btn-sm" disabled={busy || saving} onClick={() => setEditing(true)}>{current ? "案件を変える" : "案件を繋ぐ"}</button>}
+      {current && !editing && <button className="linky" disabled={busy || saving} onClick={detach}>外す</button>}
+      {editing && (
+        <span style={{ minWidth: 300, display: "inline-block" }}>
+          <SearchSelect value="" search={search} placeholder="案件番号・件名で探して決める" autoFocus disabled={saving}
+                        onChange={(v, o) => { if (v) void attach(Number(v), o?.label ?? v); }} />
+        </span>
+      )}
+      {editing && <button className="linky" onClick={() => setEditing(false)}>やめる</button>}
+    </span>
+  );
+}
 
 function StepParty({ partyId, partyName, map, onPick, onNext, onOpen }: {
   partyId?: number; partyName: string | null; map: PartyMap | null; onPick: (id: number, name: string | null) => void; onNext: () => void;
@@ -258,9 +317,10 @@ function StepStructure({ map, partyId, partyName, shape, onShape, structure, bus
   );
 }
 
-function StepDocuments({ map, partyId, root, busy, onOpen, onRegister, onLink, onImported, onNext }: {
+function StepDocuments({ map, partyId, root, busy, onOpen, onRegister, onLink, onImported, onNext, onNotice }: {
   map: PartyMap; partyId: number; root: MapNode; busy: boolean; onOpen?: (kind: EntityKind, id: number) => void;
   onRegister: (d: UnlinkedDocument) => void; onLink: (d: { id: number; documentNo: string | null }) => void; onImported: () => void; onNext: () => void;
+  onNotice: (msg: string) => void;
 }) {
   const [keyword, setKeyword] = useState("");
   const q = useDebounced(keyword);
@@ -279,6 +339,7 @@ function StepDocuments({ map, partyId, root, busy, onOpen, onRegister, onLink, o
         {isMaster
           ? `基本契約 ${root.agreementNo ?? ""} の下に、条件書・発注書を置きます。条件書は「登録する」で個別契約になり、発注書は条件を持つ文書として並びます。`
           : `独立契約 ${root.agreementNo ?? ""} に、契約書・覚書を繋ぎます。`}
+        　文書ごとに案件も繋げます（番号・件名で探して決める）。
       </div>
       <div className="panel">
         <div className="panel-hd"><h2>この{KIND_LABEL[root.kind]}の下にある文書 {attached.length}</h2>
@@ -291,6 +352,7 @@ function StepDocuments({ map, partyId, root, busy, onOpen, onRegister, onLink, o
               <span className="code">{d.no ?? ""}</span><span>{d.label}</span><span className="faint">{st(d.status)}</span>
               {onOpen && d.agreementId && <button className="linky" onClick={() => onOpen("agreement", d.agreementId!)}>開く</button>}
               {onOpen && d.documentId && <button className="linky" onClick={() => onOpen("document", d.documentId!)}>開く</button>}
+              {d.documentId && <DocMatter documentId={d.documentId} busy={busy} onOpen={onOpen} onChanged={onNotice} />}
             </div>
           ))}
         </div>
@@ -307,6 +369,7 @@ function StepDocuments({ map, partyId, root, busy, onOpen, onRegister, onLink, o
                 {d.role === "master" && <span className="faint">基本契約書は「契約の形」で立てます</span>}
                 {d.role !== "master" && !(d.role === "terms" && isMaster) && <button className="btn btn-sm" disabled={busy} onClick={() => onLink(d)}>この契約に繋ぐ</button>}
                 {onOpen && <button className="linky" onClick={() => onOpen("document", d.id)}>開く</button>}
+                <DocMatter documentId={d.id} busy={busy} onOpen={onOpen} onChanged={onNotice} />
               </div>
             ))}
           </div>
@@ -320,6 +383,7 @@ function StepDocuments({ map, partyId, root, busy, onOpen, onRegister, onLink, o
             <div key={d.id} className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span className="code">{d.documentNo ?? `#${d.id}`}</span><span>{d.title ?? d.templateLabel ?? ""}</span><span className="faint">{d.phase}</span>
               <button className="btn btn-sm" disabled={busy} onClick={() => onLink(d)}>この契約に繋ぐ</button>
+              <DocMatter documentId={d.id} busy={busy} onOpen={onOpen} onChanged={onNotice} />
             </div>
           ))}
         </div>
