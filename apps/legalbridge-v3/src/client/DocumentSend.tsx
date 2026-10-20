@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { CloudSignManual } from "./CloudSignManual.js";
 import { RecipientPicker, type Person } from "./RecipientPicker.js";
 import { ProcessRail, stationStateOf, type Station, type StationTag } from "./ProcessRail.js";
+import { replaceRouteParams } from "./route.js";
 
 /**
  * 決定した文書を「送る」。本線の 5 駅のうち ②〜⑤ を縦の工程表で出す。
@@ -105,13 +106,15 @@ function SkipBox({ step, busy, onSkip }: { step: Step; busy: boolean; onSkip: (r
 }
 
 export function DocumentSend(
-  { documentId, documentNo, templateLabel, matterId, channels, isAdmin, onChanged, onClose }: {
+  { documentId, documentNo, templateLabel, matterId, channels, isAdmin, onChanged, onClose, initialOpen }: {
     documentId: number; documentNo: string | null; templateLabel: string | null;
     matterId: number | null;
     channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
     isAdmin: boolean;
     onChanged: () => void;
     onClose: () => void;
+    /** 最初に開く段（URL の ?step=）。 */
+    initialOpen?: string | null;
   }
 ) {
   const [tl, setTl] = useState<Timeline | null>(null);
@@ -121,7 +124,17 @@ export function DocumentSend(
   const [busy, setBusy] = useState(false);
   /** いま送っているもの（印の文言）。 */
   const [sendingWhat, setSendingWhat] = useState<string | null>(null);
-  const [open, setOpen] = useState<StepKey | null>(null);
+  const STEP_KEYS: StepKey[] = ["decided", "owner_check", "party_check", "send", "executed"];
+  const [open, setOpenState] = useState<StepKey | null>(
+    initialOpen && (STEP_KEYS as string[]).includes(initialOpen) ? (initialOpen as StepKey) : null);
+  /** 段を開く。URL の ?step= にも写す（リンクを貼ればその段が開く）。 */
+  const setOpen = (next: StepKey | null | ((prev: StepKey | null) => StepKey | null)) => {
+    setOpenState((prev) => {
+      const v = typeof next === "function" ? next(prev) : next;
+      replaceRouteParams({ step: v });
+      return v;
+    });
+  };
   /** ④ 送付のやり方。契約書は CloudSign、それ以外はメールを先に出す。 */
   const [sendWay, setSendWay] = useState<"mail" | "cloudsign" | null>(null);
   // メール
@@ -269,6 +282,17 @@ export function DocumentSend(
   const stepOf = (key: StepKey) => tl?.steps.find((s) => s.key === key) ?? null;
   const opened = open ? stepOf(open) : null;
 
+
+  const sub = (s: Step) => {
+    const current = tl?.current?.key === s.key;
+    if (s.done) return `済 ${day(s.at)}　${s.detail}`;
+    if (s.skipped) return s.detail;
+    if (s.pending) return s.pending;
+    if (s.passed) return "通らずに先へ進んだ";
+    if (s.optional) return "この文書には要らない";
+    return current ? "いま" : s.skippable ? "未（飛ばせる）" : "未";
+  };
+
   /** 工程ナビ。段（決定・担当者確認・相手方確認・送付・締結）を駅 ②〜⑤ の札にする。① 登録は台帳（済）。 */
   const railStations: Station[] = (() => {
     if (!tl) return [];
@@ -290,16 +314,6 @@ export function DocumentSend(
       station(2), station(3, true), station(4), station(5, true)
     ];
   })();
-
-  const sub = (s: Step) => {
-    const current = tl?.current?.key === s.key;
-    if (s.done) return `済 ${day(s.at)}　${s.detail}`;
-    if (s.skipped) return s.detail;
-    if (s.pending) return s.pending;
-    if (s.passed) return "通らずに先へ進んだ";
-    if (s.optional) return "この文書には要らない";
-    return current ? "いま" : s.skippable ? "未（飛ばせる）" : "未";
-  };
 
   const mailForm = () => (
     <div className="stack" style={{ gap: 8 }}>

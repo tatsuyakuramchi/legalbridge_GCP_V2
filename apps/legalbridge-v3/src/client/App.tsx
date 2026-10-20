@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { ReadOnlyContext } from "./read-only.js";
 import { GlobalSearch, type SearchHit } from "./GlobalSearch.js";
@@ -23,6 +23,7 @@ import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
+import { formatHash, parseHash, pushRoute, routePath, type Route } from "./route.js";
 
 type View = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
@@ -192,6 +193,7 @@ export function App() {
   /** その画面に渡す選択。別の画面へ移ったら持ち越さない。 */
   const focusFor = (view: View) => (focus && focus.view === view ? focus.id : undefined);
 
+
   /**
    * 案件の工程から「契約を登録する」で来たとき。相手先を入れた状態で契約の登録を開く。
    */
@@ -307,6 +309,67 @@ export function App() {
     setOpenDocument((prev) => ({ id: documentId, nonce: (prev?.nonce ?? 0) + 1, edit }));
     setView("documents");
   };
+
+  // ---- URL（第 3 段）。画面と選んだ行をハッシュに写し、戻る・進む・リンクで同じ場所を開く。client/route.ts
+  /** 取引先⇔基本契約 の中の切り替え（マップ／整理する）と、選んだ取引先。 */
+  const [mapMode, setMapMode] = useState<"map" | "tidy">("map");
+  const [mapParty, setMapParty] = useState<number | undefined>();
+  /** 文書の送る流れで開く段（URL から来たとき）。 */
+  const [docStep, setDocStep] = useState<string | null>(null);
+  /** URL から来た場所を適用している最中（書き戻さない）。 */
+  const applyingRoute = useRef(false);
+  const VIEWS = useRef(new Set<string>(NAV.flatMap((g) => g.items.map((i) => i.view)).concat(["closing", "deals"])));
+
+  const applyRoute = (r: Route | null) => {
+    applyingRoute.current = true;
+    try {
+      if (!r || !VIEWS.current.has(r.view)) { setFocus(null); setView("home"); return; }
+      const v = r.view as View;
+      setTaskCtx(null); setDocFlow(null); setCompose(null); setDocBack(null);
+      if (v === "conditions") { setConditionId(r.id ?? undefined); setConditionSchedule(null); setFocus(null); setView(v); return; }
+      if (v === "documents") {
+        setDocStep(r.params.step ?? null);
+        if (r.id) setOpenDocument((prev) => ({ id: r.id!, nonce: (prev?.nonce ?? 0) + 1, edit: r.params.draft === "1" }));
+        else setOpenDocument(undefined);
+        setFocus(null); setView(v); return;
+      }
+      if (v === "ops") { setOpsTab((r.params.sub as OpsTab | undefined) ?? undefined); setFocus(null); setView(v); return; }
+      if (v === "agreement-map") { setMapMode(r.params.mode === "tidy" ? "tidy" : "map"); setMapParty(r.id ?? undefined); }
+      if (v === "drift") setDriftMatter(r.id ?? null);
+      setConditionId(undefined);
+      setFocus(r.id ? { view: v, id: r.id } : null);
+      setView(v);
+    } finally {
+      // 状態の反映は次の描画。書き戻しの effect もそのあとに走るので、そこで解く。
+      window.setTimeout(() => { applyingRoute.current = false; }, 0);
+    }
+  };
+  useEffect(() => {
+    applyRoute(parseHash(window.location.hash));
+    const onPop = () => applyRoute(parseHash(window.location.hash));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const currentRoute = (): Route => {
+    const params: Record<string, string> = {};
+    let id: number | undefined;
+    if (view === "conditions") id = conditionId;
+    else if (view === "documents") { id = openDocument?.id; if (openDocument?.edit) params.draft = "1"; if (docStep) params.step = docStep; }
+    else if (view === "ops") { if (opsTab) params.sub = opsTab; }
+    else if (view === "agreement-map") { id = mapParty ?? focusFor(view); if (mapMode === "tidy") params.mode = "tidy"; }
+    else if (view === "drift") id = driftMatter ?? undefined;
+    else id = focusFor(view);
+    return { view, id, params };
+  };
+  useEffect(() => {
+    if (applyingRoute.current) return;
+    const r = currentRoute();
+    // 画面の中の段（?step=）は部品が足す。道が同じなら上書きしない。
+    const cur = window.location.hash;
+    if (routePath(formatHash(r)) === routePath(cur) && cur.includes("?")) return;
+    pushRoute(r);
+  }, [view, focus, conditionId, openDocument, opsTab, mapMode, mapParty, driftMatter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ReadOnlyContext.Provider value={Boolean(me?.readOnly)}>
@@ -473,7 +536,8 @@ export function App() {
             key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}r${compose.supersedesId ?? ""}`
                           : openDocument ? `d${openDocument.id}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument?.id}
-            openNonce={openDocument?.nonce} openAsDraft={openDocument?.edit}
+            openNonce={openDocument?.nonce} openAsDraft={openDocument?.edit} openStep={docStep}
+            onSelectDocument={(id) => { setDocStep(null); setOpenDocument((prev) => (prev?.id === id ? prev : { id, nonce: (prev?.nonce ?? 0) + 1 })); }}
             onBack={docBack ? { label: docBack.label, go: () => goBack(docBack) } : undefined}
             flow={docFlow}
             // 新しく作るのは作業テーブルで（相手先を選んで始める）。一括も作業テーブルの一括モードで。
@@ -492,9 +556,10 @@ export function App() {
               startCompose(conditionIds, [], null, templateKey, null, null, null, agreementFlow(agreement))} />
         )}
         {view === "agreement-map" && (
-          <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? 0}`}
-            initialPartyId={focusFor("agreement-map")} onOpen={openEntity}
-            onRegisterAgreement={startAgreement} />
+          <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? mapParty ?? 0}`}
+            initialPartyId={focusFor("agreement-map") ?? mapParty} onOpen={openEntity}
+            onRegisterAgreement={startAgreement}
+            initialMode={mapMode} onModeChange={setMapMode} onPartyChange={setMapParty} />
         )}
         {view === "closing" && (
           <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
@@ -512,7 +577,7 @@ export function App() {
             onOpenMatter={(id) => openEntity("matter", id)} />
         )}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
-        {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} />}
+        {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} onTabChange={setOpsTab} />}
       </main>
     </div>
     </ReadOnlyContext.Provider>

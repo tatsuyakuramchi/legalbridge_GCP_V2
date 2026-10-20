@@ -42,8 +42,10 @@ const canBeOrder = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title" | "do
   isOrderAgreement(a) || a.kind === "document" || (a.kind === "standalone" && a.domain === "service");
 
 export function AgreementMapWorkspace(
-  { initialPartyId, onOpen, onRegisterAgreement }: {
+  { initialPartyId, onOpen, onRegisterAgreement, initialMode, onModeChange, onPartyChange }: {
     initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void;
+    /** URL から来た切り替え（マップ／整理する）と、切り替え・取引先の変更を親（URL）へ知らせる。 */
+    initialMode?: "map" | "tidy"; onModeChange?: (mode: "map" | "tidy") => void; onPartyChange?: (id: number | undefined) => void;
     /** 契約の登録へ（相手先を入れた状態で開く）。契約の無い取引先から始めるとき。 */
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
   }
@@ -52,7 +54,8 @@ export function AgreementMapWorkspace(
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
   const [issuesOnly, setIssuesOnly] = useState(false);
-  const [partyId, setPartyId] = useState<number | undefined>(initialPartyId);
+  const [partyId, setPartyIdState] = useState<number | undefined>(initialPartyId);
+  const setPartyId = (id: number | undefined) => { setPartyIdState(id); onPartyChange?.(id); };
   const [map, setMap] = useState<PartyMap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -60,7 +63,8 @@ export function AgreementMapWorkspace(
   const bump = () => setVersion((v) => v + 1);
   // 「整理する」：同じ取引先の木を、条件から下（実績・支払文書・支払）まで広げて 4 つの印で直す
   // （docs/v3-tidy.md）。入口はここの見出しの切り替え。左の取引先は共有する。
-  const [mode, setMode] = useState<"map" | "tidy">("map");
+  const [mode, setModeState] = useState<"map" | "tidy">(initialMode ?? "map");
+  const setMode = (m: "map" | "tidy") => { setModeState(m); onModeChange?.(m); };
 
   useEffect(() => {
     const qs = new URLSearchParams();

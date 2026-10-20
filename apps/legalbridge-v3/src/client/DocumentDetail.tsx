@@ -115,7 +115,9 @@ function CounterpartyNo({ doc, busy, onChanged }: { doc: DocumentRow; busy: bool
 export function DocumentDetail(
   { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
     onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onPayment,
-    isAdmin, onSelect }: {
+    isAdmin, onSelect, openStep }: {
+    /** 送る流れで最初に開く段（URL から）。あれば「送る」も開く。 */
+    openStep?: string | null;
     doc: DocumentRow;
     /** 「下敷きに次を作る」で選べるひな形。 */
     templates: TemplateOption[];
@@ -153,7 +155,7 @@ export function DocumentDetail(
   // CloudSign の状態は手で記録できるので、閉じてしまうと段が進められない。
   const canSend = doc.status === "issued";
   // 「送る」を開いているか。決定済みなら既定で開く（次にやることがこれ）。
-  const [sending, setSending] = useState(doc.phase === "decided");
+  const [sending, setSending] = useState(doc.phase === "decided" || Boolean(openStep));
   // この版を直している最中の下書き。あるあいだは、もう1枚作らせない
   // （発行できるのは1枚だけなので、残りは行き場が無くなる）。
   const pending = versions.find((v) => v.supersedesId === doc.id && v.status === "draft") ?? null;
@@ -326,7 +328,8 @@ export function DocumentDetail(
       {sending && doc.status === "issued" && (
         <DocumentSend documentId={doc.id} documentNo={doc.documentNo} templateLabel={doc.templateLabel}
                       matterId={doc.matterId} channels={integrations?.channels ?? []}
-                      isAdmin={isAdmin ?? true} onChanged={onChanged} onClose={() => setSending(false)} />
+                      isAdmin={isAdmin ?? true} onChanged={onChanged} onClose={() => setSending(false)}
+                      initialOpen={openStep ?? null} />
       )}
 
       {/* 版の履歴。1版しかないときは出さない（枠だけ増えても読むものが無い）。 */}

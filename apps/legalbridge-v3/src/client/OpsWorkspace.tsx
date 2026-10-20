@@ -69,8 +69,9 @@ export type OpsTab = "quality" | "deadlines" | "fixes" | "leftovers" | "exports"
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
 const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates"]);
 
-export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
-  const [tab, setTab] = useState<OpsTab>(initialTab ?? "quality");
+export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab; onTabChange?: (tab: OpsTab) => void } = {}) {
+  const [tab, setTabState] = useState<OpsTab>(initialTab ?? "quality");
+  const setTab = (t: OpsTab) => { setTabState(t); onTabChange?.(t); };
   const [issues, setIssues] = useState<Issue[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [settings, setSettings] = useState<Setting[] | null>(null);

@@ -175,7 +175,7 @@ function Refs(
 const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, openNonce, openAsDraft, onOpen, onBack, flow, onOpenWorkbench, onOpenWorkbenchFor }: {
+  { start, openDocumentId, openNonce, openAsDraft, openStep, onSelectDocument, onOpen, onBack, flow, onOpenWorkbench, onOpenWorkbenchFor }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /** デイリータスクから来たとき、その元の依頼。作った文書を依頼に繋ぐ。 */
               requestId?: number | null;
@@ -193,6 +193,10 @@ export function DocumentsWorkspace(
               supersedesId?: number | null; supersedesExtraIds?: number[]; reason?: string | null };
     /** 他の画面から「編集」で来たときの文書。下書きならそのままフォームに載せる。 */
     openDocumentId?: number;
+    /** 送る流れで開く段（URL から）。 */
+    openStep?: string | null;
+    /** 一覧で文書を選んだ（URL に写す）。 */
+    onSelectDocument?: (id: number) => void;
     /** 押すたびに増える番号。同じ文書をもう一度開く合図。 */
     openNonce?: number;
     onOpen?: (kind: EntityKind, id: number) => void;
@@ -1962,6 +1966,7 @@ export function DocumentsWorkspace(
               isAdmin={me?.user?.role === "admin" || me?.user === undefined}
               onLinkCondition={() => setLinkConditions(true)}
               openConditions={linkConditions}
+              openStep={current.id === openDocumentId ? openStep ?? null : null}
               onSelect={setSelected} />
           )}
           </div>
