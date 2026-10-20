@@ -50,7 +50,7 @@ const toBody = (d: Draft) => ({
 });
 
 export function RingiWorkspace(
-  { initialId, onOpen }: { initialId?: number; onOpen?: (kind: RingiOpenTarget, id: number) => void }
+  { initialId, onOpen, onSelectId }: { initialId?: number; onOpen?: (kind: RingiOpenTarget, id: number) => void; onSelectId?: (id: number | undefined) => void }
 ) {
   const readOnly = useReadOnly();
   const [role, setRole] = useState<string | null>(null);
@@ -58,6 +58,7 @@ export function RingiWorkspace(
   const [status, setStatus] = useState<"" | Status>("");
   const [items, setItems] = useState<Ringi[] | null>(null);
   const [selected, setSelected] = useState<number | "new" | undefined>(initialId);
+  useEffect(() => { onSelectId?.(typeof selected === "number" ? selected : undefined); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

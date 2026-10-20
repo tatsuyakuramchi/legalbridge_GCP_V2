@@ -80,9 +80,11 @@ const searchDocuments = async (q: string): Promise<SearchOption[]> => {
 };
 
 export function DailyTasksWorkspace(
-  { initialId, onOpenMatter, onOpenDocument, onOpenLedger, onOpenRequest, onGo, onCountsChange }: {
+  { initialId, onOpenMatter, onOpenDocument, onOpenLedger, onOpenRequest, onGo, onCountsChange, onSelectId }: {
     /** この作業を選んだ状態で開く。 */
     initialId?: number;
+    /** 選んだ行を親へ知らせる（URL に写す）。 */
+    onSelectId?: (id: number | undefined) => void;
     onOpenMatter?: (matterId: number) => void;
     /** 依頼の条件を載せた状態で文書の画面へ移る（案件なし。作った文書は依頼に繋がる）。 */
     onOpenDocument?: (documentId: number) => void;
@@ -102,6 +104,7 @@ export function DailyTasksWorkspace(
   const [items, setItems] = useState<Task[] | null>(null);
   const [counts, setCounts] = useState<Counts | null>(null);
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

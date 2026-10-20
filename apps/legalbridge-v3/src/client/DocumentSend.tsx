@@ -4,6 +4,9 @@ import { CloudSignManual } from "./CloudSignManual.js";
 import { RecipientPicker, type Person } from "./RecipientPicker.js";
 import { ProcessRail, stationStateOf, type Station, type StationTag } from "./ProcessRail.js";
 import { replaceRouteParams } from "./route.js";
+import { OwnerStaffPicker } from "./OwnerStaffPicker.js";
+import type { NoticeTarget } from "../server/documents/notice-fill.js";
+import { MAIL_PURPOSES, type MailPurpose } from "../server/ops/mail-templates.js";
 
 /**
  * 決定した文書を「送る」。本線の 5 駅のうち ②〜⑤ を縦の工程表で出す。
@@ -18,7 +21,7 @@ import { replaceRouteParams } from "./route.js";
  * 送れなかったときは理由をそのまま見せる。
  */
 
-type StepKey = "decided" | "owner_check" | "party_check" | "send" | "executed";
+type StepKey = "decided" | "owner_check" | "party_check" | "send" | "executed" | "notice";
 interface Step {
   key: StepKey; station: number; name: string; done: boolean; at: string | null; detail: string;
   skipped: boolean; skipReason: string | null; skippable: boolean; optional?: boolean; passed?: boolean; pending?: string | null;
@@ -60,17 +63,14 @@ function Sending({ what }: { what: string }) {
 interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; warnings?: string[]; externalId?: string; gate: { reasons: string[]; mode: string };
                     preview?: { recipient: string; bodyPreview: string } }
 
-type Purpose = "owner_check" | "party_check" | "contract_unify" | "delivery";
+type Purpose = MailPurpose;
 interface Draft {
   to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
   subject: string; body: string; warnings: string[];
+  staffName: string; staffNameFrom: "notice" | "input" | null;
 }
-const PURPOSES: Array<{ value: Purpose; label: string; hint: string }> = [
-  { value: "owner_check", label: "担当者への確認", hint: "依頼した事業部の担当者へ。相手に出す前に内容を確かめてもらう" },
-  { value: "party_check", label: "取引先への内容確認", hint: "取引先へ。問題なければ送付（CloudSign）に進む" },
-  { value: "contract_unify", label: "契約書の統一のご案内", hint: "取引先へ。統一書式の契約書案を添付し、問題なければ 2 週間以内に返信をもらって CloudSign で締結に進む" },
-  { value: "delivery", label: "取引先へ送付（検収書・計算書など）", hint: "取引先へ書類を送る。検収書・利用許諾計算書は専用の文面" }
-];
+/** 決まった文面。設定で足した文面（custom:<key>）は /mail-purposes から足す。 */
+const PURPOSES: Array<{ value: Purpose; label: string; hint: string }> = MAIL_PURPOSES;
 /** 各段で最初に入れておく文面。 */
 const DEFAULT_PURPOSE: Partial<Record<StepKey, Purpose>> = { owner_check: "owner_check", party_check: "party_check", send: "delivery" };
 
@@ -124,7 +124,7 @@ export function DocumentSend(
   const [busy, setBusy] = useState(false);
   /** いま送っているもの（印の文言）。 */
   const [sendingWhat, setSendingWhat] = useState<string | null>(null);
-  const STEP_KEYS: StepKey[] = ["decided", "owner_check", "party_check", "send", "executed"];
+  const STEP_KEYS: StepKey[] = ["decided", "owner_check", "party_check", "send", "executed", "notice"];
   const [open, setOpenState] = useState<StepKey | null>(
     initialOpen && (STEP_KEYS as string[]).includes(initialOpen) ? (initialOpen as StepKey) : null);
   /** 段を開く。URL の ?step= にも写す（リンクを貼ればその段が開く）。 */
@@ -155,6 +155,12 @@ export function DocumentSend(
     `${templateLabel ?? "文書"}をお送りします。内容をご確認のうえ、問題なければご返信ください。`);
   // 文面（設定の mail_templates から組んだ下書き）。どの段で組んだかも覚える（段を替えたら組み直す）。
   const [purpose, setPurpose] = useState<Purpose | null>(null);
+  /** 文面の選択肢（決まったもの＋設定で足したもの）。 */
+  const [purposes, setPurposes] = useState<Array<{ value: Purpose; label: string; hint: string }>>(PURPOSES);
+  useEffect(() => {
+    api.get<{ purposes: Array<{ value: Purpose; label: string; hint: string }> }>("/mail-purposes")
+      .then((r) => setPurposes(r.purposes)).catch(() => setPurposes(PURPOSES));
+  }, []);
   const [draftFor, setDraftFor] = useState<StepKey | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   // 確認
@@ -167,6 +173,19 @@ export function DocumentSend(
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const modeOf = (ch: string) => channels.find((c) => c.channel === ch)?.mode ?? "off";
+
+  /**
+   * ③ 確かめる の札「担当者・通知先」。通知先の欄のある契約書（基本契約書・条件書）で、
+   * 甲の通知先・乙（当社）の担当者が空いていないか。空いていれば、ここから訂正版で出し直す
+   * （まとめて直すのは 運用 › 一括修正 › 通知先。同じ道具）。
+   */
+  type NoticeCheck = { applies: boolean; filled: boolean; target: NoticeTarget | null; staff: string | null };
+  const [notice, setNotice] = useState<NoticeCheck | null>(null);
+  const [noticeStaff, setNoticeStaff] = useState<number | null>(null);
+  const loadNotice = (staffId: number | null) =>
+    api.get<NoticeCheck>(`/documents/${documentId}/notice-check${staffId ? `?ownerStaffId=${staffId}` : ""}`)
+      .then(setNotice).catch(() => setNotice(null));
+  useEffect(() => { void loadNotice(noticeStaff); }, [documentId, noticeStaff]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load() {
     const t = await api.get<Timeline>(`/documents/${documentId}/sends`);
@@ -200,11 +219,14 @@ export function DocumentSend(
       .catch(() => setSiblings([]));
   }, [docRecipients?.counterparty?.id, documentId]);
 
-  async function loadDraft(p: Purpose) {
+  /** {担当者名}。通知条項に無いときに送る画面で入れる（文面を組み直すときに渡す）。 */
+  const [staffName, setStaffName] = useState("");
+  const [staffFrom, setStaffFrom] = useState<"notice" | "input" | null>(null);
+  async function loadDraft(p: Purpose, name: string = staffName) {
     setError(null);
     try {
-      const d = await api.get<Draft>(`/documents/${documentId}/mail-draft?purpose=${p}`);
-      setPurpose(p);
+      const d = await api.get<Draft>(`/documents/${documentId}/mail-draft?purpose=${encodeURIComponent(p)}${name.trim() ? `&staffName=${encodeURIComponent(name.trim())}` : ""}`);
+      setPurpose(p); setStaffFrom(d.staffNameFrom); if (d.staffName && !name.trim()) setStaffName(d.staffName);
       setMailTo({ to: d.to.map((x) => ({ email: x.email, name: x.name })), cc: d.cc.map((x) => ({ email: x.email, name: x.name })) });
       setSubject(d.subject); setBody(d.body); setWarnings(d.warnings);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -304,6 +326,12 @@ export function DocumentSend(
     const station = (no: 2 | 3 | 4 | 5, skippable = false): Station => {
       const steps = tl.steps.filter((s) => s.station === no);
       const tags = steps.map(tagOf);
+      if (no === 3 && notice?.applies) {
+        tags.push({ key: "notice", label: "担当者・通知先", open: open === "notice",
+          state: notice.filled ? "done" : "now",
+          title: notice.filled ? "通知先・担当者は入っています" : "通知先か担当者の欄が空いています",
+          onGo: () => setOpen("notice") });
+      }
       const first = steps.find((s) => !s.done && !s.skipped) ?? steps[0];
       return { no, state: stationStateOf(tags), tags, skippable, open: steps.some((s) => s.key === open),
                onGo: first ? () => setOpen(first.key) : undefined,
@@ -322,11 +350,19 @@ export function DocumentSend(
       )}
       <div className="row" style={{ flexWrap: "wrap" }}>
         <span className="faint">文面：</span>
-        {PURPOSES.map((p) => (
+        {purposes.map((p) => (
           <button key={p.value} className="chip" aria-pressed={purpose === p.value} title={p.hint}
                   disabled={busy} onClick={() => void loadDraft(p.value)}>{p.label}</button>
         ))}
       </div>
+      {staffFrom !== "notice" && (
+        <label className="field" style={{ maxWidth: 420 }}>
+          <span>担当者名（通知条項に当社担当者が無いとき。{"{担当者名}"} に入る）</span>
+          <input value={staffName} placeholder="例：倉持" disabled={busy}
+                 onChange={(e) => setStaffName(e.target.value)}
+                 onBlur={() => { if (purpose) void loadDraft(purpose, staffName); }} />
+        </label>
+      )}
       <div className="faint">宛先・件名・本文は、運用 → 設定 → 「メールの文面」から組みます。送る前にここで直せます。</div>
       {warnings.map((w) => <div key={w} className="note warn">{w}</div>)}
       {internal && <div className="note">社内確認として送ります（宛先は当社の担当者。相手先にはまだ送っていない扱いで、送ると担当者確認が済になります）</div>}
@@ -512,6 +548,43 @@ export function DocumentSend(
                     {tl.needsExecution && <span className="faint">契約書は CloudSign で署名依頼し、締結まで進めます</span>}
                   </div>
                   {sendWay === "mail" ? mailForm() : cloudSignPane()}
+                </div>
+              )}
+
+              {open === "notice" && notice && (
+                <div className="stack" style={{ gap: 8 }}>
+                  <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <b style={{ fontSize: 15 }}>確かめる　担当者・通知先</b>
+                    <span className={`tag ${notice.filled ? "ok" : "warn"}`}>{notice.filled ? "入っています" : "空いています"}</span>
+                  </div>
+                  {notice.filled && <div className="faint">甲の通知先と乙（当社）の担当者は本文に入っています。次へ進んでください。</div>}
+                  {!notice.filled && notice.target && (
+                    <>
+                      <div className="faint">空いている欄に次を入れて、訂正版で出し直します（元の締結日・決定日のまま。この版は退いて「訂正版あり」になります）。</div>
+                      {notice.target.fills.length > 0 && (
+                        <div className="dl">{notice.target.fills.map((x) => <div key={x.field}><span className="faint">{x.label}</span>　{x.value}</div>)}</div>
+                      )}
+                      {notice.target.skip && <div className="note warn">{notice.target.skip}</div>}
+                      {(notice.target.skip?.includes("担当者") || notice.target.fills.some((x) => x.label.includes("乙")) || !notice.staff) && (
+                        <div>
+                          <div className="faint">乙（当社）の担当者</div>
+                          <OwnerStaffPicker value={noticeStaff} onChange={setNoticeStaff} disabled={busy} emptyLabel="担当者を選ぶ" />
+                        </div>
+                      )}
+                      <div className="row" style={{ gap: 8 }}>
+                        <button className="btn primary" disabled={busy || !isAdmin || Boolean(notice.target.skip) || !notice.target.fills.length}
+                          onClick={() => void run(async () => {
+                            const r = await api.post<{ reissued: number; results: Array<{ error?: string | null; newDocumentNo?: string | null }> }>(
+                              "/notice-fill", { documentIds: [documentId], ownerStaffId: noticeStaff });
+                            const err = r.results.find((x) => x.error)?.error;
+                            if (err) throw new Error(err);
+                            await loadNotice(noticeStaff);
+                            return `担当者・通知先を入れた訂正版 ${r.results[0]?.newDocumentNo ?? ""} を出しました。この版は退きました。一覧から訂正版を開いて送ってください`;
+                          }, "訂正版を作っています")}>担当者を入れて訂正版を出す</button>
+                        <span className="faint">まとめて直すなら 運用 › 一括修正 › 通知先</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

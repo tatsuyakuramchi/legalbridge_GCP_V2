@@ -54,9 +54,11 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated, onIssueRound }:
+  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated, onIssueRound, onSelectId }:
   {
     initialId?: number;
+    /** 選んだ行を親へ知らせる（URL に写す）。 */
+    onSelectId?: (id: number | undefined) => void;
     /**
      * 開いた直後に実績のフォームを出す回。支払文書処理から
      * 「実績を入れる」で来たとき、その回を指して渡ってくる。
@@ -78,6 +80,7 @@ export function ConditionsWorkspace(
 ) {
   const [rows, setRows] = useState<ConditionSummary[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [filter, setFilter] = useState<"all" | "in" | "out">("all");
   // 削除は無効化 → 削除の2段階。無効化したものを見る道が無いと、消せない。

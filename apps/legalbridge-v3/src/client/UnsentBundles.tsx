@@ -115,10 +115,11 @@ interface SendPart { documentIds: number[]; documentNos: string[];
   outcome: { sent: boolean; duplicated?: boolean; gate?: { reasons: string[] } } }
 interface PartyResult { partyName: string; ok: boolean; message: string }
 /** まとめ送りの文面。contract_unify は内容確認なので、送っても一覧に残る（返信をもらって CloudSign へ）。 */
-type MailPurpose = "delivery" | "contract_unify";
+type MailPurpose = "delivery" | "contract_unify" | `custom:${string}`;
+/** まとめて送る文面。取引先向けの決まったもの＋設定で足した取引先向けの文面（/mail-purposes）。 */
 const PURPOSES: Array<{ value: MailPurpose; label: string; hint: string }> = [
-  { value: "delivery", label: "送付", hint: "文書の種類に合った送付の文面（計算書・検収書・その他）。送った文書は一覧から消える" },
-  { value: "contract_unify", label: "契約書の統一のご案内", hint: "契約書案を添付し、問題なければ 2 週間以内の返信をお願いする。送っても一覧に残り、返信をもらったら CloudSign で送る" }
+  { value: "delivery", label: "送付（検収書・計算書など）", hint: "取引先へ書類を送る。検収書・利用許諾計算書は専用の文面、他は「その他の書類」" },
+  { value: "contract_unify", label: "契約書の統一のご案内", hint: "契約書案を添付し、問題なければ 2 週間以内の返信をもらう（相手方確認として記録）" }
 ];
 
 /**
@@ -135,15 +136,24 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
   const [results, setResults] = useState<PartyResult[]>([]);
   const [open, setOpen] = useState<number | null>(null);
   const [purpose, setPurpose] = useState<MailPurpose>("delivery");
+  /** {担当者名}（通知条項に無いとき）。 */
+  const [staffName, setStaffName] = useState("");
+  const [purposes, setPurposes] = useState(PURPOSES);
+  useEffect(() => {
+    api.get<{ purposes: Array<{ value: string; label: string; hint: string; audience: string }> }>("/mail-purposes")
+      .then((r) => setPurposes([...PURPOSES, ...r.purposes.filter((p) => p.value.startsWith("custom:") && p.audience === "party")
+        .map((p) => ({ value: p.value as MailPurpose, label: p.label, hint: p.hint }))]))
+      .catch(() => setPurposes(PURPOSES));
+  }, []);
 
   useEffect(() => {
     let live = true;
     setMails(null); setError(null); setResults([]);
-    api.post<{ mails: PartyMail[] }>("/documents/unsent-bundles/preview", { partyIds, kinds, purpose })
+    api.post<{ mails: PartyMail[] }>("/documents/unsent-bundles/preview", { partyIds, kinds, purpose, staffName: staffName.trim() || null })
       .then((r) => { if (live) setMails(r.mails); })
       .catch((e) => { if (live) setError(e instanceof ApiError ? e.message : String(e)); });
     return () => { live = false; };
-  }, [partyIds.join(","), kinds.join(","), purpose]);
+  }, [partyIds.join(","), kinds.join(","), purpose, staffName]);
 
   const ready = (mails ?? []).filter((m) => m.to.length);
   const docCount = ready.reduce((n, m) => n + m.docs.length, 0);
@@ -157,7 +167,7 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
     for (const [i, m] of ready.entries()) {
       setProgress(`${i + 1} / ${ready.length}　${m.partyName}`);
       try {
-        const r = await api.post<{ parts: SendPart[] }>("/documents/unsent-bundles/send", { partyId: m.partyId, kinds, purpose });
+        const r = await api.post<{ parts: SendPart[] }>("/documents/unsent-bundles/send", { partyId: m.partyId, kinds, purpose, staffName: staffName.trim() || null });
         const sent = r.parts.filter((p) => p.outcome.sent).reduce((n, p) => n + p.documentIds.length, 0);
         const dup = r.parts.some((p) => p.outcome.duplicated);
         const blocked = r.parts.find((p) => !p.outcome.sent && !p.outcome.duplicated);
@@ -185,11 +195,15 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
       <div className="panel-bd stack">
         <div className="row" style={{ flexWrap: "wrap" }}>
           <span className="faint">文面：</span>
-          {PURPOSES.map((p) => (
+          {purposes.map((p) => (
             <button key={p.value} className="chip" aria-pressed={purpose === p.value} title={p.hint}
                     disabled={busy} onClick={() => setPurpose(p.value)}>{p.label}</button>
           ))}
         </div>
+        <label className="field" style={{ maxWidth: 420 }}>
+          <span>担当者名（通知条項に当社担当者が無いとき。{"{担当者名}"} に入る）</span>
+          <input value={staffName} placeholder="例：倉持" disabled={busy} onChange={(e) => setStaffName(e.target.value)} />
+        </label>
         {purpose === "delivery" ? (
           <div className="faint">
             相手先ごとに 1 通（{KIND_LABEL_LIST(kinds)}を全部添付。20 枚を超える相手先は分けて送ります）。宛先は相手先の請求先 → 主担当 →

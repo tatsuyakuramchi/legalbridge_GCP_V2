@@ -1,7 +1,9 @@
 import type { Queryable } from "../core/db.js";
 import { dateStr, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
-import { MAIL_TEMPLATES_KEY, deliveryKindOf, readMailTemplates, renderMail, type MailTemplateKind } from "../ops/mail-templates.js";
+import { DomainError } from "../core/errors.js";
+import { noticeStaffOf, payDateOf, periodOf } from "./mail-draft.js";
+import { MAIL_TEMPLATES_KEY, deliveryKindOf, readMailTemplates, renderMail, isCustomPurpose, resolveMailTemplate, type MailTemplateKind } from "../ops/mail-templates.js";
 import { amountOf } from "./mail-draft.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { UnsentBundlesService, type UnsentBundle, type UnsentKind } from "./unsent-bundles.js";
@@ -28,7 +30,7 @@ import { UnsentBundlesService, type UnsentBundle, type UnsentKind } from "./unse
  * 下書きを返すだけで送らない。送るのは routes（/documents/unsent-bundles/send）。
  */
 
-export type UnsentMailPurpose = "delivery" | "contract_unify";
+export type UnsentMailPurpose = "delivery" | "contract_unify" | `custom:${string}`;
 
 export const PER_MAIL = 20;
 
@@ -51,7 +53,7 @@ type Person = { name: string | null; email: string };
 export class UnsentSendPlanner {
   constructor(private readonly database: Queryable) {}
 
-  async plan(partyIds: number[], kinds: UnsentKind[], purpose: UnsentMailPurpose = "delivery"): Promise<PartyMail[]> {
+  async plan(partyIds: number[], kinds: UnsentKind[], purpose: UnsentMailPurpose = "delivery", staffName: string | null = null): Promise<PartyMail[]> {
     try {
       const { bundles } = await new UnsentBundlesService(this.database).list();
       const wanted = new Set(partyIds.map(Number));
@@ -86,13 +88,13 @@ export class UnsentSendPlanner {
            FROM parties p WHERE p.id = ANY($1::bigint[])`, [picked.map((b) => b.partyId)])).rows as Array<Record<string, any>>;
       const partyOf = new Map(partyRows.map((r) => [Number(r.id), r]));
 
-      return picked.map((b) => this.mailOf(b, docOf, partyOf.get(b.partyId), templates, company, purpose));
+      return picked.map((b) => this.mailOf(b, docOf, partyOf.get(b.partyId), templates, company, purpose, staffName));
     } catch (error) { throw translate(error); }
   }
 
   private mailOf(
     b: UnsentBundle, docOf: Map<number, Record<string, any>>, party: Record<string, any> | undefined,
-    templates: ReturnType<typeof readMailTemplates>, company: string, purpose: UnsentMailPurpose
+    templates: ReturnType<typeof readMailTemplates>, company: string, purpose: UnsentMailPurpose, staffName: string | null = null
   ): PartyMail {
     const warnings: string[] = [];
     const contacts = (Array.isArray(party?.contacts) ? party!.contacts : []) as Array<{ name: string | null; email: string; roles: unknown }>;
@@ -100,7 +102,10 @@ export class UnsentSendPlanner {
       .filter((c) => Array.isArray(c.roles) && (c.roles as unknown[]).map(String).includes(role))
       .map((c) => ({ name: str(c.name), email: String(c.email).trim() }));
     // 送付は請求先から、内容確認（契約書の統一）は主担当から。
-    let to: Person[] = purpose === "contract_unify" ? withRole("primary") : withRole("billing");
+    // 足した文面（custom:<key>）は取引先の主担当へ（社内向けの文面はまとめて送る対象にしない）。
+    const custom = isCustomPurpose(purpose) ? resolveMailTemplate(templates, purpose, null) : null;
+    if (isCustomPurpose(purpose) && !custom) throw new DomainError("NOT_FOUND", "その文面は設定にありません（運用 → 設定 → メールの文面）");
+    let to: Person[] = purpose !== "delivery" ? withRole("primary") : withRole("billing");
     if (!to.length && purpose === "delivery") to = withRole("primary");
     if (!to.length) to = contacts.map((c) => ({ name: str(c.name), email: String(c.email).trim() }));
     if (!to.length && str(party?.email)) to = [{ name: null, email: String(party!.email).trim() }];
@@ -114,13 +119,21 @@ export class UnsentSendPlanner {
     const kinds = [...new Set(rows.map((r) => deliveryKindOf(str(r.template_key))))];
     const kind: MailTemplateKind = purpose === "contract_unify" ? "contract_unify"
       : kinds.length === 1 ? kinds[0]! : "general";
+    const template = custom ? custom.template : templates.templates[kind];
     const numberOf = (r: Record<string, any>) => r.document_no
       ? printedDocumentNumber(String(r.document_no), showRevisionOf({ _showRevision: r.show_revision })) : `#${r.id}`;
     const amounts = rows.map((r) => amountOf((r.rendered_values ?? {}) as Record<string, unknown>));
     const labels = [...new Set(rows.map((r) => str(r.template_label) ?? "書類"))];
     const latest = rows.map((r) => dateStr(r.issued_at)).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
-    const rendered = renderMail(templates.templates[kind], templates.signature, {
+    const noticeName = rows.map(noticeStaffOf).find(Boolean) ?? "";
+    const name = noticeName || String(staffName ?? "").trim();
+    if (!name && /\{担当者名\}/.test(`${template.subject}\n${template.body}`)) {
+      warnings.push("通知条項に当社担当者が無いので {担当者名} が空です。「担当者名」に入れてください");
+    }
+    const rendered = renderMail(template, templates.signature, {
       相手先: b.partyName,
+      担当者名: name, 対象期間: [...new Set(rows.map(periodOf).filter(Boolean))].join("・"),
+      支払予定日: [...new Set(rows.map(payDateOf).filter(Boolean))].join("・"),
       宛名: to.length === 1 ? to[0]!.name ?? "" : "",
       文書番号: rows.map(numberOf).join("・"),
       文書名: labels.join("・"),

@@ -39,8 +39,10 @@ interface Staff {
 const ROLE_LABEL: Record<string, string> = { primary: "主担当", signer: "署名者", billing: "請求先" };
 
 export function PartiesWorkspace(
-  { initialId, onOpen }: {
+  { initialId, onOpen, onSelectId }: {
     initialId?: number;
+    /** 選んだ行を親へ知らせる（URL に写す）。 */
+    onSelectId?: (id: number | undefined) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
   } = {}
 ) {
@@ -48,6 +50,7 @@ export function PartiesWorkspace(
   const [parties, setParties] = useState<Party[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detail, setDetail] = useState<PartyDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);

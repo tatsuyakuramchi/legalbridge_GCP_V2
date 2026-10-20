@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { MAIL_PURPOSES, type MailPurpose } from "../server/ops/mail-templates.js";
 import { RecipientPicker, type Person } from "./RecipientPicker.js";
 
 /**
@@ -23,16 +24,14 @@ interface Candidate {
 
 interface Doc { id: number; documentNo: string | null; counterparty: string | null }
 /** 設定の「メールの文面」から選ぶ文面。送付は文書の種類で検収書・計算書・その他に分かれる。 */
-type Purpose = "owner_check" | "party_check" | "contract_unify" | "delivery";
-const PURPOSES: Array<{ value: Purpose; label: string; hint: string; recordAs?: "party_check" }> = [
-  { value: "owner_check", label: "担当者への確認", hint: "依頼した事業部の担当者へ。相手に出す前に内容を確かめてもらう（社内確認に印を付けて送る）" },
-  { value: "party_check", label: "取引先への内容確認", hint: "取引先へ。問題なければ CloudSign で締結に進む" },
-  { value: "contract_unify", label: "契約書の統一のご案内", hint: "契約書案を添付し、問題なければ 2 週間以内の返信をお願いする。送っても未送付に「内容確認中」で残る", recordAs: "party_check" },
-  { value: "delivery", label: "送付（検収書・計算書など）", hint: "取引先へ書類を送る。検収書・利用許諾計算書は専用の文面、混ざれば「その他の書類」" }
-];
+type Purpose = MailPurpose;
+/** 決まった文面。設定で足した文面（custom:<key>）は /mail-purposes から足す。取引先への内容確認だけ記録が party_check。 */
+const PURPOSES: Array<{ value: Purpose; label: string; hint: string; recordAs?: "party_check" }> =
+  MAIL_PURPOSES.map((p) => (p.value === "party_check" || p.value === "contract_unify" ? { ...p, recordAs: "party_check" as const } : p));
 interface Draft {
   to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
   subject: string; body: string; warnings: string[];
+  staffName?: string; staffNameFrom?: "notice" | "input" | null;
 }
 interface Outcome {
   sent: boolean; duplicated?: boolean; warnings?: string[];
@@ -83,14 +82,21 @@ export function SendMany(
   const [prefilled, setPrefilled] = useState<string | null>(null);
   /** 選んだ文面（設定の「メールの文面」）。選ばなければ上の簡単な文。 */
   const [purpose, setPurpose] = useState<Purpose | null>(null);
+  const [purposes, setPurposes] = useState(PURPOSES);
+  useEffect(() => {
+    api.get<{ purposes: Array<{ value: Purpose; label: string; hint: string }> }>("/mail-purposes")
+      .then((r) => setPurposes(r.purposes.map((p) => PURPOSES.find((x) => x.value === p.value) ?? p))).catch(() => setPurposes(PURPOSES));
+  }, []);
   const [draftWarnings, setDraftWarnings] = useState<string[]>([]);
 
   // 文面を選ぶと、宛先・件名・本文を設定の文面から組み直す（1 通に全部の文書番号を載せる）。
-  async function loadDraft(p: Purpose) {
+  const [staffName, setStaffName] = useState("");
+  const [staffFrom, setStaffFrom] = useState<"notice" | "input" | null>(null);
+  async function loadDraft(p: Purpose, name: string = staffName) {
     setError(null);
     try {
-      const d = await api.post<Draft>("/documents/mail-draft-many", { documentIds: documents.map((x) => x.id), purpose: p });
-      setPurpose(p);
+      const d = await api.post<Draft>("/documents/mail-draft-many", { documentIds: documents.map((x) => x.id), purpose: p, staffName: name.trim() || null });
+      setPurpose(p); setStaffFrom(d.staffNameFrom ?? null); if (d.staffName && !name.trim()) setStaffName(d.staffName);
       setMail({ to: d.to.map((x) => ({ email: x.email, name: x.name })), cc: d.cc.map((x) => ({ email: x.email, name: x.name })), bcc: [] });
       setSubject(d.subject); setBody(d.body); setDraftWarnings(d.warnings);
       setInternal(p === "owner_check");
@@ -203,11 +209,19 @@ export function SendMany(
           <div className="stack" style={{ gap: 4 }}>
             <div className="row" style={{ flexWrap: "wrap" }}>
               <span className="faint">文面：</span>
-              {PURPOSES.map((p) => (
+              {purposes.map((p) => (
                 <button key={p.value} className="chip" aria-pressed={purpose === p.value} title={p.hint}
                         disabled={busy || parties.length > 1} onClick={() => void loadDraft(p.value)}>{p.label}</button>
               ))}
             </div>
+          {staffFrom !== "notice" && (
+            <label className="field" style={{ maxWidth: 420 }}>
+              <span>担当者名（通知条項に当社担当者が無いとき。{"{担当者名}"} に入る）</span>
+              <input value={staffName} placeholder="例：倉持" disabled={busy}
+                     onChange={(e) => setStaffName(e.target.value)}
+                     onBlur={() => { if (purpose) void loadDraft(purpose, staffName); }} />
+            </label>
+          )}
             <div className="faint">運用 → 設定 →「メールの文面」から組みます（文書番号・金額は全部をつなぎます）。選んだあとに直せます</div>
             {draftWarnings.map((w) => <div key={w} className="note warn">{w}</div>)}
           </div>

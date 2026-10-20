@@ -84,8 +84,10 @@ export interface CreatePreset {
 }
 
 export function AgreementsWorkspace(
-  { initialId, onOpen, createPreset, onCreated, onCompose }: {
+  { initialId, onOpen, createPreset, onCreated, onCompose, onSelectId }: {
     initialId?: number; onOpen?: (kind: EntityKind, id: number) => void;
+    /** 選んだ行を親へ知らせる（URL に写す）。 */
+    onSelectId?: (id: number | undefined) => void;
     /** 案件の工程「契約を登録する」から来たとき。相手先が入った状態で登録を開く。 */
     createPreset?: CreatePreset | null;
     /**
@@ -105,6 +107,7 @@ export function AgreementsWorkspace(
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -434,7 +437,7 @@ export function AgreementsWorkspace(
 // 登録
 // ---------------------------------------------------------------------------
 
-function AgreementCreate({ preset, onDone, onCancel }: {
+export function AgreementCreate({ preset, onDone, onCancel }: {
   preset: CreatePreset;
   /** thenConditions：続けて条件明細の登録欄を開く（条件明細がぶら下がる契約のとき）。 */
   onDone: (id: number, agreementNo: string | null, thenConditions: boolean) => void;

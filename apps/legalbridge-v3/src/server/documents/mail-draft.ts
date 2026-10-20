@@ -1,9 +1,10 @@
 import { dateStr, str, type Queryable } from "../core/db.js";
+import { splitContact } from "./contact-line.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { DomainError, translate } from "../core/errors.js";
 import {
   MAIL_TEMPLATES_KEY, readMailTemplates, renderMail, templateKindOf,
-  type MailPurpose, type MailTemplateKind
+  type MailPurpose, type MailTemplateKind, isCustomPurpose, resolveMailTemplate
 } from "../ops/mail-templates.js";
 
 /**
@@ -52,7 +53,10 @@ export interface DocumentRecipients {
 
 export interface MailDraft {
   purpose: MailPurpose;
-  kind: MailTemplateKind;
+  /** 使った文面。決まったものは種類、足したものは custom:<key>。 */
+  kind: string;
+  /** {担当者名} に入れた値と、その出どころ（notice＝通知条項／input＝送る画面で入れた／null＝無い）。 */
+  staffName: string; staffNameFrom: "notice" | "input" | null;
   to: Array<{ name: string | null; email: string }>;
   cc: Array<{ name: string | null; email: string }>;
   subject: string;
@@ -81,6 +85,35 @@ const japaneseDate = (iso: string | null) => {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
   return y ? `${y}年${m}月${d}日` : "";
 };
+
+/** 計算書に載っている対象期間（出版の計算書 pubPeriodLabel、回の期間 rs_period_label、旧 対象期間）。 */
+export function periodOf(d: Record<string, any>): string {
+  const v = (d.rendered_values ?? {}) as Record<string, unknown>;
+  const m = (d.manual_inputs ?? {}) as Record<string, unknown>;
+  for (const x of [v.pubPeriodLabel, m.rs_period_label, v["対象期間"], v.periodLabel, v.period, v["計算期間"]]) {
+    if (x && String(x).trim()) return String(x).trim();
+  }
+  return "";
+}
+/** 計算書に載っている支払期日（PAYMENT_DATE ほか。legacy-variables と同じ名前）。 */
+export function payDateOf(d: Record<string, any>): string {
+  const v = (d.rendered_values ?? {}) as Record<string, unknown>;
+  for (const x of [v.PAYMENT_DATE, v.paymentDueDate, v["支払期日"], v.summaryPaymentDate, v["支払予定日"], v["お支払予定日"]]) {
+    if (x && String(x).trim()) return String(x).trim();
+  }
+  return "";
+}
+/** 通知条項の当社担当者の氏名（基本契約書の乙 STAFF_NAME・条件書の被許諾者連絡先）。部署・メール・電話は落とす。 */
+export function noticeStaffOf(d: Record<string, any>): string {
+  const v = (d.rendered_values ?? {}) as Record<string, unknown>;
+  for (const x of [v.STAFF_NAME, v.licenseeContact, v["被許諾者連絡先"]]) {
+    const line = String(x ?? "").trim();
+    if (!line) continue;
+    const parts = splitContact(line);
+    if (parts.name) return parts.name;
+  }
+  return "";
+}
 
 export class MailDraftService {
   constructor(private readonly database: Queryable) {}
@@ -168,13 +201,14 @@ export class MailDraftService {
    * 文書番号・文書名・金額は全部を「・」でつなぐ。相手先の違う文書は混ぜられない。
    * 送付（delivery）の文面は、種類が揃っていればその種類、混ざれば「その他の書類」。
    */
-  async draftMany(documentIds: number[], purpose: MailPurpose): Promise<MailDraft> {
+  async draftMany(documentIds: number[], purpose: MailPurpose, options: { staffName?: string | null } = {}): Promise<MailDraft> {
     const ids = [...new Set(documentIds.map(Number))];
     if (!ids.length) throw new DomainError("VALIDATION", "文書を選んでください");
-    return this.draft(ids[0]!, purpose, ids.slice(1));
+    return this.draft(ids[0]!, purpose, ids.slice(1), options);
   }
 
-  async draft(documentId: number, purpose: MailPurpose, extraIds: number[] = []): Promise<MailDraft> {
+  /** options.staffName … 通知条項に担当者が無いとき、送る画面で入れた名前（{担当者名}）。 */
+  async draft(documentId: number, purpose: MailPurpose, extraIds: number[] = [], options: { staffName?: string | null } = {}): Promise<MailDraft> {
     try {
       const { doc, origin, counterpartyName, owner, requester, contacts, partyEmail, counterpartyId } = await this.loadContext(documentId);
       // 2 枚目以降。相手先が違えば止める（A社への便りに B社の書類が付く）。
@@ -221,7 +255,11 @@ export class MailDraftService {
       let cc: Person[] = [];
       const ownerP = person(owner);
       const requesterP = person(requester);
-      if (purpose === "owner_check") {
+      // 足した文面は、その文面に書いてある相手（取引先／社内の担当者）。
+      const custom = isCustomPurpose(purpose) ? resolveMailTemplate(templates, purpose, null) : null;
+      if (isCustomPurpose(purpose) && !custom) throw new DomainError("NOT_FOUND", "その文面は設定にありません（運用 → 設定 → メールの文面）");
+      const toOwner = purpose === "owner_check" || custom?.audience === "owner";
+      if (toOwner) {
         to = requesterP ? [requesterP] : ownerP ? [ownerP] : [];
         cc = requesterP && ownerP && ownerP.email !== requesterP.email ? [ownerP] : [];
         if (!requesterP) {
@@ -240,15 +278,34 @@ export class MailDraftService {
       cc = cc.filter((c) => !to.some((t) => t.email.toLowerCase() === c.email.toLowerCase()));
 
       // 送付の文面は文書の種類で選ぶ。混ざっていれば「その他の書類」。
-      const kinds = [...new Set(all.map((d) => templateKindOf(purpose, str(d.template_key))))];
+      const kinds = custom ? [custom.kind]
+        : [...new Set(all.map((d) => resolveMailTemplate(templates, purpose, str(d.template_key))!.kind))];
       const kind = kinds.length === 1 ? kinds[0]! : "general";
+      const template = custom ? custom.template : templates.templates[kind as MailTemplateKind];
       // 紙と同じ番号（訂正版の枝番は出さず、改訂の印は選んだときだけ）。何枚かなら「・」でつなぐ。
       const numberOf = (d: Record<string, any>) => d.document_no
         ? printedDocumentNumber(String(d.document_no), showRevisionOf({ _showRevision: d.show_revision })) : "";
       const amounts = all.map((d) => amountOf((d.rendered_values ?? {}) as Record<string, unknown>));
       const latest = all.map((d) => dateStr(d.issued_at)).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
-      const rendered = renderMail(templates.templates[kind], templates.signature, {
+      // {対象期間}{支払予定日}：利用許諾計算書に載っている値（どの計算書でも同じ鍵で持つ）。
+      // 支払期日が計算書に無ければ、その文書から立てた支払の期日。
+      const periods = [...new Set(all.map(periodOf).filter(Boolean))];
+      const payDates = [...new Set(all.map(payDateOf).filter(Boolean))];
+      const pay = payDates.length ? null : (await this.database.query(
+        `SELECT min(p.due_on) AS due_on FROM payments p
+           JOIN payment_allocations a ON a.payment_id = p.id
+           JOIN condition_events e ON e.id = a.event_id
+          WHERE e.document_id = ANY($1::bigint[]) AND p.status <> 'canceled'`, [all.map((d) => Number(d.id))])).rows[0] as any;
+      // {担当者名}：通知条項の当社担当者（基本契約書の乙 STAFF_NAME・条件書の被許諾者連絡先）。無ければ送る画面で入れた名前。
+      const noticeName = all.map(noticeStaffOf).find(Boolean) ?? "";
+      const inputName = String(options.staffName ?? "").trim();
+      const staffName = noticeName || inputName;
+      const staffNameFrom: MailDraft["staffNameFrom"] = noticeName ? "notice" : inputName ? "input" : null;
+      const rendered = renderMail(template, templates.signature, {
         相手先: counterpartyName,
+        担当者名: staffName,
+        対象期間: periods.join("・"),
+        支払予定日: payDates.length ? payDates.join("・") : pay?.due_on ? japaneseDate(dateStr(pay.due_on)) : "",
         宛名: to.length === 1 ? to[0].name ?? "" : "",
         文書番号: all.map(numberOf).filter(Boolean).join("・"),
         文書名: [...new Set(all.map((d) => str(d.template_label) ?? "書類"))].join("・"),
@@ -259,8 +316,11 @@ export class MailDraftService {
         発行日: latest ? japaneseDate(latest) : "",
         会社名: company
       });
-      if (kind !== "owner_check" && !company) warnings.push("自社情報の会社名が空です（運用 → 設定 → 自社情報）");
-      return { purpose, kind, to, cc, subject: rendered.subject, body: rendered.body, warnings };
+      if (!toOwner && !company) warnings.push("自社情報の会社名が空です（運用 → 設定 → 自社情報）");
+      if (!staffName && /\{担当者名\}/.test(`${template.subject}\n${template.body}`)) {
+        warnings.push("通知条項に当社担当者が無いので {担当者名} が空です。送る画面の「担当者名」に入れてください");
+      }
+      return { purpose, kind, staffName, staffNameFrom, to, cc, subject: rendered.subject, body: rendered.body, warnings };
     } catch (error) { throw translate(error); }
   }
 

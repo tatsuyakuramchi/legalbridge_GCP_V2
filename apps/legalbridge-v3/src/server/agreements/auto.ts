@@ -2,14 +2,18 @@ import { type Queryable, int, str } from "../core/db.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import { DomainError } from "../core/errors.js";
+import { baseDocumentNumber } from "../documents/numbering.js";
 
 /**
  * 条件書を決定したとき、合意を自動で起こす（合意の生まれ方 ②）。
  *
  * 個別利用許諾条件書・出版条件書は、条件明細が先にあって紙が後。
  * 相手と結ぶ契約そのものなので、決定した瞬間に合意の器を立てる。
- *   載せた条件に基本契約が付いていれば → その下の補助文書（親番号-S01）
- *   付いていなければ                   → 単体契約（ARC-ILT）
+ *   載せた条件に基本契約が付いていれば → その下の個別契約（補助文書）
+ *   付いていなければ                   → 単体契約
+ * 番号は条件書の番号（訂正版の -R2 を除いた本体の番号）。契約と紙が同じ番号で並ぶ
+ * （「文書から契約を立てる」と同じ決め方）。その番号が既に契約に使われていれば、
+ * 親番号-S01（単体契約は ARC-ILT）で採番する。
  * 文書.合意 と、載せた条件の合意（空のものだけ）を同時に埋める。
  * 状態は「交渉中」。送信→締結の記録で「締結済み」になる（send-service）。
  *
@@ -111,13 +115,20 @@ export async function ensureAgreementForTerms(
   let agreementNo: string | null;
   let kind: "supplement" | "standalone";
   const parentId = parents[0] ?? null;
+  // 番号は条件書の番号（本体）。既に別の契約が使っていれば null（下で従来の採番）。
+  const docNo = baseDocumentNumber(input.documentNo);
+  const taken = docNo ? await client.query("SELECT id FROM agreements WHERE agreement_no = $1 LIMIT 1", [docNo]) : null;
+  const fromDoc: string | null = docNo && !(taken?.rows.length) ? docNo : null;
   if (parentId) {
     const parent = (await client.query(
       "SELECT id, agreement_no, domain FROM agreements WHERE id = $1", [parentId])).rows[0] as any;
-    const used = await client.query(
-      "SELECT count(*)::int AS n FROM agreements WHERE parent_id = $1 AND kind = 'supplement'", [parentId]);
-    const n = Number((used.rows[0] as { n: number }).n) + 1;
-    agreementNo = `${str(parent.agreement_no) ?? `#${parentId}`}-S${String(n).padStart(2, "0")}`;
+    if (fromDoc) agreementNo = fromDoc;
+    else {
+      const used = await client.query(
+        "SELECT count(*)::int AS n FROM agreements WHERE parent_id = $1 AND kind = 'supplement'", [parentId]);
+      const n = Number((used.rows[0] as { n: number }).n) + 1;
+      agreementNo = `${str(parent.agreement_no) ?? `#${parentId}`}-S${String(n).padStart(2, "0")}`;
+    }
     kind = "supplement";
     const r = await client.query(
       `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id,
@@ -126,7 +137,7 @@ export async function ensureAgreementForTerms(
       [agreementNo, title, partyId, direction, str(parent.domain) ?? "license", parentId, today]);
     agreementId = Number((r.rows[0] as { id: number }).id);
   } else {
-    agreementNo = await allocateNumber(client, { prefix: "ARC-ILT", table: "agreements", column: "agreement_no", width: 4 });
+    agreementNo = fromDoc ?? await allocateNumber(client, { prefix: "ARC-ILT", table: "agreements", column: "agreement_no", width: 4 });
     kind = "standalone";
     const r = await client.query(
       `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, effective_on)

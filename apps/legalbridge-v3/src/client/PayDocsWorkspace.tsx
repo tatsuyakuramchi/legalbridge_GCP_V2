@@ -147,7 +147,9 @@ function PayCell({ r }: { r: PayDocRow }) {
 
 export function PayDocsWorkspace(
   { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenClosing,
-    author, onOpenAuthor, onLedgerCompose, onOpenRequest }: {
+    author, onOpenAuthor, onLedgerCompose, onOpenRequest, initialTile }: {
+    /** 開いたときに押しておく札（ホームの盤面から）。 */
+    initialTile?: PayDocTile | null;
     /** 予定どおりにまとめて締める（旧 支払文書処理の一括）。 */
     onOpenClosing?: () => void;
     /** 開いておく作家（支払文書の外から「作家の報告と計算書」へ来たとき）。 */
@@ -200,7 +202,7 @@ export function PayDocsWorkspace(
         </div>
       )}
       {pane === "list" && (
-        <PayDocsTable key={`l${listParty ?? 0}`} initialPartyId={listParty} scope={scope} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+        <PayDocsTable key={`l${listParty ?? 0}`} initialPartyId={listParty} initialTile={initialTile} scope={scope} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
                      onOpenDraft={onOpenDraft} onIssueRound={onIssueRound} onComposeEvents={onComposeEvents}
                      onOpenAuthor={openAuthor} />
       )}
@@ -217,13 +219,13 @@ export function PayDocsWorkspace(
 }
 
 function PayDocsTable(
-  { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenAuthor, initialPartyId }:
+  { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenAuthor, initialPartyId, initialTile }:
     Parameters<typeof PayDocsWorkspace>[0] & { onOpenAuthor: (a: AuthorTarget) => void; initialPartyId?: number | null }
 ) {
   const readOnly = useReadOnly();
   const embedded = !!scope;
   const [view, setView] = useState<"todo" | "all" | "past">(embedded ? "all" : "todo");
-  const [tile, setTile] = useState<PayDocTile | null>(null);
+  const [tile, setTile] = useState<PayDocTile | null>(initialTile ?? null);
   const [kind, setKind] = useState("");
   const [trigger, setTrigger] = useState<"" | "active" | "passive">("");
   const [month, setMonth] = useState("");

@@ -135,13 +135,15 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs }: {
+  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs, onSelectId }: {
     /** 支払文書のタブ（A-074）。この作品の回を支払文書と同じ表で出す。 */
     payDocs?: { onIssueRound: (h: PayDocsHandoff) => void; onOpenDraft: (id: number) => void;
                 /** 許諾料の報告・計算書は支払文書の「作家の報告と計算書」で。 */
                 onOpenAuthor: (a: AuthorTarget) => void };
     onOpenCondition: (id: number) => void;
     initialId?: number;
+    /** 選んだ行を親へ知らせる（URL に写す）。 */
+    onSelectId?: (id: number | undefined) => void;
     onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
     /** 文書の画面へ、選んだ条件を載せた状態で移る。台帳から文書を作る入口。 */
@@ -158,6 +160,7 @@ export function WorksWorkspace(
   const [includeVoid, setIncludeVoid] = useState(false);
   const [kindFilter, setKindFilter] = useState<"all" | "source" | "work">("all");
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   // 「利用許諾計算」タブは閉じた（A-074）。報告・計算書は支払文書の「作家の報告と計算書」へ。
   const [pane, setPane] = useState<"work" | "paydocs">("work");
   /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */

@@ -1,3 +1,4 @@
+import { DISPATCH_ALLOWLIST_KEY, effectiveAllowlist, readDispatchAllowlist } from "../ops/dispatch-allowlist.js";
 import { GoogleAuth } from "google-auth-library";
 import { config } from "../config.js";
 import type { Transactable } from "../core/db.js";
@@ -66,15 +67,26 @@ export function buildSlackViews(): SlackViewOpener | null {
   return config.slackBotToken ? new SlackAdapter(config.slackBotToken) : null;
 }
 
+/** いま効いている許可リスト（設定 → 無ければ .env）。 */
+export async function currentAllowlist(database: Transactable): Promise<{ allowlist: string[]; source: "env" | "list" | "open" }> {
+  try {
+    const r = await database.query("SELECT value FROM settings WHERE key = $1", [DISPATCH_ALLOWLIST_KEY]);
+    return effectiveAllowlist(readDispatchAllowlist((r.rows[0] as { value?: unknown } | undefined)?.value), config.dispatchAllowlist);
+  } catch {
+    return { allowlist: config.dispatchAllowlist, source: "env" };
+  }
+}
+
 export function buildDispatch(
   database: Transactable,
   adapters: Partial<Record<IntegrationChannel, DispatchAdapter>> = buildAdapters()
 ): DispatchService {
-  return new DispatchService(database, adapters, (channel) => ({
+  return new DispatchService(database, adapters, async (channel) => ({
     mode: config.integrationModes[channel],
     adapterConfigured: Boolean(adapters[channel]?.configured),
     readOnly: config.readOnly,
-    allowlist: config.dispatchAllowlist
+    // 許可リストは設定の画面で変えられる（無ければ .env）。送るたびに読む（上げ直し不要）。
+    allowlist: (await currentAllowlist(database)).allowlist
   }));
 }
 

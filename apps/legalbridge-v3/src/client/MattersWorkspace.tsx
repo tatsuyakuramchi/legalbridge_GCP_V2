@@ -84,9 +84,11 @@ const backlogIssue = (detail: MatterDetail): string | null =>
   detail.links.find((l) => l.targetType === "backlog_issue")?.targetRef ?? null;
 
 export function MattersWorkspace(
-  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onSettledImport, onFixDrift, onRegisterAgreement, onOpenTrade, onIssueRound }: {
+  { onOpenCondition, initialId, onOpen, onOpenDocument, onCompose, onBulkOrders, onSettledImport, onFixDrift, onRegisterAgreement, onOpenTrade, onIssueRound, onSelectId }: {
     onOpenCondition: (id: number) => void;
     initialId?: number;
+    /** 選んだ行を親へ知らせる（URL に写す）。 */
+    onSelectId?: (id: number | undefined) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
     /** 文書の画面へ移って、その文書を開く。 */
     onOpenDocument?: (documentId: number) => void;
@@ -109,6 +111,7 @@ export function MattersWorkspace(
 ) {
   const [rows, setRows] = useState<MatterSummary[]>([]);
   const [selected, setSelected] = useState<number | undefined>(initialId);
+  useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const [detail, setDetail] = useState<MatterDetail | null>(null);
   // タブが持っていない紐づけだけ。ここに条件や文書を出すと3か所目になる。
   const externalLinks = (detail?.links ?? []).filter((l) => !OWNED_BY_TABS.has(l.targetType));
