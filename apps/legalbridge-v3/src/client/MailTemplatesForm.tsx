@@ -16,8 +16,7 @@ import {
 const SAMPLE: Record<string, string> = {
   相手先: "株式会社サンプル", 宛名: "山田 太郎", 文書番号: "ARC-ROY-2026-1001", 文書名: "利用許諾料計算書",
   案件番号: "MTR-2026-00012", 案件名: "イラスト制作", 金額: "¥110,000", 発行日: "2026年9月27日",
-  会社名: "株式会社アークライト", 担当者名: "倉持", 対象期間: "2026年上期", 支払予定日: "2026年11月30日",
-  案内URL: "https://example.com/contract-guide"
+  会社名: "株式会社アークライト", 担当者名: "倉持", 対象期間: "2026年上期", 支払予定日: "2026年11月30日"
 };
 
 type Pick = { kind: MailTemplateKind } | { custom: number };
@@ -77,7 +76,7 @@ export function MailTemplatesForm({ value, onSaved }: { value: unknown; onSaved:
     finally { setBusy(false); }
   }
 
-  const sample = renderMail(current, draft.signature || "", { ...SAMPLE, 案内URL: draft.guideUrl || SAMPLE.案内URL! });
+  const sample = renderMail(current, draft.signature || "", SAMPLE);
   const meta = "kind" in pick ? MAIL_TEMPLATE_KINDS.find((k) => k.kind === pick.kind)! : null;
 
   return (
@@ -163,11 +162,6 @@ export function MailTemplatesForm({ value, onSaved }: { value: unknown; onSaved:
                     onChange={(e) => touch({ ...draft, signature: e.target.value })} />
         </label>
 
-        <label className="field wide">
-          <span>案内ページの URL（本文の {"{案内URL}"} に入る。契約書締結のご案内）</span>
-          <input value={draft.guideUrl} placeholder="https://…"
-                 onChange={(e) => touch({ ...draft, guideUrl: e.target.value })} />
-        </label>
 
         <label className="field wide">
           <span>取引先へのメール（内容確認・送付）にいつも cc で入れる宛先（カンマ区切り。経理など）</span>
@@ -180,7 +174,7 @@ export function MailTemplatesForm({ value, onSaved }: { value: unknown; onSaved:
             <span key={f.name} title={f.label} style={{ marginRight: 8 }}><span className="code">{`{${f.name}}`}</span></span>
           ))}
           <br />値の無い項目は空になります。宛名が分からないときは「◯◯ 様」の行ごと出しません。
-          対象期間は計算書に載っている期間、支払予定日はその文書から立てた支払の期日です。
+          担当者名は通知条項の当社担当者（無ければ送る画面で入れる）。対象期間・支払予定日は利用許諾計算書に載っている値です。
         </div>
 
         <div className="row">

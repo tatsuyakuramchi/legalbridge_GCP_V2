@@ -31,6 +31,7 @@ const PURPOSES: Array<{ value: Purpose; label: string; hint: string; recordAs?: 
 interface Draft {
   to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
   subject: string; body: string; warnings: string[];
+  staffName?: string; staffNameFrom?: "notice" | "input" | null;
 }
 interface Outcome {
   sent: boolean; duplicated?: boolean; warnings?: string[];
@@ -89,11 +90,13 @@ export function SendMany(
   const [draftWarnings, setDraftWarnings] = useState<string[]>([]);
 
   // 文面を選ぶと、宛先・件名・本文を設定の文面から組み直す（1 通に全部の文書番号を載せる）。
-  async function loadDraft(p: Purpose) {
+  const [staffName, setStaffName] = useState("");
+  const [staffFrom, setStaffFrom] = useState<"notice" | "input" | null>(null);
+  async function loadDraft(p: Purpose, name: string = staffName) {
     setError(null);
     try {
-      const d = await api.post<Draft>("/documents/mail-draft-many", { documentIds: documents.map((x) => x.id), purpose: p });
-      setPurpose(p);
+      const d = await api.post<Draft>("/documents/mail-draft-many", { documentIds: documents.map((x) => x.id), purpose: p, staffName: name.trim() || null });
+      setPurpose(p); setStaffFrom(d.staffNameFrom ?? null); if (d.staffName && !name.trim()) setStaffName(d.staffName);
       setMail({ to: d.to.map((x) => ({ email: x.email, name: x.name })), cc: d.cc.map((x) => ({ email: x.email, name: x.name })), bcc: [] });
       setSubject(d.subject); setBody(d.body); setDraftWarnings(d.warnings);
       setInternal(p === "owner_check");
@@ -211,6 +214,14 @@ export function SendMany(
                         disabled={busy || parties.length > 1} onClick={() => void loadDraft(p.value)}>{p.label}</button>
               ))}
             </div>
+          {staffFrom !== "notice" && (
+            <label className="field" style={{ maxWidth: 420 }}>
+              <span>担当者名（通知条項に当社担当者が無いとき。{"{担当者名}"} に入る）</span>
+              <input value={staffName} placeholder="例：倉持" disabled={busy}
+                     onChange={(e) => setStaffName(e.target.value)}
+                     onBlur={() => { if (purpose) void loadDraft(purpose, staffName); }} />
+            </label>
+          )}
             <div className="faint">運用 → 設定 →「メールの文面」から組みます（文書番号・金額は全部をつなぎます）。選んだあとに直せます</div>
             {draftWarnings.map((w) => <div key={w} className="note warn">{w}</div>)}
           </div>

@@ -68,10 +68,9 @@ test("足した文面：鍵・名前・差込を確かめる。既定で「計�
   assert.match(bad.errors.join("/"), /鍵は英小文字/);
   assert.match(bad.errors.join("/"), /名前が空/);
   assert.match(bad.errors.join("/"), /差し込めません/);
-  const ok = parseMailTemplates({ custom: [{ key: "x1", label: "案内", subject: "件名 {案内URL}", body: "本文 {担当者名}", audience: "owner" }], guideUrl: "https://a" });
+  const ok = parseMailTemplates({ custom: [{ key: "x1", label: "案内", subject: "件名 {対象期間}", body: "本文 {担当者名} {支払予定日}", audience: "owner" }] });
   assert.deepEqual(ok.errors, []);
   assert.equal(ok.value.custom[0]!.audience, "owner");
-  assert.equal(ok.value.guideUrl, "https://a");
   const r = resolveMailTemplate(ok.value, "custom:x1", null);
   assert.equal(r?.kind, "custom:x1"); assert.equal(r?.audience, "owner");
   assert.equal(resolveMailTemplate(ok.value, "custom:nope", null), null);

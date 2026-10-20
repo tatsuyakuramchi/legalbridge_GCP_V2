@@ -67,6 +67,7 @@ type Purpose = MailPurpose;
 interface Draft {
   to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
   subject: string; body: string; warnings: string[];
+  staffName: string; staffNameFrom: "notice" | "input" | null;
 }
 /** 決まった文面。設定で足した文面（custom:<key>）は /mail-purposes から足す。 */
 const PURPOSES: Array<{ value: Purpose; label: string; hint: string }> = MAIL_PURPOSES;
@@ -218,11 +219,14 @@ export function DocumentSend(
       .catch(() => setSiblings([]));
   }, [docRecipients?.counterparty?.id, documentId]);
 
-  async function loadDraft(p: Purpose) {
+  /** {担当者名}。通知条項に無いときに送る画面で入れる（文面を組み直すときに渡す）。 */
+  const [staffName, setStaffName] = useState("");
+  const [staffFrom, setStaffFrom] = useState<"notice" | "input" | null>(null);
+  async function loadDraft(p: Purpose, name: string = staffName) {
     setError(null);
     try {
-      const d = await api.get<Draft>(`/documents/${documentId}/mail-draft?purpose=${p}`);
-      setPurpose(p);
+      const d = await api.get<Draft>(`/documents/${documentId}/mail-draft?purpose=${encodeURIComponent(p)}${name.trim() ? `&staffName=${encodeURIComponent(name.trim())}` : ""}`);
+      setPurpose(p); setStaffFrom(d.staffNameFrom); if (d.staffName && !name.trim()) setStaffName(d.staffName);
       setMailTo({ to: d.to.map((x) => ({ email: x.email, name: x.name })), cc: d.cc.map((x) => ({ email: x.email, name: x.name })) });
       setSubject(d.subject); setBody(d.body); setWarnings(d.warnings);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -351,6 +355,14 @@ export function DocumentSend(
                   disabled={busy} onClick={() => void loadDraft(p.value)}>{p.label}</button>
         ))}
       </div>
+      {staffFrom !== "notice" && (
+        <label className="field" style={{ maxWidth: 420 }}>
+          <span>担当者名（通知条項に当社担当者が無いとき。{"{担当者名}"} に入る）</span>
+          <input value={staffName} placeholder="例：倉持" disabled={busy}
+                 onChange={(e) => setStaffName(e.target.value)}
+                 onBlur={() => { if (purpose) void loadDraft(purpose, staffName); }} />
+        </label>
+      )}
       <div className="faint">宛先・件名・本文は、運用 → 設定 → 「メールの文面」から組みます。送る前にここで直せます。</div>
       {warnings.map((w) => <div key={w} className="note warn">{w}</div>)}
       {internal && <div className="note">社内確認として送ります（宛先は当社の担当者。相手先にはまだ送っていない扱いで、送ると担当者確認が済になります）</div>}

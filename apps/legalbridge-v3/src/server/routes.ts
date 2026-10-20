@@ -3754,9 +3754,10 @@ export function createRoutes(database: Transactable) {
     .transform((v) => v as UnsentMailPurpose);
   router.post("/documents/unsent-bundles/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const input = z.object({
-      partyIds: z.array(z.coerce.number().int().positive()).min(1).max(500), kinds: unsentKinds, purpose: unsentPurpose
+      partyIds: z.array(z.coerce.number().int().positive()).min(1).max(500), kinds: unsentKinds, purpose: unsentPurpose,
+      staffName: z.string().trim().max(100).nullable().optional()
     }).parse(req.body ?? {});
-    res.json({ mails: await unsentSend.plan(input.partyIds, input.kinds, input.purpose) });
+    res.json({ mails: await unsentSend.plan(input.partyIds, input.kinds, input.purpose, input.staffName ?? null) });
   }));
   router.post("/documents/unsent-bundles/send", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -4981,15 +4982,17 @@ export function createRoutes(database: Transactable) {
   }));
   router.get("/documents/:id/mail-draft", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const purpose = mailPurposeSchema.parse(String(req.query.purpose ?? ""));
-    res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose));
+    const staffName = String(req.query.staffName ?? "").trim().slice(0, 100) || null;
+    res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose, [], { staffName }));
   }));
   // 何枚かの文書を 1 通で送る下書き（文面は設定の「メールの文面」から選ぶ）。相手先は揃っていること。
   router.post("/documents/mail-draft-many", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const input = z.object({
       documentIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
-      purpose: mailPurposeSchema
+      purpose: mailPurposeSchema,
+      staffName: z.string().trim().max(100).nullable().optional()
     }).parse(req.body ?? {});
-    res.json(await new MailDraftService(database).draftMany(input.documentIds, input.purpose));
+    res.json(await new MailDraftService(database).draftMany(input.documentIds, input.purpose, { staffName: input.staffName ?? null }));
   }));
   // 送り先の候補（CloudSign の署名者・確認者）。取引先の署名者と事業部の担当者を、
   // 案件の無い文書（デイリータスク）でも出す。連絡先は個人の情報なので admin・legal だけ。

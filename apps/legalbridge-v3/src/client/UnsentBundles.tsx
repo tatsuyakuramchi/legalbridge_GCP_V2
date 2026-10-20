@@ -136,6 +136,8 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
   const [results, setResults] = useState<PartyResult[]>([]);
   const [open, setOpen] = useState<number | null>(null);
   const [purpose, setPurpose] = useState<MailPurpose>("delivery");
+  /** {担当者名}（通知条項に無いとき）。 */
+  const [staffName, setStaffName] = useState("");
   const [purposes, setPurposes] = useState(PURPOSES);
   useEffect(() => {
     api.get<{ purposes: Array<{ value: string; label: string; hint: string; audience: string }> }>("/mail-purposes")
@@ -147,11 +149,11 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
   useEffect(() => {
     let live = true;
     setMails(null); setError(null); setResults([]);
-    api.post<{ mails: PartyMail[] }>("/documents/unsent-bundles/preview", { partyIds, kinds, purpose })
+    api.post<{ mails: PartyMail[] }>("/documents/unsent-bundles/preview", { partyIds, kinds, purpose, staffName: staffName.trim() || null })
       .then((r) => { if (live) setMails(r.mails); })
       .catch((e) => { if (live) setError(e instanceof ApiError ? e.message : String(e)); });
     return () => { live = false; };
-  }, [partyIds.join(","), kinds.join(","), purpose]);
+  }, [partyIds.join(","), kinds.join(","), purpose, staffName]);
 
   const ready = (mails ?? []).filter((m) => m.to.length);
   const docCount = ready.reduce((n, m) => n + m.docs.length, 0);
@@ -165,7 +167,7 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
     for (const [i, m] of ready.entries()) {
       setProgress(`${i + 1} / ${ready.length}　${m.partyName}`);
       try {
-        const r = await api.post<{ parts: SendPart[] }>("/documents/unsent-bundles/send", { partyId: m.partyId, kinds, purpose });
+        const r = await api.post<{ parts: SendPart[] }>("/documents/unsent-bundles/send", { partyId: m.partyId, kinds, purpose, staffName: staffName.trim() || null });
         const sent = r.parts.filter((p) => p.outcome.sent).reduce((n, p) => n + p.documentIds.length, 0);
         const dup = r.parts.some((p) => p.outcome.duplicated);
         const blocked = r.parts.find((p) => !p.outcome.sent && !p.outcome.duplicated);
@@ -198,6 +200,10 @@ function PartySend({ partyIds, kinds, gmailMode, onDone, onClose }: {
                     disabled={busy} onClick={() => setPurpose(p.value)}>{p.label}</button>
           ))}
         </div>
+        <label className="field" style={{ maxWidth: 420 }}>
+          <span>担当者名（通知条項に当社担当者が無いとき。{"{担当者名}"} に入る）</span>
+          <input value={staffName} placeholder="例：倉持" disabled={busy} onChange={(e) => setStaffName(e.target.value)} />
+        </label>
         {purpose === "delivery" ? (
           <div className="faint">
             相手先ごとに 1 通（{KIND_LABEL_LIST(kinds)}を全部添付。20 枚を超える相手先は分けて送ります）。宛先は相手先の請求先 → 主担当 →

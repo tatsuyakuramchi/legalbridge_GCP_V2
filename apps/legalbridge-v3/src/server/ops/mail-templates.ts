@@ -36,8 +36,6 @@ export interface MailTemplates {
   templates: Record<MailTemplateKind, MailTemplate>;
   /** 足した文面（設定で増やせる）。 */
   custom: CustomMailTemplate[];
-  /** 本文の {案内URL} に入る（契約書締結のご案内ページ）。 */
-  guideUrl: string;
 }
 
 /** 送る画面の「文面」の選択肢（決まったもの）。足した文面は mailPurposeOptions で後ろに並ぶ。 */
@@ -88,10 +86,9 @@ export const MAIL_TEMPLATE_FIELDS: Array<{ name: string; label: string }> = [
   { name: "金額", label: "検収金額・利用許諾料額など（書類に載っている合計。無ければ空）" },
   { name: "発行日", label: "文書を決定した日" },
   { name: "会社名", label: "自社情報の会社名" },
-  { name: "担当者名", label: "法務の担当者の名前（文書の担当者。無ければ空）" },
-  { name: "対象期間", label: "計算書の対象期間（計算書に載っている期間。無ければ空）" },
-  { name: "支払予定日", label: "その文書から立てた支払の期日（無ければ空）" },
-  { name: "案内URL", label: "下の「案内ページの URL」" },
+  { name: "担当者名", label: "通知条項の当社担当者（基本契約書の乙・条件書の被許諾者の氏名）。無ければ送る画面で入れる" },
+  { name: "対象期間", label: "利用許諾計算書に載っている対象期間（計算書以外は空）" },
+  { name: "支払予定日", label: "利用許諾計算書に載っている支払期日（無ければその文書から立てた支払の期日）" },
   { name: "署名", label: "下の署名" }
 ];
 
@@ -203,7 +200,6 @@ export const DEFAULT_MAIL_TEMPLATES: MailTemplates = {
         "当社では現在、利用許諾料をお支払いしている皆様との契約書面について、内容の整理と書式の統一を進めております。\n" +
         "契約書をお取り交わしいただいていない皆様、またすでに契約を締結いただいている皆様のいずれにも、統一書式による契約書のお取り交わしをお願いしております。\n\n" +
         "これまでのお取引条件を書面化し、著作物の利用開始時に遡って適用する内容です。詳しい内容とお手続の方法は、下記のご案内をご覧ください。\n\n" +
-        "▶ 契約書締結のご案内\n{案内URL}\n\n" +
         "契約書に関してご不明な点や、これまでのご認識と異なる点がございましたら、ご署名の前にご遠慮なくお知らせください。\n\n" +
         "お手数をおかけいたしますが、何卒よろしくお願い申し上げます。\n\n{署名}"
     },
@@ -215,13 +211,11 @@ export const DEFAULT_MAIL_TEMPLATES: MailTemplates = {
         "{相手先} 御中\n{宛名} 様\n\nいつもお世話になっております。\n{会社名}でございます。\n\n" +
         "先にお送りしました{文書名}（{文書番号}）につきまして、ご締結がまだ確認できておりません。\n" +
         "お手数ですが、内容をご確認のうえ、ご締結のお手続きをお願いいたします。\n\n" +
-        "▶ 契約書締結のご案内\n{案内URL}\n\n" +
         "ご不明な点やご修正のご希望がございましたら、本メールへご返信ください。\n" +
         "すでにお手続きいただいている場合は、行き違いをご容赦ください。\n\n" +
         "今後ともどうぞよろしくお願い申し上げます。\n\n{署名}"
     }
-  ],
-  guideUrl: ""
+  ]
 };
 
 /** 送付のとき、文書の種類からどの文面を使うか。 */
@@ -293,9 +287,7 @@ export function parseMailTemplates(input: unknown): { value: MailTemplates; erro
   const partyCc = [...new Set(rawCc.map((v: unknown) => String(v ?? "").trim()).filter(Boolean))] as string[];
   for (const e of partyCc) if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) errors.push(`cc の「${e}」はメールアドレスの形ではありません`);
   if (partyCc.length > 10) errors.push("いつも入れる cc は 10 件までです");
-  const guideUrl = String(src.guideUrl ?? d.guideUrl).trim();
-  if (guideUrl.length > 500) errors.push("案内ページの URL は 500 字までです");
-  return { value: { signature, partyCc, templates, custom, guideUrl }, errors: [...new Set(errors)] };
+  return { value: { signature, partyCc, templates, custom }, errors: [...new Set(errors)] };
 }
 
 /** 保存されている値を読む。壊れていても既定値で埋める（送る画面を止めない）。 */

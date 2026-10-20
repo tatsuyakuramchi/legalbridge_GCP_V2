@@ -2,6 +2,7 @@ import type { Queryable } from "../core/db.js";
 import { dateStr, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { DomainError } from "../core/errors.js";
+import { noticeStaffOf, payDateOf, periodOf } from "./mail-draft.js";
 import { MAIL_TEMPLATES_KEY, deliveryKindOf, readMailTemplates, renderMail, isCustomPurpose, resolveMailTemplate, type MailTemplateKind } from "../ops/mail-templates.js";
 import { amountOf } from "./mail-draft.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
@@ -52,7 +53,7 @@ type Person = { name: string | null; email: string };
 export class UnsentSendPlanner {
   constructor(private readonly database: Queryable) {}
 
-  async plan(partyIds: number[], kinds: UnsentKind[], purpose: UnsentMailPurpose = "delivery"): Promise<PartyMail[]> {
+  async plan(partyIds: number[], kinds: UnsentKind[], purpose: UnsentMailPurpose = "delivery", staffName: string | null = null): Promise<PartyMail[]> {
     try {
       const { bundles } = await new UnsentBundlesService(this.database).list();
       const wanted = new Set(partyIds.map(Number));
@@ -87,13 +88,13 @@ export class UnsentSendPlanner {
            FROM parties p WHERE p.id = ANY($1::bigint[])`, [picked.map((b) => b.partyId)])).rows as Array<Record<string, any>>;
       const partyOf = new Map(partyRows.map((r) => [Number(r.id), r]));
 
-      return picked.map((b) => this.mailOf(b, docOf, partyOf.get(b.partyId), templates, company, purpose));
+      return picked.map((b) => this.mailOf(b, docOf, partyOf.get(b.partyId), templates, company, purpose, staffName));
     } catch (error) { throw translate(error); }
   }
 
   private mailOf(
     b: UnsentBundle, docOf: Map<number, Record<string, any>>, party: Record<string, any> | undefined,
-    templates: ReturnType<typeof readMailTemplates>, company: string, purpose: UnsentMailPurpose
+    templates: ReturnType<typeof readMailTemplates>, company: string, purpose: UnsentMailPurpose, staffName: string | null = null
   ): PartyMail {
     const warnings: string[] = [];
     const contacts = (Array.isArray(party?.contacts) ? party!.contacts : []) as Array<{ name: string | null; email: string; roles: unknown }>;
@@ -124,14 +125,15 @@ export class UnsentSendPlanner {
     const amounts = rows.map((r) => amountOf((r.rendered_values ?? {}) as Record<string, unknown>));
     const labels = [...new Set(rows.map((r) => str(r.template_label) ?? "書類"))];
     const latest = rows.map((r) => dateStr(r.issued_at)).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
-    const periodOf = (r: Record<string, any>) => {
-      const v = (r.rendered_values ?? {}) as Record<string, unknown>;
-      for (const k of ["対象期間", "periodLabel", "period", "計算期間"]) { const x = v[k]; if (x && String(x).trim()) return String(x).trim(); }
-      return "";
-    };
+    const noticeName = rows.map(noticeStaffOf).find(Boolean) ?? "";
+    const name = noticeName || String(staffName ?? "").trim();
+    if (!name && /\{担当者名\}/.test(`${template.subject}\n${template.body}`)) {
+      warnings.push("通知条項に当社担当者が無いので {担当者名} が空です。「担当者名」に入れてください");
+    }
     const rendered = renderMail(template, templates.signature, {
       相手先: b.partyName,
-      担当者名: "", 対象期間: [...new Set(rows.map(periodOf).filter(Boolean))].join("・"), 支払予定日: "", 案内URL: templates.guideUrl,
+      担当者名: name, 対象期間: [...new Set(rows.map(periodOf).filter(Boolean))].join("・"),
+      支払予定日: [...new Set(rows.map(payDateOf).filter(Boolean))].join("・"),
       宛名: to.length === 1 ? to[0]!.name ?? "" : "",
       文書番号: rows.map(numberOf).join("・"),
       文書名: labels.join("・"),
