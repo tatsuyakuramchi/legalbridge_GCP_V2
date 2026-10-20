@@ -17,6 +17,7 @@ import { AccountingExport } from "./AccountingExport.js";
 import { CompanyProfileForm } from "./CompanyProfileForm.js";
 import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
 import { MailTemplatesForm } from "./MailTemplatesForm.js";
+import { DispatchAllowlistForm } from "./DispatchAllowlistForm.js";
 import { TextSnippets } from "./TextSnippets.js";
 import { StatementModels } from "./StatementModels.js";
 import { AuditReport } from "./AuditReport.js";
@@ -69,7 +70,7 @@ export type OpsTab = "quality" | "deadlines" | "fixes" | "leftovers" | "exports"
   | "audit-report" | "audit" | "integrations" | "settings";
 
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
-const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates"]);
+const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates", "dispatch_allowlist"]);
 
 export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab; onTabChange?: (tab: OpsTab) => void } = {}) {
   const [tab, setTabState] = useState<OpsTab>(initialTab ?? "quality");
@@ -319,6 +320,10 @@ export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab;
           onSaved={() => void reload()} />
         <MailTemplatesForm
           value={settings.find((s) => s.key === "mail_templates")?.value}
+          onSaved={() => void reload()} />
+        <DispatchAllowlistForm
+          value={settings.find((s) => s.key === "dispatch_allowlist")?.value}
+          envAllowlist={(integrations as { envAllowlist?: string[] } | null)?.envAllowlist}
           onSaved={() => void reload()} />
         <div className="panel">
           <div className="panel-hd">

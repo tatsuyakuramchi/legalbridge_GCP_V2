@@ -119,8 +119,7 @@ import { buildCompletionView, IntakeFieldError, parseSubmission } from "./integr
 import { SlackCommandHandler } from "./integrations/slack-commands.js";
 import { LegalSearchService } from "./search/legal-search.js";
 import {
-  buildAdapters, buildBacklogReader, buildDispatch, buildMailSource, buildSlackViews
-} from "./integrations/factory.js";
+  buildAdapters, buildBacklogReader, buildDispatch, buildMailSource, buildSlackViews, currentAllowlist } from "./integrations/factory.js";
 import { IntakeRepository, type IntakeTab } from "./intake/repository.js";
 import { intakeViewHtml } from "./intake/view-page.js";
 import { WorkbenchPlanService } from "./workbench/plan-service.js";
@@ -141,6 +140,7 @@ import type { IntegrationChannel } from "./integrations/gate.js";
 import { parseCompanyProfile } from "./ops/company-profile-schema.js";
 import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-alert-settings.js";
 import { MAIL_TEMPLATES_KEY, parseMailTemplates, readMailTemplates, mailPurposeOptions, type MailPurpose } from "./ops/mail-templates.js";
+import { DISPATCH_ALLOWLIST_KEY, parseDispatchAllowlist } from "./ops/dispatch-allowlist.js";
 import { DeliveryAlertJob, tokyoToday } from "./jobs/delivery-alert.js";
 import { RingiService, type RingiTarget } from "./ringi/service.js";
 import { RptService } from "./rpt/service.js";
@@ -3423,7 +3423,8 @@ export function createRoutes(database: Transactable) {
     });
   }));
 
-  router.get("/integrations", (_req, res) => {
+  router.get("/integrations", asyncRoute(async (_req, res) => {
+    const allow = await currentAllowlist(database);
     res.json({
       drive: { documents: storage.configured, matterFolders: matterFolders.configured },
       channels: (["slack", "gmail", "cloudsign", "backlog"] as IntegrationChannel[]).map((channel) => ({
@@ -3431,11 +3432,11 @@ export function createRoutes(database: Transactable) {
         mode: config.integrationModes[channel],
         configured: Boolean(adapters[channel]?.configured)
       })),
-      allowlist: config.dispatchAllowlist,
+      allowlist: allow.allowlist, allowlistSource: allow.source, envAllowlist: config.dispatchAllowlist,
       // 受信の設定。ラベルが空なら取り込みは動かない。
       inbound: { mail: Boolean(mailSource?.configured) }
     });
-  });
+  }));
 
   // ---- 文書 ----
   /**
@@ -4809,6 +4810,12 @@ export function createRoutes(database: Transactable) {
       // メールの文面も形を確かめる。知らない {差込} はそのまま相手に届いてしまう。
       if (key === MAIL_TEMPLATES_KEY) {
         const parsed = parseMailTemplates(input.value);
+        if (parsed.errors.length) throw new DomainError("VALIDATION", parsed.errors.join(" ／ "));
+        value = parsed.value;
+      }
+      // 宛先の許可リストも形を確かめる（メールでない文字列が入ると、全部弾いて誰にも送れなくなる）。
+      if (key === DISPATCH_ALLOWLIST_KEY) {
+        const parsed = parseDispatchAllowlist(input.value);
         if (parsed.errors.length) throw new DomainError("VALIDATION", parsed.errors.join(" ／ "));
         value = parsed.value;
       }

@@ -87,7 +87,9 @@ gcloud iam service-accounts add-iam-policy-binding <GMAIL_DELEGATION_SA> \
    宛先・件名・本文・添付が見えれば設定は読めている。
 2. `.env` を `GMAIL_MODE=live` にして `docker compose up -d app`。`DISPATCH_ALLOWLIST` に自分の
    アドレスだけを入れたまま、自分宛てに 1 通送る。届くこと、送信元が本番と同じこと、PDF が付いていることを確かめる。
-3. 問題が無ければ `DISPATCH_ALLOWLIST=` を空にして `docker compose up -d app`（宛先の制限を外す）。
+3. 問題が無ければ宛先の制限を外す。運用 › 設定 › 「送る宛先の制限」で「制限しない」を選んで保存する
+   （保存した瞬間から効く。app の上げ直しは要らない）。`.env` の `DISPATCH_ALLOWLIST=` を空にして
+   `docker compose up -d app` でも同じ。設定の画面は .env より優先する（「.env のとおり」を選ぶと .env に戻る）。
 
 ## 終わったら
 
@@ -190,7 +192,7 @@ CloudSign は client_id だけでつながる（人のログイン `keys/adc.jso
 |---|---|
 | 接続情報が設定されていません | `GMAIL_SENDER` が空。`.env` と `docker compose up -d app` |
 | 読み取り専用で動作しています | `READ_ONLY=false` にしていない |
-| 検証中の宛先許可リストに入っていません | `DISPATCH_ALLOWLIST` に無い宛先（cc・bcc も含む） |
+| 検証中の宛先許可リストに入っていません | 許可リスト（運用 › 設定 › 送る宛先の制限、または `DISPATCH_ALLOWLIST`）に無い宛先（cc・bcc・署名者も含む）。複数文書を 1 通で送るときは cc に依頼者と「いつも cc で入れる宛先」が入る |
 | GMAIL_DELEGATION_SA（署名に使う SA）が要ります | `.env` の `GMAIL_DELEGATION_SA` が空 |
 | ログインの認証情報…からトークンを取れませんでした | `keys\adc.json` が無いか期限切れ。`docker compose run --rm login` で取り直す |
 | Drive の保存で「権限がありません（403）」 | なりすました SA が本番のフォルダに入れない。`DRIVE_IMPERSONATE_SA` が本番の Drive の SA と同じか |

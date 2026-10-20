@@ -43,7 +43,7 @@ export class DispatchService {
   constructor(
     private readonly database: Transactable,
     private readonly adapters: Partial<Record<IntegrationChannel, DispatchAdapter>>,
-    private readonly settings: (channel: IntegrationChannel) => GateSettings
+    private readonly settings: (channel: IntegrationChannel) => GateSettings | Promise<GateSettings>
   ) {}
 
   /** 同じ意味の送信を二度しないためのキー。チャネル・対象・宛先・内容から作る。 */
@@ -63,7 +63,7 @@ export class DispatchService {
     actor: string;
   }): Promise<DispatchOutcome> {
     const adapter = this.adapters[input.channel];
-    const settings = this.settings(input.channel);
+    const settings = await this.settings(input.channel);
     const files = attachmentsOf(input.request);
     const gate = evaluateGate(
       {
