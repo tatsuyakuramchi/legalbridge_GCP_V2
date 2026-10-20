@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { ConditionEvents } from "./ConditionEvents.js";
+import { CsvImport } from "./CsvImport.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { useReadOnly } from "./read-only.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
+import { DealsWorkspace, type DealHandoff } from "./DealsWorkspace.js";
 import { OutReports } from "./OutReports.js";
 import { ConditionRevisions } from "./ConditionRevisions.js";
 import { ConditionEdit } from "./ConditionEdit.js";
@@ -14,17 +16,16 @@ import { ConditionContracts } from "./ConditionContracts.js";
 import { ListCount, ListLimit, ListSearch, useDebounced } from "./ListTools.js";
 import { CONDITION_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel, dealModelLabel, isLicenseCondition } from "./ConditionLabel.js";
-import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { templateKeyFor } from "./FlowBar.js";
 import { OutConditionForm } from "./OutConditionForm.js";
-import { PubConditionSetForm } from "./PubConditionSetForm.js";
-import { LicenseSetForm } from "./LicenseSetForm.js";
-import { ServiceLinesForm } from "./ServiceLinesForm.js";
 import type { ConditionDetail, ConditionSummary, EnvelopeCheck, RightsEnvelope } from "../server/core/model.js";
 import { api, ApiError, money, rate } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
+import { settlementRuleLabel } from "../server/conditions/settlement-mode.js";
+import { timeSettlementLabel } from "../server/conditions/time-settlement.js";
 
 type DetailResponse = ConditionDetail & {
   envelopeCheck: { envelope: RightsEnvelope; check: EnvelopeCheck } | null;
@@ -53,7 +54,7 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated }:
+  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated, onIssueRound }:
   {
     initialId?: number;
     /**
@@ -66,6 +67,8 @@ export function ConditionsWorkspace(
     /** 決めた文書をそのまま開く。 */
     onOpenDocument?: (documentId: number) => void;
     onOpen?: (kind: EntityKind, id: number) => void;
+    /** 取引管理（この条件の回）から決済文書を作る：作業テーブルへ。 */
+    onIssueRound?: (h: DealHandoff) => void;
     /**
      * 条件を登録したとき。あれば、登録した条件を選んだ状態で文書を作る画面へ進む
      * （条件明細 → 文書 → 送信 を順に）。templateKey は登録した種類から推したひな形。
@@ -85,7 +88,7 @@ export function ConditionsWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
   const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
-  const [creating, setCreating] = useState<false | "one" | "publishing" | "license" | "service">(false);
+  const [creating, setCreating] = useState<"entry" | "csv" | false>(false);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
   /** イン条件（再許諾・他社販売）から許諾先（OUT）を作る欄。 */
@@ -127,7 +130,7 @@ export function ConditionsWorkspace(
     api.get<DetailResponse>(`/conditions/${selected}`)
       .then(setDetail)
       .catch((e: ApiError) => setError(e.message));
-    setStmtOpen(false); setStmtDone(null); setStmtPeriod(""); setStmtOn("");
+    setStmtOn("");
   }, [selected]);
 
   // 予定・実績・文書は繋がっているので、どれか1つが動いたら全部引き直す。
@@ -210,45 +213,8 @@ export function ConditionsWorkspace(
     if (selected) setDetail(await api.get<DetailResponse>(`/conditions/${selected}`));
   }
 
-  // 計算書の発行。試算とは別物で、こちらは実績が立ち AG も進む。
-  const [stmtOpen, setStmtOpen] = useState(false);
-  const [stmtTemplate, setStmtTemplate] = useState("");
-  const [stmtPeriod, setStmtPeriod] = useState("");
+  /** ロイヤリティ試算の対象日（契約変更をまたぐときの版の選び分け）。 */
   const [stmtOn, setStmtOn] = useState("");
-  const [stmtBusy, setStmtBusy] = useState(false);
-  const [stmtDone, setStmtDone] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<
-    Array<{ templateKey: string; label: string; category: string | null }>>([]);
-
-  useEffect(() => {
-    if (!stmtOpen || templates.length) return;
-    api.get<{ templates: Array<{ templateKey: string; label: string; category: string | null }> }>(
-      "/document-templates")
-      .then((r) => { setTemplates(r.templates); setStmtTemplate(r.templates[0]?.templateKey ?? ""); })
-      .catch((e: ApiError) => setError(e.message));
-  }, [stmtOpen]);
-
-  /**
-   * 条件から計算書を出す。文書を先に発行してから結び付ける手順は実務の順番と
-   * 逆だったので、下書き→発行→確定をサーバ側で1本にしてある。
-   */
-  async function issueStatement() {
-    if (!detail) return;
-    setStmtBusy(true); setError(null);
-    try {
-      const r = await api.post<{ document: { documentNo: string } }>(
-        `/conditions/${detail.id}/statement-documents`,
-        {
-          templateKey: stmtTemplate, period: stmtPeriod.trim(),
-          occurredOn: stmtOn || null,
-          reported: { salesInput: Number(sales.replace(/[^0-9]/g, "")) || 0 }
-        });
-      setStmtDone(r.document.documentNo);
-      setStmtOpen(false);
-      await refreshFlow();
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
-    finally { setStmtBusy(false); }
-  }
 
   // ロイヤリティの試算。保存しないので何度でも押せる。
   async function previewRoyalty() {
@@ -291,7 +257,8 @@ export function ConditionsWorkspace(
       </div>
 
       <div className="row" style={{ marginBottom: 10 }}>
-        {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("one")}>条件を登録</button>}
+        {!creating && <button className="btn primary btn-sm" onClick={() => setCreating("entry")}
+                              title="取引の種類（ゲーム IN・出版 IN・OUT・業務委託・1 本だけ）を選んでから登録する">条件を登録</button>}
         {/* 一括修正（CSV の「登録済みに当てる」）は、今なにが入っているかを
             手元に出せないと直しようがない。絞り込んだぶんをそのまま書き出す。
             許諾（作品・取引モデル・料率）と業務委託など（金額・納期・仕様）は
@@ -311,45 +278,27 @@ export function ConditionsWorkspace(
           </a>
         )}
         {!creating && (
-          <button className="btn btn-sm" onClick={() => setCreating("license")}
-                  title="作品1点ぶんの自社製造・再許諾・他社販売の条件を1回で作る。個別利用許諾条件書はこの N 本を表に畳んで出す">
-            許諾セットを登録（ゲーム）
-          </button>
-        )}
-        {!creating && (
-          <button className="btn btn-sm" onClick={() => setCreating("publishing")}
-                  title="作品1点ぶんの紙・電子の条件を1回で作る。出版条件書はこの2本を1行に畳んで出す">
-            出版セットを登録（紙・電子）
-          </button>
-        )}
-        {!creating && (
-          <button className="btn btn-sm" onClick={() => setCreating("service")}
-                  title="業務委託の委託料に実費・手数料を組にして1回で作る。発注書はこの組を1枚に載せる">
-            業務委託の明細を登録（業務委託）
+          <button className="btn btn-sm" onClick={() => setCreating("csv")}
+                  title="書き出した CSV を直して取り込み、登録済みの条件に当てる（条件番号で当てる。空欄の列は触らない）">
+            CSV で一括編集
           </button>
         )}
       </div>
 
-      {creating === "one" && (
-        <ConditionCreateForm
-          onDone={(r: { id: number }) => void created([r.id], null)}
-          onCancel={() => setCreating(false)} />
+      {creating === "csv" && (
+        <div className="panel">
+          <div className="panel-hd"><h2>条件の一括編集（CSV）</h2>
+            <span className="faint">左の「書き出す」で今の内容を CSV に出し、直したい列だけ直して取り込みます。空欄の列は触りません。まず試算で確かめてから取り込んでください</span>
+            <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setCreating(false)}>閉じる</button></div>
+          <div className="panel-bd">
+            <CsvImport initialKind="license_conditions" initialMode="update" onApplied={() => reload()} />
+          </div>
+        </div>
       )}
-      {creating === "publishing" && (
-        <PubConditionSetForm
-          onDone={(r) => void created([r.print, r.digital, r.translationPrint, r.translationDigital]
-                                        .flatMap((c) => (c ? [c.id] : [])), null)}
-          onCancel={() => setCreating(false)} />
-      )}
-      {creating === "service" && (
-        <ServiceLinesForm
-          onDone={(r) => void created(r.conditions.map((c) => c.id), "purchase_order")}
-          onCancel={() => setCreating(false)} />
-      )}
-      {creating === "license" && (
-        <LicenseSetForm
-          onDone={(r) => void created(r.conditions.map((c) => c.id), "individual_license_terms_v4")}
-          onCancel={() => setCreating(false)} />
+
+      {creating === "entry" && (
+        <ConditionEntryForm onDone={({ conditionIds, templateKey }) => void created(conditionIds, templateKey)}
+                            onCancel={() => setCreating(false)} />
       )}
 
       {error && <div className="alert">{error}</div>}
@@ -560,6 +509,12 @@ export function ConditionsWorkspace(
                       ({ taxable: "課税 10%", reduced: "軽減 8%", exempt: "非課税・不課税", included: "税込（海外・内税）" } as Record<string, string>)[detail.taxCategory]
                     }</dd>
                     {detail.paymentTerms && (<><dt>支払条件</dt><dd>{detail.paymentTerms}</dd></>)}
+                    {detail.contractForm && (<><dt>契約形式</dt><dd>{detail.contractForm}</dd></>)}
+                    {detail.timeSettlement && (<><dt>時間精算</dt>
+                      <dd>{timeSettlementLabel(detail, detail.flatAmount)}　<span className="faint">決済文書は役務提供完了通知書</span></dd></>)}
+                    <dt>決済の型</dt><dd>{settlementRuleLabel({
+                      mode: detail.settlementMode, count: detail.settlementCount,
+                      cycle: detail.settlementCycle, graceDays: detail.settlementGraceDays })}</dd>
                     {detail.spec && (<><dt>仕様・成果物</dt><dd style={{ whiteSpace: "pre-wrap" }}>{detail.spec}</dd></>)}
                     {detail.deliverableOwnership && (<><dt>帰属先</dt>
                       <dd>{detail.deliverableOwnership === "orderer" ? "発注者（譲渡型）" : "受注者（利用許諾型）"}</dd></>)}
@@ -669,79 +624,19 @@ export function ConditionsWorkspace(
                     </div>
                     <div className="row">
                       <button className="btn" onClick={previewRoyalty} disabled={!sales}>試算する</button>
-                      {royalty && !stmtOpen && (
-                        <button className="btn primary" onClick={() => { setStmtOpen(true); setStmtDone(null); }}>
-                          この内容で計算書を出す
-                        </button>
-                      )}
                     </div>
 
-                    {stmtDone && (
-                      <div className="note ok">
-                        計算書 <span className="code">{stmtDone}</span> を決定しました。
-                        金額は決定のときに計算し直しています（試算の値は使いません）。
-                      </div>
-                    )}
-
-                    {stmtOpen && (
-                      <div className="stack" style={{ gap: 8 }}>
-                        <div className="form-grid">
-                          <label className="field">
-                            <span>ひな形</span>
-                            <select value={stmtTemplate} onChange={(e) => setStmtTemplate(e.target.value)}>
-                              {templates.map((t) => (
-                                <option key={t.templateKey} value={t.templateKey}>
-                                  {t.category ? `${t.category}／${t.label}` : t.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="field">
-                            <span>対象期間</span>
-                            <input value={stmtPeriod} placeholder="2026Q2 / 2026-06"
-                                   onChange={(e) => setStmtPeriod(e.target.value)} />
-                          </label>
-                          <label className="field">
-                            <span>発生日</span>
-                            <input type="date" value={stmtOn}
-                                   onChange={(e) => setStmtOn(e.target.value)} />
-                          </label>
-                        </div>
-                        <div className="row">
-                          <button className="btn primary btn-sm"
-                                  disabled={stmtBusy || !stmtTemplate || !stmtPeriod.trim()}
-                                  onClick={() => void issueStatement()}>決定して確定する</button>
-                          <button className="btn btn-sm" onClick={() => setStmtOpen(false)}>やめる</button>
-                          <span className="faint">実績が1件立ち、AGの消化もここで進みます</span>
-                        </div>
-                      </div>
-                    )}
-                    {royalty?.appliedVersion?.switched && (
-                      <div className="note warn">
-                        契約変更の適用開始日をまたぐので、
-                        <b>{royalty.appliedVersion.effectiveFrom} から適用の
-                        {royalty.appliedVersion.conditionNo ?? `#${royalty.appliedVersion.id}`}</b>
-                        で計算しました。対象日を変えると版も変わります。
-                      </div>
-                    )}
-
                     {royalty && (
-                      <table>
-                        <tbody>
-                          <tr><td>グロス</td><td className="num">{money(royalty.fee.gross_ex_tax, detail.currency)}</td>
-                              <td className="faint">{royalty.fee.formula_breakdown}</td></tr>
-                          <tr><td>MG下限の上乗せ</td><td className="num">{money(royalty.fee.mg_topup_this_time, detail.currency)}</td>
-                              <td className="faint">{royalty.fee.mg_floor_applied ? "下限が適用された" : "—"}</td></tr>
-                          <tr><td>AG相殺</td><td className="num">{money(royalty.fee.ag_offset_this_time, detail.currency)}</td>
-                              <td className="faint">消化済み {money(royalty.agConsumedBefore, detail.currency)} ／ 残 {money(royalty.fee.ag_remaining_after, detail.currency)}</td></tr>
-                          <tr><td><b>税抜実額</b></td><td className="num"><b>{money(royalty.fee.actual_ex_tax, detail.currency)}</b></td>
-                              <td className="faint">消費税 {money(royalty.fee.tax_amount, detail.currency)}</td></tr>
-                          {royalty.payment.withholdingEnabled && (
-                            <tr><td>源泉</td><td className="num">{money(royalty.payment.withholdingTax, detail.currency)}</td>
-                                <td className="faint">振込 {money(royalty.payment.netTransfer, detail.currency)}</td></tr>
-                          )}
-                        </tbody>
-                      </table>
+                      <div className="note">
+                        計算書は作業テーブルで作ります（実績を選んで作るので、紙の金額と実績が結ばれます）。
+                        まだ実績が無ければ、下の取引管理の回で「実績を入れる」→「計算書を作る（作業テーブルへ）」。
+                        {onCompose && detail.status !== "void" && detail.status !== "superseded" && (
+                          <>　<button className="btn btn-sm primary"
+                                      onClick={() => onCompose([detail.id], [], detail.matters[0]?.id ?? null, "royalty_statement")}>
+                            作業テーブルで計算書を作る
+                          </button></>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -756,6 +651,19 @@ export function ConditionsWorkspace(
                             onOpenCondition={(id) => { setResult(null); setSelected(id); }}
                             onOpenWork={onOpen ? (id) => onOpen("work", id) : undefined}
                             onOpenDocument={onOpenDocument} />
+              )}
+
+              {/* この条件の回。予定 → 実績 → 決済文書 → 支払 を取引管理と同じ表で進める。 */}
+              {onIssueRound && (
+                <div className="panel">
+                  <div className="panel-hd"><h2>取引管理（この条件の回）</h2>
+                    <span className="faint">決まり（決済の型）に沿って進める。決済文書は作業テーブルで</span></div>
+                  <div className="panel-bd">
+                    <DealsWorkspace key={`deals${flowVersion}`} scope={{ conditionId: detail.id }}
+                                    onOpenCondition={(id) => { setResult(null); setSelected(id); }}
+                                    onOpenDocument={(id) => onOpenDocument?.(id)} onIssueDocument={onIssueRound} />
+                  </div>
+                </div>
               )}
 
               <ConditionSchedules conditionId={detail.id} reloadKey={flowVersion}

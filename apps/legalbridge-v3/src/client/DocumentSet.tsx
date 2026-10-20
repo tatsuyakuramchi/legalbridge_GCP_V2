@@ -29,11 +29,13 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const EXTRA_REASON = { split: "著作物を分ける（追加イラスト等）", work: "別の作品（複数のゲーム・出版物）" } as const;
 
 export function DocumentSet({
-  domain, matterId, partyId, partyName, masterKey, masterLabel, termsOptions, conditions, agreements,
+  domain, matterId, partyId, partyName, payeePartyId = null, masterKey, masterLabel, termsOptions, conditions, agreements,
   channels, isAdmin, onIssued, onOpenDocument, onClose
 }: {
   domain: "license" | "service";
   matterId: number | null; partyId: number; partyName: string | null;
+  /** 共著の受取人宛てに出すとき、その受取人。partyId が受取人のときに渡す。 */
+  payeePartyId?: number | null;
   masterKey: string; masterLabel: string;
   /** 本体・追加に使えるひな形（条件書の一覧形式／別紙形式、発注書など）。最初が既定。 */
   termsOptions: Array<{ key: string; label: string }>;
@@ -41,7 +43,8 @@ export function DocumentSet({
   agreements: SetAgreement[];
   channels: Array<{ channel: string; mode: "off" | "dry_run" | "live"; configured: boolean }>;
   isAdmin: boolean;
-  onIssued: () => void;
+  /** 決定したとき（作った文書の一覧つき）と、送ったとき（引数なし）。 */
+  onIssued: (result?: { documents: Array<{ role: string; templateKey: string; id: number; documentNo: string | null }>; agreementNo: string | null }) => void;
   onOpenDocument: (id: number) => void;
   onClose: () => void;
 }) {
@@ -134,14 +137,14 @@ export function DocumentSet({
     setBusy(true); setError(null);
     try {
       const r = await api.post<{ agreement: { agreementNo: string | null } | null; documents: Issued[]; error?: string }>("/document-sets", {
-        domain, counterpartyId: partyId, matterId,
+        domain, counterpartyId: partyId, matterId, payeePartyId,
         master: masterMode === "none" ? null
           : masterMode === "existing" ? { existingAgreementId: existingId }
           : { templateKey: masterKey, title: masterTitle, manualInputs: inputsFor("master") },
         docs: active.map((d) => ({ templateKey: d.templateKey, conditionIds: d.conditionIds, role: d.role, manualInputs: inputsFor(d.uid) }))
       });
       setResult({ documents: r.documents, agreementNo: r.agreement?.agreementNo ?? null, error: r.error });
-      onIssued();
+      onIssued({ documents: r.documents, agreementNo: r.agreement?.agreementNo ?? null });
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }

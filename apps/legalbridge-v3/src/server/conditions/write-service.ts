@@ -13,12 +13,26 @@ import { conditionNameFor } from "./naming.js";
 import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
          type ConditionUsageType } from "../core/condition-usage.js";
 import { validateShareInput } from "../royalty/shares.js";
+import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
+import { normalizeTimeSettlement } from "./time-settlement.js";
+import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
 export interface PublishingTerms {
   /** 料率（%）。11 は 11%。 */
   ratePct: number;
   exclusivity?: "exclusive" | "non_exclusive" | null;
+  /**
+   * 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。pub-digital-cycle.ts。
+   * 入っていれば支払条件の文と決済の型（期間で決まる・周期）をここから作る。
+   */
+  cycle?: DigitalCycle | null;
+  /** 最初の集計期間が始まる月（1〜12）。 */
+  startMonth?: number | null;
+  /** 最初の集計期間の支払月（1〜12）。 */
+  payMonth?: number | null;
+  /** 支払日。"end" は末日。 */
+  payDay?: PayDay | null;
 }
 /**
  * 翻訳版の再許諾（A-033）。乙が第三者に出させ、受領額から甲へ払う。
@@ -85,6 +99,9 @@ export interface LicenseSetRow {
   licenseFeeBasis?: LicenseFeeBasis | null;
   /** この行だけの支払条件。空ならセット共通の支払条件。 */
   paymentTerms?: string | null;
+  /** この行だけの決済の型（A-071）。空ならセット共通。電子の年 2 回・年 4 回で使う。 */
+  settlementMode?: SettlementMode | null;
+  settlementCycle?: SettlementCycle | null;
 }
 
 /**
@@ -120,6 +137,9 @@ export interface LicenseSetInput {
   sublicenseConsentDefault?: "covered" | "required" | null;
   /** 計算書の出し方（periodic=締めごと / event=製造ごと）。束で 1 つ。 */
   statementTiming?: "periodic" | "event" | null;
+  /** 決済の型（A-071）。束で 1 つ。出し方はここから決まる。 */
+  settlementMode?: SettlementMode | null;
+  settlementCycle?: SettlementCycle | null;
   notes?: string | null;
   scopes?: ConditionScope[];
   rows: LicenseSetRow[];
@@ -147,6 +167,11 @@ export interface ServiceSetRow {
   contractForm?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
   taxCategory?: "taxable" | "reduced" | "exempt" | "included" | null;
+  /** 準委任の時間精算（A-073）。行ごとの上書き。空なら束の既定。 */
+  timeSettlement?: boolean | null;
+  hoursIncluded?: number | null;
+  overageUnitAmount?: number | null;
+  shortfallUnitAmount?: number | null;
   /**
    * 行の作品。未指定（undefined）なら束の作品、null なら作品なし。
    * 1つの発注で複数作品の素材を頼むことがあるので、行ごとに持てる。
@@ -190,6 +215,11 @@ export interface ServiceSetInput {
   paymentTerms?: string | null;
   contractForm?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
+  /** 準委任の時間精算（A-073）。束の既定。委託料の行に効く（実費・手数料には付かない）。 */
+  timeSettlement?: boolean | null;
+  hoursIncluded?: number | null;
+  overageUnitAmount?: number | null;
+  shortfallUnitAmount?: number | null;
   rows: ServiceSetRow[];
   license?: ServiceLicenseInput | null;
   payment?: ServicePaymentInput | null;
@@ -299,7 +329,17 @@ export interface ConditionInput {
   statementTiming?: "periodic" | "event" | null;
   /** 契約形式（請負・委任など）。支払条件とは別のもの。 */
   contractForm?: string | null;
+  /** 準委任の時間精算（A-073）。time-settlement.ts。時間精算でなければ 3 つの値は捨てる。 */
+  timeSettlement?: boolean | null;
+  hoursIncluded?: number | null;
+  overageUnitAmount?: number | null;
+  shortfallUnitAmount?: number | null;
   cycle?: string | null;
+  /** 決済の型（A-071）。settlement-mode.ts。型に要る値だけ保存する。 */
+  settlementMode?: SettlementMode | null;
+  settlementCount?: number | null;
+  settlementCycle?: SettlementCycle | null;
+  settlementGraceDays?: number | null;
   notes?: string | null;
   /** 仕様・成果物。発注書・検収書の明細の「仕様・成果物」に出る。 */
   spec?: string | null;
@@ -335,6 +375,11 @@ export interface EconomicsPatch {
   deliveryDue?: string | null;
   paymentTerms?: string | null;
   contractForm?: string | null;
+  /** 準委任の時間精算（A-073）。timeSettlement を送るときは 3 つの値も一緒に送る。 */
+  timeSettlement?: boolean | null;
+  hoursIncluded?: number | null;
+  overageUnitAmount?: number | null;
+  shortfallUnitAmount?: number | null;
   taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   notes?: string | null;
   /** 作品と独占性。登録のときに入れられるのに、編集で直せなかった。 */
@@ -357,6 +402,13 @@ export interface EconomicsPatch {
   pricingModel?: "fixed" | "unit_rate" | "revenue_rate" | "subscription" | "none";
   /** 対象の許諾先（A-063）。 */
   targetPartyId?: number | null;
+  /** 決済の型（A-071）。型を送るときは要る値（回数・周期）も一緒に送る。 */
+  settlementMode?: SettlementMode | null;
+  settlementCount?: number | null;
+  settlementCycle?: SettlementCycle | null;
+  settlementGraceDays?: number | null;
+  /** 締めから報告期限までの日数（A-074）。空なら 30 日。 */
+  reportDueDays?: number | null;
 }
 
 const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
@@ -371,7 +423,12 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   autoRenew: "auto_renew", renewMonths: "renew_months", renewStoppedOn: "renew_stopped_on",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
   usageType: "usage_type",
-  targetPartyId: "target_party_id"
+  targetPartyId: "target_party_id",
+  settlementMode: "settlement_mode", settlementCount: "settlement_count",
+  settlementCycle: "settlement_cycle", settlementGraceDays: "settlement_grace_days",
+  timeSettlement: "time_settlement", hoursIncluded: "hours_included",
+  overageUnitAmount: "overage_unit_amount", shortfallUnitAmount: "shortfall_unit_amount",
+  reportDueDays: "report_due_days"
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
@@ -387,7 +444,13 @@ const COPY_COLUMNS = [
   // 計算書の出し方（A-059）。改訂しても時限式・イベント式は変わらない。
   "statement_timing",
   // 対象の許諾先（A-063）。
-  "target_party_id"
+  "target_party_id",
+  // 決済の型（A-071）。回数を増やす・期間を延ばすのは改訂で行うので、版をまたいで引き継ぐ。
+  "settlement_mode", "settlement_count", "settlement_cycle", "settlement_grace_days",
+  // 準委任の時間精算（A-073）。
+  "time_settlement", "hours_included", "overage_unit_amount", "shortfall_unit_amount",
+  // 報告期限（A-074）。
+  "report_due_days"
 ];
 
 /**
@@ -551,6 +614,9 @@ export class ConditionWriteService {
       paymentTerms: row.paymentTerms ?? input.paymentTerms ?? null,
       sublicensable: input.sublicensable ?? null,
       statementTiming: input.statementTiming ?? null,
+      settlementMode: row.settlementMode ?? input.settlementMode ?? null,
+      settlementCycle: (row.settlementMode ?? input.settlementMode) === "term_bound"
+        ? (row.settlementCycle ?? input.settlementCycle ?? "quarter") : null,
       notes: input.notes ?? null,
       scopes,
       usageType: row.usageType,
@@ -621,8 +687,17 @@ export class ConditionWriteService {
                   paymentTerms: terms || PUB_PRINT_PAYMENT_TERMS });
     }
     if (input.digital) {
+      // 集計のしかた（年 1 回・年 2 回・年 4 回）を選んでいれば、支払条件の文と決済の型をそこから作る。
+      const cycle = input.digital.cycle ?? null;
+      const spec = cycle ? {
+        cycle,
+        startMonth: input.digital.startMonth ?? DIGITAL_CYCLE_DEFAULTS[cycle].startMonth,
+        payMonth: input.digital.payMonth ?? DIGITAL_CYCLE_DEFAULTS[cycle].payMonth,
+        payDay: input.digital.payDay ?? DIGITAL_CYCLE_DEFAULTS[cycle].payDay
+      } : null;
       rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
-                  paymentTerms: terms || PUB_DIGITAL_PAYMENT_TERMS });
+                  paymentTerms: terms || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS),
+                  ...(spec ? { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(spec.cycle) } : {}) });
     }
     if (input.sublicense) {
       rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,
@@ -694,6 +769,13 @@ export class ConditionWriteService {
         taxCategory: row.kind === "expense" ? "exempt" : (row.taxCategory ?? input.taxCategory ?? "taxable"),
         paymentTerms: input.paymentTerms ?? null,
         contractForm: row.kind === "service" ? (row.contractForm ?? input.contractForm ?? null) : null,
+        // 準委任の時間精算（A-073）。委託料の行だけ。行に無ければ束の既定。
+        ...(row.kind === "service" && (row.timeSettlement ?? input.timeSettlement)
+          ? { timeSettlement: true,
+              hoursIncluded: row.hoursIncluded ?? input.hoursIncluded ?? null,
+              overageUnitAmount: row.overageUnitAmount ?? input.overageUnitAmount ?? null,
+              shortfallUnitAmount: row.shortfallUnitAmount ?? input.shortfallUnitAmount ?? null }
+          : {}),
         spec: row.spec ?? null,
         deliverableOwnership: ownershipOf(row),
         notes: row.notes ?? null
@@ -794,6 +876,13 @@ export class ConditionWriteService {
     const name = String(input.name ?? "").trim();
     const pricing = input.pricingModel ?? "none";
     const flatAmount = flatAmountOf(input);
+    // 決済の型（A-071）。型に要る値だけ保存する。空なら未設定（004 の移行規則で埋まる）。
+    const settlement = normalizeSettlementRule(input);
+    // 準委任の時間精算（A-073）。委託料だけが持つ。
+    if (input.timeSettlement && input.kind !== "service") {
+      throw new DomainError("VALIDATION", "時間精算は委託料の条件だけに付けられます");
+    }
+    const time = normalizeTimeSettlement(input);
     {
         const party = await client.query(
           "SELECT id, name FROM parties WHERE id = $1", [input.counterpartyId]);
@@ -825,10 +914,13 @@ export class ConditionWriteService {
                                    spec, deliverable_ownership, order_no,
                                    quantity, contract_form, usage_type,
                                    auto_renew, renew_months, renew_stopped_on, license_fee_basis,
-                                   target_party_id, statement_timing, unit_label)
+                                   target_party_id, statement_timing, unit_label,
+                                   settlement_mode, settlement_count, settlement_cycle, settlement_grace_days,
+                                   time_settlement, hours_included, overage_unit_amount, shortfall_unit_amount)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
-                   $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
+                   $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42,
+                   $43, $44, $45, $46)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -844,7 +936,9 @@ export class ConditionWriteService {
            input.autoRenew ?? null, input.renewMonths ?? null, input.renewStoppedOn ?? null,
            input.licenseFeeBasis ?? "separate",
            input.targetPartyId ?? null, input.statementTiming ?? null,
-           String(input.unitLabel ?? "").trim() || null]);
+           String(input.unitLabel ?? "").trim() || null,
+           settlement.mode, settlement.count, settlement.cycle, settlement.graceDays,
+           time.timeSettlement, time.hoursIncluded, time.overageUnitAmount, time.shortfallUnitAmount]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 
@@ -962,6 +1056,17 @@ export class ConditionWriteService {
     id: number, patch: EconomicsPatch, actor: string, effectiveFrom?: string | null,
     options: { inPlace?: boolean } = {}
   ): Promise<WriteResult> {
+    // 決済の型（A-071）は 4 列で 1 組。型が来たら要る値だけに整えて 4 列とも書く。
+    if (patch.settlementMode !== undefined) {
+      const rule = normalizeSettlementRule(patch);
+      patch = { ...patch, settlementMode: rule.mode, settlementCount: rule.count,
+                settlementCycle: rule.cycle, settlementGraceDays: rule.graceDays };
+    }
+    // 準委任の時間精算（A-073）も 4 列で 1 組。
+    if (patch.timeSettlement !== undefined) {
+      const time = normalizeTimeSettlement(patch);
+      patch = { ...patch, ...time };
+    }
     const entries = (Object.keys(patch) as Array<keyof EconomicsPatch>)
       .filter((key) => patch[key] !== undefined)
       .map((key) => ({ column: ECONOMICS_COLUMNS[key], value: patch[key] as unknown }));

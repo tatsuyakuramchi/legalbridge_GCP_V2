@@ -13,6 +13,7 @@ import { toCsv } from "../exports/csv.js";
 import { FEE_BASIS } from "./fee-basis.js";
 import { CONDITION_KIND_CSV, DELIVERABLE_OWNERSHIP_CSV, PRICING_MODEL_CSV, SERVICE_CONDITION_EXPORT_HEADERS,
          TAX_CATEGORY_CSV } from "../conditions/export.js";
+import { CYCLE_CSV, DIGITAL_CYCLE_DEFAULTS, cycleFromCsv, digitalPaymentTerms, payDayFromCsv, payScheduleText, readDigitalCycle, settlementCycleOf } from "../conditions/pub-digital-cycle.js";
 import { PartyAgreementMapService } from "../agreements/party-map.js";
 import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_UPDATE_COLUMNS,
          agreementCsvPatch } from "../agreements/csv.js";
@@ -145,9 +146,12 @@ export const IMPORT_SPECS: ImportSpec[] = [
             "星降る夜のはなし,,著者名,,,翻訳版再許諾（電子）,40,非独占,,,,,要,2026-10-01,,,,,JPY,,全世界,,",
     updatable: true,
     updateHint: "当てる先は 条件番号。無ければ 作品名（または作品コード）＋取引モデルで当てます" +
-                "（再許諾は 再許諾先 も見ます）。作品・許諾者・契約・通貨は替えられません（条件の画面で）",
+                "（再許諾は 再許諾先 も見ます）。作品・許諾者・契約・通貨は替えられません（条件の画面で）。" +
+                "電子出版は 集計のしかた（年1回・年2回・年4回）・集計開始月・支払月（最初の集計期間の分）・支払日（末日・10日・15日・20日・25日）を直すと、" +
+                "支払条件の文と決済の型が入れ替わります（そのとき支払条件の列は見ません）",
     updateColumns: ["料率", "独占", "MG", "AG", "別途合意", "許諾料の扱い", "開始日", "終了日",
-                    "自動更新", "更新の単位", "更新停止日", "支払条件", "地域", "言語", "備考"],
+                    "自動更新", "更新の単位", "更新停止日", "支払条件",
+                    "集計のしかた", "集計開始月", "支払月", "支払日", "地域", "言語", "備考"],
     updateSample: "条件番号,料率,開始日,終了日\n" +
                   "CL-2026-00451,11,2026-10-01,2031-09-30\n" +
                   "CL-2026-00452,15,,",
@@ -901,12 +905,13 @@ export class ImportService {
     Promise<Omit<RowOutcome, "line">> {
     const text = (header: string) => String(row[header] ?? "").trim() || null;
     const conditionNo = text("条件番号");
-    let hits: Array<{ id: number; condition_no: string | null; name: string; status: string; kind?: string | null }>;
+    let hits: Array<{ id: number; condition_no: string | null; name: string; status: string; kind?: string | null;
+                      usage_type?: string | null; payment_terms?: string | null }>;
     let label: string;
 
     if (conditionNo) {
       const r = await this.database.query(
-        `SELECT id, condition_no, name, status, kind FROM conditions
+        `SELECT id, condition_no, name, status, kind, usage_type, payment_terms FROM conditions
           WHERE lower(btrim(condition_no)) = lower(btrim($1)) LIMIT 2`, [conditionNo]);
       hits = r.rows as typeof hits;
       label = conditionNo;
@@ -927,7 +932,7 @@ export class ImportService {
       label = `${String(work.title)} ／ ${String(row["取引モデル"] ?? "").trim()}`;
       const sublicensee = text("再許諾先") ?? "";
       const r = await this.database.query(
-        `SELECT c.id, c.condition_no, c.name, c.status, c.kind FROM conditions c
+        `SELECT c.id, c.condition_no, c.name, c.status, c.kind, c.usage_type, c.payment_terms FROM conditions c
           WHERE c.work_id = $1 AND c.usage_type = $2
             AND c.status IN ('active', 'scheduled')
             AND ($3 = '' OR c.name ILIKE '%' || $3 || '%')
@@ -1013,8 +1018,42 @@ export class ImportService {
     if (termStart) put("開始日", "termStart", csvDate(row["開始日"]));
     const termEnd = text("終了日");
     if (termEnd) put("終了日", "termEnd", csvDate(row["終了日"]));
-    const paymentTerms = text("支払条件");
-    if (paymentTerms) put("支払条件", "paymentTerms", paymentTerms);
+    // 電子出版の集計のしかた。書いてあれば支払条件の文と決済の型をここから作る（支払条件の列より優先）。
+    const cycleText = text("集計のしかた"), startText = text("集計開始月"), payMonthText = text("支払月"), payDayText = text("支払日");
+    let cycleApplied = false;
+    if (cycleText || startText || payMonthText || payDayText) {
+      if (condition.usage_type !== "pub_digital") {
+        throw new DomainError("VALIDATION", `${who} は電子出版の条件ではありません。集計のしかた・集計開始月・支払月・支払日は電子出版の条件だけに書けます`);
+      }
+      const current = readDigitalCycle(condition.payment_terms);
+      const cycle = cycleText ? cycleFromCsv(cycleText) : (current?.cycle ?? "year");
+      if (!cycle) throw new DomainError("VALIDATION", `集計のしかたは「年1回」「年2回」「年4回」のいずれかです（"${cycleText}"）`);
+      // 周期を替えたら、開始月・支払月・支払日はその周期の既定から（書いてあればそれ）。
+      const base = current && current.cycle === cycle ? current : DIGITAL_CYCLE_DEFAULTS[cycle];
+      const month = (t: string | null, name: string) => {
+        if (!t) return null;
+        const n = Number(t.normalize("NFKC").replace(/月$/, ""));
+        if (!Number.isInteger(n) || n < 1 || n > 12) throw new DomainError("VALIDATION", `${name}は 1〜12 で入れてください（"${t}"）`);
+        return n;
+      };
+      const payDay = payDayText ? payDayFromCsv(payDayText) : base.payDay;
+      if (payDay === null) throw new DomainError("VALIDATION", `支払日は「末日」か 1〜28 の日で入れてください（"${payDayText}"）`);
+      const spec = { cycle, startMonth: month(startText, "集計開始月") ?? base.startMonth,
+                     payMonth: month(payMonthText, "支払月") ?? base.payMonth, payDay };
+      const terms = digitalPaymentTerms(spec);
+      if (terms !== String(condition.payment_terms ?? "").trim()) {
+        patch.paymentTerms = terms;
+        patch.settlementMode = "term_bound";
+        patch.settlementCycle = settlementCycleOf(cycle);
+        changed.push(`集計のしかた（${CYCLE_CSV[cycle]}・${payScheduleText(spec)}）`);
+        cycleApplied = true;
+      }
+    }
+    // 集計の 4 列がいまのままなら（書き出したまま）、支払条件の列で直したものを当てる。
+    if (!cycleApplied) {
+      const paymentTerms = text("支払条件");
+      if (paymentTerms && paymentTerms !== String(condition.payment_terms ?? "").trim()) put("支払条件", "paymentTerms", paymentTerms);
+    }
     const notes = text("備考");
     if (notes) put("備考", "notes", notes);
 

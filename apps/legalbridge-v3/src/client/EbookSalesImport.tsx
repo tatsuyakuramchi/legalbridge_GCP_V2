@@ -267,7 +267,7 @@ export function EbookSalesImport() {
                             {g.condition.shares.length > 0 && <> · 取り分 {g.condition.shares.join("・")}</>}
                             {g.round
                               ? <> · 回 {g.round.label ?? `#${g.round.id}`}</>
-                              : <> · <span className="warn" title="年 1 回の締めを立てると、支払文書処理でまとめて締められます">回なし</span></>}
+                              : <> · <span className="warn" title="年 1 回の締めを立てると、支払文書の「まとめて締める」で計算書にできます">回なし</span></>}
                           </div>
                         )}
                         {g.status === "unresolved" && !readOnly && g.cid && read && (
@@ -365,6 +365,7 @@ function WorkPicker(
 // ---------------------------------------------------------------------------
 
 interface AnnualTarget {
+  cycle?: "year" | "half_year" | "quarter";
   conditionId: number; conditionNo: string | null; name: string; workTitle: string | null; partyName: string | null;
   paymentTerms: string | null; existing: number;
   adding: Array<{ seq: number; label: string | null; dueOn: string | null; payOn: string | null; serviceFrom?: string | null; serviceTo?: string | null }>;
@@ -425,8 +426,8 @@ function AnnualClosesPanel() {
   return (
     <div className="subpanel">
       <div className="row" style={{ alignItems: "center", gap: 8 }}>
-        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "年 1 回の締めをまとめて立てる"}</button>
-        <span className="faint">取込の実績を付ける回。立てておくと、支払文書処理の「まとめて締める」で計算書を一括で作れます</span>
+        <button className="btn btn-sm" onClick={() => setOpen(!open)}>{open ? "閉じる" : "集計期間の締めをまとめて立てる（年 1・2・4 回）"}</button>
+        <span className="faint">取込の実績を付ける回。立てておくと、支払文書の「まとめて締める」で計算書を一括で作れます（1 人ずつなら「作家の報告と計算書」から）</span>
       </div>
       {open && (
         <div className="stack" style={{ marginTop: 8 }}>
@@ -439,7 +440,7 @@ function AnnualClosesPanel() {
             </label>
             <label className="field"><span>立て方</span>
               <select value={mode} onChange={(e) => { setMode(e.target.value as "yearly" | "span"); reset(); }}>
-                <option value="yearly">毎年（12 か月ずつ）</option>
+                <option value="yearly">条件の集計期間どおり（年 1 回・年 2 回・年 4 回）</option>
                 <option value="span">期間を指定（1 回だけ）</option>
               </select>
             </label>
@@ -466,18 +467,19 @@ function AnnualClosesPanel() {
               </button>
             )}
           </div>
-          <div className="faint">締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません。回より先に取り込んで浮いている売上の実績（「予定が無いのに実績がある」）は、発生日を集計期間に含む回に付け直します。「期間を指定」は移行時に浮いた実績をまとめて 1 回の支払で精算するためのもので、以後は「毎年」で立ててください</div>
+          <div className="faint">回の長さは条件ごとの集計のしかた（支払条件の文、読めなければ決済の型）で決まります。年 2 回なら 1 年に 2 回、年 4 回なら 4 回立て、開始日は条件の集計期間の区切りに合わせます。締め日は期間の末日、支払期日は条件の支払条件（読めなければ出版の既定：電子は 10 月末日、紙は翌月末日）。同じ期間に回がある条件は飛ばします。実績の付いた回は触りません。回より先に取り込んで浮いている売上の実績（「予定が無いのに実績がある」）は、発生日を集計期間に含む回に付け直します。「期間を指定」は移行時に浮いた実績をまとめて 1 回の支払で精算するためのもので、以後は「毎年」で立ててください</div>
           {error && <div className="alert">{error}</div>}
           {done && <div className="notice">{done.written ?? 0} 本の条件に回を立てました（飛ばした条件 {done.skipped}）{done.attached ? `。浮いていた実績 ${done.attached} 件を回に付け直しました` : ""}</div>}
           {preview && (
             <div className="tablewrap">
               <table>
-                <thead><tr><th>作品</th><th>条件</th><th>相手先</th><th>いまの回</th><th>立てる回</th><th>支払期日</th><th>付け直す実績</th></tr></thead>
+                <thead><tr><th>作品</th><th>条件</th><th>集計</th><th>相手先</th><th>いまの回</th><th>立てる回</th><th>支払期日</th><th>付け直す実績</th></tr></thead>
                 <tbody>
                   {preview.targets.map((t) => (
                     <tr key={t.conditionId} className={t.adding.length || t.attaching ? "" : "faint"}>
                       <td>{t.workTitle ?? "—"}</td>
                       <td className="code">{t.conditionNo ?? `#${t.conditionId}`}<div className="faint" style={{ fontSize: "0.85em" }}>{t.name}</div></td>
+                      <td>{({ year: "年1回", half_year: "年2回", quarter: "年4回" } as Record<string, string>)[t.cycle ?? "year"]}</td>
                       <td>{t.partyName ?? "—"}</td>
                       <td className="num">{t.existing}</td>
                       <td>{t.adding.length ? t.adding.map((l) => `${l.label}（締め ${l.dueOn}）`).join("、") : (t.skipped ?? "—")}</td>
@@ -485,7 +487,7 @@ function AnnualClosesPanel() {
                       <td className="num">{t.attaching || ""}{t.unattached ? <span className="tag out" title="どの回の集計期間にも入らない実績。期間を広げるか、条件明細で回を付けてください">期間外 {t.unattached}</span> : null}</td>
                     </tr>
                   ))}
-                  {!preview.targets.length && <tr><td colSpan={7} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
+                  {!preview.targets.length && <tr><td colSpan={8} className="faint">対象の条件がありません（有効な IN の料率条件で、利用形態がこの媒体のもの）</td></tr>}
                 </tbody>
               </table>
             </div>

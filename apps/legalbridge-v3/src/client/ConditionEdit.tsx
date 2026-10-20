@@ -6,8 +6,11 @@ import type { ConditionDetail } from "../server/core/model.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { isQuasiMandate } from "../server/conditions/time-settlement.js";
+import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, PAY_DAYS, digitalPaymentTerms, payDayLabel, payScheduleText, readDigitalCycle, type DigitalCycle, type DigitalCycleInput, type PayDay } from "../server/conditions/pub-digital-cycle.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
-import { minorUnitHint } from "./ConditionCreateForm.js";
+import { minorUnitHint, SETTLEMENT_CYCLE_OPTIONS, SETTLEMENT_MODE_OPTIONS } from "./ConditionCreateForm.js";
+import { SETTLEMENT_GRACE_DAYS_DEFAULT } from "../server/conditions/settlement-mode.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
 
 /**
@@ -96,7 +99,16 @@ export function ConditionEdit(
     licenseFeeBasis: detail.licenseFeeBasis ?? "separate",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
+    settlementMode: detail.settlementMode ?? "",
+    settlementCount: detail.settlementCount === null ? "" : String(detail.settlementCount),
+    settlementCycle: detail.settlementCycle ?? "",
+    settlementGraceDays: detail.settlementGraceDays === null ? "" : String(detail.settlementGraceDays),
+    reportDueDays: detail.reportDueDays === null || detail.reportDueDays === undefined ? "" : String(detail.reportDueDays),
     contractForm: detail.contractForm ?? "",
+    timeSettlement: detail.timeSettlement ? "1" : "",
+    hoursIncluded: detail.hoursIncluded === null || detail.hoursIncluded === undefined ? "" : String(detail.hoursIncluded),
+    overageUnitAmount: asMoney(detail.overageUnitAmount),
+    shortfallUnitAmount: asMoney(detail.shortfallUnitAmount),
     spec: detail.spec ?? "",
     orderNo: detail.orderNo ?? "",
     deliverableOwnership: detail.deliverableOwnership ?? "",
@@ -117,6 +129,13 @@ export function ConditionEdit(
   const [inPlace, setInPlace] = useState(false);
   const hasPayment = ["payment_planned", "partly_paid", "paid"].includes(detail.settlement?.state ?? "");
   const set = (k: string, value: string) => setV({ ...v, [k]: value });
+  /** 電子書籍の集計のしかた（年 1 回・年 2 回・年 4 回）。支払条件の文と決済の型をまとめて入れる。 */
+  const readCycle = readDigitalCycle(detail.paymentTerms);
+  const [cyc, setCyc] = useState<DigitalCycleInput>(readCycle ?? DIGITAL_CYCLE_DEFAULTS.year);
+  const applyCycle = (next: typeof cyc) => {
+    setCyc(next);
+    setV({ ...v, paymentTerms: digitalPaymentTerms(next), settlementMode: "term_bound", settlementCycle: next.cycle });
+  };
 
   useEffect(() => {
     api.get<{ works: Array<{ id: number; title: string }> }>("/works")
@@ -168,9 +187,32 @@ export function ConditionEdit(
       ["currency", patchText(v.currency, detail.currency)],
       ["targetPartyId", patchInt(v.targetPartyId, detail.targetParty?.id ?? null)],
       ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)],
-      ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")]
+      ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")],
+      ["reportDueDays", patchInt(v.reportDueDays, detail.reportDueDays ?? null)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
+
+    // 決済の型（A-071）。4 つで 1 組なので、どれか変わったら 4 つとも送る（型に要らない値はサーバが捨てる）。
+    const sMode = v.settlementMode || null;
+    const sCount = v.settlementCount.trim() === "" ? null : Math.round(Number(v.settlementCount));
+    const sCycle = v.settlementCycle || null;
+    const sGrace = v.settlementGraceDays.trim() === "" ? null : Math.round(Number(v.settlementGraceDays));
+    if (sMode !== detail.settlementMode || sCount !== detail.settlementCount
+        || sCycle !== detail.settlementCycle || sGrace !== detail.settlementGraceDays) {
+      patch.settlementMode = sMode; patch.settlementCount = sCount;
+      patch.settlementCycle = sCycle; patch.settlementGraceDays = sGrace;
+    }
+
+    // 準委任の時間精算（A-073）。4 つで 1 組。どれか変わったら 4 つとも送る（時間精算でなければサーバが捨てる）。
+    const tOn = v.timeSettlement === "1";
+    const tHours = v.hoursIncluded.trim() === "" ? null : Number(v.hoursIncluded.replace(/[^0-9.]/g, ""));
+    const tOver = v.overageUnitAmount.trim() === "" ? null : Math.round(Number(v.overageUnitAmount.replace(/[^0-9-]/g, "")));
+    const tShort = v.shortfallUnitAmount.trim() === "" ? null : Math.round(Number(v.shortfallUnitAmount.replace(/[^0-9-]/g, "")));
+    if (tOn !== Boolean(detail.timeSettlement) || (tOn && (tHours !== (detail.hoursIncluded ?? null)
+        || tOver !== (detail.overageUnitAmount ?? null) || tShort !== (detail.shortfallUnitAmount ?? null)))) {
+      patch.timeSettlement = tOn; patch.hoursIncluded = tOn ? tHours : null;
+      patch.overageUnitAmount = tOn ? tOver : null; patch.shortfallUnitAmount = tOn ? tShort : null;
+    }
 
     // 自動更新（A-039）。更新しないなら単位と止めた日は空に戻す。
     const autoRenew = v.autoRenew === "1";
@@ -520,6 +562,57 @@ export function ConditionEdit(
               発注書・検収書の「契約種別」に出る。一覧に無い形は直接書ける（海外版は英語で）
             </small>
           </label>
+          {/* 準委任の時間精算（A-073）。委託料だけ。契約形式が準委任のときに出す（他の形式でも付けてあれば出す）。 */}
+          {(inPlace ? v.kind : detail.kind) === "service" && (isQuasiMandate(v.contractForm) || v.timeSettlement === "1") && (
+            <label className="field">
+              <span>精算の仕方（準委任）</span>
+              <select value={v.timeSettlement} onChange={(e) => set("timeSettlement", e.target.value)}>
+                <option value="">固定額・成果物で精算（検収書）</option>
+                <option value="1">時間精算：月間包括枠と実績時間で精算（役務提供完了通知書）</option>
+              </select>
+              <small className="faint">
+                {v.timeSettlement === "1"
+                  ? "枠までは定額、超過は超過単価 × 時間。決済文書は検収書ではなく役務提供完了通知書になる"
+                  : "成果物や固定額で精算するなら従来どおり検収書"}
+              </small>
+            </label>
+          )}
+          {(inPlace ? v.kind : detail.kind) === "service" && v.timeSettlement === "1" && (<>
+            {field("hoursIncluded", "月間包括枠（時間）", { type: "number", placeholder: "64",
+              hint: "この時間までは定額（上の定額の欄が月額）。コアタイム" })}
+            {field("overageUnitAmount", "超過単価（1 時間あたり・最小通貨単位）", { type: "number", placeholder: "3125",
+              hint: "枠を超えた時間 × 超過単価 を追加精算" })}
+            {field("shortfallUnitAmount", "控除単価（1 時間あたり・最小通貨単位）", { type: "number",
+              hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" })}
+          </>)}
+          {detail.usageType === "pub_digital" && (
+            <div className="field wide">
+              <span>電子書籍の集計のしかた</span>
+              <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <select value={cyc.cycle} aria-label="集計のしかた"
+                        onChange={(e) => { const c = e.target.value as DigitalCycle; applyCycle({ ...DIGITAL_CYCLE_DEFAULTS[c] }); }}>
+                  {DIGITAL_CYCLES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                <select value={cyc.startMonth} aria-label="最初の集計期間の開始月"
+                        onChange={(e) => applyCycle({ ...cyc, startMonth: Number(e.target.value) })}>
+                  {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1} 月始まり</option>)}
+                </select>
+                <select value={cyc.payMonth} aria-label="支払月"
+                        onChange={(e) => applyCycle({ ...cyc, payMonth: Number(e.target.value) })}>
+                  {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1} 月払い</option>)}
+                </select>
+                <select value={String(cyc.payDay ?? "end")} aria-label="支払日"
+                        onChange={(e) => applyCycle({ ...cyc, payDay: (e.target.value === "end" ? "end" : Number(e.target.value)) as PayDay })}>
+                  {PAY_DAYS.map((d) => <option key={String(d)} value={String(d)}>{payDayLabel(d)}</option>)}
+                </select>
+                <button type="button" className="btn btn-sm" onClick={() => applyCycle(cyc)}>支払条件と決済の型に入れる</button>
+              </div>
+              <small className="faint">
+                {readCycle ? `いまの支払条件は「${DIGITAL_CYCLES.find((c) => c.value === readCycle.cycle)?.label}」と読めます。` : "いまの支払条件は集計のしかたとして読めません。"}
+                支払月は最初の集計期間の分（{payScheduleText(cyc)}）。選び直すと下の支払条件の文と決済の型（期間で決まる・周期）が入れ替わります。出版条件書の支払の表と計算書の回はこの文に連動します
+              </small>
+            </div>
+          )}
           <label className="field">
             <span>支払条件</span>
             <input list="payment-terms-presets" value={v.paymentTerms}
@@ -533,6 +626,36 @@ export function ConditionEdit(
               予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ。契約形式（請負）はひとつ上の欄へ
             </small>
           </label>
+          <label className="field">
+            <span>決済の型（支払の回数）</span>
+            <select value={v.settlementMode} onChange={(e) => set("settlementMode", e.target.value)}>
+              <option value="">未設定（予定明細から推す）</option>
+              {SETTLEMENT_MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <small className="faint">
+              {SETTLEMENT_MODE_OPTIONS.find((o) => o.value === v.settlementMode)?.hint
+                ?? "この取引は何回払うものか。予定明細はこの決まりの中で回る"}
+            </small>
+          </label>
+          {v.settlementMode === "fixed_count" && field("settlementCount", "回数", {
+            type: "number", placeholder: "3", hint: "2 回以上。増やすときは改訂で" })}
+          {v.settlementMode === "term_bound" && (
+            <label className="field">
+              <span>周期</span>
+              <select value={v.settlementCycle} onChange={(e) => set("settlementCycle", e.target.value)}>
+                <option value="">—</option>
+                {SETTLEMENT_CYCLE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <small className="faint">契約期間 ÷ 周期 が回数になる。期間を延ばせば回が増える</small>
+            </label>
+          )}
+          {(v.settlementMode === "open" || v.settlementMode === "term_bound") && field("settlementGraceDays", "終了後の猶予（日）", {
+            type: "number", placeholder: String(SETTLEMENT_GRACE_DAYS_DEFAULT),
+            hint: `終了日の後いつまで回を立ててよいか。空なら ${SETTLEMENT_GRACE_DAYS_DEFAULT} 日` })}
+          {(v.pricingModel === "revenue_rate" || v.timeSettlement === "1"
+            || v.usageType === "sublicense" || v.usageType === "oem") && field("reportDueDays", "報告期限（締めから何日）", {
+            type: "number", placeholder: "30",
+            hint: "売上報告・月次報告が締めから何日で来るはずか。過ぎると支払文書で督促の対象になる。空なら 30 日" })}
           {field("spec", "仕様・成果物", { type: "textarea",
             placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
             hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}

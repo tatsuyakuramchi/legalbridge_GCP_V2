@@ -367,7 +367,9 @@ export class ConditionScheduleService {
              inspectedOn?: string | null;
              inspectorDept?: string | null; inspectorName?: string | null;
              contractForm?: string | null;
-             serviceFrom?: string | null; serviceTo?: string | null },
+             serviceFrom?: string | null; serviceTo?: string | null;
+             /** 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。 */
+             hours?: number | null; reportReceivedOn?: string | null },
     actor: string
   ): Promise<{ eventId: number; scheduleId: number }> {
     // 実績を足す側（ConditionEventService.add）でも同じ回を選べる。
@@ -416,16 +418,18 @@ export class ConditionScheduleService {
               gross_amount, deductions, amount, note, created_by,
               quantity, deliverable, inspected_on, inspector_dept, inspector_name,
               contract_form, service_from, service_to,
-              expected_amount, variance_note)
+              expected_amount, variance_note, hours, report_received_on)
            VALUES ($1, $2, $3, COALESCE($4::date, current_date), $5, $6, 0, $6, $7, $8,
-                   $9, $10, $11::date, $12, $13, $14, $15::date, $16::date, $17, $18)
+                   $9, $10, $11::date, $12, $13, $14, $15::date, $16::date, $17, $18, $19, $20::date)
            RETURNING id`,
           [conditionId, scheduleId, eventType, occurredOn, period, amount,
            str(input.note), actor,
            input.quantity ?? null, str(input.deliverable), str(input.inspectedOn),
            str(input.inspectorDept), str(input.inspectorName),
            contractForm, serviceFrom, serviceTo,
-           expectedAmount, varianceNote]);
+           expectedAmount, varianceNote,
+           input.hours === null || input.hours === undefined ? null : Number(input.hours),
+           input.reportReceivedOn || null]);
         const eventId = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

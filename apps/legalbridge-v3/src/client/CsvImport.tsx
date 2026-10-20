@@ -33,8 +33,10 @@ const STATUS_LABEL: Record<Mode, Record<RowOutcome["status"], string>> = {
  * 試算を通さないと登録できない。500行を書いてから結果を見るのでは、
  * マスタを壊したあとにしか気づけない。
  */
-export function CsvImport({ initialKind, lockKind, onApplied }: {
+export function CsvImport({ initialKind, initialMode, lockKind, onApplied }: {
   initialKind?: string;
+  /** 最初から「登録済みに当てる」で開く（条件明細の一括編集）。 */
+  initialMode?: Mode;
   /** 種類を選ばせない（取引先⇔基本契約の画面に埋め込むとき）。 */
   lockKind?: boolean;
   /** 本番の取り込みが済んだとき。埋め込んだ画面が表示を読み直す。 */
@@ -47,7 +49,7 @@ export function CsvImport({ initialKind, lockKind, onApplied }: {
    * 新しく作るのか、既に登録してあるものに当てるのか。
    * 備考や著作権表示だけをまとめて入れたい用が「新規登録」では通らなかった。
    */
-  const [mode, setMode] = useState<Mode>("create");
+  const [mode, setMode] = useState<Mode>(initialMode ?? "create");
   const [csv, setCsv] = useState("");
   /** 選んだファイルの名前。選んだかどうかが読めないと、貼り付けと見分けがつかない。 */
   const [picked, setPicked] = useState<string | null>(null);

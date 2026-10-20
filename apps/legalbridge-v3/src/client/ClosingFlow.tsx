@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { api, ApiError, money } from "./api.js";
+import { ApiError, money } from "./api.js";
 import { ClosingRun } from "./ClosingRun.js";
+import { newRoundDraft, saveRoundEvent, type RoundDraft } from "./EventEntryForm.js";
 import type { CloseResult, PeriodRow } from "./closing-types.js";
 
 /**
@@ -12,20 +13,9 @@ import type { CloseResult, PeriodRow } from "./closing-types.js";
  * 支払は締めで立つ（文書 1 枚に 1 件）。
  */
 
-interface Draft {
-  skip: boolean;             // 予定どおり（締めに任せる）
-  occurredOn: string;        // 納品日／売上の締め日
-  quantity: string;
-  amount: string;            // 税抜。料率の回は売上（税抜）
-  deductions: string;        // 料率の回の控除
-  deliverable: string;
-  inspectedOn: string;
-  inspectorName: string;
-  note: string;
-}
+/** 行の入力。欄と送り方は実績入力（EventEntryForm）と同じ。skip は「予定どおり（締めに任せる）」。 */
+interface Draft extends RoundDraft { skip: boolean }
 
-const today = () => new Date().toISOString().slice(0, 10);
-const num = (v: string) => { const n = Number(String(v ?? "").replace(/[,，¥￥\s]/g, "")); return Number.isFinite(n) ? n : 0; };
 const isRoyalty = (r: PeriodRow) => r.pricingModel === "revenue_rate";
 
 export function ClosingFlow({ rows: initialRows, onOpenDocument, onRan, onDone, onCancel }: {
@@ -39,11 +29,7 @@ export function ClosingFlow({ rows: initialRows, onOpenDocument, onRan, onDone, 
 }) {
   const [rows] = useState<PeriodRow[]>(initialRows);
   const [stage, setStage] = useState<1 | 2 | 3 | 4>(rows.every((r) => r.eventId !== null) ? 3 : 2);
-  const [drafts, setDrafts] = useState<Record<number, Draft>>(() => Object.fromEntries(rows.map((r) => [r.scheduleId!, {
-    skip: false, occurredOn: r.closingOn ?? today(), quantity: "1",
-    amount: r.plannedAmount != null ? String(r.plannedAmount) : "", deductions: "0",
-    deliverable: "", inspectedOn: r.closingOn ?? today(), inspectorName: "", note: ""
-  }])));
+  const [drafts, setDrafts] = useState<Record<number, Draft>>(() => Object.fromEntries(rows.map((r) => [r.scheduleId!, { skip: false, ...newRoundDraft(r) }])));
   const [recorded, setRecorded] = useState<Record<number, number>>({});   // scheduleId → eventId
   const [errors, setErrors] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
@@ -60,22 +46,8 @@ export function ClosingFlow({ rows: initialRows, onOpenDocument, onRan, onDone, 
       const d = drafts[r.scheduleId!];
       if (d.skip) continue;
       try {
-        if (isRoyalty(r)) {
-          const made = await api.post<{ id: number }>(`/conditions/${r.conditionId}/events`, {
-            eventType: "sales", occurredOn: d.occurredOn, scheduleId: r.scheduleId,
-            grossAmount: Math.round(num(d.amount)), deductions: Math.round(num(d.deductions)),
-            quantity: d.quantity.trim() ? num(d.quantity) : null, amount: 0, note: d.note.trim() || null
-          });
-          setRecorded((x) => ({ ...x, [r.scheduleId!]: made.id }));
-        } else {
-          const made = await api.post<{ eventId: number }>(`/conditions/${r.conditionId}/schedules/${r.scheduleId}/record`, {
-            occurredOn: d.occurredOn, amount: d.amount.trim() ? Math.round(num(d.amount)) : null,
-            quantity: d.quantity.trim() ? num(d.quantity) : null,
-            deliverable: d.deliverable.trim() || null, inspectedOn: d.inspectedOn || null,
-            inspectorName: d.inspectorName.trim() || null, note: d.note.trim() || null
-          });
-          setRecorded((x) => ({ ...x, [r.scheduleId!]: made.eventId }));
-        }
+        const eventId = await saveRoundEvent({ conditionId: r.conditionId, scheduleId: r.scheduleId, pricingModel: r.pricingModel }, d);
+        setRecorded((x) => ({ ...x, [r.scheduleId!]: eventId }));
       } catch (e) { errs[r.scheduleId!] = e instanceof ApiError ? e.message : String(e); }
     }
     setErrors(errs); setBusy(false);

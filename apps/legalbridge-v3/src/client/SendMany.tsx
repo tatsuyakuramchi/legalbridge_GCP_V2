@@ -249,7 +249,7 @@ export function SendMany(
             <span>
               社内確認として送る（相手先にはまだ送っていない扱い）
               <div className="faint" style={{ fontSize: "0.85em" }}>
-                宛先を当社の担当者に替えてください。送ったあとも未送付の一覧に残り、支払文書処理の「送る」も進みません。
+                宛先を当社の担当者に替えてください。送ったあとも未送付の一覧に残り、支払文書の「未送付」も消えません。
                 担当者の確認が済んだら、あらためて相手先へ送ります
               </div>
               {internal && <div className="warn" style={{ fontSize: "0.85em" }}>To・Cc・Bcc に相手先の連絡先が残っていないか確かめてください</div>}

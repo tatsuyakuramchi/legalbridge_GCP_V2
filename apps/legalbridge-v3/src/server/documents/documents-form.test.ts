@@ -33,8 +33,15 @@ function effects(text: string): Array<{ body: string; deps: string }> {
 test("項目の一覧は手入力を空にして取る（埋めた欄が消えないように）", () => {
   const specEffect = effects(source).find((e) => /setSpec\(/.test(e.body));
   assert.ok(specEffect, "spec を立てる useEffect が見つからない");
-  assert.match(specEffect.body, /manualInputs: \{\}/,
+  // 送ってよいのは「選び直し」の内部の鍵（_ownerStaffId・_parentPoNo…）だけ。欄の手入力は送らない。
+  assert.match(specEffect.body, /manualInputs: JSON\.parse\(chosenJson\)/,
     "手入力を送ると、埋まった項目が missing から消えて入力欄ごと消える");
+  const chosen = source.match(/const chosenJson = JSON\.stringify\(\{([\s\S]*?)\}\);/);
+  assert.ok(chosen, "chosenJson の組み立てが見つからない");
+  const keys = [...chosen[1].matchAll(/\{ (\w+):/g)].map((m) => m[1]);
+  assert.ok(keys.length > 0, "chosenJson に鍵が無い");
+  assert.deepEqual(keys.filter((k) => !k.startsWith("_")), [],
+    `欄の手入力（_ で始まらない鍵）を項目の一覧の取り直しに送っている: ${keys.join(", ")}`);
 });
 
 test("項目の一覧は手入力では取り直さない（変換中に確定させないため）", () => {

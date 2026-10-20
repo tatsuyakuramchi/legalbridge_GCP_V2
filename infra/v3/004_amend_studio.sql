@@ -37,16 +37,19 @@ SET LOCAL search_path = v3, public;
 DO $amend_matter_links$
 DECLARE
   con   text;
+  -- 'work' は案件の 2 つ目以降の作品（matters/write-service.ts。Studio 用は 156）。
+  -- 156 だけにあって 004 に無かったので、本番から取り出した行が手元の定義で落ちていた。
   wanted constant text[] := ARRAY[
     'backlog_issue', 'document', 'agreement', 'condition', 'payment',
-    'slack_thread', 'email_thread'];
+    'slack_thread', 'email_thread', 'work'];
 BEGIN
-  -- 既に email_thread を通す制約なら何もしない。
+  -- 既に email_thread と work を通す制約なら何もしない。
   IF EXISTS (
     SELECT 1 FROM pg_constraint c
      WHERE c.conrelid = 'v3.matter_links'::regclass
        AND c.contype = 'c'
        AND pg_get_constraintdef(c.oid) LIKE '%email_thread%'
+       AND pg_get_constraintdef(c.oid) ~ '\mwork\M'
   ) THEN
     RAISE NOTICE 'A-001: 適用済み';
   ELSE
@@ -62,7 +65,7 @@ BEGIN
     EXECUTE format(
       'ALTER TABLE v3.matter_links ADD CONSTRAINT matter_links_target_type_check
          CHECK (target_type = ANY (%L::text[]))', wanted);
-    RAISE NOTICE 'A-001: matter_links.target_type に email_thread を足した';
+    RAISE NOTICE 'A-001: matter_links.target_type に email_thread と work を足した';
   END IF;
 END
 $amend_matter_links$;
@@ -2438,6 +2441,226 @@ END $a070$;
 COMMENT ON COLUMN v3.conditions.distribution IS
   '共著の分配を誰がするか。direct=当社が受取人ごとに払う（既定）/ representative=代表（相手先）が分配。A-070';
 
+-- ---------------------------------------------------------------------
+-- A-071 決済の型（conditions/settlement-mode.ts）
+--   条件明細が「この取引は何回払うものか」を持つ。予定明細（condition_schedules）は
+--   1 行＝1 回の置き場で、何回あってよいかの決まりが無かった。
+--     once        … 一回きり（成果物ありの業務委託、買い切り）
+--     fixed_count … 回数固定。settlement_count 回（分割払い）
+--     term_bound  … 期間で決まる。契約期間 ÷ settlement_cycle（顧問・保守、時限式の許諾料）
+--     open        … 回数無制限。出来事のたび（製造・増刷）。終了後 settlement_grace_days（空は 60）まで
+--   既存の条件は下の規則で埋める（空のものだけ。人が直した値は触らない）。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_mode       text;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_count      integer;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_cycle      text;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS settlement_grace_days integer;
+DO $a071$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_settlement_mode_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_settlement_mode_chk
+      CHECK (settlement_mode IS NULL OR settlement_mode IN ('once', 'fixed_count', 'term_bound', 'open'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_settlement_cycle_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_settlement_cycle_chk
+      CHECK (settlement_cycle IS NULL OR settlement_cycle IN ('month', 'quarter', 'half_year', 'year'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_settlement_shape_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_settlement_shape_chk
+      CHECK ((settlement_mode IS DISTINCT FROM 'fixed_count' OR (settlement_count IS NOT NULL AND settlement_count >= 2))
+         AND (settlement_mode IS DISTINCT FROM 'term_bound' OR settlement_cycle IS NOT NULL)
+         AND (settlement_grace_days IS NULL OR settlement_grace_days BETWEEN 0 AND 3650));
+  END IF;
+END $a071$;
+COMMENT ON COLUMN v3.conditions.settlement_mode IS
+  '決済の型。once=一回きり / fixed_count=回数固定 / term_bound=期間で決まる / open=回数無制限。A-071';
+COMMENT ON COLUMN v3.conditions.settlement_count IS '回数固定のときの回数。A-071';
+COMMENT ON COLUMN v3.conditions.settlement_cycle IS '期間で決まるときの周期。month / quarter / half_year / year。A-071';
+COMMENT ON COLUMN v3.conditions.settlement_grace_days IS
+  '終了日の後いつまで回を立ててよいか（日）。空は 60。回数無制限と期間で決まる型に効く。A-071';
+
+-- 既存の条件を埋める（settlement_mode が空のものだけ）。
+--   1. イベント式か、紙出版・OEM の許諾 → open
+--   2. 時限式か、定期の予定明細がある → term_bound（周期は cycle の文字から。読めなければ 許諾=四半期 / 他=毎月）
+--   3. 予定明細が 2 行以上 → fixed_count（行数）
+--   4. それ以外 → once
+WITH s AS (
+  SELECT condition_id, count(*) AS n, count(*) FILTER (WHERE trigger_kind = 'periodic') AS periodic_n
+    FROM v3.condition_schedules GROUP BY condition_id
+), d AS (
+  SELECT c.id,
+         CASE
+           WHEN c.statement_timing = 'event'
+             OR (c.kind IN ('license', 'product') AND c.usage_type IN ('pub_print', 'oem')) THEN 'open'
+           WHEN c.statement_timing = 'periodic' OR COALESCE(s.periodic_n, 0) > 0 THEN 'term_bound'
+           WHEN COALESCE(s.n, 0) >= 2 THEN 'fixed_count'
+           ELSE 'once'
+         END AS mode,
+         COALESCE(s.n, 0)::int AS n,
+         CASE
+           WHEN c.cycle ~* '四半期|quarter|3[かヶカ]月' THEN 'quarter'
+           WHEN c.cycle ~* '半年|半期|6[かヶカ]月|half' THEN 'half_year'
+           WHEN c.cycle ~* '年|annual|year' THEN 'year'
+           WHEN c.cycle ~* '月|month' THEN 'month'
+           WHEN c.kind IN ('license', 'product') THEN 'quarter'
+           ELSE 'month'
+         END AS cyc
+    FROM v3.conditions c LEFT JOIN s ON s.condition_id = c.id
+   WHERE c.settlement_mode IS NULL
+)
+UPDATE v3.conditions c
+   SET settlement_mode  = d.mode,
+       settlement_count = CASE WHEN d.mode = 'fixed_count' THEN d.n END,
+       settlement_cycle = CASE WHEN d.mode = 'term_bound' THEN d.cyc END
+  FROM d WHERE d.id = c.id;
+
+-- A-072 相手方の文書番号（documents/cite-no.ts）
+--   相手方から届いた文書（取り込んだ契約書・発注書・覚書）や、当社の文書に相手方が
+--   付けた番号の控え。当社の番号（document_no）とは別に持つ。
+--   個別条件書・発注書・検収書・計算書で番号を引用するとき、文書フォームの
+--   「番号の出し方」（manual_inputs._refNoMode：ours / theirs / both）で
+--   当社番号・相手方番号・両方 を選べる。契約の相手方番号は agreements.counterparty_ref_no。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.documents ADD COLUMN IF NOT EXISTS counterparty_doc_no text;
+COMMENT ON COLUMN v3.documents.counterparty_doc_no IS
+  '相手方が付けた文書番号の控え。当社番号（document_no）とは別。引用するとき 当社／相手方／両方 を選べる。A-072';
+
+-- ---------------------------------------------------------------------
+-- A-073 準委任の時間精算（conditions/time-settlement.ts）
+--   準委任（役務提供）の委託料には、成果物や固定額で精算するものと、月間の包括枠
+--   （コアタイム）を持ち、実績時間で精算するものがある。時間精算の条件は、
+--   役務提供完了通知書（service_completion_notice）を検収書の代わりに出す。
+--     time_settlement        … 時間精算か（既定 false＝固定額・成果物で精算）
+--     hours_included         … 月間包括枠（時間）。実績がこの枠までは基本委託料（flat_amount）
+--     overage_unit_amount    … 超過単価（最小通貨単位／時間）。枠を超えた分の追加委託料
+--     shortfall_unit_amount  … 控除単価（最小通貨単位／時間）。空なら未消化でも減額しない
+--   実績（condition_events）には 実績時間（hours）と 月次業務報告書の受領日（report_received_on）を持つ。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS time_settlement       boolean NOT NULL DEFAULT false;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS hours_included        numeric(8,2);
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS overage_unit_amount   bigint;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS shortfall_unit_amount bigint;
+DO $a073$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_time_settlement_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_time_settlement_chk
+      CHECK ((NOT time_settlement OR (hours_included IS NOT NULL AND hours_included > 0 AND overage_unit_amount IS NOT NULL))
+         AND (hours_included IS NULL OR hours_included >= 0)
+         AND (overage_unit_amount IS NULL OR overage_unit_amount >= 0)
+         AND (shortfall_unit_amount IS NULL OR shortfall_unit_amount >= 0));
+  END IF;
+END $a073$;
+COMMENT ON COLUMN v3.conditions.time_settlement IS
+  '準委任の時間精算か。true なら包括枠（hours_included）までは基本委託料、超過は overage_unit_amount × 時間。A-073';
+COMMENT ON COLUMN v3.conditions.hours_included IS '月間包括枠（時間）。時間精算のときだけ。A-073';
+COMMENT ON COLUMN v3.conditions.overage_unit_amount IS '超過単価（最小通貨単位／時間）。A-073';
+COMMENT ON COLUMN v3.conditions.shortfall_unit_amount IS '控除単価（最小通貨単位／時間）。空なら未消化でも減額しない。A-073';
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS hours              numeric(8,2);
+ALTER TABLE v3.condition_events ADD COLUMN IF NOT EXISTS report_received_on date;
+COMMENT ON COLUMN v3.condition_events.hours IS '実績時間。時間精算の役務提供の回。A-073';
+COMMENT ON COLUMN v3.condition_events.report_received_on IS '月次業務報告書の受領日。役務提供完了通知書に出す。A-073';
+
+-- ---------------------------------------------------------------------
+-- A-074 支払文書の送付・受領・過去分、製造予定、報告期限（paydocs/）
+--   送付済みかどうかは、これまで画面ごとに gmail.send / cloudsign.send だけを見ていた。
+--   CloudSign の画面から送ったもの・郵送・手渡し・別のメールで送ったもの・V1 から移した
+--   ものが「未送付」に見えていた。送付と受領を 1 つの関数（document_delivery）で導く。
+--     送付：gmail.send / cloudsign.send / cloudsign.applied(sent・executed) / document.sent_manual
+--           （document.send_cleared・cloudsign.applied(unsent) で取り消し。新しい方が勝つ）
+--     受領：document.received / document.confirmed / cloudsign.applied(executed)
+--           （document.receipt_cleared で取り消し）
+--     過去分：document.sent_manual の detail.via = 'past'（一括で送付済み扱い）
+--   documents.inbound … 相手から受け取った文書（取込）。送付・受領を追わない。
+--   production_plans … 製造・印刷の予定（能動の回の記録漏れを防ぐ）。手で入れるか、
+--                      印刷・製造の発注書から候補を出して入れる（source='order'）。
+--   conditions.report_due_days … 締めから報告期限までの日数。空なら 30 日。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.documents ADD COLUMN IF NOT EXISTS inbound boolean NOT NULL DEFAULT false;
+COMMENT ON COLUMN v3.documents.inbound IS
+  '相手から受け取った文書（取込）。送付・受領を追わない（未送付に数えない）。A-074';
+
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS report_due_days int;
+DO $a074$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_report_due_days_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_report_due_days_chk
+      CHECK (report_due_days IS NULL OR (report_due_days >= 0 AND report_due_days <= 366));
+  END IF;
+END $a074$;
+COMMENT ON COLUMN v3.conditions.report_due_days IS
+  '締めから報告（売上報告・月次報告）の期限までの日数。空なら 30 日。過ぎたら督促の対象。A-074';
+
+CREATE TABLE IF NOT EXISTS v3.production_plans (
+  id                 bigserial PRIMARY KEY,
+  condition_id       bigint NOT NULL REFERENCES v3.conditions(id),
+  planned_on         date NOT NULL,
+  quantity           numeric(14,4),
+  label              text,
+  note               text,
+  source             text NOT NULL DEFAULT 'manual',
+  source_document_id bigint REFERENCES v3.documents(id),
+  status             text NOT NULL DEFAULT 'open',
+  event_id           bigint REFERENCES v3.condition_events(id),
+  created_by         text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT production_plans_source_chk CHECK (source IN ('manual', 'order')),
+  CONSTRAINT production_plans_status_chk CHECK (status IN ('open', 'done', 'dropped'))
+);
+CREATE INDEX IF NOT EXISTS production_plans_condition_idx ON v3.production_plans (condition_id, planned_on);
+CREATE UNIQUE INDEX IF NOT EXISTS production_plans_order_uq
+  ON v3.production_plans (condition_id, source_document_id) WHERE source_document_id IS NOT NULL;
+COMMENT ON TABLE v3.production_plans IS
+  '製造・印刷の予定。実績（製造）が入ったら done（event_id）。取りやめは dropped。A-074';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.production_plans TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.production_plans_id_seq TO legalbridge_v3_runtime;
+
+CREATE OR REPLACE FUNCTION v3.document_delivery(p_document_id bigint)
+RETURNS TABLE (sent_at timestamptz, sent_via text, received_at timestamptz, received_via text, past boolean)
+LANGUAGE sql STABLE AS $fn$
+  WITH ev AS (
+    SELECT a.id, a.occurred_at, a.action, a.detail,
+           CASE
+             WHEN a.action IN ('gmail.send', 'cloudsign.send', 'document.sent_manual') THEN 'sent'
+             WHEN a.action = 'cloudsign.applied' AND a.detail->>'status' IN ('sent', 'executed') THEN 'sent'
+             WHEN a.action = 'document.send_cleared' THEN 'unsent'
+             WHEN a.action = 'cloudsign.applied' AND a.detail->>'status' = 'unsent' THEN 'unsent'
+           END AS send_kind,
+           CASE
+             WHEN a.action IN ('document.received', 'document.confirmed') THEN 'received'
+             WHEN a.action = 'cloudsign.applied' AND a.detail->>'status' = 'executed' THEN 'received'
+             WHEN a.action = 'document.receipt_cleared' THEN 'unreceived'
+           END AS recv_kind
+      FROM v3.audit_events a
+     WHERE a.target_type = 'document' AND a.target_id = p_document_id
+       AND a.action IN ('gmail.send', 'cloudsign.send', 'cloudsign.applied', 'document.sent_manual',
+                        'document.send_cleared', 'document.received', 'document.confirmed', 'document.receipt_cleared')
+  ),
+  s AS (SELECT * FROM ev WHERE send_kind IS NOT NULL ORDER BY occurred_at DESC, id DESC LIMIT 1),
+  r AS (SELECT * FROM ev WHERE recv_kind IS NOT NULL ORDER BY occurred_at DESC, id DESC LIMIT 1)
+  SELECT CASE WHEN s.send_kind = 'sent' THEN s.occurred_at END,
+         CASE WHEN s.send_kind <> 'sent' OR s.send_kind IS NULL THEN NULL
+              WHEN s.action = 'gmail.send' THEN 'gmail'
+              WHEN s.action IN ('cloudsign.send', 'cloudsign.applied') THEN 'cloudsign'
+              ELSE COALESCE(NULLIF(s.detail->>'via', ''), 'other') END,
+         CASE WHEN r.recv_kind = 'received' THEN r.occurred_at END,
+         CASE WHEN r.recv_kind IS DISTINCT FROM 'received' THEN NULL
+              WHEN r.action = 'cloudsign.applied' THEN 'cloudsign'
+              WHEN r.action = 'document.confirmed' THEN 'confirmed'
+              ELSE COALESCE(NULLIF(r.detail->>'via', ''), 'other') END,
+         COALESCE(s.send_kind = 'sent' AND s.action = 'document.sent_manual' AND s.detail->>'via' = 'past', false)
+    FROM (SELECT 1) one
+    LEFT JOIN s ON true
+    LEFT JOIN r ON true
+$fn$;
+COMMENT ON FUNCTION v3.document_delivery(bigint) IS
+  '文書の送付・受領（監査記録から導く。新しい記録が勝つ）。sent_via: gmail / cloudsign / post / hand / email_other / past / other。A-074';
+GRANT EXECUTE ON FUNCTION v3.document_delivery(bigint) TO legalbridge_v3_runtime;
+
 COMMIT;
 
 
@@ -2711,6 +2934,31 @@ SELECT * FROM (
         + (SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='parties'
               AND column_name IN ('rpt_entity', 'has_board', 'related_party', 'related_party_type', 'related_party_note')))::text
+  UNION ALL
+  SELECT 72, '相手方の文書番号（A-072。列 1 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
+  UNION ALL
+  SELECT 74, '支払文書の送付・受領・製造予定・報告期限（A-074。列 2・表 1・関数 1・CHECK 1 で 5 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
+            AND ((table_name='documents' AND column_name='inbound') OR (table_name='conditions' AND column_name='report_due_days')))
+        + (SELECT count(*) FROM information_schema.tables WHERE table_schema='v3' AND table_name='production_plans')
+        + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname='v3' AND p.proname='document_delivery')
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_report_due_days_chk'))::text
+  UNION ALL
+  SELECT 73, '準委任の時間精算（A-073。列 6・CHECK 1 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
+            AND ((table_name='conditions' AND column_name IN ('time_settlement', 'hours_included', 'overage_unit_amount', 'shortfall_unit_amount'))
+              OR (table_name='condition_events' AND column_name IN ('hours', 'report_received_on'))))
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_time_settlement_chk'))::text
+  UNION ALL
+  SELECT 71, '決済の型（A-071。列 4・CHECK 3 で 7 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions'
+              AND column_name IN ('settlement_mode', 'settlement_count', 'settlement_cycle', 'settlement_grace_days'))
+          + (SELECT count(*) FROM pg_constraint
+              WHERE conrelid='v3.conditions'::regclass
+                AND conname IN ('conditions_settlement_mode_chk', 'conditions_settlement_cycle_chk', 'conditions_settlement_shape_chk')))::text
   UNION ALL
   SELECT 70, '共著の分配を誰がするか（A-070。列 1・CHECK 1 で 2 であること）',
          ((SELECT count(*) FROM information_schema.columns

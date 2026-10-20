@@ -33,11 +33,14 @@ import { deliveryKindFor, orderPeriodSummary, withPeriodText } from "./order-per
 import { contextMasterAgreement, resolveLegacyVariable } from "./legacy-variables.js";
 import { contractRefText } from "../conditions/contracts.js";
 import { toInternationalPhone } from "../core/phone.js";
-import { isRoyaltyStatementKey } from "./settlement-docs.js";
+import { isRoyaltyStatementKey, SERVICE_COMPLETION_KEY } from "./settlement-docs.js";
+import { hoursText, isTimeSettled, settleHours, timeSettlementLabel, type TimeSettlementTerms } from "../conditions/time-settlement.js";
+import { addBusinessDays } from "../core/business-days.js";
 
 type Ctx = Record<string, any>;
 
-const INSPECTION_KEYS = new Set(["inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate"]);
+const INSPECTION_KEYS = new Set(["inspection_certificate", "intl_inspection_certificate", "delivery_note", "acceptance_certificate",
+                                 SERVICE_COMPLETION_KEY]);
 /**
  * 海外用の検収書（Acceptance Certificate）。英文で、金額は消費税・VAT 等を含む総額として出す
  * （海外発注書の約款 6.5 条）。税を上乗せも内訳もしないので、税率は条件によらず 0 で組む。
@@ -47,7 +50,7 @@ export const INTL_INSPECTION_KEY = "intl_inspection_certificate";
  * 「発注番号」欄を「基本契約番号 / 発注書番号」で出す検収書（国内）。
  * 英文の検収書は本文が「Purchase Order No. {{parent_po_number}}」と書くので発注書番号のまま。
  */
-const CONTRACT_REF_INSPECTION_KEYS = new Set(["inspection_certificate", "acceptance_certificate"]);
+const CONTRACT_REF_INSPECTION_KEYS = new Set(["inspection_certificate", "acceptance_certificate", SERVICE_COMPLETION_KEY]);
 
 /**
  * 検収書の「発注番号」欄。計算書の「契約番号」と同じく「基本契約番号 / 個別契約番号」で出す。
@@ -78,7 +81,7 @@ export function lineFieldsFor(templateKey: string): string[] {
   // 条件書は「明細」ではなく2つの表（取引形態・構成要素）。画面は名前で
   // 専用の編集欄に振り分ける。
   if (isLicenseTermsTemplate(templateKey)) {
-    return ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_special_extras"];
+    return ["v3_conds", "v3_lcs", "v3_sublicensees", "v3_calc_base_rows", "v3_special_extras"];
   }
   // 出版の条件書は「対象著作物の一覧」1つ。作品1点が1行で、紙・電子の条件が畳まれる。
   if (isPubTermsTemplate(templateKey)) return [PUB_TITLES_FIELD];
@@ -254,6 +257,125 @@ function rewardBreakdown(condition: Ctx, event: Ctx, spec: unknown): Row {
 }
 
 /**
+ * 準委任の時間精算（A-073）の回は、1 件の実績を 包括枠 ／ 超過 ／ 未消化の控除 の行に分ける。
+ *
+ * 役務提供完了通知書は「枠までは定額、超過は単価 × 時間」を紙に出す書類なので、
+ * 実績の総額を 1 行にすると根拠が読めない。時間精算でない条件や、実績時間の無い回は
+ * そのまま 1 行。定期の回でも畳まない（月ごとに時間が違う）。
+ */
+function timeSettledLines(condition: Ctx, event: Ctx, row: Row): Row[] {
+  if (!isTimeSettled(condition) || event.hours === null || event.hours === undefined) return [row];
+  const terms: TimeSettlementTerms = {
+    timeSettlement: true, hoursIncluded: num(condition.hoursIncluded),
+    overageUnitAmount: condition.overageUnitAmount ?? null, shortfallUnitAmount: condition.shortfallUnitAmount ?? null
+  };
+  // 基本委託料は予定の回の額（無ければ条件の定額）。実績の総額は 基本＋超過−控除 なので、ここから逆算しない。
+  const base = num(event.plannedAmount ?? event.expectedAmount ?? condition.flatAmount, 0);
+  const s = settleHours(terms, base, num(event.hours));
+  const unit = String(condition.currency ?? "JPY") === "JPY" ? "円" : String(condition.currency);
+  const money = (n: number) => `${yen(n)} ${unit}`;
+  const common = { ...row, trigger_kind: null, hasChange: false, changeNote: "" };
+  // その月の案件別の実績（実績のメモ。月次業務報告書から写したもの）は包括枠の行の下に出す。
+  const detail = String(event.note ?? "").trim();
+  // spec / description も書き換える（inspectionBlock は spec から見出しと本文を割り直す）。
+  const baseText = detail ? `${String(row.spec_head ?? row.item_name ?? "")}\n${detail}` : null;
+  const baseSpec = baseText ? { spec: baseText, description: baseText, ...splitSpec(baseText) } : {};
+  const out: Row[] = [{
+    ...common,
+    ...baseSpec,
+    sc_role: "base",
+    sc_hours: s.hoursApplied, sc_hours_text: hoursText(s.hoursApplied),
+    sc_unit_text: `${money(base)}／月`,
+    item_spec: `実績 ${hoursText(s.hoursActual)} のうち月間包括枠 ${hoursText(s.hoursIncluded)} への充当分`,
+    quantity: s.hoursApplied, inspected_quantity: s.hoursApplied, unit_price: base,
+    amount_ex_tax: base, inspected_amount_ex_tax: base, ordered_amount_ex_tax: base
+  }];
+  if (s.overageHours > 0) {
+    out.push({
+      ...common, sc_role: "overage",
+      item_name: "月間包括枠 超過分の追加委託料",
+      spec: "", description: "", ...splitSpec(""),
+      sc_hours: s.overageHours, sc_hours_text: hoursText(s.overageHours),
+      sc_unit_text: `${money(Number(terms.overageUnitAmount ?? 0))}／h`,
+      item_spec: `実績 ${hoursText(s.hoursActual)} − 包括枠 ${hoursText(s.hoursIncluded)}`,
+      quantity: s.overageHours, inspected_quantity: s.overageHours, unit_price: terms.overageUnitAmount,
+      amount_ex_tax: s.overageAmount, inspected_amount_ex_tax: s.overageAmount, ordered_amount_ex_tax: null
+    });
+  }
+  if (s.shortfallAmount > 0) {
+    out.push({
+      ...common, sc_role: "shortfall",
+      item_name: "月間包括枠 未消化分の控除",
+      spec: "", description: "", ...splitSpec(""),
+      sc_hours: s.shortfallHours, sc_hours_text: hoursText(s.shortfallHours),
+      sc_unit_text: `−${money(Number(terms.shortfallUnitAmount ?? 0))}／h`,
+      item_spec: `包括枠 ${hoursText(s.hoursIncluded)} − 実績 ${hoursText(s.hoursActual)}`,
+      quantity: s.shortfallHours, inspected_quantity: s.shortfallHours, unit_price: -Number(terms.shortfallUnitAmount ?? 0),
+      amount_ex_tax: -s.shortfallAmount, inspected_amount_ex_tax: -s.shortfallAmount, ordered_amount_ex_tax: null
+    });
+  }
+  return out;
+}
+
+/**
+ * 役務提供完了通知書（A-073）だけが使う値。
+ * 対象月・役務提供期間・実績時間と枠・報告書の受領日・確認期限（送付日から 10 営業日。
+ * 下書きの間は発行日で仮置き）・登録番号の有無（副題「兼 仕入明細書」）。
+ * 署名欄は、金額が発注時の合意と違うとき（超過・未消化の精算か、予定と違う額）だけ出す。
+ */
+function serviceCompletionExtras(context: Ctx, block: Record<string, unknown>, manual: Record<string, unknown>): Record<string, unknown> {
+  const events = ((context.events ?? []) as Ctx[]).filter(Boolean);
+  const first = events[0] ?? context.event ?? null;
+  const condition = (first && (context.conditions ?? []).find((c: Ctx) => c.id === first.conditionId)) ?? context.condition ?? {};
+  const terms: TimeSettlementTerms = {
+    timeSettlement: isTimeSettled(condition), hoursIncluded: num(condition.hoursIncluded),
+    overageUnitAmount: condition.overageUnitAmount ?? null, shortfallUnitAmount: condition.shortfallUnitAmount ?? null
+  };
+  const base = num(first?.plannedAmount ?? first?.expectedAmount ?? condition.flatAmount, 0);
+  const hours = first?.hours === null || first?.hours === undefined ? null : num(first.hours);
+  const s = terms.timeSettlement ? settleHours(terms, base, hours) : null;
+  const from = String(first?.serviceFrom ?? "").slice(0, 10);
+  const to = String(first?.serviceTo ?? first?.occurredOn ?? "").slice(0, 10);
+  const monthLabel = (() => {
+    if (from && to && from.slice(0, 7) === to.slice(0, 7)) return `${Number(from.slice(0, 4))}年${Number(from.slice(5, 7))}月分`;
+    if (first?.period) return String(first.period);
+    return to ? `${Number(to.slice(0, 4))}年${Number(to.slice(5, 7))}月分` : "";
+  })();
+  const latest = (pick: (e: Ctx) => unknown) =>
+    events.map(pick).filter((d): d is string => typeof d === "string" && d !== "").sort().at(-1) ?? null;
+  const issuedOn = String(context.document?.issuedOn ?? "").slice(0, 10) || null;
+  const typedDeadline = String(manual.confirm_deadline ?? "").slice(0, 10);
+  const invoiceNo = String(condition?.counterparty?.invoiceNo ?? "").replace(/[^0-9]/g, "");
+  const hasOverage = Boolean(s && s.overageAmount > 0);
+  const hasShortfall = Boolean(s && s.shortfallAmount > 0);
+  return {
+    sc_month_label: monthLabel,
+    sc_service_from: from || null, sc_service_to: to || null,
+    sc_term_start: condition.termStart ?? null, sc_term_end: condition.termEnd ?? null,
+    sc_contract_form: contractFormFor(first?.contractForm, condition.contractForm) ?? "準委任",
+    sc_time_settlement: terms.timeSettlement,
+    sc_time_settlement_label: timeSettlementLabel(terms, base),
+    sc_hours_included_text: hoursText(terms.hoursIncluded),
+    sc_hours_actual_text: hours === null ? "" : hoursText(hours),
+    sc_overage_hours_text: s ? hoursText(s.overageHours) : "",
+    sc_shortfall_hours_text: s ? hoursText(s.shortfallHours) : "",
+    sc_overage_unit_str: yen(Number(terms.overageUnitAmount ?? 0)),
+    sc_shortfall_unit_str: terms.shortfallUnitAmount === null ? "" : yen(Number(terms.shortfallUnitAmount)),
+    sc_overage_amount_str: s ? yen(s.overageAmount) : "",
+    sc_shortfall_amount_str: s ? yen(s.shortfallAmount) : "",
+    sc_base_amount_str: yen(base),
+    hasOverage, hasShortfall,
+    sc_report_received_on: latest((e) => e.reportReceivedOn),
+    // お支払予定日：回の支払期日。無ければ完了日と相手先の区分から（検収書の行の支払日と同じ規則）。
+    sc_payment_date: latest((e) => e.schedule?.payOn) ?? (first ? payOnFor(first, condition) : null),
+    // 確認期限：送付日から 10 営業日。送付日は決まっていないので発行日で仮置きし、人が直せる。
+    sc_confirm_deadline: typedDeadline || addBusinessDays(issuedOn, 10),
+    sc_is_invoice_statement: invoiceNo.length >= 13,
+    needsSignature: Boolean(block.needsSignature) || hasOverage || hasShortfall
+  };
+}
+
+/**
  * 検収・納品の明細を実績から組む。
  *
  * 実績（condition_events）1件が明細1行。検収書は「どの回の分か」を書く
@@ -264,11 +386,15 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
   const events = (context.events ?? []) as Ctx[];
   if (events.length) {
     // 定期課金の回が続くところは1行に畳む（同じ内容の行が縦に並ばないように）。
-    return foldPeriodicLines(events.map((event) => {
+    // 実費・手数料の条件の実績は明細の行にしない（経費・その他手数料の表に条件から出る）。
+    // 同じ額が納品明細にも経費にも出て、消費税まで掛かっていた。
+    const settlementIds = new Set(((context.conditions ?? []) as Ctx[]).filter((c) => isSettlementKind(c.kind)).map((c) => c.id));
+    const lineEvents = events.filter((e) => !settlementIds.has(e.conditionId));
+    return foldPeriodicLines((lineEvents.length ? lineEvents : events).flatMap((event) => {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
       const spec = condition.spec ?? condition.notes ?? event.note ?? "";
-      return {
+      const row: Row = {
         // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
         item_name: event.deliverable ?? condition.name ?? condition.work?.title ?? "",
         // 業務内容の本文。仕様の欄が無い条件は備考で代える。
@@ -317,6 +443,7 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         calc_method: calcMethodOf(condition),
         reward_label: rewardLabelOf(condition)
       };
+      return timeSettledLines(condition, event, row);
     // 畳んだ行は仕様に「全12回（毎月）…」が足されるので、まとめと本文を割り直す。
     })).map((line) => (line.folded ? { ...line, ...splitSpec(line.spec) } : line));
   }
@@ -544,6 +671,9 @@ export function buildTemplateContext(
       return { ...common, ...block, ...intlInspectionExtras(context, block) };
     }
     const ref = CONTRACT_REF_INSPECTION_KEYS.has(templateKey) ? inspectionContractRef(context, manual) : undefined;
+    if (templateKey === SERVICE_COMPLETION_KEY) {
+      return { ...common, ...block, ...(ref ? { parent_po_number: ref } : {}), ...serviceCompletionExtras(context, block, manual) };
+    }
     return { ...common, ...block, ...(ref ? { parent_po_number: ref } : {}) };
   }
   if (PURCHASE_ORDER_KEYS.has(templateKey)) {
@@ -584,8 +714,12 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
   const lines = rows(manual.delivery_line_items).length
     ? rows(manual.delivery_line_items)
     : deliveryLinesFrom(context);
-  const otherFees = rows(manual.other_fees);
-  const expenses = rows(manual.expenses);
+  // 手数料・経費は画面が条件から種を作って手入力として送ってくる。欄そのものが無い
+  // （画面を通らない API や試算）ときだけ、条件から組む。空の配列は「消した」なので尊重する。
+  const otherFees = manual.other_fees === undefined
+    ? feeLinesFrom((context.conditions ?? []) as Ctx[]) : rows(manual.other_fees);
+  const expenses = manual.expenses === undefined
+    ? expenseLinesFrom((context.conditions ?? []) as Ctx[]) : rows(manual.expenses);
   const source: Row = { delivery_line_items: lines, other_fees: otherFees, expenses, taxRate };
   const totals = computeInspectionTotals(source);
   const breakdown = inspectionTaxBreakdown(source);

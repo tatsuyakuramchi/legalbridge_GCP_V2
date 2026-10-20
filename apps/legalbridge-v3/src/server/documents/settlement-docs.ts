@@ -9,7 +9,13 @@
  *
  * ひな形の鍵で見る。案件の支払タブ（MatterPayments）が使う判定と同じにしてある。
  */
-export const SETTLEMENT_TEMPLATE_PATTERN = /inspection|acceptance|delivery|statement|royalty/;
+export const SETTLEMENT_TEMPLATE_PATTERN = /inspection|acceptance|delivery|statement|royalty|completion/;
+
+/**
+ * 役務提供完了通知書（A-073）。準委任で時間精算（月間包括枠＋実績時間）の委託料の決済文書。
+ * 検収書の役務提供版：成果物の検収ではなく、その月の役務の提供が完了したことを確認する。
+ */
+export const SERVICE_COMPLETION_KEY = "service_completion_notice";
 
 /**
  * 利用許諾料計算書のひな形。従来の計算書と、出版（紙・電子）専用の計算書
@@ -25,9 +31,19 @@ export function settlesEvents(templateKey: string | null | undefined): boolean {
   return SETTLEMENT_TEMPLATE_PATTERN.test(String(templateKey ?? ""));
 }
 
-/** 条件の種類ごとに、実績を決済する文書の呼び名とひな形。 */
-export function settlementDocFor(kind: string | null | undefined): { label: string; templateKey: string } {
-  return kind === "license" || kind === "product"
-    ? { label: "計算書", templateKey: "royalty_statement" }
-    : { label: "検収書", templateKey: "inspection_certificate" };
+/**
+ * 条件ごとに、実績を決済する文書の呼び名とひな形。
+ *   許諾・製品 … 計算書
+ *   委託料で時間精算（A-073） … 役務提供完了通知書
+ *   それ以外の業務委託 … 検収書
+ * 種類の文字だけを渡す古い呼び方も通す（時間精算は見ない）。
+ */
+export function settlementDocFor(
+  c: string | null | undefined | { kind: string | null | undefined; timeSettlement?: boolean | null }
+): { label: string; templateKey: string } {
+  const kind = typeof c === "string" || c === null || c === undefined ? c : c.kind;
+  const time = typeof c === "object" && c !== null ? c.timeSettlement === true : false;
+  if (kind === "license" || kind === "product") return { label: "計算書", templateKey: "royalty_statement" };
+  if (kind === "service" && time) return { label: "役務提供完了通知書", templateKey: SERVICE_COMPLETION_KEY };
+  return { label: "検収書", templateKey: "inspection_certificate" };
 }

@@ -17,12 +17,14 @@ import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
-import { TradeWorkspace, type TradeCtx } from "./TradeWorkspace.js";
+import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
+import { DealsWorkspace } from "./DealsWorkspace.js";
+import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "trade" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -37,10 +39,16 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     // 軽微ならデイリータスク、大きければ案件。どちらも作業テーブルは tasks。
     { view: "intake", label: "受付箱" },
     { view: "daily", label: "デイリータスク" },
-    { view: "matters", label: "案件" },
-    // 取引の種類（ボードゲーム・出版の IN／OUT、業務委託）を選んで、基礎情報 → 契約 →
-    // 条件 → 文書 → 送信 を 1 枚で進める（docs/v3-request-inbox.md §11）。
-    { view: "trade", label: "取引を進める" }
+    { view: "matters", label: "案件" }
+  ] },
+  // 文書は作業テーブル、お金は取引管理。どちらも「決める台帳（条件・作品・契約）」とは別の、進める画面。
+  { section: "作業", items: [
+    // 文書を作る・登録する・繋ぐのはこの 1 枚だけ。デイリータスク・案件からも同じ画面に入る。
+    // 以前の「取引を進める」（基礎情報 → 契約 → 条件 → 文書 → 送信）はここに一本化した。
+    { view: "workbench", label: "作業テーブル" },
+    // 計算書・検収書・役務提供完了通知書を回ごとに 起点 → 文書 → 送付 → 受領 → 支払 まで（A-074）。
+    // 以前の「取引管理」「支払文書処理」はここへまとめた（取引管理の表は案件・条件明細の中に残る）。
+    { view: "paydocs", label: "支払文書" }
   ] },
   { section: "横断で見る", items: [
     // 契約が器で、条件はその明細。並びもその順にする。
@@ -60,7 +68,6 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
   // ところなので、紙の話と金の話の継ぎ目に、見出しを付けて置く
   // （見出しが無いと「横断で見る」の続きに読めて、何をする所か分からなかった）。
   { section: "お金の流れ", items: [
-    { view: "closing", label: "支払文書処理" },
     { view: "money", label: "お金" }
   ] },
   { section: "監視・運用", items: [
@@ -71,6 +78,15 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "ops", label: "運用" }
   ] }
 ];
+
+const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
+  a.kind === b.kind && (a.kind === "task" ? a.taskId === (b as typeof a).taskId
+    : a.kind === "matter" ? a.matterId === (b as typeof a).matterId
+    : a.kind === "round" ? a.conditionId === (b as typeof a).conditionId && a.scheduleId === (b as typeof a).scheduleId && a.eventId === (b as typeof a).eventId
+    : a.kind === "conditions" ? a.conditionIds.join(",") === (b as typeof a).conditionIds.join(",") && (a.templateKey ?? null) === ((b as typeof a).templateKey ?? null)
+    : a.kind === "bulk" ? a.mode === (b as typeof a).mode && (a.matterId ?? null) === ((b as typeof a).matterId ?? null)
+    : a.kind === "document" ? a.documentId === (b as typeof a).documentId && a.mode === (b as typeof a).mode
+    : a.partyId === (b as typeof a).partyId);
 
 export function App() {
   const [view, setView] = useState<View>("home");
@@ -146,25 +162,43 @@ export function App() {
    * 左のメニューから別の画面を開いたら解除する（作業と関係ない文書まで繋がないように）。
    */
   const [taskCtx, setTaskCtx] = useState<TaskCtx | null>(null);
-  /** 「取引を進める」で開いている取引。文書の画面へ行って戻っても続きから。 */
-  const [tradeCtx, setTradeCtx] = useState<TradeCtx | null>(null);
+  /**
+   * 作業テーブルの進み具合。文書の画面へ行って決定して戻っても、どこまで済んだかが残る
+   * （画面を離れると部品の中の状態は消えるので、ここに持つ）。
+   */
+  const [workbench, setWorkbench] = useState<WorkbenchState | null>(null);
+  /** 取引管理の回から決済文書を作る：作業テーブルへ（この回の実績を渡す）。 */
+  const issueRound = (h: { conditionId: number; conditionName: string; roundLabel: string; scheduleId: number | null; eventId: number | null }) =>
+    startWorkbench({ kind: "round", conditionId: h.conditionId, scheduleId: h.scheduleId, eventId: h.eventId,
+                     label: `${h.conditionName} ${h.roundLabel}` });
+  const startWorkbench = (entry: WorkbenchEntry) => {
+    // 同じ入口の途中の状態があれば続きから（画面の状態 → 手元に残したもの → 新規）。
+    setWorkbench((prev) => (prev && sameEntry(prev.entry, entry) ? prev : loadWorkbenchState(entry) ?? newWorkbenchState(entry)));
+    setFocus(null); setConditionId(undefined);
+    setView("workbench");
+  };
 
-  /** 作品の利用許諾計算をこの作家で開く（受付箱の依頼から）。作品画面を離れたら消す。 */
-  const [ledgerParty, setLedgerParty] = useState<number | null>(null);
-  useEffect(() => { if (view !== "works") setLedgerParty(null); }, [view]);
+  /**
+   * 支払文書の「作家の報告と計算書」をこの作家で開く（作品のタブ・デイリータスク・文書の画面の戻りから）。
+   * 以前の 作品 › 利用許諾計算（A-074 で支払文書へ移した）。
+   */
+  const [payAuthor, setPayAuthor] = useState<(AuthorTarget & { nonce: number }) | null>(null);
+  // 左のメニューから支払文書を開き直したときは一覧から（作家を持ち越さない）。
+  useEffect(() => { if (view !== "paydocs") setPayAuthor(null); }, [view]);
+  const openAuthor = (a: AuthorTarget) => {
+    setPayAuthor({ ...a, nonce: Date.now() }); setConditionId(undefined); setFocus(null); setView("paydocs");
+  };
 
   /** その画面に渡す選択。別の画面へ移ったら持ち越さない。 */
   const focusFor = (view: View) => (focus && focus.view === view ? focus.id : undefined);
 
   /**
-   * 案件の工程・取引から「契約を登録する」で来たとき。相手先を入れた状態で契約の登録を開く。
-   * returnTo が "trade" なら、登録したら「取引を進める」へ戻って、その契約を選んだ状態で
-   * 次の段階（条件）から続ける。以前は契約の画面に残り、左のメニューから戻るしかなかった。
+   * 案件の工程から「契約を登録する」で来たとき。相手先を入れた状態で契約の登録を開く。
    */
   const [agreementPreset, setAgreementPreset] =
-    useState<{ partyId: number; partyName: string | null; nonce: number; returnTo?: "trade" } | null>(null);
-  const startAgreement = (partyId: number, partyName: string | null, returnTo?: "trade") => {
-    setAgreementPreset({ partyId, partyName, nonce: Date.now(), returnTo });
+    useState<{ partyId: number; partyName: string | null; nonce: number } | null>(null);
+  const startAgreement = (partyId: number, partyName: string | null) => {
+    setAgreementPreset({ partyId, partyName, nonce: Date.now() });
     setFocus(null);
     setView("agreements");
   };
@@ -174,20 +208,16 @@ export function App() {
    * いまどの段階か・戻る先を持つ。左のメニューから開いたときは持たない（素の文書の画面）。
    */
   const [docFlow, setDocFlow] = useState<DocFlow | null>(null);
-  /** 「取引を進める」の段階。文書の画面の帯に出す名前（取引の種類で変わる名前は丸める）。 */
-  const TRADE_STEPS = ["基礎情報", "基本契約", "条件", "文書", "送信"];
-  const tradeFlow = (step: number): DocFlow => ({
-    title: "取引を進める", steps: TRADE_STEPS, step,
-    back: { label: "取引を進める", go: () => {
-      // 戻った先は、来た段階か、決定して進んだ段階（送信）。
-      setTradeCtx((c) => c && { ...c, stage: Math.max(c.stage ?? 0, step) });
-      setFocus(null); setView("trade");
-    } },
-    // 決定したら戻る先の段階。基本契約書（段階 1）なら次は条件、条件書・発注書なら送信。
-    onIssued: () => setTradeCtx((c) => c && { ...c, stage: step <= 1 ? 2 : 4 })
+  /** 作業テーブルの②から 1 枚作りに来た。決定したらその単位を済みにして、作業テーブルへ戻れる。 */
+  const workbenchFlow = (unitKey: string, label: string): DocFlow => ({
+    title: `作業テーブル：${label}`, steps: WORKBENCH_STEPS, step: 1,
+    back: { label: "作業テーブル", go: () => { setFocus(null); setView("workbench"); } },
+    onIssued: (documentId) => setWorkbench((s) => s && ({
+      ...s, results: { ...s.results, [unitKey]: { status: "issued", documentIds: [documentId] } }
+    }))
   });
   /** 契約の画面で条件明細を登録して、そのまま文書を作りに来た。 */
-  const agreementFlow = (agreement: { id: number; label: string }): DocFlow => ({
+  const agreementFlow =(agreement: { id: number; label: string }): DocFlow => ({
     title: `契約 ${agreement.label}`, steps: ["契約を登録", "条件明細を登録", "文書を作る", "送る"], step: 2,
     back: { label: `契約 ${agreement.label}`, go: () => openEntity("agreement", agreement.id) }
   });
@@ -218,7 +248,7 @@ export function App() {
    * 押すたびに増える番号を添えて、同じ文書でも合図が飛ぶようにする。
    */
   const [openDocument, setOpenDocument] =
-    useState<{ id: number; nonce: number } | undefined>();
+    useState<{ id: number; nonce: number; edit?: boolean } | undefined>();
   // 条件は複数受ける。発注書のように1枚で2件以上の条件を載せる書類があるので、
   // 案件から来たときはその案件の条件をまとめて選んだ状態にする。
   // 案件も受ける。案件や条件の画面から作った文書は、その案件に載せる。
@@ -228,8 +258,8 @@ export function App() {
    */
   const [docBack, setDocBack] = useState<DocBack | null>(null);
   const goBack = (back: DocBack) => {
-    setLedgerParty(back.partyId); setConditionId(undefined); setCompose(null); setOpenDocument(undefined);
-    setFocus({ view: "works", id: back.workId }); setView("works");
+    setCompose(null); setOpenDocument(undefined);
+    openAuthor({ partyId: back.partyId, workId: back.workId ?? null });
   };
   const startCompose = (
     conditionIds: number[], eventIds: number[] = [], matterId: number | null = null,
@@ -238,6 +268,14 @@ export function App() {
     requestId: number | null = null,
     flow: DocFlow | null = null
   ) => {
+    // 文書を作るのは作業テーブル。条件明細・作品・契約・案件・工程表の「文書を作る」は、
+    // 流れの帯（契約・条件明細・作業テーブル）も訂正・台帳の戻り先も無ければ、作業テーブルの
+    // ①（要る文書を決める）に条件を渡して開く。文書の画面に直接入るのは、流れの途中か訂正だけ。
+    if (!flow && !revise && !back) {
+      startWorkbench({ kind: "conditions", conditionIds, eventIds, matterId, requestId: requestId ?? (matterId ? null : taskCtx?.requestId ?? null),
+                       templateKey });
+      return;
+    }
     setDocBack(back);
     setDocFlow(flow);
     // 作業から離れて作品・条件明細の画面で作った文書も、その作業に繋ぐ（案件の文書は案件へ）。
@@ -255,30 +293,18 @@ export function App() {
    * 入口が文書の画面の中にしか無く、案件から来た人は画面を移ってから
    * 案件をもう一度選び直す必要があった（同じ案件を2回選ばせていた）。
    */
-  const startBulkOrders = (matterId: number) => {
-    setCompose({ conditionIds: [], eventIds: [], matterId, bulk: true });
-    setDocFlow(null);
-    setFocus(null);
-    setOpenDocument(undefined);
-    setView("documents");
-  };
+  const startBulkOrders = (matterId: number) => startWorkbench({ kind: "bulk", mode: "orders", matterId });
   /** 案件から「検収済みをまとめて入れる」へ。案件を入れた状態で開く。 */
-  const startSettledImport = (matterId: number) => {
-    setCompose({ conditionIds: [], eventIds: [], matterId, settled: true });
-    setDocFlow(null);
-    setFocus(null);
-    setOpenDocument(undefined);
-    setView("documents");
-  };
+  const startSettledImport = (matterId: number) => startWorkbench({ kind: "bulk", mode: "settled", matterId });
 
   /** 文書の画面へ移って、その文書を開く。流れの途中（取引の「開いて送る」）なら帯を付ける。 */
-  const openDocumentAt = (documentId: number, back: DocBack | null = null, flow: DocFlow | null = null) => {
+  const openDocumentAt = (documentId: number, back: DocBack | null = null, flow: DocFlow | null = null, edit = false) => {
     setDocBack(back);
     setDocFlow(flow);
     setCompose(null);
     setFocus(null);
     setConditionId(undefined);
-    setOpenDocument((prev) => ({ id: documentId, nonce: (prev?.nonce ?? 0) + 1 }));
+    setOpenDocument((prev) => ({ id: documentId, nonce: (prev?.nonce ?? 0) + 1, edit }));
     setView("documents");
   };
 
@@ -348,7 +374,7 @@ export function App() {
               <b>デイリータスク {taskCtx.requestNo ?? `#${taskCtx.requestId}`}</b>「{taskCtx.title}」の作業中です。
               ここで作った文書はその作業に自動で繋がります。
             </span>
-            <button className="btn btn-sm" onClick={() => { setFocus({ view: "daily", id: taskCtx.taskId }); setView("daily"); }}>作業に戻る</button>
+            <button className="btn btn-sm" onClick={() => { setFocus({ view: "daily", id: taskCtx.taskId }); setView("daily"); }}>やることの一覧に戻る</button>
             <button className="linky" onClick={() => setTaskCtx(null)}>繋がずに作る</button>
           </div>
         )}
@@ -369,37 +395,45 @@ export function App() {
         {view === "daily" && (
           <DailyTasksWorkspace key={`t${focusFor("daily") ?? 0}`} initialId={focusFor("daily")}
             onOpenMatter={(id) => openEntity("matter", id)}
-            onCompose={(ids, templateKey, requestId) => startCompose(ids, [], null, templateKey, null, null, requestId)}
             onOpenDocument={openDocumentAt}
-            onOpenLedger={(workId, partyId) => {
-              setLedgerParty(partyId); setConditionId(undefined);
-              setFocus({ view: "works", id: workId }); setView("works");
-            }}
+            onOpenLedger={(workId, partyId) => openAuthor({ partyId, workId })}
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
-            onGo={(ctx, target) => {
+            // デイリータスクからの行き先は作業テーブル 1 つ（その作業の文脈で開く）。
+            onGo={(ctx) => {
               setTaskCtx(ctx); setConditionId(undefined);
-              if (target.kind === "trade") {
-                setTradeCtx({ pattern: target.pattern, matterId: null, fromTask: true }); setFocus(null); setView("trade");
-              } else if (target.kind === "ledger") {
-                setLedgerParty(target.partyId); setFocus({ view: "works", id: target.workId }); setView("works");
-              } else if (target.kind === "work") {
-                setFocus(target.workId ? { view: "works", id: target.workId } : null); setView("works");
-              } else {
-                if (target.conditionId) openCondition(target.conditionId); else { setFocus(null); setView("conditions"); }
-              }
+              startWorkbench({ kind: "task", taskId: ctx.taskId, requestId: ctx.requestId });
             }}
             onCountsChange={(c) => setDailyCount(c.open)} />
         )}
-        {view === "trade" && (
-          <TradeWorkspace ctx={tradeCtx} onCtx={setTradeCtx}
-            // 取引の段階から来た文書は、流れの帯を付けて開く（決定したら取引の送信の段階へ戻れる）。
-            onCompose={(conditionIds, eventIds, matterId, templateKey, flowStep) =>
-              startCompose(conditionIds, eventIds ?? [], matterId ?? null, templateKey ?? null, null, null, null,
-                           flowStep === undefined ? null : tradeFlow(flowStep))}
-            onOpenDocument={(id, flowStep) => openDocumentAt(id, null, flowStep === undefined ? null : tradeFlow(flowStep))}
+        {view === "deals" && (
+          <DealsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenMatter={(id) => openEntity("matter", id)}
-            onRegisterAgreement={(partyId, partyName) => startAgreement(partyId, partyName, "trade")}
-            onOpenPayments={() => { setConditionId(undefined); setFocus(null); setView("closing"); }} />
+            // 決済文書は作業テーブルで作る（この回の実績を渡す）。決定したら取引管理へ戻れる。
+            onIssueDocument={issueRound} />
+        )}
+        {view === "paydocs" && (
+          <PayDocsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+            onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
+            onIssueRound={issueRound}
+            onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}
+            onOpenClosing={() => setView("closing")}
+            author={payAuthor} onOpenAuthor={openAuthor}
+            onLedgerCompose={(ids, events, key, back, revise) => startCompose(ids, events, null, key, back, revise ?? null)}
+            onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }} />
+        )}
+        {view === "workbench" && (
+          <WorkbenchWorkspace state={workbench} onState={setWorkbench}
+            onOpenDeals={() => { setFocus(null); setView("paydocs"); }}
+            onCompose={(unit, a) => startCompose(a.conditionIds, a.eventIds, a.matterId, a.templateKey || null, null, null, a.requestId,
+                                                 workbenchFlow(unit.key, unit.label))}
+            // 訂正版・下敷きの下書きは、文書の画面を「直す」状態で開く。決定したらこの単位を済みにする。
+            onOpenDraft={(unit, id) => openDocumentAt(id, null, workbenchFlow(unit.key, unit.label), true)}
+            onOpenDocument={(id) => openDocumentAt(id, null, workbench
+              ? { title: "作業テーブル", steps: WORKBENCH_STEPS, step: 2, back: { label: "作業テーブル", go: () => { setFocus(null); setView("workbench"); } } }
+              : null)}
+            onOpenTask={(taskId) => { setFocus({ view: "daily", id: taskId }); setView("daily"); }}
+            onOpenMatter={(id) => openEntity("matter", id)}
+            onOpenCondition={openCondition} />
         )}
         {view === "matters" && (
           <MattersWorkspace key={`m${focusFor("matters") ?? 0}`}
@@ -408,11 +442,9 @@ export function App() {
             onBulkOrders={startBulkOrders}
             onSettledImport={startSettledImport}
             onRegisterAgreement={startAgreement}
-            onOpenTrade={(m) => {
-              // 案件の種類から取引のパターンを推す。OUT は画面の切替で選ぶ。
-              const pattern = m.kind === "outsourcing" ? "service" : m.businessLine === "publishing" ? "pub_in" : "game_in";
-              setTradeCtx({ pattern, matterId: m.id }); setFocus(null); setView("trade");
-            }}
+            // 案件の「作業テーブルで文書を作る」。取引の型は作業テーブルが案件の種類と条件から推す。
+            onOpenTrade={(m) => startWorkbench({ kind: "matter", matterId: m.id })}
+            onIssueRound={issueRound}
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} />
         )}
         {view === "conditions" && (
@@ -420,16 +452,17 @@ export function App() {
                                initialId={conditionId} initialSchedule={conditionSchedule}
                                onCompose={startCompose} onOpen={openEntity}
                                onOpenDocument={openDocumentAt}
+                               onIssueRound={issueRound}
                                // 条件を登録したら、その条件で文書を作る画面へ進む（戻る先はその条件）。
                                onCreated={({ conditionIds, templateKey }) =>
                                  startCompose(conditionIds, [], null, templateKey, null, null, null, conditionFlow(conditionIds[0]))} />
         )}
         {view === "works" && (
-          <WorksWorkspace key={`w${focusFor("works") ?? 0}-${ledgerParty ?? 0}`}
+          <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
             onOpenCondition={openCondition} initialId={focusFor("works")}
-            initialLedgerParty={ledgerParty} onOpenDocument={openDocumentAt}
-            onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }}
-            onOpen={openEntity} onCompose={startCompose} />
+            onOpenDocument={openDocumentAt}
+            onOpen={openEntity} onCompose={startCompose}
+            payDocs={{ onIssueRound: issueRound, onOpenDraft: (id) => openDocumentAt(id, null, null, true), onOpenAuthor: openAuthor }} />
         )}
         {view === "parties" && (
           <PartiesWorkspace key={`p${focusFor("parties") ?? 0}`} initialId={focusFor("parties")}
@@ -440,9 +473,13 @@ export function App() {
             key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}r${compose.supersedesId ?? ""}`
                           : openDocument ? `d${openDocument.id}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument?.id}
-            openNonce={openDocument?.nonce}
+            openNonce={openDocument?.nonce} openAsDraft={openDocument?.edit}
             onBack={docBack ? { label: docBack.label, go: () => goBack(docBack) } : undefined}
             flow={docFlow}
+            // 新しく作るのは作業テーブルで（相手先を選んで始める）。一括も作業テーブルの一括モードで。
+            onOpenWorkbench={(mode) => { if (mode) startWorkbench({ kind: "bulk", mode }); else { setWorkbench(null); setFocus(null); setView("workbench"); } }}
+            // 訂正版・下敷きは作業テーブルの①で決める（文書の画面はそこへ送るだけ）。
+            onOpenWorkbenchFor={(documentId, mode) => startWorkbench({ kind: "document", documentId, mode })}
             onOpen={openEntity} />
         )}
         {view === "agreements" && (
@@ -450,11 +487,6 @@ export function App() {
             initialId={focusFor("agreements")} onOpen={openEntity}
             createPreset={agreementPreset
               ? { partyId: agreementPreset.partyId, partyName: agreementPreset.partyName } : null}
-            // 取引から来た登録は、済んだら取引へ戻って、その契約を選んだ状態で条件の段階から続ける。
-            onCreated={agreementPreset?.returnTo === "trade" ? (id) => {
-              setTradeCtx((c) => c && { ...c, agreementId: id, noAgreement: false, stage: 2 });
-              setAgreementPreset(null); setFocus(null); setView("trade");
-            } : undefined}
             // 契約の画面で条件明細を登録したら、その条件で文書を作る画面へ進む（戻る先はその契約）。
             onCompose={(conditionIds, agreement, templateKey) =>
               startCompose(conditionIds, [], null, templateKey, null, null, null, agreementFlow(agreement))} />

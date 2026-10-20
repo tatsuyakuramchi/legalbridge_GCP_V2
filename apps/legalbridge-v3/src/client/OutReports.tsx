@@ -43,12 +43,12 @@ export function OutReports(
     <div className="panel">
       <div className="panel-hd">
         <h2>この許諾先からの報告</h2>
-        <span className="faint">{data.events.length} 件 · 作品 › 利用許諾計算 で入れたもの</span>
+        <span className="faint">{data.events.length} 件 · 支払文書 › 作家の報告と計算書 で入れたもの</span>
       </div>
       <div className="panel-bd stack">
         <div className="note">
           締め（予定）と報告（実績）は、許諾料を払う側の <b>IN 条件（作家）</b> に付きます。この OUT 条件には付きません。
-          入れる・直すのは作品の「利用許諾計算」か IN 条件で。計算書と支払（経理提出）も IN 側から出ます。
+          入れる・直すのは支払文書の「作家の報告と計算書」か IN 条件で。計算書と支払（経理提出）も IN 側から出ます。
         </div>
         {data.inConditions.length > 0 && (
           <div className="stack" style={{ gap: 4 }}>

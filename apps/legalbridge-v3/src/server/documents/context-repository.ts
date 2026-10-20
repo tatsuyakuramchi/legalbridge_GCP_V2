@@ -496,7 +496,7 @@ export class DocumentContextRepository {
       `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.gross_amount, e.deductions, e.amount, e.note,
               e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
-              e.contract_form, e.service_from, e.service_to,
+              e.contract_form, e.service_from, e.service_to, e.hours, e.report_received_on,
               e.expected_amount, e.variance_note,
               e.usage_type, e.out_condition_id, e.scope_languages, e.scope_regions,
               oc.condition_no AS out_condition_no, oc.name AS out_condition_name,
@@ -579,6 +579,9 @@ export class DocumentContextRepository {
         triggerKind: str(row.schedule_trigger_kind),
         serviceFrom: dateStr(row.service_from) ?? dateStr(row.schedule_service_from),
         serviceTo: dateStr(row.service_to) ?? dateStr(row.schedule_service_to),
+        /** 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。 */
+        hours: num(row.hours),
+        reportReceivedOn: dateStr(row.report_received_on),
         note: str(row.note),
         currency,
         /** 検収書がそのまま使う項目。実績に入っていれば文書側で人が入れずに済む。 */
@@ -613,6 +616,7 @@ export class DocumentContextRepository {
       `SELECT c.id, c.condition_no, c.name, c.direction, c.kind, c.currency, c.pricing_model,
               c.rate_ppm, c.unit_amount, c.quantity, c.flat_amount, c.mg_amount, c.ag_amount,
               c.term_start, c.term_end, c.delivery_due, c.tax_category, c.payment_terms, c.contract_form,
+              c.time_settlement, c.hours_included, c.overage_unit_amount, c.shortfall_unit_amount,
               c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
               c.auto_renew, c.renew_months, c.renew_stopped_on,
@@ -682,6 +686,11 @@ export class DocumentContextRepository {
         taxCategory: String(row.tax_category ?? "taxable"),
         paymentTerms: str(row.payment_terms),
         contractForm: str(row.contract_form),
+        /** 準委任の時間精算（A-073）。役務提供完了通知書の明細はここから組む。単価は最小通貨単位。 */
+        timeSettlement: row.time_settlement === true,
+        hoursIncluded: num(row.hours_included),
+        overageUnitAmount: int(row.overage_unit_amount),
+        shortfallUnitAmount: int(row.shortfall_unit_amount),
         cycle: str(row.cycle),
         exclusivity: str(row.exclusivity),
         /** 書類に印字する言い方。列は enum なので、そのまま出すと英語が出る。 */

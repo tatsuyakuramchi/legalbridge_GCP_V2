@@ -114,7 +114,26 @@ export interface ConditionDetail extends ConditionSummary {
   paymentTerms: string | null;
   /** 契約形式（請負・委任など）。紙に書く語。支払条件とは別。 */
   contractForm: string | null;
+  /**
+   * 準委任の時間精算（A-073）。月間包括枠（時間）までは定額、超過は超過単価 × 時間、
+   * 未消化は控除単価 × 時間（空なら減額なし）。時間精算の回は役務提供完了通知書で確認する。
+   */
+  timeSettlement: boolean;
+  hoursIncluded: number | null;
+  overageUnitAmount: number | null;
+  shortfallUnitAmount: number | null;
   cycle: string | null;
+  /**
+   * 決済の型（A-071）。この取引は何回払うものか。
+   * once=一回きり / fixed_count=回数固定（settlementCount 回）/ term_bound=期間で決まる（settlementCycle ごと）/
+   * open=回数無制限（終了後 settlementGraceDays、空は 60 日まで）。空は未設定（移行前）。
+   */
+  settlementMode: "once" | "fixed_count" | "term_bound" | "open" | null;
+  settlementCount: number | null;
+  settlementCycle: "month" | "quarter" | "half_year" | "year" | null;
+  settlementGraceDays: number | null;
+  /** 締めから報告（売上報告・月次報告）の期限までの日数。空なら 30 日（A-074）。 */
+  reportDueDays: number | null;
   notes: string | null;
   /** 仕様・成果物。書類の明細の「仕様・成果物」に出る。 */
   spec: string | null;
@@ -290,7 +309,12 @@ export interface MatterDetail extends MatterSummary {
                      /** 最後に送った日時と口（gmail / cloudsign）。 */
                      sentAt: string | null; sentVia: string | null;
                      /** 繋がっている合意の状態。executed なら締結済み。 */
-                     agreementStatus: string | null }>;
+                     agreementStatus: string | null;
+                     /** 文書が付いている案件。この案件と違えば「参照」（別の案件の文書・契約の記録から辿った基本契約書）。 */
+                     matterId: number | null;
+                     agreementNo: string | null;
+                     /** 参照の文書。link＝別の案件の文書を参照として繋いだ／agreement＝条件の基本契約の文書。この案件の文書なら null。 */
+                     reference?: "link" | "agreement" | null }>;
   payments: Array<{ id: number; paymentNo: string | null; direction: Direction; amount: number;
                     currency: string; dueOn: string | null; status: string;
                     /** 管理者が直せる欄（A-041）。 */

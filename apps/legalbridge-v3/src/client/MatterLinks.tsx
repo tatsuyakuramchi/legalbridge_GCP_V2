@@ -3,14 +3,13 @@ import { SettledRebuild } from "./SettledRebuild.js";
 import type { MatterDetail, MatterKind } from "../server/core/model.js";
 import { api, ApiError, saveCsv } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
-import { ConditionCreateForm } from "./ConditionCreateForm.js";
+import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { SendMany } from "./SendMany.js";
 import { CloudSignManual } from "./CloudSignManual.js";
 import { WorkChooser, type WorkOption } from "./WorkChooser.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { CONDITION_KIND_LABEL, MATTER_KIND_LABEL, SettlementTag, StatusTag } from "./labels.js";
 import { ConditionLabel } from "./ConditionLabel.js";
-import { ServiceLinesForm } from "./ServiceLinesForm.js";
 import { money } from "./api.js";
 
 /**
@@ -46,7 +45,7 @@ export function MatterConditions(
     onRecordEvent?: (conditionId: number) => void;
   }
 ) {
-  const [making, setMaking] = useState<false | "one" | "service">(false);
+  const [making, setMaking] = useState(false);
   const [picking, setPicking] = useState(false);
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
@@ -174,16 +173,11 @@ export function MatterConditions(
             {/* 案件を見ながら新しい条件を作れるようにする。以前は「条件の画面で
                 作ってください」と案内していて、作ってから案件へ戻って繋ぎ直す
                 往復が要った。 */}
-            {outsourcing && (
-              <button className="btn btn-sm primary"
-                      title="委託料に実費・手数料を組にして1回で登録する。発注書はこの組を1枚に載せる"
-                      onClick={() => { setMade(null); setMaking("service"); }}>
-                業務委託の明細を登録（委託料＋実費＋手数料）
-              </button>
-            )}
-            <button className={`btn btn-sm${outsourcing ? "" : " primary"}`} disabled={licensing && !work}
-                    onClick={() => { setMade(null); setMaking("one"); }}>
-              {licensing ? "この作品で条件を1本作る" : outsourcing ? "条件を1本だけ作る" : "新しい条件を作る"}
+            <button className="btn btn-sm primary" disabled={licensing && !work}
+                    title={outsourcing ? "委託料に実費・手数料を組にして 1 回で登録する（発注書はこの組を 1 枚に載せる）。1 本だけも選べる"
+                                       : "取引の種類を選んで登録する。作った条件はこの案件に繋がる"}
+                    onClick={() => { setMade(null); setMaking(true); }}>
+              {licensing ? "この作品で条件を登録" : "条件を登録"}
             </button>
             <button className="btn btn-sm"
                     onClick={() => setPicking(true)}>すでにある条件を繋ぐ</button>
@@ -210,7 +204,7 @@ export function MatterConditions(
         <div className="done-note">
           条件を作って、この案件に繋ぎました。
           <span className="row">
-            <button className="btn btn-sm primary" onClick={() => { setMade(null); setMaking("one"); }}>
+            <button className="btn btn-sm primary" onClick={() => { setMade(null); setMaking(true); }}>
               続けてもう1本作る
             </button>
             <button className="btn btn-sm" onClick={() => onOpenCondition(made)}>作った条件を開く</button>
@@ -219,52 +213,33 @@ export function MatterConditions(
         </div>
       )}
 
-      {making === "service" && (
-        <ServiceLinesForm
-          counterpartyName={detail.counterparty?.name ?? last?.counterparty?.name ?? null}
-          workOptions={detail.works ?? []}
-          preset={{
-            matterId: String(detail.id),
-            ...(detail.counterparty
-              ? { counterpartyId: String(detail.counterparty.id) }
-              : last?.counterparty ? { counterpartyId: String(last.counterparty.id) } : {}),
-            ...(last?.agreement ? { agreementId: String(last.agreement.id) } : {})
-          }}
-          onDone={(created) => {
-            setMaking(false);
-            setMade(created.conditions[0]?.id ?? null);
-            // サーバが案件に繋いでいる（matterId 付き）。読み直すだけでよい。
-            onChanged();
-          }}
-          onCancel={() => setMaking(false)} />
-      )}
-
-      {making === "one" && (
-        <ConditionCreateForm
-          title={work
-            ? `「${work.title}」の条件を1本作る`
-            : `${detail.matterNo ?? "この案件"} に新しい条件を作る`}
+      {making && (
+        <ConditionEntryForm
+          initialKind={outsourcing ? "service" : licensing ? (last?.direction === "out" ? "out" : "game_in") : "one"}
           // 案件と、すでに作った条件が知っていることは入れておく。人が入れるのは
           // その条件だけの中身（取引モデルの名前と金額）になる。
           preset={{
+            matterId: detail.id,
+            counterpartyId: detail.counterparty?.id ?? last?.counterparty?.id ?? null,
+            counterpartyName: detail.counterparty?.name ?? last?.counterparty?.name ?? null,
+            workId: work?.id ?? null, workTitle: work?.title ?? null,
+            workOptions: detail.works ?? [],
+            agreementId: last?.agreement?.id ?? null,
+            agreementLabel: last?.agreement ? `${last.agreement.agreementNo ?? ""} ${last.agreement.title ?? ""}`.trim() : null,
             kind: (last?.kind as string | undefined) ?? allowed[0],
-            ...(detail.counterparty
-              ? { counterpartyId: String(detail.counterparty.id) }
-              : last?.counterparty ? { counterpartyId: String(last.counterparty.id) } : {}),
             // 業務委託は必ず自社が払う側。ライセンスは取得も許諾もあるので、
             // 1本目に合わせる（同じ作品の許諾が IN と OUT に散らばらない）。
-            ...(detail.kind === "outsourcing" ? { direction: "in" }
-              : last ? { direction: last.direction } : {}),
-            ...(work ? { workId: String(work.id) } : {}),
-            ...(last?.agreement ? { agreementId: String(last.agreement.id) } : {}),
-            ...(last ? { currency: last.currency } : {})
+            direction: detail.kind === "outsourcing" ? "in" : last?.direction ?? null,
+            currency: last?.currency ?? null
           }}
-          presetLabels={{
-            counterpartyId: detail.counterparty?.name ?? last?.counterparty?.name ?? null,
-            workId: work?.title ?? null,
-            agreementId: last?.agreement ? `${last.agreement.agreementNo ?? ""} ${last.agreement.title ?? ""}`.trim() : null
+          onDone={({ conditionIds, templateKey }) => {
+            setMaking(false);
+            setMade(conditionIds[0] ?? null);
+            // セット系（業務委託の明細・許諾セット・出版セット）は matterId 付きでサーバが案件に繋ぐ。
+            // 「1 本だけ」と OUT はここで繋ぐ。
+            if (templateKey === "purchase_order" || templateKey === "individual_license_terms_v4" || templateKey === "pub_master_individual") onChanged();
+            else for (const id of conditionIds) void attach(id);
           }}
-          onDone={(created) => { setMaking(false); setMade(created.id); void attach(created.id); }}
           onCancel={() => setMaking(false)} />
       )}
 
@@ -850,6 +825,14 @@ export function MatterDocuments(
                     はみ出し、取引先が1文字ずつに潰れる。 */}
                 <td className="code" style={{ whiteSpace: "nowrap" }}>
                   {d.documentNo ?? "（下書き）"}
+                  {/* 参照：別の案件の文書を参照として繋いだもの／条件の基本契約の文書（契約の記録から辿る）。この案件には付いていない。 */}
+                  {d.reference && (
+                    <div><span className="tag" title={d.reference === "agreement"
+                      ? `条件が載っている基本契約（${d.agreementNo ?? "契約の記録"}）の文書。案件には付かず、同じ相手先のどの案件からも参照できます`
+                      : "別の案件の文書を参照として繋いだもの。文書は元の案件に付いたまま"}>
+                      {d.reference === "agreement" ? "基本契約（参照）" : "参照"}
+                    </span></div>
+                  )}
                 </td>
                 <td style={{ minWidth: "8em" }}>
                   {d.templateLabel ?? "—"}
@@ -866,7 +849,10 @@ export function MatterDocuments(
                         ? <div><span className="tag accent" title={d.sentAt ? `送信 ${d.sentAt.slice(0, 10)}` : undefined}>CloudSign 送信済</span></div>
                         : d.sentVia === "gmail"
                           ? <div><span className="tag" title={d.sentAt ? `送信 ${d.sentAt.slice(0, 10)}` : undefined}>メール送付済</span></div>
-                          : null)}
+                          : d.sentVia
+                            ? <div><span className="tag" title={d.sentAt ? `送付 ${d.sentAt.slice(0, 10)}` : undefined}>
+                                {d.sentVia === "past" ? "過去分" : d.sentVia === "post" ? "郵送済" : d.sentVia === "hand" ? "手渡し済" : "送付済"}</span></div>
+                            : null)}
                 </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   <span className="row" style={{ flexWrap: "nowrap", gap: 4 }}>
@@ -884,8 +870,10 @@ export function MatterDocuments(
                         aria-pressed={csDoc?.id === d.id}
                         onClick={() => { setCsNotice(null); setCsDoc(csDoc?.id === d.id ? null : d); }}>署名</button>
                     )}
-                    <button className="btn btn-sm" disabled={busy}
-                      onClick={() => void detach(d.id, d.documentNo ?? `#${d.id}`)}>外す</button>
+                    {d.reference !== "agreement" && (
+                      <button className="btn btn-sm" disabled={busy}
+                        onClick={() => void detach(d.id, d.documentNo ?? `#${d.id}`)}>{d.reference === "link" ? "参照を外す" : "外す"}</button>
+                    )}
                   </span>
                 </td>
               </tr>

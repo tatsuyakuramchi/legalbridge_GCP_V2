@@ -60,5 +60,7 @@ test("社内確認として担当者に送った文書（gmail.review）は未�
     [["ARC-PUBT-2026-1028", null], ["ARC-ROY-2026-1021", "2026-10-08T05:00:00.000Z"]]);
   const sql = db.find("JOIN v_document_display v")!.text;
   assert.match(sql, /action = 'gmail\.review'/);
-  assert.match(sql, /a\.action IN \('gmail\.send', 'cloudsign\.send'\)/, "未送付の判定は相手先へ送った記録だけ");
+  // 未送付の判定は document_delivery（A-074）。gmail.review は送付に数えない（関数が見ない）。
+  assert.match(sql, /document_delivery\(d\.id\)/, "未送付の判定は送付の記録だけ");
+  assert.match(sql, /NOT d\.inbound/, "相手から受け取った文書は未送付に数えない");
 });

@@ -5,6 +5,7 @@ import { recordAudit } from "../core/audit.js";
 import { INDIVIDUAL_PAY_DAY, payDateFromTerms } from "../conditions/payment-terms.js";
 import { PUB_DIGITAL_PAYMENT_TERMS, PUB_PRINT_PAYMENT_TERMS } from "../conditions/write-service.js";
 import type { ScheduleLine, ScheduleRow } from "../conditions/schedule-service.js";
+import { cycleMonths, readDigitalCycle, type DigitalCycle } from "../conditions/pub-digital-cycle.js";
 
 /**
  * 出版の許諾条件に、年 1 回の締め（時限式の回）をまとめて立てる（docs/royalty-shares.md §5.4）。
@@ -47,6 +48,8 @@ export interface AnnualCloseInput {
 }
 
 export interface AnnualCloseTarget {
+  /** この条件の集計のしかた（支払条件の文か決済の型から。読めなければ年 1 回）。 */
+  cycle: DigitalCycle;
   conditionId: number;
   conditionNo: string | null;
   name: string;
@@ -113,7 +116,9 @@ const validDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(n
 
 /** 立てる回。既存の回と期間が重なる年は飛ばす。`to` があれば from〜to の 1 回だけ。 */
 export function annualLines(
-  input: { from: string; count: number; to?: string | null; paymentTerms: string | null; usageType: AnnualUsage },
+  input: { from: string; count: number; to?: string | null; paymentTerms: string | null; usageType: AnnualUsage;
+           /** 集計のしかた。年 2 回なら 6 か月、年 4 回なら 3 か月ずつ、年数 × 回数を立てる。既定は年 1 回。 */
+           cycle?: DigitalCycle; cycleStartMonth?: number | null },
   existing: ScheduleRow[]
 ): ScheduleLine[] {
   if (!validDay(input.from)) throw new DomainError("VALIDATION", `集計期間の開始が読み取れません：${input.from}`);
@@ -131,10 +136,20 @@ export function annualLines(
   });
   let seq = existing.reduce((m, l) => Math.max(m, l.seq), 0);
   const out: ScheduleLine[] = [];
+  const step = cycleMonths(input.cycle ?? "year");
+  // 集計期間の区切りに合わせる。年 2 回（1 月・7 月始まり）の条件に 2025-08-01 を渡されても、
+  // 2025-07-01 からの期間で立てる（区切りのずれた回を作らない）。
+  const start = (() => {
+    if (!input.cycleStartMonth || step === 12 && input.cycleStartMonth === Number(input.from.slice(5, 7))) return input.from;
+    const fromMonth = Number(input.from.slice(5, 7));
+    const back = ((fromMonth - input.cycleStartMonth) % step + step) % step;
+    return iso(addMonths(`${input.from.slice(0, 7)}-01`, -back));
+  })();
+  const perYear = 12 / step;
   const periods: Array<[string, string]> = input.to
     ? [[input.from, input.to]]
-    : Array.from({ length: input.count }, (_, i) =>
-        [iso(addMonths(input.from, 12 * i)), iso(dayBefore(addMonths(input.from, 12 * (i + 1))))] as [string, string]);
+    : Array.from({ length: input.count * perYear }, (_, i) =>
+        [iso(addMonths(start, step * i)), iso(dayBefore(addMonths(start, step * (i + 1))))] as [string, string]);
   for (const [from, to] of periods) {
     if (overlaps(from, to)) continue;
     seq += 1;
@@ -192,7 +207,7 @@ export class AnnualCloseService {
 
   private async resolve(client: Queryable, input: AnnualCloseInput) {
     const r = await client.query(
-      `SELECT c.id, c.condition_no, c.name, c.payment_terms, w.title AS work_title, p.name AS party_name
+      `SELECT c.id, c.condition_no, c.name, c.payment_terms, c.settlement_cycle, w.title AS work_title, p.name AS party_name
          FROM conditions c
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN parties p ON p.id = c.counterparty_id
@@ -221,13 +236,20 @@ export class AnnualCloseService {
       const conditionId = Number(row.id);
       if (input.onlyWithStrays && !strays.has(conditionId)) continue;
       const existing = (await this.deps.schedules.list(conditionId)).lines;
-      const adding = annualLines({ from: input.from, count: input.count, to: input.to ?? null, paymentTerms: str(row.payment_terms), usageType: input.usageType }, existing);
+      // 集計のしかた：支払条件の文から読む（期間の区切りもわかる）。読めなければ決済の型の周期、それも無ければ年 1 回。
+      const read = input.usageType === "pub_digital" ? readDigitalCycle(row.payment_terms) : null;
+      const sc = String(row.settlement_cycle ?? "");
+      const cycle: DigitalCycle = read?.cycle
+        ?? (input.usageType === "pub_digital" && (sc === "half_year" || sc === "quarter") ? sc : "year");
+      const adding = annualLines({ from: input.from, count: input.count, to: input.to ?? null, paymentTerms: str(row.payment_terms),
+                                   usageType: input.usageType, cycle, cycleStartMonth: read?.startMonth ?? null }, existing);
       const periods = [...existing, ...adding].map((l) => ({ from: dateStr(l.serviceFrom), to: dateStr(l.serviceTo) }))
         .filter((p): p is { from: string; to: string } => Boolean(p.from && p.to));
       const days = strays.get(conditionId) ?? [];
       if (individuals.has(conditionId)) for (const l of adding) l.payOn = individualPayOn(l.payOn);
       const attaching = days.filter((d) => periods.some((p) => p.from <= d && d <= p.to)).length;
       targets.push({
+        cycle,
         conditionId, conditionNo: str(row.condition_no), name: String(row.name ?? ""),
         workTitle: str(row.work_title), partyName: str(row.party_name), paymentTerms: str(row.payment_terms),
         existing: existing.length, adding,
