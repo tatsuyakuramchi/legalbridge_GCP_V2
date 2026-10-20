@@ -5055,6 +5055,17 @@ export function createRoutes(database: Transactable) {
       res.json(await sends.confirm(Number(req.params.id), input, actor(res)));
     }));
 
+  // 工程を飛ばす（担当者確認・相手方確認・締結）。理由は任意。
+  router.post("/documents/:id/skip",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        step: z.enum(["owner_check", "party_check", "executed"]),
+        reason: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await sends.skip(Number(req.params.id), input, actor(res)));
+    }));
+
   /**
    * システム外で扱った CloudSign の状態を手で記録する（予備系で連携が無いとき）。
    * sent＝署名依頼を送った、executed＝締結した、terminated＝辞退・取下げ、

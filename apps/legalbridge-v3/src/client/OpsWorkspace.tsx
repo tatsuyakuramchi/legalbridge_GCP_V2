@@ -3,7 +3,7 @@ import { StatusTag } from "./labels.js";
 import { CsvBar } from "./CsvBar.js";
 import { api, ApiError, money } from "./api.js";
 import { CsvImport } from "./CsvImport.js";
-import { EbookSalesImport } from "./EbookSalesImport.js";
+import { EbookSalesImport, PeriodReissuePanel } from "./EbookSalesImport.js";
 import { MissingContracts } from "./MissingContracts.js";
 import { UnsentBundles } from "./UnsentBundles.js";
 import { Leftovers } from "./Leftovers.js";
@@ -62,7 +62,7 @@ const SOURCE_LABEL: Record<string, string> = {
   matter: "案件", agreement: "契約満了", payment: "支払", schedule: "予定", task: "タスク"
 };
 
-export type OpsTab = "quality" | "deadlines" | "leftovers" | "exports" | "imports" | "contracts" | "sending" | "snippets" | "statement-models"
+export type OpsTab = "quality" | "deadlines" | "fixes" | "leftovers" | "exports" | "imports" | "contracts" | "sending" | "snippets" | "statement-models"
   | "audit" | "integrations" | "settings";
 
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
@@ -113,6 +113,7 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
       <div className="tabs">
         <button aria-selected={tab === "quality"} onClick={() => setTab("quality")}>データ品質 {issues.length}</button>
         <button aria-selected={tab === "deadlines"} onClick={() => setTab("deadlines")}>期限 {deadlines.length}</button>
+        <button aria-selected={tab === "fixes"} onClick={() => setTab("fixes")}>一括修正</button>
         <button aria-selected={tab === "leftovers"} onClick={() => setTab("leftovers")}>片づけ</button>
         <button aria-selected={tab === "exports"} onClick={() => setTab("exports")}>出力</button>
         <button aria-selected={tab === "imports"} onClick={() => setTab("imports")}>取込</button>
@@ -207,7 +208,20 @@ export function OpsWorkspace({ initialTab }: { initialTab?: OpsTab } = {}) {
         </div>
       )}
 
-      {tab === "leftovers" && (<><StatementMerge /><TermDefault /><NoticeFill /><IndividualPayDay /><Leftovers /></>)}
+      {tab === "fixes" && (
+        <>
+          <div className="faint" style={{ marginBottom: 8 }}>
+            出したものをまとめて直す道具。どれも <b>試算 → 直す（出し直す）</b> の順で、試算は何も書き換えません。
+            上から順に進めると 条件 → 契約書 → 計算書 → 回 の向きで直ります。
+          </div>
+          <TermDefault />
+          <NoticeFill />
+          <StatementMerge />
+          <div className="panel"><div className="panel-bd"><PeriodReissuePanel /></div></div>
+          <IndividualPayDay />
+        </>
+      )}
+      {tab === "leftovers" && <Leftovers />}
 
       {tab === "imports" && (<><EbookSalesImport /><CsvImport /></>)}
       {tab === "contracts" && <MissingContracts />}

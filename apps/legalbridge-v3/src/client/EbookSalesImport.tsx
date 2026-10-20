@@ -179,7 +179,7 @@ export function EbookSalesImport() {
         </div>
         {error && <div className="alert">{error}</div>}
         <AnnualClosesPanel />
-        <PeriodReissuePanel />
+        <div className="faint">出した計算書の出し直し（対象期間・担当者・支払日・取り分の表示・源泉）は 運用 → 一括修正 にあります</div>
         {read && (
           <div className="faint">
             読んだシート：{read.sheets.map((s) => `${s.name}（${s.rows} 行${s.note ? `・${s.note}` : ""}）`).join("、")}
@@ -513,7 +513,7 @@ const REISSUE_STATUS: Record<ReissueStatus, string> = {
  * 出した計算書の対象期間を、回の期間（「2025年7月〜2026年6月」）に揃えて訂正版で出し直す。
  * まとめて締めるの計算書は売上のあった月の範囲で期間を出していて、作品・受取人ごとにばらついていた。
  */
-function PeriodReissuePanel() {
+export function PeriodReissuePanel() {
   const readOnly = useReadOnly();
   const [open, setOpen] = useState(false);
   const [usage, setUsage] = useState<"pub_digital" | "pub_print">("pub_digital");
