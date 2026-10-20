@@ -27,6 +27,7 @@ export interface NoticeTarget {
   documentId: number;
   documentNo: string | null;
   kind: "terms" | "master";
+  partyId: number | null;
   partyName: string | null;
   issuedOn: string | null;
   /** 入れる値（空いていた欄だけ）。画面に出す。 */
@@ -146,7 +147,8 @@ export class NoticeFillService {
           else reasons.push(`訂正版の下書き（#${r.open_draft}）が開いています。それを決定するか捨ててください`);
         }
         return {
-          documentId: Number(r.id), documentNo: str(r.document_no), kind, partyName: party?.name ?? null,
+          documentId: Number(r.id), documentNo: str(r.document_no), kind,
+          partyId: r.party_id != null ? Number(r.party_id) : null, partyName: party?.name ?? null,
           issuedOn: dateStr(r.issued_at), fills, patch, reuseDraftId,
           // 入れられる欄が 1 つでもあれば出し直す（甲だけ・乙だけでも）。人の下書きがあれば出さない。
           skip: reasons.find((x) => x.startsWith("訂正版の下書き")) ?? (fills.length ? null : reasons.join("・") || "入れる値がありません")

@@ -24,6 +24,7 @@ import { isStatementTemplate } from "./documents/template-context.js";
 import { WorkWriteService } from "./works/write-service.js";
 import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
 import { LeftoverService } from "./ops/leftovers-service.js";
+import { TidyService } from "./ops/tidy-service.js";
 import { tally } from "./ops/leftovers.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
@@ -2869,6 +2870,21 @@ export function createRoutes(database: Transactable) {
       const input = z.object({ keys: z.array(z.string().min(1).max(200)).min(1).max(500) }).parse(req.body ?? {});
       res.json(await statementMerge.run(input.keys, actor(res)));
     }));
+
+  // ---- 整理する：取引先の木を 1 本ずつ直す（docs/v3-tidy.md）----
+  const tidy = new TidyService(database, {
+    map: agreementMap, merge: partyMerge, term: termDefault, notice: noticeFill, statements: statementMerge
+  });
+  router.get("/tidy/parties", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json({ parties: await tidy.parties({
+      keyword: String(req.query.q ?? ""), issuesOnly: String(req.query.issues ?? "") === "1"
+    }) });
+  }));
+  router.get("/tidy/parties/:id", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const tree = await tidy.forParty(Number(req.params.id));
+    if (!tree) return res.status(404).json({ error: "取引先が見つかりません" });
+    res.json(tree);
+  }));
   // 出した計算書の対象期間を回の期間に揃えて、訂正版で一括で出し直す。試算してから出す。
   const periodReissue = new StatementPeriodReissueService(database, statementIssuer);
   const reissueUsage = z.enum(["pub_digital", "pub_print"]).default("pub_digital");

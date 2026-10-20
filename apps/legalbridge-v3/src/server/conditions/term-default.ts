@@ -33,6 +33,7 @@ export interface TermTarget {
   conditionId: number;
   conditionNo: string | null;
   conditionName: string;
+  partyId: number | null;
   partyName: string | null;
   workTitle: string | null;
   documentNos: string[];
@@ -73,7 +74,7 @@ export interface TermReissuer {
 }
 
 const CANDIDATES = `
-  SELECT c.id, c.condition_no, c.name, c.term_start, p.name AS party_name, w.title AS work_title,
+  SELECT c.id, c.condition_no, c.name, c.term_start, p.id AS party_id, p.name AS party_name, w.title AS work_title,
          ARRAY(SELECT DISTINCT d.document_no FROM document_conditions dc
                  JOIN documents d ON d.id = dc.document_id
                  JOIN document_template_versions tv ON tv.id = d.template_version_id
@@ -220,7 +221,7 @@ export class TermDefaultService {
       const newTermEnd = termStart ? termEndFrom(termStart) : null;
       return {
         conditionId: Number(r.id), conditionNo: str(r.condition_no), conditionName: String(r.name ?? ""),
-        partyName: str(r.party_name), workTitle: str(r.work_title),
+        partyId: r.party_id != null ? Number(r.party_id) : null, partyName: str(r.party_name), workTitle: str(r.work_title),
         documentNos: (Array.isArray(r.document_nos) ? r.document_nos : []).map(String),
         termStart, newTermEnd,
         label: termStart && newTermEnd

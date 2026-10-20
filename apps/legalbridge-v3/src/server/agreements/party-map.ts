@@ -158,7 +158,7 @@ export function isOrderAgreement(a: Pick<MapAgreement, "kind" | "agreementNo" | 
 }
 
 /** 発注書の文書（d・t）。作ったもの（ひな形）と、取り込んだもの（種類＝発注書）。 */
-const ORDER_DOCUMENT_SQL = `(t.template_key IN ('purchase_order', 'intl_purchase_order')
+export const ORDER_DOCUMENT_SQL = `(t.template_key IN ('purchase_order', 'intl_purchase_order')
   OR (t.template_key IS NULL AND d.manual_inputs->>'documentKind' = '発注書'))`;
 
 /**

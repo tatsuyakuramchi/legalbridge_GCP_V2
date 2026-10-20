@@ -6,6 +6,7 @@ import { MattersWorkspace } from "./MattersWorkspace.js";
 import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
 import { AgreementsWorkspace } from "./AgreementsWorkspace.js";
 import { AgreementMapWorkspace } from "./AgreementMapWorkspace.js";
+import { TidyWorkspace } from "./TidyWorkspace.js";
 import type { EntityKind } from "./Relations.js";
 import { DocumentsWorkspace } from "./DocumentsWorkspace.js";
 import { ClosingWorkspace } from "./ClosingWorkspace.js";
@@ -22,7 +23,7 @@ import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "trade" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "trade" | "agreements" | "agreement-map" | "tidy" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -47,6 +48,8 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "agreements", label: "契約" },
     // 取引先ごとの基本契約の木。画面によって基本契約の見え方が違う原因（ずれ）を直す。
     { view: "agreement-map", label: "取引先⇔基本契約" },
+    // 取引先の木（取引 → 個別契約 → 条件 → 実績 → 支払文書 → 支払）を 1 本ずつ直す（docs/v3-tidy.md）。
+    { view: "tidy", label: "整理する" },
     { view: "conditions", label: "条件明細" },
     { view: "works", label: "作品" },
     { view: "parties", label: "取引先・担当" },
@@ -463,6 +466,9 @@ export function App() {
           <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? 0}`}
             initialPartyId={focusFor("agreement-map")} onOpen={openEntity}
             onRegisterAgreement={startAgreement} />
+        )}
+        {view === "tidy" && (
+          <TidyWorkspace key={`t${focusFor("tidy") ?? 0}`} initialPartyId={focusFor("tidy")} onOpen={openEntity} />
         )}
         {view === "closing" && (
           <ClosingWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
