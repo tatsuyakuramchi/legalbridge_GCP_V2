@@ -114,3 +114,9 @@
 「担当者を入れて訂正版を出す」と、元の締結日・決定日のまま訂正版が出て、この版は退く（1 枚の修正）。
 まとめて直すのは 運用 › 一括修正 › 通知先（同じ `NoticeFillService`）。
 API：`GET /documents/:id/notice-check`（applies／filled／target）。
+
+## 個別契約の番号
+
+条件書を決定したときに自動で立つ個別契約・単体契約の番号は、条件書の番号（訂正版の -R2 を除いた本体）にする
+（`agreements/auto.ts`。「文書から契約を立てる」と同じ決め方）。その番号が既に契約に使われていれば 親番号-S01（単体契約は ARC-ILT）。
+以前に -S01／ARC-ILT で立ったものは `infra/v3/173_terms_agreement_numbers.sql` で条件書の番号に付け替える（audit_events に agreement.renumber）。
