@@ -6,6 +6,7 @@ import { ProcessRail, stationStateOf, type Station, type StationTag } from "./Pr
 import { replaceRouteParams } from "./route.js";
 import { OwnerStaffPicker } from "./OwnerStaffPicker.js";
 import type { NoticeTarget } from "../server/documents/notice-fill.js";
+import { MAIL_PURPOSES, type MailPurpose } from "../server/ops/mail-templates.js";
 
 /**
  * 決定した文書を「送る」。本線の 5 駅のうち ②〜⑤ を縦の工程表で出す。
@@ -62,17 +63,13 @@ function Sending({ what }: { what: string }) {
 interface Outcome { sent: boolean; duplicated?: boolean; draft?: boolean; warnings?: string[]; externalId?: string; gate: { reasons: string[]; mode: string };
                     preview?: { recipient: string; bodyPreview: string } }
 
-type Purpose = "owner_check" | "party_check" | "contract_unify" | "delivery";
+type Purpose = MailPurpose;
 interface Draft {
   to: Array<{ name: string | null; email: string }>; cc: Array<{ name: string | null; email: string }>;
   subject: string; body: string; warnings: string[];
 }
-const PURPOSES: Array<{ value: Purpose; label: string; hint: string }> = [
-  { value: "owner_check", label: "担当者への確認", hint: "依頼した事業部の担当者へ。相手に出す前に内容を確かめてもらう" },
-  { value: "party_check", label: "取引先への内容確認", hint: "取引先へ。問題なければ送付（CloudSign）に進む" },
-  { value: "contract_unify", label: "契約書の統一のご案内", hint: "取引先へ。統一書式の契約書案を添付し、問題なければ 2 週間以内に返信をもらって CloudSign で締結に進む" },
-  { value: "delivery", label: "取引先へ送付（検収書・計算書など）", hint: "取引先へ書類を送る。検収書・利用許諾計算書は専用の文面" }
-];
+/** 決まった文面。設定で足した文面（custom:<key>）は /mail-purposes から足す。 */
+const PURPOSES: Array<{ value: Purpose; label: string; hint: string }> = MAIL_PURPOSES;
 /** 各段で最初に入れておく文面。 */
 const DEFAULT_PURPOSE: Partial<Record<StepKey, Purpose>> = { owner_check: "owner_check", party_check: "party_check", send: "delivery" };
 
@@ -157,6 +154,12 @@ export function DocumentSend(
     `${templateLabel ?? "文書"}をお送りします。内容をご確認のうえ、問題なければご返信ください。`);
   // 文面（設定の mail_templates から組んだ下書き）。どの段で組んだかも覚える（段を替えたら組み直す）。
   const [purpose, setPurpose] = useState<Purpose | null>(null);
+  /** 文面の選択肢（決まったもの＋設定で足したもの）。 */
+  const [purposes, setPurposes] = useState<Array<{ value: Purpose; label: string; hint: string }>>(PURPOSES);
+  useEffect(() => {
+    api.get<{ purposes: Array<{ value: Purpose; label: string; hint: string }> }>("/mail-purposes")
+      .then((r) => setPurposes(r.purposes)).catch(() => setPurposes(PURPOSES));
+  }, []);
   const [draftFor, setDraftFor] = useState<StepKey | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   // 確認
@@ -343,7 +346,7 @@ export function DocumentSend(
       )}
       <div className="row" style={{ flexWrap: "wrap" }}>
         <span className="faint">文面：</span>
-        {PURPOSES.map((p) => (
+        {purposes.map((p) => (
           <button key={p.value} className="chip" aria-pressed={purpose === p.value} title={p.hint}
                   disabled={busy} onClick={() => void loadDraft(p.value)}>{p.label}</button>
         ))}

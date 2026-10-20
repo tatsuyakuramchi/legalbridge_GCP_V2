@@ -18,15 +18,54 @@ export const MAIL_TEMPLATES_KEY = "mail_templates";
 
 export type MailTemplateKind = "owner_check" | "party_check" | "contract_unify" | "inspection" | "royalty" | "general";
 /** 送る画面で選ぶ「何のメールか」。送付は文書の種類で inspection / royalty / general に分かれる。 */
-export type MailPurpose = "owner_check" | "party_check" | "contract_unify" | "delivery";
+export type MailPurpose = "owner_check" | "party_check" | "contract_unify" | "delivery" | `custom:${string}`;
 
 export interface MailTemplate { subject: string; body: string }
+/**
+ * 設定で足した文面。送る画面の「文面」に並び、purpose は custom:<key>。
+ *   audience … 誰に送るか。party＝取引先（主担当へ）／owner＝社内の担当者（依頼者へ）
+ */
+export interface CustomMailTemplate extends MailTemplate {
+  key: string; label: string; hint: string; audience: "party" | "owner";
+}
 export interface MailTemplates {
   /** 本文の {署名} に入る。 */
   signature: string;
   /** 取引先へ送るメール（内容確認・送付）にいつも cc で入れる宛先。V1 の EMAIL_CC（経理など）。 */
   partyCc: string[];
   templates: Record<MailTemplateKind, MailTemplate>;
+  /** 足した文面（設定で増やせる）。 */
+  custom: CustomMailTemplate[];
+  /** 本文の {案内URL} に入る（契約書締結のご案内ページ）。 */
+  guideUrl: string;
+}
+
+/** 送る画面の「文面」の選択肢（決まったもの）。足した文面は mailPurposeOptions で後ろに並ぶ。 */
+export const MAIL_PURPOSES: Array<{ value: MailPurpose; label: string; hint: string }> = [
+  { value: "owner_check", label: "担当者への確認", hint: "依頼した事業部の担当者へ。相手に出す前に内容を確かめてもらう" },
+  { value: "party_check", label: "取引先への内容確認", hint: "取引先へ。問題なければ送付（CloudSign）に進む" },
+  { value: "contract_unify", label: "契約書の統一のご案内", hint: "取引先へ。統一書式の契約書案を添付し、問題なければ 2 週間以内の返信をもらう" },
+  { value: "delivery", label: "取引先へ送付（検収書・計算書など）", hint: "取引先へ書類を送る。検収書・利用許諾計算書は専用の文面、他は「その他の書類」" }
+];
+export const isCustomPurpose = (p: string): p is `custom:${string}` => p.startsWith("custom:");
+export const customKeyOf = (p: string): string => p.replace(/^custom:/, "");
+export const CUSTOM_KEY_RE = /^[a-z0-9_-]{1,40}$/;
+/** 送る画面に出す文面の一覧（決まったもの＋足したもの）。 */
+export function mailPurposeOptions(templates: MailTemplates): Array<{ value: MailPurpose; label: string; hint: string; audience: "party" | "owner" }> {
+  return [
+    ...MAIL_PURPOSES.map((p) => ({ ...p, audience: (p.value === "owner_check" ? "owner" : "party") as "party" | "owner" })),
+    ...templates.custom.map((c) => ({ value: `custom:${c.key}` as MailPurpose, label: c.label, hint: c.hint, audience: c.audience }))
+  ];
+}
+/** purpose から使う文面を引く。足した文面なら custom:<key> の文面、無ければ null。 */
+export function resolveMailTemplate(templates: MailTemplates, purpose: MailPurpose, templateKey: string | null | undefined)
+  : { kind: string; template: MailTemplate; audience: "party" | "owner" } | null {
+  if (isCustomPurpose(purpose)) {
+    const c = templates.custom.find((x) => x.key === customKeyOf(purpose));
+    return c ? { kind: `custom:${c.key}`, template: { subject: c.subject, body: c.body }, audience: c.audience } : null;
+  }
+  const kind = templateKindOf(purpose, templateKey);
+  return { kind, template: templates.templates[kind], audience: purpose === "owner_check" ? "owner" : "party" };
 }
 
 export const MAIL_TEMPLATE_KINDS: Array<{ kind: MailTemplateKind; label: string; hint: string }> = [
@@ -49,6 +88,10 @@ export const MAIL_TEMPLATE_FIELDS: Array<{ name: string; label: string }> = [
   { name: "金額", label: "検収金額・利用許諾料額など（書類に載っている合計。無ければ空）" },
   { name: "発行日", label: "文書を決定した日" },
   { name: "会社名", label: "自社情報の会社名" },
+  { name: "担当者名", label: "法務の担当者の名前（文書の担当者。無ければ空）" },
+  { name: "対象期間", label: "計算書の対象期間（計算書に載っている期間。無ければ空）" },
+  { name: "支払予定日", label: "その文書から立てた支払の期日（無ければ空）" },
+  { name: "案内URL", label: "下の「案内ページの URL」" },
   { name: "署名", label: "下の署名" }
 ];
 
@@ -143,7 +186,42 @@ export const DEFAULT_MAIL_TEMPLATES: MailTemplates = {
         "内容をご確認のうえ、ご不明な点がございましたら、お手数ですが\n本メールへのご返信にてご連絡ください。\n\n" +
         "今後ともどうぞよろしくお願い申し上げます。\n\n{署名}"
     }
-  }
+  },
+  custom: [
+    {
+      key: "royalty_contract_notice", label: "計算書の送付＋契約書のお取り交わしのお願い", audience: "party",
+      hint: "取引先へ。利用許諾料計算書を添付して送り、あわせて統一書式の契約書のお取り交わしをお願いする",
+      subject: "利用許諾料計算書のご送付と契約書のお取り交わしのお願い（{会社名}）",
+      body:
+        "{相手先} 様\n\n" +
+        "いつも大変お世話になっております。\n{会社名} 経営管理本部 法務部の{担当者名}でございます。\n\n" +
+        "平素より弊社商品にご尽力を賜り、心より御礼申し上げます。\n\n" +
+        "■ 利用許諾料計算書のご送付\n" +
+        "{対象期間}分の利用許諾料計算書を添付にてお送りいたします。\n" +
+        "お支払いは{支払予定日}を予定しております。内容についてご不明な点がございましたら、下記までお問い合わせください。\n\n" +
+        "■ 契約書のお取り交わしについてのお願い\n" +
+        "当社では現在、利用許諾料をお支払いしている皆様との契約書面について、内容の整理と書式の統一を進めております。\n" +
+        "契約書をお取り交わしいただいていない皆様、またすでに契約を締結いただいている皆様のいずれにも、統一書式による契約書のお取り交わしをお願いしております。\n\n" +
+        "これまでのお取引条件を書面化し、著作物の利用開始時に遡って適用する内容です。詳しい内容とお手続の方法は、下記のご案内をご覧ください。\n\n" +
+        "▶ 契約書締結のご案内\n{案内URL}\n\n" +
+        "契約書に関してご不明な点や、これまでのご認識と異なる点がございましたら、ご署名の前にご遠慮なくお知らせください。\n\n" +
+        "お手数をおかけいたしますが、何卒よろしくお願い申し上げます。\n\n{署名}"
+    },
+    {
+      key: "unsigned_reminder", label: "契約未締結の締結案内", audience: "party",
+      hint: "取引先へ。お送りした契約書がまだ締結されていないとき、締結をお願いする",
+      subject: "【{会社名}】{文書名}のご締結のお願い（{文書番号}）",
+      body:
+        "{相手先} 御中\n{宛名} 様\n\nいつもお世話になっております。\n{会社名}でございます。\n\n" +
+        "先にお送りしました{文書名}（{文書番号}）につきまして、ご締結がまだ確認できておりません。\n" +
+        "お手数ですが、内容をご確認のうえ、ご締結のお手続きをお願いいたします。\n\n" +
+        "▶ 契約書締結のご案内\n{案内URL}\n\n" +
+        "ご不明な点やご修正のご希望がございましたら、本メールへご返信ください。\n" +
+        "すでにお手続きいただいている場合は、行き違いをご容赦ください。\n\n" +
+        "今後ともどうぞよろしくお願い申し上げます。\n\n{署名}"
+    }
+  ],
+  guideUrl: ""
 };
 
 /** 送付のとき、文書の種類からどの文面を使うか。 */
@@ -155,7 +233,9 @@ export function deliveryKindOf(templateKey: string | null | undefined): MailTemp
 }
 
 export function templateKindOf(purpose: MailPurpose, templateKey: string | null | undefined): MailTemplateKind {
-  return purpose === "delivery" ? deliveryKindOf(templateKey) : purpose;
+  if (purpose === "delivery") return deliveryKindOf(templateKey);
+  // 足した文面（custom:<key>）はここに来ない（resolveMailTemplate が先に引く）。来たら「その他の書類」。
+  return isCustomPurpose(purpose) ? "general" : purpose;
 }
 
 /**
@@ -181,6 +261,31 @@ export function parseMailTemplates(input: unknown): { value: MailTemplates; erro
     }
     templates[kind] = { subject, body };
   }
+  // 足した文面。key は英数字・_・-（送る画面の purpose になる）。label は必須。
+  const custom: CustomMailTemplate[] = [];
+  const rawCustom = Array.isArray(src.custom) ? src.custom : src.custom === undefined ? d.custom : [];
+  const seen = new Set<string>();
+  for (const [i, raw] of (rawCustom as unknown[]).entries()) {
+    const c = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+    const label = String(c.label ?? "").trim();
+    const where = label || `足した文面 ${i + 1}`;
+    const key = String(c.key ?? "").trim();
+    if (!CUSTOM_KEY_RE.test(key)) errors.push(`${where}の鍵は英小文字・数字・_・- の 1〜40 字にしてください`);
+    else if (seen.has(key)) errors.push(`${where}の鍵「${key}」が重なっています`);
+    seen.add(key);
+    if (!label) errors.push(`足した文面 ${i + 1} の名前が空です`);
+    if (label.length > 60) errors.push(`${where}の名前は 60 字までです`);
+    const subject = String(c.subject ?? ""); const body = String(c.body ?? "");
+    if (!subject.trim()) errors.push(`${where}の件名が空です`);
+    if (!body.trim()) errors.push(`${where}の本文が空です`);
+    if (subject.length > 300) errors.push(`${where}の件名は 300 字までです`);
+    if (body.length > 10000) errors.push(`${where}の本文は 10000 字までです`);
+    for (const m of `${subject}\n${body}`.matchAll(/\{([^{}]+)\}/g)) {
+      if (!known.has(m[1])) errors.push(`${where}の {${m[1]}} は差し込めません（使えるのは ${[...known].join("・")}）`);
+    }
+    custom.push({ key, label, hint: String(c.hint ?? "").slice(0, 200), audience: c.audience === "owner" ? "owner" : "party", subject, body });
+  }
+  if (custom.length > 30) errors.push("足せる文面は 30 までです");
   const signature = String(src.signature ?? d.signature);
   if (signature.length > 2000) errors.push("署名は 2000 字までです");
   const rawCc = Array.isArray(src.partyCc) ? src.partyCc
@@ -188,7 +293,9 @@ export function parseMailTemplates(input: unknown): { value: MailTemplates; erro
   const partyCc = [...new Set(rawCc.map((v: unknown) => String(v ?? "").trim()).filter(Boolean))] as string[];
   for (const e of partyCc) if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) errors.push(`cc の「${e}」はメールアドレスの形ではありません`);
   if (partyCc.length > 10) errors.push("いつも入れる cc は 10 件までです");
-  return { value: { signature, partyCc, templates }, errors: [...new Set(errors)] };
+  const guideUrl = String(src.guideUrl ?? d.guideUrl).trim();
+  if (guideUrl.length > 500) errors.push("案内ページの URL は 500 字までです");
+  return { value: { signature, partyCc, templates, custom, guideUrl }, errors: [...new Set(errors)] };
 }
 
 /** 保存されている値を読む。壊れていても既定値で埋める（送る画面を止めない）。 */

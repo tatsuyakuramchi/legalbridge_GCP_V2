@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_MAIL_TEMPLATES, deliveryKindOf, parseMailTemplates, readMailTemplates, renderMail
-} from "./mail-templates.js";
+  DEFAULT_MAIL_TEMPLATES, deliveryKindOf, parseMailTemplates, readMailTemplates, renderMail, mailPurposeOptions, resolveMailTemplate } from "./mail-templates.js";
 
 test("既定の文面は差し込みの誤りが無い", () => {
   assert.deepEqual(parseMailTemplates(DEFAULT_MAIL_TEMPLATES).errors, []);
@@ -57,4 +56,24 @@ test("契約書の統一のご案内：相手先を差し込み、2 週間以内
   assert.match(r.body, /作家甲様とのお取引について/);
   assert.match(r.body, /本メールの受信から2週間以内に/);
   assert.match(r.body, /（署名）$/);
+});
+
+test("足した文面：鍵・名前・差込を確かめる。既定で「計算書の送付＋契約書のお取り交わし」と「契約未締結の締結案内」が入る", () => {
+  const d = readMailTemplates(undefined);
+  assert.deepEqual(d.custom.map((c) => c.key), ["royalty_contract_notice", "unsigned_reminder"]);
+  assert.match(d.custom[0]!.body, /\{対象期間\}分の利用許諾料計算書/);
+  const options = mailPurposeOptions(d);
+  assert.ok(options.some((o) => o.value === "custom:royalty_contract_notice" && o.audience === "party"));
+  const bad = parseMailTemplates({ custom: [{ key: "Bad Key", label: "", subject: "", body: "{無い項目}" }] });
+  assert.match(bad.errors.join("/"), /鍵は英小文字/);
+  assert.match(bad.errors.join("/"), /名前が空/);
+  assert.match(bad.errors.join("/"), /差し込めません/);
+  const ok = parseMailTemplates({ custom: [{ key: "x1", label: "案内", subject: "件名 {案内URL}", body: "本文 {担当者名}", audience: "owner" }], guideUrl: "https://a" });
+  assert.deepEqual(ok.errors, []);
+  assert.equal(ok.value.custom[0]!.audience, "owner");
+  assert.equal(ok.value.guideUrl, "https://a");
+  const r = resolveMailTemplate(ok.value, "custom:x1", null);
+  assert.equal(r?.kind, "custom:x1"); assert.equal(r?.audience, "owner");
+  assert.equal(resolveMailTemplate(ok.value, "custom:nope", null), null);
+  assert.equal(resolveMailTemplate(ok.value, "delivery", "royalty_statement_pub")?.kind, "royalty");
 });

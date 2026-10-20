@@ -84,7 +84,7 @@ import { NoticeFillService } from "./documents/notice-fill.js";
 import { StatementMergeService } from "./royalty/statement-merge.js";
 import { MissingContractsService } from "./documents/missing-contracts.js";
 import { UnsentBundlesService } from "./documents/unsent-bundles.js";
-import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner } from "./documents/unsent-send.js";
+import { PER_MAIL as UNSENT_PER_MAIL, UnsentSendPlanner, type UnsentMailPurpose } from "./documents/unsent-send.js";
 import { inContractRef, withInContract } from "./royalty/in-contract.js";
 import { citeContractRef, loadCounterpartyNos, refNoModeOf } from "./documents/cite-no.js";
 import { PUB_STATEMENT_KEY, StatementIssuer } from "./royalty/statement-issue.js";
@@ -140,7 +140,7 @@ import { BacklogService } from "./integrations/backlog-service.js";
 import type { IntegrationChannel } from "./integrations/gate.js";
 import { parseCompanyProfile } from "./ops/company-profile-schema.js";
 import { DELIVERY_ALERT_KEY, parseDeliveryAlertSettings } from "./ops/delivery-alert-settings.js";
-import { MAIL_TEMPLATES_KEY, parseMailTemplates } from "./ops/mail-templates.js";
+import { MAIL_TEMPLATES_KEY, parseMailTemplates, readMailTemplates, mailPurposeOptions, type MailPurpose } from "./ops/mail-templates.js";
 import { DeliveryAlertJob, tokyoToday } from "./jobs/delivery-alert.js";
 import { RingiService, type RingiTarget } from "./ringi/service.js";
 import { RptService } from "./rpt/service.js";
@@ -3750,7 +3750,8 @@ export function createRoutes(database: Transactable) {
   const unsentSend = new UnsentSendPlanner(database);
   const unsentKinds = z.array(z.enum(["master", "terms", "statement", "other"])).min(1);
   // 文面。contract_unify（契約書の統一のご案内）は内容確認なので、送っても「送付済み」にしない。
-  const unsentPurpose = z.enum(["delivery", "contract_unify"]).default("delivery");
+  const unsentPurpose = z.string().regex(/^(delivery|contract_unify|custom:[a-z0-9_-]{1,40})$/).default("delivery")
+    .transform((v) => v as UnsentMailPurpose);
   router.post("/documents/unsent-bundles/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const input = z.object({
       partyIds: z.array(z.coerce.number().int().positive()).min(1).max(500), kinds: unsentKinds, purpose: unsentPurpose
@@ -4971,15 +4972,22 @@ export function createRoutes(database: Transactable) {
    * purpose = owner_check（担当者への確認）／party_check（取引先への内容確認）／
    *           contract_unify（契約書の統一のご案内）／delivery（取引先への送付。検収書・利用許諾計算書は専用の文面）
    */
+  const mailPurposeSchema = z.string().regex(/^(owner_check|party_check|contract_unify|delivery|custom:[a-z0-9_-]{1,40})$/, "文面の指定が違います")
+    .transform((v) => v as MailPurpose);
+  // 送る画面の「文面」の選択肢（決まったもの＋設定で足したもの）。
+  router.get("/mail-purposes", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    const r = await database.query("SELECT value FROM settings WHERE key = $1", [MAIL_TEMPLATES_KEY]);
+    res.json({ purposes: mailPurposeOptions(readMailTemplates((r.rows[0] as any)?.value)) });
+  }));
   router.get("/documents/:id/mail-draft", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
-    const purpose = z.enum(["owner_check", "party_check", "contract_unify", "delivery"]).parse(String(req.query.purpose ?? ""));
+    const purpose = mailPurposeSchema.parse(String(req.query.purpose ?? ""));
     res.json(await new MailDraftService(database).draft(Number(req.params.id), purpose));
   }));
   // 何枚かの文書を 1 通で送る下書き（文面は設定の「メールの文面」から選ぶ）。相手先は揃っていること。
   router.post("/documents/mail-draft-many", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const input = z.object({
       documentIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
-      purpose: z.enum(["owner_check", "party_check", "contract_unify", "delivery"])
+      purpose: mailPurposeSchema
     }).parse(req.body ?? {});
     res.json(await new MailDraftService(database).draftMany(input.documentIds, input.purpose));
   }));

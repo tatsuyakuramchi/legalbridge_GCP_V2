@@ -3,7 +3,7 @@ import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { DomainError, translate } from "../core/errors.js";
 import {
   MAIL_TEMPLATES_KEY, readMailTemplates, renderMail, templateKindOf,
-  type MailPurpose, type MailTemplateKind
+  type MailPurpose, type MailTemplateKind, isCustomPurpose, resolveMailTemplate
 } from "../ops/mail-templates.js";
 
 /**
@@ -52,7 +52,8 @@ export interface DocumentRecipients {
 
 export interface MailDraft {
   purpose: MailPurpose;
-  kind: MailTemplateKind;
+  /** 使った文面。決まったものは種類、足したものは custom:<key>。 */
+  kind: string;
   to: Array<{ name: string | null; email: string }>;
   cc: Array<{ name: string | null; email: string }>;
   subject: string;
@@ -221,7 +222,11 @@ export class MailDraftService {
       let cc: Person[] = [];
       const ownerP = person(owner);
       const requesterP = person(requester);
-      if (purpose === "owner_check") {
+      // 足した文面は、その文面に書いてある相手（取引先／社内の担当者）。
+      const custom = isCustomPurpose(purpose) ? resolveMailTemplate(templates, purpose, null) : null;
+      if (isCustomPurpose(purpose) && !custom) throw new DomainError("NOT_FOUND", "その文面は設定にありません（運用 → 設定 → メールの文面）");
+      const toOwner = purpose === "owner_check" || custom?.audience === "owner";
+      if (toOwner) {
         to = requesterP ? [requesterP] : ownerP ? [ownerP] : [];
         cc = requesterP && ownerP && ownerP.email !== requesterP.email ? [ownerP] : [];
         if (!requesterP) {
@@ -240,15 +245,33 @@ export class MailDraftService {
       cc = cc.filter((c) => !to.some((t) => t.email.toLowerCase() === c.email.toLowerCase()));
 
       // 送付の文面は文書の種類で選ぶ。混ざっていれば「その他の書類」。
-      const kinds = [...new Set(all.map((d) => templateKindOf(purpose, str(d.template_key))))];
+      const kinds = custom ? [custom.kind]
+        : [...new Set(all.map((d) => resolveMailTemplate(templates, purpose, str(d.template_key))!.kind))];
       const kind = kinds.length === 1 ? kinds[0]! : "general";
+      const template = custom ? custom.template : templates.templates[kind as MailTemplateKind];
       // 紙と同じ番号（訂正版の枝番は出さず、改訂の印は選んだときだけ）。何枚かなら「・」でつなぐ。
       const numberOf = (d: Record<string, any>) => d.document_no
         ? printedDocumentNumber(String(d.document_no), showRevisionOf({ _showRevision: d.show_revision })) : "";
       const amounts = all.map((d) => amountOf((d.rendered_values ?? {}) as Record<string, unknown>));
       const latest = all.map((d) => dateStr(d.issued_at)).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
-      const rendered = renderMail(templates.templates[kind], templates.signature, {
+      // 計算書の対象期間と、その文書から立てた支払の期日（足した文面の {対象期間}{支払予定日}）。
+      const periodOf = (d: Record<string, any>) => {
+        const v = (d.rendered_values ?? {}) as Record<string, unknown>;
+        for (const k of ["対象期間", "periodLabel", "period", "計算期間"]) { const x = v[k]; if (x && String(x).trim()) return String(x).trim(); }
+        return "";
+      };
+      const periods = [...new Set(all.map(periodOf).filter(Boolean))];
+      const pay = (await this.database.query(
+        `SELECT min(p.due_on) AS due_on FROM payments p
+           JOIN payment_allocations a ON a.payment_id = p.id
+           JOIN condition_events e ON e.id = a.event_id
+          WHERE e.document_id = ANY($1::bigint[]) AND p.status <> 'canceled'`, [all.map((d) => Number(d.id))])).rows[0] as any;
+      const rendered = renderMail(template, templates.signature, {
         相手先: counterpartyName,
+        担当者名: ownerP?.name ?? "",
+        対象期間: periods.join("・"),
+        支払予定日: pay?.due_on ? japaneseDate(dateStr(pay.due_on)) : "",
+        案内URL: templates.guideUrl,
         宛名: to.length === 1 ? to[0].name ?? "" : "",
         文書番号: all.map(numberOf).filter(Boolean).join("・"),
         文書名: [...new Set(all.map((d) => str(d.template_label) ?? "書類"))].join("・"),
@@ -259,7 +282,7 @@ export class MailDraftService {
         発行日: latest ? japaneseDate(latest) : "",
         会社名: company
       });
-      if (kind !== "owner_check" && !company) warnings.push("自社情報の会社名が空です（運用 → 設定 → 自社情報）");
+      if (!toOwner && !company) warnings.push("自社情報の会社名が空です（運用 → 設定 → 自社情報）");
       return { purpose, kind, to, cc, subject: rendered.subject, body: rendered.body, warnings };
     } catch (error) { throw translate(error); }
   }
