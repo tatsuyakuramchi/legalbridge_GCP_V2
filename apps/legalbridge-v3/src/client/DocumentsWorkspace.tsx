@@ -1553,9 +1553,16 @@ export function DocumentsWorkspace(
                   </div>
                   {/* 実績の無い条件は明細に出ない。黙って消すと「選んだのに反映されない」に見える。 */}
                   {withoutEvents.length > 0 && (
-                    <div className="note warn">
-                      選んだ条件のうち {withoutEvents.length} 件は実績が無いので明細に出ません。
-                      条件の画面で実績を登録してから作り直してください。
+                    <div className="note warn row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span>
+                        選んだ条件のうち {withoutEvents.length} 件は実績が無いので明細に出ません
+                        {isStatement ? "（今回の期間に実績の無い媒体はこのまま外してよい）" : ""}。
+                      </span>
+                      <button type="button" className="btn btn-sm"
+                              onClick={() => setPicked((prev) => prev.filter((cid) => !withoutEvents.includes(cid)))}>
+                        実績の無い {withoutEvents.length} 件を外す
+                      </button>
+                      <span className="faint">載せたいなら、条件の画面で実績を登録してから作り直す</span>
                     </div>
                   )}
                   <div className="picker">
@@ -1572,8 +1579,11 @@ export function DocumentsWorkspace(
                             </div>
                           )}
                           {mine.length === 0 && (
-                            <div className="faint" style={{ padding: "4px 8px" }}>
-                              実績がありません（取り消した実績は出ません）。この条件は明細に出ません。
+                            <div className="faint row" style={{ padding: "4px 8px", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                              <span>実績がありません（取り消した実績は出ません）。この条件は明細に出ません。</span>
+                              <button type="button" className="linky"
+                                      onClick={() => setPicked((prev) => prev.filter((id) => id !== cid))}>この条件を外す</button>
+                              {onOpen && <button type="button" className="linky" onClick={() => onOpen("condition", cid)}>実績を登録しに行く</button>}
                             </div>
                           )}
                           {mine.map((e) => (
