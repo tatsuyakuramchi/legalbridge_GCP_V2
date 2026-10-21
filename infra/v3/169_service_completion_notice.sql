@@ -163,6 +163,9 @@ DECLARE
       <td class="num">{{#if sc_unit_text}}{{sc_unit_text}}{{else}}{{#if unit_price}}{{formatCurrency unit_price}}{{else}}—{{/if}}{{/if}}</td>
       <td class="num">{{formatCurrency (or inspected_amount_ex_tax amount_ex_tax)}}</td>
     </tr>
+    {{#if has_spec_body}}
+    <tr class="spec-row"><td colspan="6">{{spec_body}}</td></tr>
+    {{/if}}
     {{/each}}
     {{#each other_fees}}
     <tr>

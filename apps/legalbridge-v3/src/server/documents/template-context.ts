@@ -394,13 +394,17 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
       const spec = condition.spec ?? condition.notes ?? event.note ?? "";
+      const itemName = event.deliverable ?? condition.name ?? condition.work?.title ?? "";
+      const split = splitSpec(spec);
+      // 実績の成果物名が仕様の先頭行そのもの（実績入力の既定）なら、見出しを二重に出さない。
+      if (split.spec_head && split.spec_head === String(itemName).trim()) split.spec_head = "";
       const row: Row = {
         // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
-        item_name: event.deliverable ?? condition.name ?? condition.work?.title ?? "",
+        item_name: itemName,
         // 業務内容の本文。仕様の欄が無い条件は備考で代える。
         spec,
         description: spec,
-        ...splitSpec(spec),
+        ...split,
         ...rewardBreakdown(condition, event, spec),
         deliverable_ownership: ownershipOf(condition),
         // この行の元になった発注書。条件をまたぐ検収書で行ごとに違う。
