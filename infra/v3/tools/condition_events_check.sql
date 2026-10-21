@@ -29,3 +29,13 @@ SELECT e.id AS event_id, e.condition_id, e.schedule_id, e.event_type, e.occurred
   LEFT JOIN documents d ON d.id = e.document_id
  WHERE e.condition_id IN (SELECT c.id FROM conditions c JOIN parties p ON p.id = c.counterparty_id WHERE p.name ILIKE '%' || :party || '%')
  ORDER BY e.condition_id, e.occurred_on, e.id;
+
+\echo === documents on those conditions: status draft means not decided yet; _eventIds is the result ids the draft carries ===
+SELECT d.id AS document_id, d.document_no, d.status, t.template_key, d.title, d.issued_at::date AS issued_on, d.created_at::date AS created_on,
+       dc.condition_id, d.manual_inputs->'_eventIds' AS draft_event_ids
+  FROM documents d
+  JOIN document_conditions dc ON dc.document_id = d.id
+  LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+  LEFT JOIN document_templates t ON t.id = tv.template_id
+ WHERE dc.condition_id IN (SELECT c.id FROM conditions c JOIN parties p ON p.id = c.counterparty_id WHERE p.name ILIKE '%' || :party || '%')
+ ORDER BY d.id;
