@@ -1,5 +1,4 @@
 import { DISPATCH_ALLOWLIST_KEY, effectiveAllowlist, readDispatchAllowlist } from "../ops/dispatch-allowlist.js";
-import { GoogleAuth } from "google-auth-library";
 import { config } from "../config.js";
 import type { Transactable } from "../core/db.js";
 import {
@@ -9,6 +8,7 @@ import {
 import { DispatchService } from "./dispatch-service.js";
 import type { IntegrationChannel } from "./gate.js";
 import { delegatedToken, GMAIL_READ_SCOPE, GMAIL_SEND_SCOPE } from "./gmail-auth.js";
+import { GoogleLogin } from "./google-login.js";
 import { GmailMailSource, MemoryMailSource, type MailSource } from "./mail-source.js";
 
 /**
@@ -29,17 +29,20 @@ const gmailToken = (scope: string) => delegatedToken({
   sender: config.gmailSender, scope,
   keyFilePath: config.driveKeyFilePath || undefined,
   delegationSa: config.gmailDelegationSa || undefined,
-  // 予備系の PC（GCP の外）は、人のログイン（GOOGLE_APPLICATION_CREDENTIALS）で署名を頼む。
-  ...(process.env.GOOGLE_APPLICATION_CREDENTIALS ? { adcToken: adcAccessToken } : {})
+  // 予備系の PC（GCP の外）は、人のログイン（画面の「Google にログイン」か GOOGLE_APPLICATION_CREDENTIALS）で署名を頼む。
+  ...(usesHumanLogin() ? { adcToken: () => googleLogin.accessToken() } : {})
 });
 
-/** 人のログイン（ADC）のアクセストークン。signJwt を呼ぶためだけに使う。 */
-async function adcAccessToken(): Promise<string> {
-  const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-  const token = (await (await auth.getClient()).getAccessToken()).token;
-  if (!token) throw new Error("ログインの認証情報（GOOGLE_APPLICATION_CREDENTIALS）からトークンを取れませんでした");
-  return token;
-}
+/**
+ * アプリの中で済ませる Google のログイン（google-login.ts）。画面の経路と受信の経路で同じものを使う。
+ * メールの署名と Drive のなりすましの元になる。無ければ従来の ADC に戻る。
+ */
+export const googleLogin = new GoogleLogin({
+  clientId: config.googleLoginClientId, clientSecret: config.googleLoginClientSecret, path: config.googleLoginPath
+});
+
+/** 人のログインで Google を使う構成か（予備系）。本番（Cloud Run）はメタデータの SA を使うので false。 */
+export const usesHumanLogin = () => Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS) || googleLogin.configured;
 
 export function buildAdapters(): Partial<Record<IntegrationChannel, DispatchAdapter>> {
   if (useMemory()) {

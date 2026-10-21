@@ -41,6 +41,13 @@ export interface Config {
   driveKeyFilePath: string;
   driveEnvironmentTag: string;
   driveMatterParentFolderId: string;
+  /** アプリの中で済ませる Google のログイン（予備系）。OAuth クライアントが空なら画面にボタンを出さない。 */
+  googleLoginClientId: string;
+  googleLoginClientSecret: string;
+  /** ログインの保存先（authorized_user の JSON）。 */
+  googleLoginPath: string;
+  /** 戻り先の URL。空なら画面の URL から組む（<origin>/auth/google/callback）。 */
+  googleLoginRedirectUrl: string;
   /** 外部送信の段階開放。既定は off（設定し忘れで送らない）。 */
   integrationModes: Record<"slack" | "gmail" | "cloudsign" | "backlog", "off" | "dry_run" | "live">;
   /** 検証中に送ってよい宛先。空なら制限しない。 */
@@ -111,6 +118,10 @@ export const config: Config = {
   driveKeyFilePath: (process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "").trim(),
   driveEnvironmentTag: (process.env.DRIVE_ENVIRONMENT_TAG ?? "validation").trim(),
   driveMatterParentFolderId: (process.env.DRIVE_MATTER_PARENT_FOLDER_ID ?? "").trim(),
+  googleLoginClientId: (process.env.GOOGLE_LOGIN_CLIENT_ID ?? "").trim(),
+  googleLoginClientSecret: (process.env.GOOGLE_LOGIN_CLIENT_SECRET ?? "").trim(),
+  googleLoginPath: (process.env.GOOGLE_LOGIN_PATH ?? "").trim() || "./data/google-login.json",
+  googleLoginRedirectUrl: (process.env.GOOGLE_LOGIN_REDIRECT_URL ?? "").trim(),
   integrationModes: {
     slack: mode(process.env.SLACK_MODE),
     gmail: mode(process.env.GMAIL_MODE),

@@ -86,6 +86,12 @@ services:
       GMAIL_DELEGATION_SA: ${GMAIL_DELEGATION_SA:-}
       DISPATCH_ALLOWLIST: ${DISPATCH_ALLOWLIST:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GMAIL_ADC_PATH:-}
+      # 画面の「Google にログイン」（gcloud を使わずに人のログインを取る。docs/v3-local-gmail.md）。
+      # OAuth クライアント（ウェブ アプリケーション）の ID とシークレット。保存先は /data（書ける側）。
+      GOOGLE_LOGIN_CLIENT_ID: ${GOOGLE_LOGIN_CLIENT_ID:-}
+      GOOGLE_LOGIN_CLIENT_SECRET: ${GOOGLE_LOGIN_CLIENT_SECRET:-}
+      GOOGLE_LOGIN_PATH: /data/google-login.json
+      GOOGLE_LOGIN_REDIRECT_URL: ${GOOGLE_LOGIN_REDIRECT_URL:-}
       # CloudSign も .env で開けられる（docs/v3-local-gmail.md の「CloudSign で送る」）。既定は off。
       # 締結の知らせ（webhook）は本番に届くので、予備系では手で記録するか、トンネルで受ける。
       CLOUDSIGN_MODE: ${CLOUDSIGN_MODE:-off}

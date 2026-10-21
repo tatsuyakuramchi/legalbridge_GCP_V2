@@ -198,7 +198,7 @@ CloudSign は client_id だけでつながる（人のログイン `keys/adc.jso
 | Drive の保存で「権限がありません（403）」 | なりすました SA が本番のフォルダに入れない。`DRIVE_IMPERSONATE_SA` が本番の Drive の SA と同じか |
 | `unable to impersonate`（403） | ログインした人に、`DRIVE_IMPERSONATE_SA` の Token Creator が付いていない |
 | `EACCES: permission denied, open '/keys/adc.json'` | app が認証情報を読めない（古い login で作ったファイル）。`docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json` |
-| `invalid_grant`・`reauth related error (invalid_rapt)` | 組織の再認証ポリシーでログインが切れた。ログインし直して写す（下の「ログインし直す」）。app の上げ直しは要らない |
+| `invalid_grant`・`reauth related error (invalid_rapt)`・Google のログインが切れています | 組織の再認証ポリシーでログインが切れた。運用 › 外部連携 の「Google にログインし直す」（下の「Google にログイン」）。gcloud なら下の「ログインし直す」。app の上げ直しは要らない |
 | CloudSign のトークンを取得できませんでした・CloudSign（401・403） | `CLOUDSIGN_CLIENT_ID` が違う（本番の `cloudsign-client-id` と同じか） |
 | CloudSign には送信する書類が必要です | 文書の PDF ができていない。先に決定して PDF を作る |
 | JWT に署名できませんでした（403…） | 2 の権限がログインした人に付いていない（付けてから数分かかることがある） |
@@ -206,7 +206,35 @@ CloudSign は client_id だけでつながる（人のログイン `keys/adc.jso
 
 アプリのログは `docker compose logs -f app`。
 
-### ログインし直す
+### Google にログイン（画面から。おすすめ）
+
+gcloud と PowerShell を使わずに、運用 › 外部連携 の「Google にログイン」で人のログインを取れる。
+一度設定しておけば、切れたときもボタン 1 つで取り直せる（`src/server/integrations/google-login.ts`）。
+
+準備（GCP コンソール、一度だけ）:
+
+1. API とサービス › 認証情報 › 認証情報を作成 › OAuth クライアント ID。種類は **ウェブ アプリケーション**。
+2. 承認済みのリダイレクト URI に `http://localhost:8080/auth/google/callback` を登録する。
+   社外から（Cloudflare Tunnel で）使うなら `https://<その URL>/auth/google/callback` も登録する。
+3. できたクライアント ID とシークレットを `infra\local\.env` に入れて `docker compose up -d app`:
+   ```
+   GOOGLE_LOGIN_CLIENT_ID=<クライアント ID>
+   GOOGLE_LOGIN_CLIENT_SECRET=<シークレット>
+   ```
+   （OAuth 同意画面が「テスト中」なら、ログインする人をテストユーザーに足す。）
+
+使い方:
+
+- 運用 › 外部連携 の「Google のログイン（予備系）」で「Google にログイン」。ブラウザで許可すると画面に戻る。
+- 「確かめる」でトークンを取り直して生きているかを見る。切れていれば「ログインし直す」。
+- ログインは `data/google-login.json`（authorized_user の JSON。gcloud の ADC と同じ形）に置かれ、
+  メールの署名と Drive のなりすましの両方で使われる。無ければ従来の `keys/adc.json` に戻る。
+- 送るときに「Google のログインが切れています」と出たら、同じ場所で「ログインし直す」。
+
+組織の再認証ポリシーで切れる間隔は変わらない（切れたときの手間が減るだけ）。
+間隔そのものは管理コンソール › セキュリティ › Google Cloud セッション管理で、予備系を使う人の組織部門だけ長くできる。
+
+### ログインし直す（gcloud を使うとき）
 
 組織の再認証ポリシーで、人のログインは一定時間（組織の設定。たとえば 1 日）で切れる。
 切れると `invalid_rapt` で送れなくなるので、予備系で送る日は最初にログインし直しておく（同期も同じ認証情報を使う）。

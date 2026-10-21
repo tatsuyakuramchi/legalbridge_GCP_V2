@@ -9,6 +9,8 @@ import { checkDatabase, getPool } from "./db/pool.js";
 import type { Transactable } from "./core/db.js";
 import { buildUploads, createRoutes, createWebhookRouter, errorHandler } from "./routes.js";
 import { createUploadRouter } from "./intake/upload-page.js";
+import { createGoogleLoginRouter } from "./integrations/google-login-routes.js";
+import { googleLogin } from "./integrations/factory.js";
 
 /**
  * 予備系で「どの環境で、いつ時点のデータを見ているか」を画面に出すための情報。
@@ -71,6 +73,9 @@ export function createApp(database: Transactable | null = getPool() as Transacta
   });
 
   app.use(authenticate);
+
+  // 予備系の「Google にログイン」（認証の内側。state で守る。google-login.ts）。
+  app.use("/auth/google", createGoogleLoginRouter(googleLogin));
 
   app.get("/api/v3/me", (_request, response) => {
     response.json({ user: response.locals.currentUser, readOnly: config.readOnly, site: siteInfo() });

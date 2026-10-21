@@ -61,16 +61,16 @@ export interface GoogleDriveStorageOptions {
    * ログインした人にその SA の Token Creator が要る（メールの署名と同じ権限。docs/v3-local-gmail.md）。
    */
   impersonate?: string;
-  /** 試験用：なりすましの元になる認証。省くと ADC。 */
-  impersonateSource?: AuthClient;
+  /** なりすましの元になる認証。省くと ADC。関数なら呼ぶたびに聞く（ログインし直しで差し替わる）。 */
+  impersonateSource?: AuthClient | (() => Promise<AuthClient>);
 }
 
 export class GoogleDriveStorage implements DriveStorage {
   private readonly auth: GoogleAuth;
   private readonly environmentTag: string;
   private readonly impersonate: string;
-  private readonly impersonateSource: AuthClient | null;
-  private impersonated: Impersonated | null = null;
+  private readonly impersonateSource: AuthClient | (() => Promise<AuthClient>) | null;
+  private impersonated: { source: AuthClient; client: Impersonated } | null = null;
 
   constructor(
     private readonly folderId: string,
@@ -251,14 +251,16 @@ export class GoogleDriveStorage implements DriveStorage {
 
   /** 指定の SA としての認証。トークンの取り直しは Impersonated が受け持つ。 */
   private async impersonatedClient(): Promise<Impersonated> {
-    if (!this.impersonated) {
-      const source = this.impersonateSource ?? await this.auth.getClient() as AuthClient;
-      this.impersonated = new Impersonated({
+    const source = typeof this.impersonateSource === "function" ? await this.impersonateSource()
+      : this.impersonateSource ?? await this.auth.getClient() as AuthClient;
+    // 元の認証が差し替わったら（ログインし直し）なりすましも作り直す。
+    if (!this.impersonated || this.impersonated.source !== source) {
+      this.impersonated = { source, client: new Impersonated({
         sourceClient: source, targetPrincipal: this.impersonate,
         targetScopes: [DRIVE_SCOPE], lifetime: 3600, delegates: []
-      });
+      }) };
     }
-    return this.impersonated;
+    return this.impersonated.client;
   }
 }
 
