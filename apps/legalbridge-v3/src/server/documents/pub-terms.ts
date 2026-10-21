@@ -302,6 +302,30 @@ export function sharesText(condition: Data | null | undefined): string {
   return `${text(condition?.distribution) === "representative" ? "代表が分配：" : ""}${body}`;
 }
 
+/**
+ * 同じ作品の紙と電子で、取り分の有無や中身が食い違う作品を名指しする（受取人宛ての料率が揃わない原因）。
+ */
+export function sharesMismatch(conditions: Data[]): string[] {
+  const groups = new Map<string, Data[]>();
+  for (const c of conditions) {
+    if (rowBlockerOf(c) || isTranslationCondition(c)) continue;
+    const key = titleKeyOf(c);
+    groups.set(key, [...(groups.get(key) ?? []), c]);
+  }
+  const out: string[] = [];
+  for (const group of groups.values()) {
+    const print = group.find((c) => mediaOfCondition(c) === "print");
+    const digital = group.find((c) => mediaOfCondition(c) === "digital");
+    if (!print || !digital) continue;
+    const title = text(print.work?.title) || text(print.name);
+    const np = list(print.shares).length, nd = list(digital.shares).length;
+    if (np && !nd) out.push(`作品「${title}」は紙（${text(print.conditionNo) || `#${print.id}`}）に取り分があるのに電子（${text(digital.conditionNo) || `#${digital.id}`}）にはありません。電子の料率は全体の率のまま出ます。電子の条件明細にも同じ取り分を入れてください`);
+    else if (!np && nd) out.push(`作品「${title}」は電子（${text(digital.conditionNo) || `#${digital.id}`}）に取り分があるのに紙（${text(print.conditionNo) || `#${print.id}`}）にはありません。紙の料率は全体の率のまま出ます。紙の条件明細にも同じ取り分を入れてください`);
+    else if (np && nd && !sameSharesOf(print, digital)) out.push(`作品「${title}」は紙と電子で取り分が違います（紙：${sharesText(print)}／電子：${sharesText(digital)}）。意図したものでなければ揃えてください`);
+  }
+  return out;
+}
+
 /** 紙・電子で同じ按分か。 */
 function sameSharesOf(a: Data | undefined, b: Data | undefined): boolean {
   const key = (c: Data | undefined) => list(c?.shares).map((s) => `${number(s.partyId)}:${number(s.sharePpm)}`).sort().join("|");
@@ -448,6 +472,10 @@ export function pubTermsWarnings(context: Data, templateKey: string = PUB_TERMS_
   if (parties.size > 1) {
     out.push({ kind: "other", message: "相手先の違う条件明細が混ざっています。条件書は許諾者1者につき1枚です" });
   }
+  // 取り分（共著）は条件ごとに持つので、同じ作品の紙と電子で片方にしか無いことがある。
+  // 受取人宛てだと、取り分の無い側は「2%（全体 10%）」にならず全体の率のまま出る（受取人がその条件の相手先なら載る）。
+  // 黙って出さず名指しする。直すのは条件明細の取り分（紙・電子の両方に同じ取り分を入れる）。
+  for (const w of sharesMismatch(conditions)) out.push({ kind: "other", message: w });
   // どちらのひな形で出すか。作品が多いのに一覧を前に置くと、条文が何ページも
   // 後ろに行く。逆に数点で別紙にすると、1点のために別紙が1枚増える。
   const count = pubTitleSeeds(context).length;
