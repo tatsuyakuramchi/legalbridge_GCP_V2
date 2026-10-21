@@ -6,6 +6,7 @@ import type { DocumentRepository, DocumentSummary } from "../documents/repositor
 import type { AgreementService, AgreementRow } from "../agreements/service.js";
 import type { IntakeRepository } from "../intake/repository.js";
 import type { ConditionRepository } from "../conditions/repository.js";
+import { isQuasiMandate } from "../conditions/time-settlement.js";
 import { conditionMatches, inferPattern, MAIN_DOCS, MASTER_DOC, SERVICE_COMPLETION_DOC, SETTLEMENT_DOC, SET_DOMAIN, type WorkbenchPattern } from "./catalog.js";
 
 /**
@@ -318,9 +319,11 @@ export class WorkbenchPlanService {
       // 準委任の時間精算（A-073）の条件が載っていれば、決済文書は検収書ではなく役務提供完了通知書。
       // どちらも選べるようにし、既定を条件から決める。回から来たときはその条件だけを見る。
       const ids = ctx.round ? [ctx.round.conditionId] : conditionIds;
+      // 準委任（契約形式）も同じ（仕事の完成が無いので検収ではなく役務の完了を通知する）。
       const timeSettled = ids.length
-        ? Boolean((await this.database.query(
-            "SELECT bool_or(time_settlement) AS t FROM conditions WHERE id = ANY($1::bigint[])", [ids])).rows[0]?.t)
+        ? ((await this.database.query(
+            "SELECT time_settlement, contract_form FROM conditions WHERE id = ANY($1::bigint[])", [ids])).rows as Array<{ time_settlement?: boolean; contract_form?: string | null }>)
+            .some((r) => r.time_settlement === true || isQuasiMandate(r.contract_form))
         : false;
       settlementOptions = timeSettled ? [SERVICE_COMPLETION_DOC, settlement] : [settlement, SERVICE_COMPLETION_DOC];
       if (timeSettled) settlement = SERVICE_COMPLETION_DOC;

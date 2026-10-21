@@ -331,6 +331,7 @@ export function DocumentsWorkspace(
   const [stored, setStored] = useState<string | null>(null);
   // 呼び出した条件の実績。検収書はここの日付と金額を候補に出す。
   const [events, setEvents] = useState<EventRow[]>([]);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [pickedEvents, setPickedEvents] = useState<number[]>(start?.eventIds ?? []);
   const [condSearch, setCondSearch] = useState("");
   // 候補から選んだ欄。手で打った欄だけを「前回の値」として覚える。
@@ -459,8 +460,9 @@ export function DocumentsWorkspace(
    * 条件の画面から実績を指定して来たときは、その選択を消さない。
    */
   useEffect(() => {
-    if (!picked.length) { setEvents([]); setPickedEvents([]); return; }
+    if (!picked.length) { setEvents([]); setPickedEvents([]); setEventsError(null); return; }
     let live = true;
+    const failed: string[] = [];
     Promise.all(picked.map((id) =>
       api.get<{ events: Array<Omit<EventRow, "conditionId" | "conditionNo" | "conditionName">> }>(`/conditions/${id}/events`)
         .then((r) => {
@@ -469,10 +471,15 @@ export function DocumentsWorkspace(
             ...e, conditionId: id, conditionNo: c?.conditionNo ?? null, conditionName: c?.name ?? `#${id}`
           }));
         })
-        .catch(() => [] as EventRow[])))
+        .catch((e: unknown) => {
+          // 読めなかったのを「実績が無い」に見せない。
+          failed.push(`${conditions.find((x) => x.id === id)?.conditionNo ?? `#${id}`}：${e instanceof ApiError ? e.message : String(e)}`);
+          return [] as EventRow[];
+        })))
       .then((lists) => {
         if (!live) return;
         const all = lists.flat();
+        setEventsError(failed.length ? `実績を読めませんでした（${failed.join("／")}）` : null);
         setEvents(all);
         setPickedEvents((prev) => prev.filter((id) => all.some((e) => e.id === id)));
       });
@@ -1551,8 +1558,9 @@ export function DocumentsWorkspace(
                       {pickedEvents.length ? `　${pickedEvents.length} 件を選択中` : ""}
                     </span>
                   </div>
+                  {eventsError && <div className="alert">{eventsError}</div>}
                   {/* 実績の無い条件は明細に出ない。黙って消すと「選んだのに反映されない」に見える。 */}
-                  {withoutEvents.length > 0 && (
+                  {withoutEvents.length > 0 && !eventsError && (
                     <div className="note warn row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span>
                         選んだ条件のうち {withoutEvents.length} 件は実績が無いので明細に出ません

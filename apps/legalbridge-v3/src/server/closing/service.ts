@@ -46,6 +46,8 @@ export interface CandidateRow {
   documentLabel: string;
   /** 準委任の時間精算（A-073）。決済文書が役務提供完了通知書になる。 */
   timeSettlement: boolean;
+  /** 契約形式（準委任なら役務提供完了通知書）。 */
+  contractForm?: string | null;
   party: { id: number; name: string } | null;
   work: { id: number; name: string } | null;
   matter: { id: number; title: string } | null;
@@ -69,6 +71,8 @@ export interface PeriodRow {
   currency: string;
   /** 準委任の時間精算（A-073）。決済文書が役務提供完了通知書になる。 */
   timeSettlement: boolean;
+  /** 契約形式。準委任なら決済文書は役務提供完了通知書。 */
+  contractForm?: string | null;
   party: { id: number; name: string } | null;
   matter: { id: number; title: string } | null;
   seq: number | null;
@@ -164,7 +168,7 @@ const PRINTED_DUE_SQL = `CASE WHEN jsonb_typeof(d.rendered_values) = 'object' TH
 /** 条件の輪郭。候補一覧でも、回の一覧の頭でも同じものを出す。 */
 const CONDITION_HEAD = `
   SELECT c.id, c.condition_no, c.name, c.kind, c.pricing_model, c.direction, c.currency,
-         c.rate_ppm, c.term_start, c.term_end, c.time_settlement,
+         c.rate_ppm, c.term_start, c.term_end, c.time_settlement, c.contract_form,
          p.id AS party_id, p.name AS party_name,
          w.id AS work_id, w.title AS work_title,
          m.id AS matter_id, m.title AS matter_title,
@@ -184,7 +188,7 @@ const PERIOD_SELECT = `
   SELECT s.id AS schedule_id, s.seq, s.label, s.planned_amount,
          s.due_on, s.pay_on, s.service_from, s.service_to,
          c.id AS condition_id, c.condition_no, c.name AS condition_name,
-         c.kind, c.pricing_model, c.currency, c.payment_terms, c.time_settlement,
+         c.kind, c.pricing_model, c.currency, c.payment_terms, c.time_settlement, c.contract_form,
          p.id AS party_id, p.name AS party_name,
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
@@ -230,7 +234,7 @@ const UNPLANNED_SELECT = `
          e.occurred_on AS due_on, NULL::date AS pay_on,
          NULL::date AS service_from, NULL::date AS service_to,
          c.id AS condition_id, c.condition_no, c.name AS condition_name,
-         c.kind, c.pricing_model, c.currency, c.payment_terms, c.time_settlement,
+         c.kind, c.pricing_model, c.currency, c.payment_terms, c.time_settlement, c.contract_form,
          p.id AS party_id, p.name AS party_name,
          m.id AS matter_id, m.title AS matter_title,
          e.id AS event_id, e.occurred_on AS event_on, e.amount AS event_amount,
@@ -511,7 +515,7 @@ function headRow(row: any): CandidateRow {
     needsReport: needsReport(row.pricing_model),
     ratePpm: int(row.rate_ppm),
     timeSettlement: row.time_settlement === true,
-    documentLabel: documentFor({ kind, timeSettlement: row.time_settlement === true }).label,
+    documentLabel: documentFor({ kind, timeSettlement: row.time_settlement === true, contractForm: str(row.contract_form) }).label,
     party: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
     work: row.work_id ? { id: Number(row.work_id), name: String(row.work_title ?? "") } : null,
     matter: row.matter_id ? { id: Number(row.matter_id), title: String(row.matter_title ?? "") } : null,
@@ -550,6 +554,7 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     pricingModel: String(row.pricing_model ?? "none"),
     currency: String(row.currency ?? "JPY"),
     timeSettlement: row.time_settlement === true,
+    contractForm: str(row.contract_form),
     party: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
     matter: row.matter_id ? { id: Number(row.matter_id), title: String(row.matter_title ?? "") } : null,
     seq: int(row.seq),
@@ -564,7 +569,7 @@ export function periodRow(row: any, today: string, unplanned: boolean): PeriodRo
     documentId,
     documentNo: str(row.document_no),
     documentStatus: str(row.document_status),
-    documentLabel: documentFor({ kind, timeSettlement: row.time_settlement === true }).label,
+    documentLabel: documentFor({ kind, timeSettlement: row.time_settlement === true, contractForm: str(row.contract_form) }).label,
     documentSentAt: row.document_sent_at ? new Date(String(row.document_sent_at)).toISOString() : null,
     paymentId,
     paymentNo: str(row.payment_no),

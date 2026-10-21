@@ -27,6 +27,8 @@ export interface PdCondition {
   id: number; conditionNo: string | null; name: string;
   kind: string; pricingModel: string | null; usageType: string | null; direction: "in" | "out";
   timeSettlement: boolean; statementTiming: string | null; settlementMode: string | null;
+  /** 契約形式（準委任なら決済文書は役務提供完了通知書）。 */
+  contractForm?: string | null;
   reportDueDays: number | null;
   party: { id: number; name: string } | null;
   work: { id: number; title: string } | null;
@@ -216,7 +218,7 @@ function buildRow(c: PdCondition, x: {
   const timing = timingOf(c.statementTiming, c.usageType, c.settlementMode);
   const trigger: Trigger = x.plan || timing === "event" || (x.triggerKind && ACTIVE_TRIGGERS.has(x.triggerKind))
     || (x.events.length > 0 && x.events.every((e) => ACTIVE_EVENTS.has(e.eventType))) ? "active" : "passive";
-  const settlement = settlementDocFor({ kind: c.kind, timeSettlement: c.timeSettlement });
+  const settlement = settlementDocFor({ kind: c.kind, timeSettlement: c.timeSettlement, contractForm: c.contractForm ?? null });
 
   // 起点
   let source: PayDocRow["source"];

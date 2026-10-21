@@ -101,7 +101,7 @@ const COND_COLUMNS = `
          c.kind, c.pricing_model, c.currency, c.payment_terms, c.direction, c.usage_type,
          c.term_start, c.term_end,
          c.settlement_mode, c.settlement_count, c.settlement_cycle, c.settlement_grace_days,
-         c.time_settlement,
+         c.time_settlement, c.contract_form,
          p.id AS party_id, p.name AS party_name,
          w.id AS work_id, w.title AS work_title,
          m.id AS matter_id, m.title AS matter_title`;

@@ -40,7 +40,7 @@ export interface PayDocsList {
 
 const CONDITION_SQL = `
   SELECT c.id, c.status, c.condition_no, c.name, c.kind, c.pricing_model, c.usage_type, c.direction,
-         c.time_settlement, c.statement_timing, c.settlement_mode, c.report_due_days,
+         c.time_settlement, c.contract_form, c.statement_timing, c.settlement_mode, c.report_due_days,
          p.id AS party_id, p.name AS party_name, w.id AS work_id, w.title AS work_title
     FROM conditions c
     LEFT JOIN parties p ON p.id = c.counterparty_id
@@ -76,7 +76,7 @@ export class PayDocsService {
     const conditions: PdCondition[] = (cr.rows as any[]).map((c) => ({
       id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""), kind: String(c.kind),
       pricingModel: str(c.pricing_model), usageType: str(c.usage_type), direction: c.direction === "out" ? "out" : "in",
-      timeSettlement: c.time_settlement === true, statementTiming: str(c.statement_timing),
+      timeSettlement: c.time_settlement === true, contractForm: str(c.contract_form), statementTiming: str(c.statement_timing),
       settlementMode: str(c.settlement_mode), reportDueDays: int(c.report_due_days),
       party: c.party_id ? { id: Number(c.party_id), name: String(c.party_name ?? "") } : null,
       work: c.work_id ? { id: Number(c.work_id), title: String(c.work_title ?? "") } : null
