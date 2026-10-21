@@ -37,12 +37,14 @@ export class GoogleMatterDriveFolderService implements MatterDriveFolderService 
   readonly configured = true;
   private readonly auth: GoogleAuth;
   private readonly impersonate: string;
-  private impersonated: Impersonated | null = null;
+  private impersonated: { source: AuthClient; client: Impersonated } | null = null;
+  private readonly impersonateSource: (() => Promise<AuthClient>) | null;
   /** impersonate … このサービスアカウントとして使う（予備系の PC。drive-storage.ts と同じ）。 */
-  constructor(options: { keyFilePath?: string; impersonate?: string } = {}) {
+  constructor(options: { keyFilePath?: string; impersonate?: string; impersonateSource?: () => Promise<AuthClient> } = {}) {
     const keyFile = options.keyFilePath?.trim();
     const keyFileUsable = Boolean(keyFile && fs.existsSync(keyFile));
     this.impersonate = options.impersonate?.trim() ?? "";
+    this.impersonateSource = options.impersonateSource ?? null;
     this.auth = new GoogleAuth({
       ...(keyFileUsable ? { keyFile } : {}),
       scopes: [this.impersonate ? "https://www.googleapis.com/auth/cloud-platform" : DRIVE_SCOPE]
@@ -50,13 +52,16 @@ export class GoogleMatterDriveFolderService implements MatterDriveFolderService 
   }
 
   private async token(): Promise<string> {
-    if (this.impersonate && !this.impersonated) {
-      this.impersonated = new Impersonated({
-        sourceClient: await this.auth.getClient() as AuthClient, targetPrincipal: this.impersonate,
-        targetScopes: [DRIVE_SCOPE], lifetime: 3600, delegates: []
-      });
+    if (this.impersonate) {
+      const source = this.impersonateSource ? await this.impersonateSource() : await this.auth.getClient() as AuthClient;
+      if (!this.impersonated || this.impersonated.source !== source) {
+        this.impersonated = { source, client: new Impersonated({
+          sourceClient: source, targetPrincipal: this.impersonate,
+          targetScopes: [DRIVE_SCOPE], lifetime: 3600, delegates: []
+        }) };
+      }
     }
-    const client = this.impersonated ?? await this.auth.getClient();
+    const client = this.impersonated?.client ?? await this.auth.getClient();
     const { token } = await client.getAccessToken();
     if (!token) throw new Error("Google Drive access token could not be obtained");
     return token;

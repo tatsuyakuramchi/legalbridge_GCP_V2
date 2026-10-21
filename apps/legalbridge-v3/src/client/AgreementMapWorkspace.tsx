@@ -9,6 +9,8 @@ import { CsvImport } from "./CsvImport.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { TidyFlow } from "./TidyFlow.js";
 import { DocMatter } from "./DocMatter.js";
+import { PartySend } from "./PartySend.js";
+import { MasterMerge } from "./MasterMerge.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
@@ -165,7 +167,7 @@ export function AgreementMapWorkspace(
         <div className="stack">
           {!map && <div className="note">左から取引先を選んでください。</div>}
           {map && (
-            <PartyMapView map={map} onOpen={onOpen} onRegisterAgreement={onRegisterAgreement}
+            <PartyMapView map={map} onOpen={onOpen} onRegisterAgreement={onRegisterAgreement} sendVersion={version}
               onChanged={(msg) => { setNotice(msg); setError(null); bump(); }}
               onError={setError} />
           )}
@@ -176,7 +178,8 @@ export function AgreementMapWorkspace(
 }
 
 function PartyMapView(
-  { map, onOpen, onRegisterAgreement, onChanged, onError }: {
+  { map, onOpen, onRegisterAgreement, onChanged, onError, sendVersion = 0 }: {
+    sendVersion?: number;
     map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
     onChanged: (msg: string) => void; onError: (msg: string) => void;
@@ -296,6 +299,9 @@ function PartyMapView(
           </div>
         </div>
       </div>
+
+      {/* 契約の構造を見ながら送る。決定済みの文書を契約ごとに並べ、選んで 1 通で送る。 */}
+      <PartySend map={map} version={sendVersion} onOpen={onOpen} />
 
       {orders.some((o) => o.masterId === null) && (
         <div className="panel">
@@ -621,6 +627,9 @@ function AgreementNode(
   }
   const canDemote = a.kind === "standalone";
   const canPromote = a.kind === "supplement" && Boolean(a.parentId);
+  /** 二重に作った基本契約を別の基本契約に寄せる欄。 */
+  const [merging, setMerging] = useState(false);
+  const canMerge = a.kind === "master" && a.status !== "terminated" && roots.some((r) => r.kind === "master" && r.id !== a.id && r.status !== "terminated");
   return (
     <div className={`amap-node${issues.length ? " bad" : ""}`}>
       <div className="amap-line">
@@ -668,11 +677,21 @@ function AgreementNode(
             {levelOpen ? "閉じる" : canDemote ? "個別契約にする" : "単体契約に戻す"}
           </button>
         )}
+        {canMerge && (
+          <button className="btn btn-sm" disabled={readOnly} onClick={() => setMerging((v) => !v)}
+                  title="二重に作った基本契約を 1 本に寄せる（個別契約・条件・文書・案件を付け替え、この契約は解除扱い）">
+            {merging ? "閉じる" : "別の基本契約に寄せる"}
+          </button>
+        )}
         <button className="btn btn-sm" disabled={readOnly} onClick={onEdit}>
           {editing ? "閉じる" : "編集"}
         </button>
       </div>
       {issues.map((i, n) => <div key={n} className="amap-issue">⚠ {i.message}</div>)}
+      {merging && (
+        <MasterMerge a={a} roots={roots} onOpen={onOpen} onError={onError} onCancel={() => setMerging(false)}
+                     onDone={(msg) => { setMerging(false); onSaved(msg); }} />
+      )}
       {editing && <RemapForm a={a} roots={roots} onSaved={onSaved} onError={onError} />}
       {levelOpen && canDemote && (
         <DemoteForm a={a} roots={roots} onSaved={onSaved} onError={onError} />

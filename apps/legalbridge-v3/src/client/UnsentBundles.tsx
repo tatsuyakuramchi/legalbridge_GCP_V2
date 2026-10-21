@@ -1,3 +1,4 @@
+import { DocPeek } from "./DocPeek.js";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { SendMany } from "./SendMany.js";
@@ -372,6 +373,7 @@ export function UnsentBundles({ onOpenDocument }: { onOpenDocument?: (id: number
                         {onOpenDocument
                           ? <a href="#" onClick={(e) => { e.preventDefault(); onOpenDocument(d.id); }}>{d.documentNo ?? `#${d.id}`}</a>
                           : (d.documentNo ?? `#${d.id}`)}
+                        　<DocPeek id={d.id} />
                         {d.issuedOn && <span className="faint">　{d.issuedOn}</span>}
                         {d.reviewedAt && <span className="tag" title={`社内確認で送付 ${d.reviewedAt.slice(0, 16).replace("T", " ")}`}>　社内確認済</span>}
                         {d.partyCheckedAt && <span className="tag" title={`取引先へ内容確認で送付 ${d.partyCheckedAt.slice(0, 16).replace("T", " ")}。返信をもらったら CloudSign へ`}>　内容確認中</span>}

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, mediaSharesText, payeeRateText, payeeShareText, percentText,
+  PUB_TERMS_VARIABLES, PUB_TITLES_FIELD, isPubTermsTemplate, mediaOfCondition, mediaSharesText, payeeRateText, payeeShareText, percentText, sharesMismatch,
   pubTermsPatch, pubTermsSuggestions, pubTermsWarnings, pubTitleSeeds, renewUnitOf, rowBlockerOf, sharesText
 } from "./pub-terms.js";
 import { pubMediaOf, pubMediaOfScopes } from "../core/pub-media.js";
@@ -374,4 +374,15 @@ test("支払条件が読めない・食い違うときは警告し、読めな�
   const messages = pubTermsWarnings(ctx).map((w) => w.message).join("\n");
   assert.match(messages, /支払の表の語を読めません：CL-2026-00452（年2回払い）/);
   assert.match(messages, /紙の支払時期が条件明細ごとに違います/);
+});
+
+test("紙と電子で取り分が片方にしか無い作品は名指しで知らせる（受取人宛ての料率が揃わない原因）", () => {
+  const ctx = sharedContext();
+  const conds = ctx.conditions.map((c: Record<string, any>) =>
+    c.workId === 10 && mediaOfCondition(c) === "print" ? { ...c, shares: [] } : c);
+  const w = sharesMismatch(conds);
+  assert.equal(w.length, 1);
+  assert.match(w[0]!, /電子.*取り分があるのに紙.*ありません/);
+  assert.equal(sharesMismatch(sharedContext().conditions).length, 0, "両方に同じ取り分なら何も言わない");
+  assert.ok(pubTermsWarnings({ ...ctx, conditions: conds }).some((x) => /取り分があるのに/.test(x.message)));
 });

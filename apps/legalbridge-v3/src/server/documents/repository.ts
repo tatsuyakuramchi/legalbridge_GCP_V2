@@ -25,6 +25,8 @@ export interface DocumentSummary {
   counterparty: string | null;
   matterId: number | null;
   matterNo: string | null;
+  /** この文書が属する契約（基本契約・個別契約・単体契約）。無ければ null。 */
+  agreementId: number | null;
   conditionCount: number;
   /** 紐づく条件明細。件数ではなく番号を出す（何から出た書類かが分かる）。 */
   conditions: Array<{ id: number; conditionNo: string | null }>;
@@ -101,7 +103,7 @@ export interface TemplateSource {
 }
 
 const LIST_SELECT = `
-  d.id, d.document_no, d.status, d.matter_id, d.issued_at, d.storage_url,
+  d.id, d.document_no, d.status, d.matter_id, d.agreement_id, d.issued_at, d.storage_url,
   d.supersedes_id, d.batch_id, d.counterparty_doc_no,
   d.manual_inputs->>'_showRevision' AS show_revision,
   -- 受取人（共著の取り分）宛ての文書は、相手先を受取人にする。表示の view は 1 本目の条件の相手先
@@ -171,6 +173,7 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
     counterparty: str(row.counterparty),
     matterId: int(row.matter_id),
     matterNo: str(row.matter_no),
+    agreementId: int(row.agreement_id),
     conditionCount: Number(row.condition_count ?? 0),
     conditions: ((row.condition_refs ?? []) as Array<{ id: number; conditionNo: string | null }>)
       .map((c) => ({ id: Number(c.id), conditionNo: c.conditionNo ?? null })),

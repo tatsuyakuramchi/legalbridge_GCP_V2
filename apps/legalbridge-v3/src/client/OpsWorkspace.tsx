@@ -18,6 +18,7 @@ import { CompanyProfileForm } from "./CompanyProfileForm.js";
 import { DeliveryAlertForm } from "./DeliveryAlertForm.js";
 import { MailTemplatesForm } from "./MailTemplatesForm.js";
 import { DispatchAllowlistForm } from "./DispatchAllowlistForm.js";
+import { GoogleLoginCard } from "./GoogleLoginCard.js";
 import { TextSnippets } from "./TextSnippets.js";
 import { StatementModels } from "./StatementModels.js";
 import { AuditReport } from "./AuditReport.js";
@@ -265,6 +266,7 @@ export function OpsWorkspace({ initialTab, onTabChange }: { initialTab?: OpsTab;
 
       {tab === "integrations" && integrations && (
         <div className="stack">
+          <GoogleLoginCard />
           <div className="panel">
             <div className="panel-hd"><h2>送信の段階</h2><span className="faint">設定し忘れは送らない（off が既定）</span></div>
             <div className="tablewrap">
