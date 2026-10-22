@@ -394,10 +394,15 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
       const spec = condition.spec ?? condition.notes ?? event.note ?? "";
-      const itemName = event.deliverable ?? condition.name ?? condition.work?.title ?? "";
+      let itemName = String(event.deliverable ?? condition.name ?? condition.work?.title ?? "");
       const split = splitSpec(spec);
-      // 実績の成果物名が仕様の先頭行そのもの（実績入力の既定）なら、見出しを二重に出さない。
-      if (split.spec_head && split.spec_head === String(itemName).trim()) split.spec_head = "";
+      // 実績の成果物名が仕様の先頭行そのもの（実績入力の既定）なら、品目名には条件の名前を出し、
+      // 先頭行は仕様の見出しとしてその下に 1 回だけ出す。同じ文を太字と灰色で 2 回並べない。
+      if (split.spec_head && split.spec_head === itemName.trim()) {
+        const fallback = String(condition.name ?? condition.work?.title ?? "").trim();
+        if (fallback && fallback !== split.spec_head) itemName = fallback;
+        else split.spec_head = "";
+      }
       const row: Row = {
         // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
         item_name: itemName,
