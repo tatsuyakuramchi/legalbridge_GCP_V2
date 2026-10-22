@@ -642,6 +642,12 @@ test("検収書の行：成果物名が既定（空か仕様の先頭行）な�
   assert.equal(dflt.item_name, condition({ spec }).name);
   assert.equal(dflt.spec_head, "");
   assert.match(dflt.spec_body, /^イベント名：氷星杯/);
+  // 成果物名が条件の件名そのもの（条件から写した実績）も、白い欄は件名だけ
+  const [named] = deliveryLinesFrom(ctx({ events: [{ ...ctx().events[0], deliverable: condition({ spec }).name }],
+                                           conditions: [condition({ spec })], condition: condition({ spec }) })) as Array<Record<string, any>>;
+  assert.equal(named.item_name, condition({ spec }).name);
+  assert.equal(named.spec_head, "");
+  assert.match(named.spec_body, /^イベント名：氷星杯/);
   // 成果物名を手で付けた実績（分納の成果物）は、その名前＋仕様の見出し＋残り
   const [typed] = deliveryLinesFrom(ctx({ events: [{ ...ctx().events[0], deliverable: "第2回納品分" }],
                                            conditions: [condition({ spec })], condition: condition({ spec }) })) as Array<Record<string, any>>;

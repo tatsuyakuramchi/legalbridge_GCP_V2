@@ -404,10 +404,12 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
       let split = splitSpec(spec);
       // 実績の成果物名が仕様の先頭行そのもの（実績入力の既定）か空なら、白い欄は条件の件名だけにし、
       // 仕様は先頭行から全文を灰色の行に出す。同じ文を太字と灰色で 2 回並べない。
+      // 成果物名が条件の件名そのもの（条件から写した実績）も同じ。
       // 成果物名を手で別の文字にした実績（分納の成果物など）は、その名前＋仕様の見出し＋本文のまま。
       const typedDeliverable = String(event.deliverable ?? "").trim();
-      if (!typedDeliverable || (split.spec_head && split.spec_head === typedDeliverable)) {
-        const fallback = String(condition.name ?? condition.work?.title ?? "").trim();
+      const fallback = String(condition.name ?? condition.work?.title ?? "").trim();
+      if (!typedDeliverable || typedDeliverable === fallback
+          || (split.spec_head && split.spec_head === typedDeliverable)) {
         if (fallback) itemName = fallback;
         split = wholeSpec(spec);
       }
