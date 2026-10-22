@@ -128,7 +128,7 @@ $q$;
       <div class="vlabel">発注者</div>
       <div class="company-name">{{PARTY_A_NAME}}</div>
       <div class="muted" style="white-space:pre-wrap;">{{PARTY_A_ADDRESS}}</div>
-      {{#if COMPANY_INVOICE_NO}}<div class="muted">登録番号: T{{COMPANY_INVOICE_NO}}</div>{{/if}}
+      {{#if COMPANY_INVOICE_NO}}<div class="muted">登録番号: {{COMPANY_INVOICE_NO}}</div>{{/if}}
       {{#if PARTY_A_REP}}<div class="muted">{{PARTY_A_REP}}</div>{{/if}}
       {{#if STAFF_NAME}}
       <div class="contact">担当: {{#if STAFF_DEPARTMENT}}{{STAFF_DEPARTMENT}} {{/if}}{{STAFF_NAME}}{{#if STAFF_PHONE}}　TEL {{STAFF_PHONE}}{{/if}}{{#if STAFF_EMAIL}}<br>{{STAFF_EMAIL}}{{/if}}</div>

@@ -9,6 +9,8 @@
  *
  * ひな形の鍵で見る。案件の支払タブ（MatterPayments）が使う判定と同じにしてある。
  */
+import { isQuasiMandate } from "../conditions/time-settlement.js";
+
 export const SETTLEMENT_TEMPLATE_PATTERN = /inspection|acceptance|delivery|statement|royalty|completion/;
 
 /**
@@ -34,16 +36,19 @@ export function settlesEvents(templateKey: string | null | undefined): boolean {
 /**
  * 条件ごとに、実績を決済する文書の呼び名とひな形。
  *   許諾・製品 … 計算書
- *   委託料で時間精算（A-073） … 役務提供完了通知書
- *   それ以外の業務委託 … 検収書
- * 種類の文字だけを渡す古い呼び方も通す（時間精算は見ない）。
+ *   委託料で 準委任（契約形式）か時間精算（A-073） … 役務提供完了通知書
+ *     （準委任は仕事の完成を約束しないので「検収」は無い。役務の提供が完了したことを通知する）
+ *   それ以外の業務委託（請負など） … 検収書
+ * 種類の文字だけを渡す古い呼び方も通す（契約形式・時間精算は見ない）。
  */
 export function settlementDocFor(
-  c: string | null | undefined | { kind: string | null | undefined; timeSettlement?: boolean | null }
+  c: string | null | undefined
+    | { kind: string | null | undefined; timeSettlement?: boolean | null; contractForm?: string | null }
 ): { label: string; templateKey: string } {
   const kind = typeof c === "string" || c === null || c === undefined ? c : c.kind;
   const time = typeof c === "object" && c !== null ? c.timeSettlement === true : false;
+  const quasi = typeof c === "object" && c !== null ? isQuasiMandate(c.contractForm) : false;
   if (kind === "license" || kind === "product") return { label: "計算書", templateKey: "royalty_statement" };
-  if (kind === "service" && time) return { label: "役務提供完了通知書", templateKey: SERVICE_COMPLETION_KEY };
+  if (kind === "service" && (time || quasi)) return { label: "役務提供完了通知書", templateKey: SERVICE_COMPLETION_KEY };
   return { label: "検収書", templateKey: "inspection_certificate" };
 }

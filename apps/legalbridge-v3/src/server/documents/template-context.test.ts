@@ -629,16 +629,28 @@ test("委託料が2本なら2行。定額の無い条件は行にしない", () 
   assert.deepEqual(lines.map((l) => [l.item_name, l.amount_ex_tax]), [["第1回", 100000], ["第2回", 180000]]);
 });
 
-test("検収書の行は仕様を「1行のまとめ」と「残りの全文」に分けて持つ（改訂ひな形が読む）", () => {
+test("検収書の行：成果物名が既定（空か仕様の先頭行）なら、白い欄は条件の件名だけ、仕様は先頭行から全文を灰色の行へ", () => {
   const spec = "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜\n●審判業務（判定業務、記録）\n\n●競技イベント遂行業務（進行管理）";
   const [line] = deliveryLinesFrom(ctx({ conditions: [condition({ spec })], condition: condition({ spec }) })) as Array<Record<string, any>>;
   assert.equal(line.spec, spec, "古いひな形が読む spec はそのまま");
-  assert.equal(line.spec_head, "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜");
-  assert.equal(line.spec_body, "●審判業務（判定業務、記録）\n●競技イベント遂行業務（進行管理）");
+  assert.equal(line.spec_head, "", "白い欄に仕様のまとめは出さない");
+  assert.equal(line.spec_body, "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜\n●審判業務（判定業務、記録）\n●競技イベント遂行業務（進行管理）");
   assert.equal(line.has_spec_body, true);
-  // 実績を選ばないときの行にも同じ分け方
+  // 成果物名が仕様の先頭行そのもの（実績入力の既定）でも同じ。品目名は条件の件名
+  const [dflt] = deliveryLinesFrom(ctx({ events: [{ ...ctx().events[0], deliverable: "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜" }],
+                                          conditions: [condition({ spec })], condition: condition({ spec }) })) as Array<Record<string, any>>;
+  assert.equal(dflt.item_name, condition({ spec }).name);
+  assert.equal(dflt.spec_head, "");
+  assert.match(dflt.spec_body, /^イベント名：氷星杯/);
+  // 成果物名を手で付けた実績（分納の成果物）は、その名前＋仕様の見出し＋残り
+  const [typed] = deliveryLinesFrom(ctx({ events: [{ ...ctx().events[0], deliverable: "第2回納品分" }],
+                                           conditions: [condition({ spec })], condition: condition({ spec }) })) as Array<Record<string, any>>;
+  assert.equal(typed.item_name, "第2回納品分");
+  assert.equal(typed.spec_head, "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜");
+  assert.equal(typed.spec_body, "●審判業務（判定業務、記録）\n●競技イベント遂行業務（進行管理）");
+  // 実績を選ばないときの行も白い欄は件名だけ
   const [fromCondition] = deliveryLinesFrom(ctx({ events: [], conditions: [condition({ spec })] })) as Array<Record<string, any>>;
-  assert.equal(fromCondition.spec_head, "イベント名：氷星杯　日時：2026/9/13(日) 12:00〜");
+  assert.equal(fromCondition.spec_head, "");
   assert.equal(fromCondition.has_spec_body, true);
 });
 

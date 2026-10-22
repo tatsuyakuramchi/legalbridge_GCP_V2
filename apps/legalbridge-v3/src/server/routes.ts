@@ -4190,6 +4190,20 @@ export function createRoutes(database: Transactable) {
       for (const [conditionId, ids] of groups) {
         await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
       }
+      // 実績を 1 件も選ばずに決済文書を決定すると、実績が文書に繋がらず、板では「作れる」のまま、
+      // 支払も立てられない（役務提供完了通知書で実際に起きた）。選べる実績が残っているなら止める。
+      if (!eventIds.length && !draft.supersedesId) {
+        const loose: string[] = [];
+        for (const c of draft.conditions) {
+          const n = (await conditionEvents.list(c.id)).filter((e) => e.status === "active" && !e.documentId).length;
+          if (n) loose.push(`${c.conditionNo ?? `#${c.id}`}（${n} 件）`);
+        }
+        if (loose.length) {
+          throw new DomainError("VALIDATION",
+            `実績を選ばずに決定しようとしています。条件に結び付けていない実績があります：${loose.join("・")}。`
+            + "実績の一覧でチェックを入れてから決定してください（この実績を載せないなら、条件の画面で実績を取り消してから）");
+        }
+      }
     }
     const issued = await issues.issue(id, who, {
       ...(eventIds.length ? { eventIds } : {}),

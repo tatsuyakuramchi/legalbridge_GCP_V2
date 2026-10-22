@@ -27,6 +27,8 @@ export interface PdCondition {
   id: number; conditionNo: string | null; name: string;
   kind: string; pricingModel: string | null; usageType: string | null; direction: "in" | "out";
   timeSettlement: boolean; statementTiming: string | null; settlementMode: string | null;
+  /** 契約形式（準委任なら決済文書は役務提供完了通知書）。 */
+  contractForm?: string | null;
   reportDueDays: number | null;
   party: { id: number; name: string } | null;
   work: { id: number; title: string } | null;
@@ -166,14 +168,22 @@ export function buildPayDocRows(input: BuildInput): PayDocRow[] {
     if (timing === "periodic") {
       const rows = input.schedules.filter((s) => s.conditionId === c.id)
         .sort((a, b) => String(a.dueOn ?? "9999").localeCompare(String(b.dueOn ?? "9999")) || a.seq - b.seq);
+      // 締め日の無い回（「いつでも」＝納品・完了の都度）は、回に結び付けずに入れた実績を発生日の早い順に
+      // 1 回へ 1 日分ずつ当てる。当てないと「回は未済のまま、実績は別の行」に割れて、同じ仕事が 2 行に見える
+      // （一回きりの業務委託で実際に起きた）。回に結び付けた実績（scheduleId）があればそれを優先する。
+      const looseDays = [...new Set(events.filter((e) => !e.scheduleId).map((e) => e.occurredOn))].sort();
       rows.forEach((s, i) => {
         const prev = rows[i - 1];
         const from = prev?.dueOn ? addDays(prev.dueOn, 1) : null;
-        const mine = events.filter((e) => {
+        let mine = events.filter((e) => {
           if (used.has(e.id)) return false;
           if (e.scheduleId) return e.scheduleId === s.id;
           return !!s.dueOn && e.occurredOn <= s.dueOn && (!from || e.occurredOn >= from);
         });
+        if (!s.dueOn && !mine.length) {
+          const day = looseDays.find((d) => events.some((e) => !used.has(e.id) && !e.scheduleId && e.occurredOn === d));
+          if (day) mine = events.filter((e) => !used.has(e.id) && !e.scheduleId && e.occurredOn === day);
+        }
         mine.forEach((e) => used.add(e.id));
         add({ key: `s:${s.id}`, scheduleId: s.id, planId: null,
               label: s.label ?? (s.dueOn ? `${s.dueOn.slice(0, 7)} 締め` : `第 ${s.seq} 回`),
@@ -216,7 +226,7 @@ function buildRow(c: PdCondition, x: {
   const timing = timingOf(c.statementTiming, c.usageType, c.settlementMode);
   const trigger: Trigger = x.plan || timing === "event" || (x.triggerKind && ACTIVE_TRIGGERS.has(x.triggerKind))
     || (x.events.length > 0 && x.events.every((e) => ACTIVE_EVENTS.has(e.eventType))) ? "active" : "passive";
-  const settlement = settlementDocFor({ kind: c.kind, timeSettlement: c.timeSettlement });
+  const settlement = settlementDocFor({ kind: c.kind, timeSettlement: c.timeSettlement, contractForm: c.contractForm ?? null });
 
   // 起点
   let source: PayDocRow["source"];
