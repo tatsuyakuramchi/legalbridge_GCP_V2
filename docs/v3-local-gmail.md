@@ -1,4 +1,4 @@
-# 予備系（ローカル版）からメール（Gmail）を送る・Drive に保存する・CloudSign で送る
+# 予備系（ローカル版）からメール（Gmail）を送る・Drive に保存する・CloudSign で送る・Slack で送る
 
 本番が止まっている間、予備系で決定した文書を予備系から相手へ送るための設定。
 既定はメールを止めている（`GMAIL_MODE=off`）。使うときだけ開ける。
@@ -186,6 +186,42 @@ CloudSign は client_id だけでつながる（人のログイン `keys/adc.jso
     **本番が戻ったら、webhook の URL を必ず本番に戻す。**
 - 終わったら `CLOUDSIGN_MODE=off`（`WEBHOOK_TOKEN` も空に）にして `docker compose up -d app`。
 
+## Slack で送る（任意）
+
+既定では予備系から Slack へは送らない（`SLACK_MODE=off`）。依頼者への DM・案件のスレッド・工程の通知・
+納期アラートを予備系から送りたいときは、次を足す。Slack は Bot トークンだけでつながる（人のログインは要らない）。
+
+1. 本番の Bot トークンを読む（Cloud Shell）:
+   ```bash
+   gcloud secrets versions access latest --secret=legalbridge-v3-slack-bot-token --project legalbridge-488506
+   ```
+   `xoxb-` で始まる。Slack のワークスペースの鍵なので、`.env` 以外（チャット・メール・リポジトリ）に貼らない。
+
+2. `.env` に足す（`.env.example` の末尾にひな形がある）。まずは **dry_run** で:
+   ```
+   SLACK_MODE=dry_run
+   SLACK_BOT_TOKEN=<1 の値>
+   READ_ONLY=false
+   ```
+
+3. `docker compose up -d app` → 運用 › 外部連携 の「送信の段階」で slack が `dry_run`・接続情報が「設定済み」になること。
+   送る操作で「検証モードのため送信しません」と宛先・中身が出ること。
+
+4. `SLACK_MODE=live` にして `docker compose up -d app`。
+
+**気をつけること**
+
+- **宛先の許可リストは Slack にも効く。** Slack の宛先はメールアドレスではなくユーザー ID・チャンネル ID なので、
+  許可リスト（運用 › 設定 › 送る宛先の制限、または `DISPATCH_ALLOWLIST`）にメールだけを入れていると
+  Slack は全部止まる。Slack を開けるときは許可リストを空（制限しない）にするか、送ってよい ID も足す。
+- **本番と同じ Bot を使う。** 本番と予備系の両方で動かすと、工程の通知や納期アラートが二重に届く。
+  予備系から送るのは本番が止まっている間だけ。`ops backup-begin` のあとで送る。
+- **`/法務依頼`・`/法務検索` は予備系に届かない。** Slack はアプリに登録した URL（本番の口）へ送る。
+  予備系で受けるには、トンネル（`docker compose --profile tunnel up -d`）を開け、`.env` に
+  `SLACK_SIGNING_SECRET`（Secret Manager の `legalbridge-v3-slack-signing-secret`）を足し、
+  Slack アプリの Request URL を一時的にトンネルのホストへ替える。**本番が戻ったら必ず戻す。**
+- 終わったら `SLACK_MODE=off`（`SLACK_BOT_TOKEN` も空に）にして `docker compose up -d app`。
+
 ## うまくいかないとき
 
 | 画面・ログに出る言葉 | 見るところ |
@@ -200,6 +236,8 @@ CloudSign は client_id だけでつながる（人のログイン `keys/adc.jso
 | `EACCES: permission denied, open '/keys/adc.json'` | app が認証情報を読めない（古い login で作ったファイル）。`docker compose run --rm --entrypoint chown login 1000:1000 /keys/adc.json` |
 | `invalid_grant`・`reauth related error (invalid_rapt)`・Google のログインが切れています | 組織の再認証ポリシーでログインが切れた。運用 › 外部連携 の「Google にログインし直す」（下の「Google にログイン」）。gcloud なら下の「ログインし直す」。app の上げ直しは要らない |
 | CloudSign のトークンを取得できませんでした・CloudSign（401・403） | `CLOUDSIGN_CLIENT_ID` が違う（本番の `cloudsign-client-id` と同じか） |
+| Slack の送信で「接続情報が設定されていません」 | `SLACK_BOT_TOKEN` が空。`.env` と `docker compose up -d app` |
+| Slack の送信で `invalid_auth`・`not_in_channel` | トークンが違う（本番の `legalbridge-v3-slack-bot-token` と同じか）／ Bot がそのチャンネルに招かれていない |
 | CloudSign には送信する書類が必要です | 文書の PDF ができていない。先に決定して PDF を作る |
 | JWT に署名できませんでした（403…） | 2 の権限がログインした人に付いていない（付けてから数分かかることがある） |
 | 代理トークンを得られませんでした（unauthorized_client） | 署名用 SA が本番と違う（ドメイン全体委任が付いていない SA）。1 の値を見直す |

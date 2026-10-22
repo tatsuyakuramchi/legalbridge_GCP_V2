@@ -76,8 +76,12 @@ services:
       DRIVE_IMPERSONATE_SA: ${DRIVE_IMPERSONATE_SA:-}
       LOCAL_FILES_DIR: /data/files
       CHROMIUM_PATH: /usr/bin/chromium-browser
-      # 外部連携は既定で止める（設定しない＝off）。Backlog・Slack は送らない。
-      SLACK_MODE: "off"
+      # 外部連携は既定で止める（設定しない＝off）。Backlog は送らない。
+      # Slack は .env で開けられる（docs/v3-local-gmail.md の「Slack で送る」）。既定は off。
+      SLACK_MODE: ${SLACK_MODE:-off}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_SEARCH_CHANNELS: ${SLACK_SEARCH_CHANNELS:-}
       # メール（Gmail）だけは .env で開けられる（本番停止中に予備系から送るため。
       # docs/v3-local-gmail.md）。既定は off。GOOGLE_APPLICATION_CREDENTIALS は keys/adc.json
       # （docker compose run --rm login で取る人のログイン）を指す。Drive に保存するときも同じものを使う。
