@@ -17,3 +17,11 @@ test("条件の種類で、実績から作る文書が決まる", () => {
   assert.deepEqual(settlementDocFor("expense"), { label: "検収書", templateKey: "inspection_certificate" });
   assert.deepEqual(settlementDocFor("license"), { label: "計算書", templateKey: "royalty_statement" });
 });
+
+test("準委任（契約形式）の委託料は、時間精算でなくても役務提供完了通知書。請負は検収書", () => {
+  assert.equal(settlementDocFor({ kind: "service", contractForm: "準委任" }).templateKey, "service_completion_notice");
+  assert.equal(settlementDocFor({ kind: "service", contractForm: "請負／準委任" }).templateKey, "service_completion_notice");
+  assert.equal(settlementDocFor({ kind: "service", contractForm: "請負" }).templateKey, "inspection_certificate");
+  assert.equal(settlementDocFor({ kind: "service", timeSettlement: true }).templateKey, "service_completion_notice");
+  assert.equal(settlementDocFor({ kind: "license", contractForm: "準委任" }).templateKey, "royalty_statement");
+});

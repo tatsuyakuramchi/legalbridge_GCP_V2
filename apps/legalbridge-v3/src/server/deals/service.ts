@@ -101,7 +101,7 @@ const COND_COLUMNS = `
          c.kind, c.pricing_model, c.currency, c.payment_terms, c.direction, c.usage_type,
          c.term_start, c.term_end,
          c.settlement_mode, c.settlement_count, c.settlement_cycle, c.settlement_grace_days,
-         c.time_settlement,
+         c.time_settlement, c.contract_form,
          p.id AS party_id, p.name AS party_name,
          w.id AS work_id, w.title AS work_title,
          m.id AS matter_id, m.title AS matter_title`;
@@ -230,11 +230,14 @@ export class DealsService {
       for (const c of conds.rows as any[]) {
         const id = Number(c.condition_id);
         const rule = rules.get(id)!;
-        const hasOpen = [...(roundsByCond.get(id) ?? []), ...(looseByCond.get(id) ?? [])]
-          .some((r) => !r.payment_id);
+        const open = [...(roundsByCond.get(id) ?? []), ...(looseByCond.get(id) ?? [])].filter((r) => !r.payment_id).length;
+        const hasOpen = open > 0;
         if (rule.expired && !hasOpen) { out.push(syntheticRow(c, today, "expired", rule)); continue; }
         if (rule.mode === "open" && rule.canOpen && !hasOpen) { out.push(syntheticRow(c, today, "next", rule)); continue; }
-        if (rule.mode !== "open" && rule.planned === 0 && rule.canOpen) out.push(syntheticRow(c, today, "next", rule));
+        // 回の無い条件（一回きり・回数固定・期間で決まる）の「次の回」。回に結び付けずに入れた実績も 1 回と数える。
+        // 数えないと、一回きりの仕事で「実績の行」と「1 / 1 いつでも」の 2 行に割れる。
+        if (rule.mode !== "open" && rule.planned === 0 && rule.canOpen
+            && (rule.limit === null || rule.done + open < rule.limit)) out.push(syntheticRow(c, today, "next", rule));
       }
 
       const rows = out.filter((r) => inView(r, view, today)).slice(0, limit);

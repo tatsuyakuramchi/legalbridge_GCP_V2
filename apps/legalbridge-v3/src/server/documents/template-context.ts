@@ -161,6 +161,12 @@ const specOf = (condition: Ctx) => condition?.spec ?? condition?.notes ?? "";
  * 表の幅いっぱいの行を足して spec_body（残り）を刷る。古いひな形は spec を
  * そのまま読むので、spec は変えない。
  */
+/** 仕様を分けずに全文を灰色の行へ（白い欄は品目名だけ）。 */
+export function wholeSpec(text: unknown): { spec_head: string; spec_body: string; has_spec_body: boolean } {
+  const all = String(text ?? "").replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
+  return { spec_head: "", spec_body: all, has_spec_body: all !== "" };
+}
+
 export function splitSpec(text: unknown): { spec_head: string; spec_body: string; has_spec_body: boolean } {
   const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim());
   const first = lines.findIndex((l) => l !== "");
@@ -278,7 +284,7 @@ function timeSettledLines(condition: Ctx, event: Ctx, row: Row): Row[] {
   // その月の案件別の実績（実績のメモ。月次業務報告書から写したもの）は包括枠の行の下に出す。
   const detail = String(event.note ?? "").trim();
   // spec / description も書き換える（inspectionBlock は spec から見出しと本文を割り直す）。
-  const baseText = detail ? `${String(row.spec_head ?? row.item_name ?? "")}\n${detail}` : null;
+  const baseText = detail ? `${String(row.spec_head || row.item_name || "")}\n${detail}` : null;
   const baseSpec = baseText ? { spec: baseText, description: baseText, ...splitSpec(baseText) } : {};
   const out: Row[] = [{
     ...common,
@@ -394,13 +400,24 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};
       const spec = condition.spec ?? condition.notes ?? event.note ?? "";
+      let itemName = String(event.deliverable ?? condition.name ?? condition.work?.title ?? "");
+      let split = splitSpec(spec);
+      // 実績の成果物名が仕様の先頭行そのもの（実績入力の既定）か空なら、白い欄は条件の件名だけにし、
+      // 仕様は先頭行から全文を灰色の行に出す。同じ文を太字と灰色で 2 回並べない。
+      // 成果物名を手で別の文字にした実績（分納の成果物など）は、その名前＋仕様の見出し＋本文のまま。
+      const typedDeliverable = String(event.deliverable ?? "").trim();
+      if (!typedDeliverable || (split.spec_head && split.spec_head === typedDeliverable)) {
+        const fallback = String(condition.name ?? condition.work?.title ?? "").trim();
+        if (fallback) itemName = fallback;
+        split = wholeSpec(spec);
+      }
       const row: Row = {
         // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
-        item_name: event.deliverable ?? condition.name ?? condition.work?.title ?? "",
+        item_name: itemName,
         // 業務内容の本文。仕様の欄が無い条件は備考で代える。
         spec,
         description: spec,
-        ...splitSpec(spec),
+        ...split,
         ...rewardBreakdown(condition, event, spec),
         deliverable_ownership: ownershipOf(condition),
         // この行の元になった発注書。条件をまたぐ検収書で行ごとに違う。
@@ -456,7 +473,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     item_name: condition.name ?? "",
     spec: specOf(condition),
     description: specOf(condition),
-    ...splitSpec(specOf(condition)),
+    // 白い欄は件名だけ。仕様は全文を灰色の行へ（実績から出す行と同じ形）。
+    ...wholeSpec(specOf(condition)),
     ...rewardBreakdown(condition, {}, specOf(condition)),
     deliverable_ownership: ownershipOf(condition),
     order_no: orderNoFor(context, condition.id),

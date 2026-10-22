@@ -162,3 +162,23 @@ test("今期は無しにした回は要対応に出さない。金額 0 で済�
   assert.equal(rows[1].payment.state, "nopay");
   assert.equal(rows[1].next, "none");
 });
+
+test("締め日の無い回（いつでも）：回に結び付けずに入れた実績はその回に当たる。1 回きりの仕事が 2 行に割れない", () => {
+  const c = cond({ id: 1, kind: "service", pricingModel: "fixed", usageType: null, name: "イベント運営", settlementMode: "count" });
+  const rows = buildPayDocRows(base({
+    conditions: [c],
+    schedules: [sched(1, null as unknown as string, { triggerKind: "on_delivery", plannedAmount: 13500 })],
+    events: [ev(1, "2026-10-21", { eventType: "delivery", amount: 13500 })]
+  }));
+  assert.equal(rows.length, 1, "回の行だけ（実績の行が別に生えない）");
+  assert.equal(rows[0].scheduleId, 1);
+  assert.deepEqual(rows[0].eventIds, [1]);
+  // 回に結び付けた実績があれば、結び付けていない別の実績は別の行のまま（混ぜない）。
+  const rows2 = buildPayDocRows(base({
+    conditions: [c],
+    schedules: [sched(1, null as unknown as string, { triggerKind: "on_delivery", plannedAmount: 13500 })],
+    events: [ev(1, "2026-10-21", { eventType: "delivery", amount: 13500, scheduleId: 1 }), ev(2, "2026-10-22", { eventType: "delivery", amount: 500 })]
+  }));
+  assert.equal(rows2.length, 2);
+  assert.deepEqual(rows2[0].eventIds, [1]);
+});
