@@ -65,6 +65,8 @@ interface PreviewResponse {
 interface EventRow {
   id: number; eventType: string; occurredOn: string | null; period: string | null;
   amount: number; status: string; documentId?: number | null;
+  /** 結び付いている文書の番号・状態（別の文書に載っている実績は、その文書を訂正版に含めないと選べない）。 */
+  documentNo?: string | null; documentStatus?: string | null;
   /** どの条件の実績か。条件をまたいで1枚にするので、行に持たせる。 */
   conditionId: number; conditionNo: string | null; conditionName: string;
 }
@@ -263,9 +265,10 @@ export function DocumentsWorkspace(
    * manual_inputs._showRevision（"1"／"0"）として文書に残る。
    */
   const [showRevision, setShowRevision] = useState(true);
-  const reviseCtx = start?.supersedesId
+  // 画面で足した元の文書（別の文書に載った実績を引き継ぐとき）があれば、そちらが新しい。
+  const reviseCtx = revise ?? (start?.supersedesId
     ? { ids: [start.supersedesId, ...(start.supersedesExtraIds ?? [])], reason: start.reason ?? null }
-    : revise;
+    : null);
   /**
    * 基本契約（発注書の準拠契約・条件書の基本契約）。null は「選んだ条件に
    * 付いている契約に従う」。条件に契約が無いときや、別の契約に基づくときに選ぶ。
@@ -1595,18 +1598,39 @@ export function DocumentsWorkspace(
                               {onOpen && <button type="button" className="linky" onClick={() => onOpen("condition", cid)}>実績を登録しに行く</button>}
                             </div>
                           )}
-                          {mine.map((e) => (
-                            <label key={e.id} className="pick" style={e.documentId ? { opacity: 0.6 } : undefined}>
-                              <input type="checkbox" checked={pickedEvents.includes(e.id)}
-                                     disabled={Boolean(e.documentId) && !pickedEvents.includes(e.id)}
-                                     onChange={(ev) => setPickedEvents((prev) => ev.target.checked
-                                       ? [...prev, e.id] : prev.filter((id) => id !== e.id))} />
-                              <span className="code">{e.occurredOn ?? "—"}</span>
-                              <span>{e.period ?? ""}</span>
-                              <span className="num">{money(e.amount)}</span>
-                              {e.documentId && <span className="faint">文書あり</span>}
-                            </label>
-                          ))}
+                          {mine.map((e) => {
+                            // 別の文書に載っている実績は選べない。ただし、この訂正版の元の文書（まとめて訂正する文書を含む）
+                            // に載っているものは引き継げる。元でない決定済みの文書なら、その文書も訂正版に含めれば選べる。
+                            const heldByOther = Boolean(e.documentId) && !(reviseCtx?.ids ?? []).includes(Number(e.documentId));
+                            const canAbsorb = heldByOther && Boolean(reviseCtx) && e.documentStatus === "issued" && e.documentId != null;
+                            return (
+                              <label key={e.id} className="pick" style={heldByOther ? { opacity: 0.6 } : undefined}>
+                                <input type="checkbox" checked={pickedEvents.includes(e.id)}
+                                       disabled={heldByOther && !pickedEvents.includes(e.id)}
+                                       onChange={(ev) => setPickedEvents((prev) => ev.target.checked
+                                         ? [...prev, e.id] : prev.filter((id) => id !== e.id))} />
+                                <span className="code">{e.occurredOn ?? "—"}</span>
+                                <span>{e.period ?? ""}</span>
+                                <span className="num">{money(e.amount)}</span>
+                                {e.documentId && (
+                                  <span className="faint">
+                                    {heldByOther ? `${e.documentNo ?? `文書 #${e.documentId}`} に載っています` : "この訂正版の元の文書に載っています"}
+                                  </span>
+                                )}
+                                {canAbsorb && (
+                                  <button type="button" className="linky" onClick={(ev) => {
+                                    ev.preventDefault();
+                                    const docId = Number(e.documentId);
+                                    setRevise((prev) => ({ ids: [...new Set([...(reviseCtx?.ids ?? prev?.ids ?? []), docId])], reason: prev?.reason ?? reviseCtx?.reason ?? null }));
+                                    setPickedEvents((prev) => (prev.includes(e.id) ? prev : [...prev, e.id]));
+                                    setTouched(true);
+                                  }} title="その文書もこの訂正版で置き換える（決定すると、その文書は差し替え済みになる）">
+                                    その文書もこの訂正版に含める
+                                  </button>
+                                )}
+                              </label>
+                            );
+                          })}
                         </Fragment>
                       );
                     })}

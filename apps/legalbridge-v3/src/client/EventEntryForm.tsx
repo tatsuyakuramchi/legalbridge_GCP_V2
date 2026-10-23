@@ -204,7 +204,7 @@ export function ServiceEntry(
   const [extrasDone, setExtrasDone] = useState<string | null>(null);
   const [v, setV] = useState<Record<string, string>>({
     occurredOn: today(), inspectedOn: today(), quantity: "", amount: "", deliverable: "", contractForm: "",
-    hours: "", reportReceivedOn: "",
+    hours: "", reportReceivedOn: "", serviceFrom: "", serviceTo: "",
     note: "", varianceNote: "", followUp: "", followUpDueOn: "", closeCondition: ""
   });
   const set = (k: string, value: string) => setV((s) => ({ ...s, [k]: value }));
@@ -226,7 +226,10 @@ export function ServiceEntry(
         quantity: qty === null ? "" : String(qty),
         amount: amount === null ? "" : String(amount),
         deliverable: settlement ? d.name : (firstLine(d.spec) || d.name),
-        contractForm: line?.contractForm ?? d.contractForm ?? ""
+        contractForm: line?.contractForm ?? d.contractForm ?? "",
+        // 役務提供期間。回に決めてあればそれ、無ければ条件の契約期間。通知書・検収書の「役務提供期間」に出る。
+        serviceFrom: line?.serviceFrom ?? d.termStart ?? "",
+        serviceTo: line?.serviceTo ?? d.termEnd ?? ""
       }));
     }).catch((e: ApiError) => setError(e.message));
   }, [conditionId]);
@@ -310,6 +313,8 @@ export function ServiceEntry(
         deliverable: f("deliverable").trim() || null,
         inspectedOn: settlement ? null : (f("inspectedOn") || null),
         contractForm: settlement ? null : (f("contractForm").trim() || null),
+        serviceFrom: settlement ? null : (f("serviceFrom") || null),
+        serviceTo: settlement ? null : (f("serviceTo") || null),
         // 時間精算の回（A-073）。実績時間と月次業務報告書の受領日。役務提供完了通知書に出る。
         hours: timeSettled ? hoursActual : null,
         reportReceivedOn: timeSettled ? (f("reportReceivedOn") || null) : null,
@@ -450,6 +455,19 @@ export function ServiceEntry(
               <input type="date" value={f("inspectedOn")} onChange={(e) => set("inspectedOn", e.target.value)} />
               <small className="faint">検収書の検収日。空なら納品日と同じ</small>
             </label>
+          )}
+          {!settlement && (
+            <>
+              <label className="field">
+                <span>役務提供期間（開始）</span>
+                <input type="date" value={f("serviceFrom")} onChange={(e) => set("serviceFrom", e.target.value)} />
+              </label>
+              <label className="field">
+                <span>役務提供期間（終了）</span>
+                <input type="date" value={f("serviceTo")} onChange={(e) => set("serviceTo", e.target.value)} />
+                <small className="faint">通知書・検収書の「役務提供期間」に出る。空なら条件の契約期間</small>
+              </label>
+            </>
           )}
           {!settlement && (
             <label className="field">
