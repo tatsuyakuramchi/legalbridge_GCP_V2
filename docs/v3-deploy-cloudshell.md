@@ -424,6 +424,11 @@ gcloud run services proxy legalbridge-v3 --region=asia-northeast1 --port=8080
 
 ### GitHub と繋いで自動デプロイにする（2026-09-08）
 
+> **2026-10-23 追記。** トリガー `legalbridge-v3-deploy` を入れてからは、本番の設定（認証・外部連携の
+> live・Drive・鍵）はトリガーの代入変数が持っている。**手で `gcloud builds submit` を流すと既定値
+> （全部 off・認証 disabled）で上がる**ので使わない。トリガーが走らなかったときは
+> `gcloud builds triggers run legalbridge-v3-deploy --branch=main` で同じ設定のまま走らせる。
+
 Cloud Shell には週50時間の上限があり、デプロイのたびに使っていると
 使い切る。Cloud Build のトリガーを GitHub に繋げば、push だけで
 ビルドとデプロイが走り、Cloud Shell が要らなくなる。

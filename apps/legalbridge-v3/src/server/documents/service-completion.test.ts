@@ -102,8 +102,10 @@ test("時間精算でない条件・実績時間の無い回は従来の 1 行�
   assert.equal(noHours.length, 1);
 });
 
-test("本文：副題・業務概要・明細・合計・署名欄・確認期限が出る", () => {
-  const computed = buildTemplateContext(SERVICE_COMPLETION_KEY, ctx(), {});
+test("本文：副題・業務概要・明細・合計・振込先・署名欄・確認期限が出る", () => {
+  const computed = buildTemplateContext(SERVICE_COMPLETION_KEY, ctx({
+    bank: { bankName: "三菱UFJ銀行", branchName: "神保町支店", accountType: "ordinary", accountNumber: "2513200", holderKana: "アベヤマ　タカミツ" }
+  }), {});
   const out = renderDocumentHtml(html, {
     ...computed, VENDOR_NAME: "阿部山 孝光", VENDOR_SUFFIX: "様", PARTY_A_NAME: "株式会社アークライト",
     PROJECT_TITLE: "法務支援業務", parent_po_number: "ARC-PO-2026-1134", PAYMENT_DATE: "2026-12-21",
@@ -117,6 +119,7 @@ test("本文：副題・業務概要・明細・合計・署名欄・確認期�
   assert.match(out, /2026年12月2日 受領/);
   assert.match(out, /月間包括枠 超過分の追加委託料/);
   assert.match(out, /実績 72 h − 包括枠 64 h/);
+  assert.match(out, /振込先.*三菱UFJ銀行 神保町支店　普通 2513200　アベヤマ　タカミツ/s, "受注者の口座を合計の下に出す");
   assert.match(out, /源泉徴収税計算前お支払額<\/th><td>247,500/);
   assert.match(out, /2026年12月21日/);
   assert.match(out, /<div class="page-break annex">/, "変更があれば 2 ページ目に内容変更確認書");

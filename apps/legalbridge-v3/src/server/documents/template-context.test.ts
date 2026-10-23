@@ -669,8 +669,8 @@ test("画面で直した明細の仕様からも、まとめと残りを出し�
                             amount_ex_tax: 1000, inspected_amount_ex_tax: 1000, tax_category: "taxable" }]
   }) as Record<string, any>;
   const [line] = c.delivery_line_items;
-  assert.equal(line.spec_head, "納品物：訳文一式");
-  assert.equal(line.spec_body, "●英訳\n●校正");
+  assert.equal(line.spec_head, "", "白い欄は品目名だけ");
+  assert.equal(line.spec_body, "納品物：訳文一式\n●英訳\n●校正", "仕様は全文を灰色の行へ");
   assert.equal(line.has_spec_body, true);
 });
 

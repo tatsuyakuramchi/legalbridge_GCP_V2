@@ -22,6 +22,7 @@
 #                           流すのは Cloud Shell の psql。docs/v3-push-local-to-prod.md）
 #   ops backup-begin      予備系で書き始める（本番が止まったとき。ここからの変更を記録する）
 #   ops backup-status     予備系で書いた変更の数
+#   ops backup-attach     停止中に移行 SQL で足した表にも記録の引き金を付ける（backup-export の前に）
 #   ops backup-export     予備系で書いた変更を、本番へ持ち帰る SQL 1 本にまとめる
 #                         （本番にも書き込みがあってよい。流すのは Cloud Shell の psql。
 #                           docs/v3-backup-merge.md）
@@ -393,10 +394,13 @@ push_export() {
 
   log "ローカルの中身を書き出す（pg_dump --data-only）"
   # \restrict / \unrestrict は新しい pg_dump が付ける psql の命令。Cloud Shell の
+  # SET transaction_timeout は PostgreSQL 17 の pg_dump が付ける設定。本番（Cloud SQL）が 16 以前だと
+  # 「unrecognized configuration parameter」で止まるので外す（無くても動きは同じ）。
   # psql が古いと知らない命令で止まるので落とす。
   # 循環する外部キーの警告が出るが、流す側で外部キーを最後に確かめるので問題ない。
   pg_dump --data-only --schema=v3 --no-owner --no-privileges 2>"$body.err" \
-    | grep -v -E '^\\(restrict|unrestrict) ' > "$body"
+    | grep -v -E '^\\(restrict|unrestrict) ' \
+    | grep -v -E '^SET transaction_timeout ' > "$body"
   if grep -v -E 'circular foreign-key|^pg_dump: (detail|hint):' "$body.err" | grep -q .; then
     cat "$body.err" >&2; rm -f "$body" "$body.err"; die "pg_dump が失敗しました"
   fi
@@ -1157,6 +1161,14 @@ SELECT row_number() OVER (ORDER BY last_seq) AS no, table_name, op, pk,
 SQL
 }
 
+# 停止中に表を足す移行 SQL（172 など）を流したあとに。引き金の無い表に付け、いまの行を記録する。
+backup_attach() {
+  [ -f "$LOCAL_SQL/backup_attach.sql" ] || die "$LOCAL_SQL/backup_attach.sql がありません"
+  local sid; sid=$(backup_session)
+  [ -n "$sid" ] || die "予備系の書き込みは始まっていません"
+  psql -v ON_ERROR_STOP=1 -f "$LOCAL_SQL/backup_attach.sql"
+}
+
 backup_status() {
   local sid; sid=$(backup_session)
   if [ -z "$sid" ]; then
@@ -1328,6 +1340,7 @@ case "${1:-}" in
   push-export) push_export ;;
   backup-begin) backup_begin ;;
   backup-status) backup_status ;;
+  backup-attach) backup_attach ;;
   backup-export) backup_export ;;
   backup-close) shift; backup_close "${1:-}" ;;
   status) status ;;

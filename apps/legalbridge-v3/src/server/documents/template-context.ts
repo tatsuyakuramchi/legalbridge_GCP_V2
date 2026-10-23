@@ -283,9 +283,9 @@ function timeSettledLines(condition: Ctx, event: Ctx, row: Row): Row[] {
   const common = { ...row, trigger_kind: null, hasChange: false, changeNote: "" };
   // その月の案件別の実績（実績のメモ。月次業務報告書から写したもの）は包括枠の行の下に出す。
   const detail = String(event.note ?? "").trim();
-  // spec / description も書き換える（inspectionBlock は spec から見出しと本文を割り直す）。
-  const baseText = detail ? `${String(row.spec_head || row.item_name || "")}\n${detail}` : null;
-  const baseSpec = baseText ? { spec: baseText, description: baseText, ...splitSpec(baseText) } : {};
+  // spec / description も書き換える（inspectionBlock は spec から灰色の行を出し直す）。
+  // 品目名は白い欄に出ているので、灰色の行はメモだけ。
+  const baseSpec = detail ? { spec: detail, description: detail, ...wholeSpec(detail) } : {};
   const out: Row[] = [{
     ...common,
     ...baseSpec,
@@ -462,7 +462,7 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
       };
       return timeSettledLines(condition, event, row);
     // 畳んだ行は仕様に「全12回（毎月）…」が足されるので、まとめと本文を割り直す。
-    })).map((line) => (line.folded ? { ...line, ...splitSpec(line.spec) } : line));
+    })).map((line) => (line.folded ? { ...line, ...wholeSpec(line.spec) } : line));
   }
   // 実績を選んでいなければ、載せた条件を1本1行にする（手数料・経費は別の表）。
   // 以前は条件が1本のときしか行を作らず、委託料と実費の2本を載せると行が
@@ -742,11 +742,11 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
   const totals = computeInspectionTotals(source);
   const breakdown = inspectionTaxBreakdown(source);
 
-  // 仕様の「1行のまとめ」と「残り」は、いま入っている spec から出し直す。種の行を
-  // 画面で直したとき、種に付いていた spec_head が古いままにならないように。
+  // 仕様は、いま入っている spec から出し直す（種の行を画面で直したとき、種に付いていた
+  // spec_head が古いままにならないように）。白い欄は品目名だけ、仕様は全文を灰色の行へ。
   for (const line of lines) {
     if (line.spec !== undefined || line.description !== undefined) {
-      Object.assign(line, splitSpec(line.spec ?? line.description ?? ""));
+      Object.assign(line, wholeSpec(line.spec ?? line.description ?? ""));
     }
   }
   // 行の「発注番号」は画面で直せない自動の欄。画面で明細を直した行（手入力）は

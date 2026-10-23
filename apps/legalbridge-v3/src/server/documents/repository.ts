@@ -76,7 +76,9 @@ export interface DocumentDetail extends DocumentSummary {
    * これが無いと、訂正のたびに実績を選び直すことになる。
    */
   eventIds: number[];
-  conditions: Array<{ id: number; conditionNo: string | null; name: string; lineNo: number }>;
+  conditions: Array<{ id: number; conditionNo: string | null; name: string; lineNo: number;
+    /** 改訂で旧版になっていれば、いまの版の id（そうでなければ id と同じ）。 */
+    currentId: number }>;
   /**
    * この文書の実績にもう立っている支払（取消済みを除く）。
    *
@@ -285,9 +287,19 @@ export class DocumentRepository {
         WHERE d.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) return null;
+    // 改訂で旧版になった条件は、いまの版（superseded_by_id の先。何段でも）も添える。
+    // 画面はいまの版を選び直し、決定はいまの版に付け替える（issue-service.followRevisions）。
     const conditions = await this.database.query(
-      `SELECT c.id, c.condition_no, c.name, dc.line_no
+      `WITH RECURSIVE chain AS (
+         SELECT c.id AS start_id, c.id, c.superseded_by_id, 0 AS depth
+           FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id WHERE dc.document_id = $1
+         UNION ALL
+         SELECT ch.start_id, n.id, n.superseded_by_id, ch.depth + 1
+           FROM chain ch JOIN conditions n ON n.id = ch.superseded_by_id WHERE ch.depth < 50
+       ), latest AS (SELECT DISTINCT ON (start_id) start_id, id AS current_id FROM chain ORDER BY start_id, depth DESC)
+       SELECT c.id, c.condition_no, c.name, c.status, dc.line_no, l.current_id
          FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+         LEFT JOIN latest l ON l.start_id = c.id
         WHERE dc.document_id = $1 ORDER BY dc.line_no`, [id]);
     // 実績はこの文書のもの。まだ発行していない訂正版は、前の版のものを引き継ぐ。
     const events = await this.database.query(
@@ -318,7 +330,8 @@ export class DocumentRepository {
       manualInputs: (row.manual_inputs as Record<string, unknown>) ?? {},
       conditions: conditions.rows.map((c: Record<string, any>) => ({
         id: Number(c.id), conditionNo: str(c.condition_no),
-        name: String(c.name), lineNo: Number(c.line_no)
+        name: String(c.name), lineNo: Number(c.line_no),
+        currentId: Number(c.current_id ?? c.id)
       })),
       payments: (payments.rows as Array<Record<string, any>>).map((y) => ({
         id: Number(y.id), paymentNo: str(y.payment_no), status: String(y.status),

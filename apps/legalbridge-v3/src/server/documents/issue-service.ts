@@ -136,6 +136,7 @@ export class DocumentIssueService {
   async preview(requested: DraftInput): Promise<PreviewResult> {
     try {
       const input = { ...requested,
+        conditionIds: await this.followRevisions(this.database, requested.conditionIds),
         templateKey: await this.resolveTemplateKey(this.database, requested.templateKey, requested.conditionIds) };
       const template = await this.repository.templateSource(this.database, { templateKey: input.templateKey });
       // 番号は発行のときにしか決まらない。プレビューで空にすると必須の未入力に
@@ -219,6 +220,7 @@ export class DocumentIssueService {
     try {
       return await inTransaction(this.database, async (client) => {
         const input = { ...requested,
+          conditionIds: await this.followRevisions(client, requested.conditionIds),
           templateKey: await this.resolveTemplateKey(client, requested.templateKey, requested.conditionIds) };
         const template = await this.repository.templateSource(client, { templateKey: input.templateKey });
         await this.assertConditionsIssuable(client, input.conditionIds);
@@ -311,8 +313,9 @@ export class DocumentIssueService {
         }
 
         if (input.conditionIds) {
-          const unique = [...new Set(input.conditionIds.map((n) => Number(n)))];
+          let unique = [...new Set(input.conditionIds.map((n) => Number(n)))];
           if (unique.length) {
+            unique = await this.followRevisions(client, unique);
             const found = await client.query(
               "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
             if (found.rows.length !== unique.length) {
@@ -389,7 +392,17 @@ export class DocumentIssueService {
         const linked = await client.query(
           "SELECT condition_id FROM document_conditions WHERE document_id = $1 ORDER BY line_no",
           [documentId]);
-        const conditionIds = linked.rows.map((c) => Number((c as { condition_id: number }).condition_id));
+        const linkedIds = linked.rows.map((c) => Number((c as { condition_id: number }).condition_id));
+        // 下書きを作ったあとに条件が改訂されていれば、決定の時点でいまの版に付け替える。
+        const conditionIds = await this.followRevisions(client, linkedIds);
+        if (conditionIds.join(",") !== linkedIds.join(",")) {
+          await client.query("DELETE FROM document_conditions WHERE document_id = $1", [documentId]);
+          await this.linkConditions(client, documentId, conditionIds);
+          await recordAudit(client, {
+            actor, action: "document.conditions_revised", targetType: "document", targetId: documentId,
+            detail: { from: linkedIds, to: conditionIds }
+          });
+        }
         await this.assertConditionsIssuable(client, conditionIds);
 
         // 発注書・検収書の手数料・経費の行で、条件の無いものは条件にする。
@@ -796,7 +809,7 @@ export class DocumentIssueService {
 
         if (conditionIds && conditionIds.length) {
           // 条件を指定し直した。実在と重複だけ確かめて、その並びで繋ぐ。
-          const unique = [...new Set(conditionIds.map((n) => Number(n)))];
+          const unique = await this.followRevisions(client, [...new Set(conditionIds.map((n) => Number(n)))]);
           const found = await client.query(
             "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
           if (found.rows.length !== unique.length) {
@@ -876,7 +889,7 @@ export class DocumentIssueService {
         const newId = Number((created.rows[0] as { id: number }).id);
 
         if (input.conditionIds && input.conditionIds.length) {
-          const unique = [...new Set(input.conditionIds.map((n) => Number(n)))];
+          const unique = await this.followRevisions(client, [...new Set(input.conditionIds.map((n) => Number(n)))]);
           const found = await client.query(
             "SELECT id FROM conditions WHERE id = ANY($1::bigint[])", [unique]);
           if (found.rows.length !== unique.length) {
@@ -1051,6 +1064,35 @@ export class DocumentIssueService {
         [documentId, conditionId, index + 1]
       );
     }
+  }
+
+  /**
+   * 改訂で旧版（superseded）になった条件を、いまの版（superseded_by_id の先）に付け替える。
+   *
+   * 実績のある条件を直すと改訂（新しい行）になり、旧版を繋いだ下書きは「旧版の条件は文書にできません」で
+   * 決定できなくなっていた。実績は旧版に付いたまま系列で突き合わせるので、条件だけ新版へ寄せればよい。
+   * 無効（void）はそのまま返す（assertConditionsIssuable が止める）。順番は保ち、同じ版に寄った重複は 1 つにする。
+   */
+  private async followRevisions(client: Queryable, conditionIds: number[]): Promise<number[]> {
+    const unique = [...new Set(conditionIds.map((n) => Math.trunc(Number(n))))].filter((n) => n > 0);
+    if (!unique.length) return [];
+    const r = await client.query(
+      `WITH RECURSIVE chain AS (
+         SELECT c.id AS start_id, c.id, c.superseded_by_id, 0 AS depth
+           FROM conditions c WHERE c.id = ANY($1::bigint[])
+         UNION ALL
+         SELECT ch.start_id, n.id, n.superseded_by_id, ch.depth + 1
+           FROM chain ch JOIN conditions n ON n.id = ch.superseded_by_id
+          WHERE ch.depth < 50
+       )
+       SELECT DISTINCT ON (start_id) start_id, id FROM chain ORDER BY start_id, depth DESC`, [unique]);
+    const latest = new Map((r.rows as Array<{ start_id: number; id: number }>).map((x) => [Number(x.start_id), Number(x.id)]));
+    const out: number[] = [];
+    for (const id of unique) {
+      const to = latest.get(id) ?? id;
+      if (!out.includes(to)) out.push(to);
+    }
+    return out;
   }
 
   /** 無効・旧版の条件からは文書を出さない。 */
