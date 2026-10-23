@@ -102,15 +102,20 @@ psql -c "SELECT count(*) FROM v3.documents WHERE document_no LIKE 'ARC-SC-2026-9
 
 ## 6. アプリを本番に載せる（GitHub）
 
-`claude/sweet-hamilton-l3y137` → `main` の PR を作ってマージする。Cloud Build のトリガーが走り、
-`READ_ONLY=false` で上がる（デプロイが読み取り専用を解く）。Cloud Build の画面で緑になるのを待つ。
+`claude/sweet-hamilton-l3y137` → `main` の PR を作ってマージする。Cloud Build のトリガー
+（`legalbridge-v3-deploy`）が走り、`READ_ONLY=false` で上がる（デプロイが読み取り専用を解く）。
+Cloud Build の画面で緑になるのを待つ。
 
-トリガーが走らなければ Cloud Shell から：
+マージ済みなのにトリガーが走っていなければ（請求停止中にマージした場合など）、**トリガーを手で走らせる**：
 
 ```bash
-cd ~/legalbridge_GCP_V2 && git checkout main && git pull
-gcloud builds submit --config infra/v3/cloudbuild.yaml --substitutions=_GIT_SHA="$(git rev-parse --short HEAD)" --project=legalbridge-488506 .
+gcloud builds triggers run legalbridge-v3-deploy --branch=main
+gcloud builds list --limit=1 --format='table(id,status,createTime)'
 ```
+
+**`gcloud builds submit` を手で流してはいけない。** 本番用の設定（認証 iap・Gmail/CloudSign/Slack/Backlog の
+live・Drive のフォルダ・鍵）はトリガーの代入変数に入っていて、手動の submit は `cloudbuild.yaml` の既定値
+（全部 off・認証 disabled）で上がる（2026-10-23 に実際に起きた）。
 
 本番の画面で確かめる：ホーム（#/home）の盤面が出る、取引先⇔基本契約で「送る」欄と「別の基本契約に寄せる」が出る、
 予備系で作った 9000 番台の文書が開けて PDF が出る（本番で本文から作り直す）。
