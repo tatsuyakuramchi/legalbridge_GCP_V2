@@ -357,7 +357,10 @@ function serviceCompletionExtras(context: Ctx, block: Record<string, unknown>, m
   return {
     sc_month_label: monthLabel,
     sc_service_from: from || null, sc_service_to: to || null,
-    sc_term_start: condition.termStart ?? null, sc_term_end: condition.termEnd ?? null,
+    // 業務概要の役務提供期間。条件の契約期間が両端そろっていればそれ、そうでなければ実績の期間
+    // （条件の終了日が空だと「10月17日 〜」で止まっていた）。
+    sc_term_start: condition.termStart && condition.termEnd ? condition.termStart : (from || condition.termStart || null),
+    sc_term_end: condition.termStart && condition.termEnd ? condition.termEnd : (to || condition.termEnd || null),
     sc_contract_form: contractFormFor(first?.contractForm, condition.contractForm) ?? "準委任",
     sc_time_settlement: terms.timeSettlement,
     sc_time_settlement_label: timeSettlementLabel(terms, base),
