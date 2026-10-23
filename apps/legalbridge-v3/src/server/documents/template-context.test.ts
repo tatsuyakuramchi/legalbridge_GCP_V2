@@ -749,7 +749,8 @@ test("発注書：利用許諾条件は許諾料の扱いで料率・額の欄�
   const rows = c.license_terms as Array<Record<string, string>>;
   assert.equal(rows.length, 3);
   assert.deepEqual(rows[1], { usage: "出版（紙）（独占）", fee: "8 %", guarantee: "MG ¥ 100,000",
-                              term: "2026/10/01 〜 2029/09/30", scope: "日本 ／ 日本語", condition_no: "CL-1" });
+                              term: "2026/10/01 〜 2029/09/30", scope: "日本 ／ 日本語", condition_no: "CL-1",
+                              covers: "", note: "", contract: "" });
   assert.equal(rows[2].fee, "利用許諾料は業務委託報酬に含む");
   assert.equal(rows[2].guarantee, "—");
   assert.equal(rows[2].term, "期間の定めなし");
@@ -1039,4 +1040,53 @@ test("実績に役務提供期間が無ければ、条件の契約期間（両�
   assert.equal(line.term_end, "2026-10-18");
   const [open] = deliveryLinesFrom(ctx({ conditions: [condition({ termStart: "2026-10-17", termEnd: null })] })) as Array<Record<string, any>>;
   assert.equal(open.term_start, null, "片方だけなら出さない（納品日で出る）");
+});
+
+test("発注書：保証利用許諾料に代える（A-075）。利用許諾条件の表に対象の行・対象外、特約の既定文", () => {
+  const licenseTerms = [
+    { id: 13, usageType: "pub_print", pricingModel: "revenue_rate", ratePct: 10, mgAmount: 300000, agAmount: null,
+      currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: ["日本"], languages: ["日本語"],
+      licenseFeeBasis: "in_lieu", conditionNo: "CL-13", exclusivity: "non_exclusive",
+      royaltyExemptFirstCopies: 100, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"],
+      // 利用許諾条件は出版基本契約の個別契約（業務委託の基本契約とは別）。
+      agreementNo: "AGR-2026-0088", agreementTitle: "出版基本契約" },
+    { id: 14, usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 15, mgAmount: null, agAmount: null,
+      currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: [], languages: [],
+      licenseFeeBasis: "in_lieu", conditionNo: "CL-14", exclusivity: "non_exclusive",
+      royaltyExemptFirstCopies: 100, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"] }
+  ];
+  const conditions = [
+    { id: 11, kind: "service", name: "原稿", flatAmount: 250000, unitAmount: 250000, quantity: 1, deliverableOwnership: "contractor",
+      pricingModel: "unit_rate", rewardLabel: "保証利用許諾料", taxCategory: "taxable" },
+    { id: 12, kind: "service", name: "イラスト", flatAmount: 50000, unitAmount: 50000, quantity: 1, deliverableOwnership: "contractor",
+      pricingModel: "unit_rate", rewardLabel: "保証利用許諾料", taxCategory: "taxable" }
+  ];
+  const context = { conditions, licenseTerms, events: [],
+                    schedules: [{ id: 1, conditionId: 11, seq: 1, plannedAmount: 250000, dueOn: "2026-11-30", payOn: "2026-12-25" },
+                                { id: 2, conditionId: 12, seq: 1, plannedAmount: 50000, dueOn: "2026-11-30", payOn: "2026-12-25" }] };
+  const c = buildTemplateContext("purchase_order", context, {});
+  const items = c.items as Array<Record<string, unknown>>;
+  assert.equal(items.length, 2);
+  assert.equal(items[0].reward_label, "保証利用許諾料", "条件の報酬名の上書きが行に出る");
+  assert.equal(items[0].payment_date, "2026-12-25");
+  const rows = c.license_terms as Array<Record<string, string>>;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].fee, "10 %（制作対価を兼ねる）");
+  assert.equal(rows[0].guarantee, "保証利用許諾料 ¥ 300,000");
+  assert.equal(rows[0].covers, "対象：No.1 原稿、No.2 イラスト");
+  assert.equal(rows[0].note, "対象外：初版100部／2版以降1%");
+  assert.equal(rows[0].contract, "AGR-2026-0088 出版基本契約 の個別契約");
+  assert.equal(rows[1].guarantee, "（上の行の保証利用許諾料に含む）");
+  assert.equal(rows[1].contract, "", "契約に載っていない行は空");
+
+  const s = suggestionsFor("purchase_order", context) as Record<string, string>;
+  assert.match(s.SPECIAL_TERMS, /原稿およびイラストの制作/);
+  assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書/);
+  assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）の個別契約として取り扱い/);
+  assert.match(s.SPECIAL_TERMS, /保証利用許諾料：金300,000円（税抜）（内訳：原稿 金250,000円、イラスト 金50,000円）/);
+  assert.match(s.SPECIAL_TERMS, /2026年12月25日までに/);
+  assert.match(s.SPECIAL_TERMS, /紙版：本体価格 × 発行部数 × 10％/);
+  // 人が欄に書いていればそちら。in_lieu が無ければ特約は立てない。
+  assert.equal((suggestionsFor("purchase_order", context, { SPECIAL_TERMS: "自前" }) as Record<string, unknown>).SPECIAL_TERMS, undefined);
+  assert.equal("SPECIAL_TERMS" in suggestionsFor("purchase_order", { conditions, licenseTerms: [] }), false);
 });

@@ -13,7 +13,7 @@ function digitalCycleCells(usageType: unknown, paymentTerms: unknown): string[] 
 
 /** 許諾料の扱い（A-048）の CSV 表記。取込（imports/service.ts の FEE_BASIS）と対。 */
 const LICENSE_FEE_BASIS_CSV: Record<string, string> = {
-  separate: "", included: "業務委託報酬に含む", free: "無償"
+  separate: "", included: "業務委託報酬に含む", free: "無償", in_lieu: "保証利用許諾料に代える"
 };
 
 /**

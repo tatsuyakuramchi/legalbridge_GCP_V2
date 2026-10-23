@@ -11,10 +11,12 @@ const root = join(here, "..");
 
 const TARGETS = [
   {
-    no: "147", key: "purchase_order", label: "発注書",
+    // r3（176）：利用許諾料で払う発注（A-075）。利用許諾条件の表に対象の明細・印税対象外、
+    // 確定額の行に報酬名（保証利用許諾料）。147（r2）の SQL はそのまま残し、176 が置き換える。
+    no: "176", key: "purchase_order", label: "発注書",
     body: "templates/purchase_order_v3_body.html", css: "templates/purchase_order_v3_css.txt",
-    mark: 'data-layout="po-v3-2026-09r2"', family: 'data-layout="po-v3',
-    out: "147_po_layout_v3.sql",
+    mark: 'data-layout="po-v3-2026-10r3"', family: 'data-layout="po-v3',
+    out: "176_po_layout_v3_r3.sql",
     // 約款は本文に書いてある（{{> terms_spot_2026}}）。
     termsPlaceholder: null,
     title: "発注書のひな形：1 ページ目を固定し、明細は 2 ページ目から（署名式・利用許諾条件つき）",
@@ -37,10 +39,11 @@ const TARGETS = [
        (strpos(v.html_source, '■ 利用許諾条件') > 0) AS 利用許諾条件,`
   },
   {
-    no: "148", key: "intl_purchase_order", label: "海外版の発注書",
+    // r3（177）：License Terms に対象の明細（Covers）。148（r2）の SQL はそのまま残し、177 が置き換える。
+    no: "177", key: "intl_purchase_order", label: "海外版の発注書",
     body: "templates/intl_purchase_order_v3_body.html", css: "templates/intl_purchase_order_v3_css.txt",
-    mark: 'data-layout="ipo-v3-2026-09r2"', family: 'data-layout="ipo-v3',
-    out: "148_intl_po_layout_v3.sql",
+    mark: 'data-layout="ipo-v3-2026-10r3"', family: 'data-layout="ipo-v3',
+    out: "177_intl_po_layout_v3_r3.sql",
     // 約款の partial 名は現行版の本文から拾って差す（海外版の約款名はここでは決めない）。
     termsPlaceholder: "__TERMS_BLOCK__",
     termsFallback: "terms_spot_intl_2026",

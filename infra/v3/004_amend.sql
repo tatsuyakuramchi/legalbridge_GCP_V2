@@ -1614,7 +1614,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
                   WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_license_fee_basis_chk') THEN
     ALTER TABLE v3.conditions ADD CONSTRAINT conditions_license_fee_basis_chk
-      CHECK (license_fee_basis IN ('separate', 'included', 'free'));
+      CHECK (license_fee_basis IN ('separate', 'included', 'free', 'in_lieu'));
   END IF;
 END
 $a048$;
@@ -2566,6 +2566,50 @@ COMMENT ON COLUMN v3.condition_events.hours IS '実績時間。時間精算の�
 COMMENT ON COLUMN v3.condition_events.report_received_on IS '月次業務報告書の受領日。役務提供完了通知書に出す。A-073';
 
 -- ---------------------------------------------------------------------
+-- A-075 制作対価を利用許諾料で払う発注（conditions/royalty-in-lieu.ts。T17）
+--   原稿・イラストなど受注者帰属の成果物の制作を、別途の制作報酬ではなく利用許諾料
+--   （印税）で払う。委託料の行の確定額は「保証利用許諾料」（発行の有無にかかわらず
+--   受領後 60 日以内に払う最低保証）で、利用許諾条件の MG と同じ額。料率型の利用許諾料
+--   はその超過分だけ計算書で払う。取適法・フリーランス法の 60 日以内・買いたたき・
+--   一方的決定の受け皿がこの保証額（0 円の委託料にしない）。
+--     license_fee_basis            … in_lieu を追加（保証利用許諾料が制作対価を兼ねる）
+--     reward_label                 … 委託料の行の報酬名の上書き（紙は「保証利用許諾料（利用許諾料は別途）」）
+--     royalty_exempt_first_copies  … 印税対象外（初版の献本等。部数）
+--     royalty_exempt_later_pct     … 印税対象外（2 版目以降の献本等。発行部数の %）
+--     condition_fee_covers         … 利用許諾条件 × その利用許諾料が対価を兼ねる委託料の条件
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions DROP CONSTRAINT IF EXISTS conditions_license_fee_basis_chk;
+ALTER TABLE v3.conditions ADD CONSTRAINT conditions_license_fee_basis_chk
+  CHECK (license_fee_basis IN ('separate', 'included', 'free', 'in_lieu'));
+COMMENT ON COLUMN v3.conditions.license_fee_basis IS
+  '許諾料の扱い（separate=別途 / included=業務委託報酬に含む / free=無償 / in_lieu=保証利用許諾料が制作対価を兼ねる）。許諾条件だけが意味を持つ。';
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS reward_label text;
+COMMENT ON COLUMN v3.conditions.reward_label IS
+  '報酬名の上書き（保証利用許諾料 など）。発注書・検収書の金額欄の小さな行に出る。空なら導く。A-075';
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS royalty_exempt_first_copies integer;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS royalty_exempt_later_pct numeric(5,2);
+DO $a075$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_royalty_exempt_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_royalty_exempt_chk
+      CHECK ((royalty_exempt_first_copies IS NULL OR royalty_exempt_first_copies >= 0)
+         AND (royalty_exempt_later_pct IS NULL OR (royalty_exempt_later_pct >= 0 AND royalty_exempt_later_pct <= 100)));
+  END IF;
+END $a075$;
+COMMENT ON COLUMN v3.conditions.royalty_exempt_first_copies IS '印税対象外の部数（初版の献本等）。空なら対象外なし。A-075';
+COMMENT ON COLUMN v3.conditions.royalty_exempt_later_pct IS '印税対象外の割合（2 版目以降、発行部数の %）。空なら対象外なし。A-075';
+CREATE TABLE IF NOT EXISTS v3.condition_fee_covers (
+  license_condition_id bigint NOT NULL REFERENCES v3.conditions(id) ON DELETE CASCADE,
+  service_condition_id bigint NOT NULL REFERENCES v3.conditions(id) ON DELETE CASCADE,
+  PRIMARY KEY (license_condition_id, service_condition_id)
+);
+CREATE INDEX IF NOT EXISTS condition_fee_covers_service_idx ON v3.condition_fee_covers (service_condition_id);
+COMMENT ON TABLE v3.condition_fee_covers IS
+  '利用許諾条件（in_lieu）× その利用許諾料が制作対価を兼ねる委託料の条件。A-075';
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.condition_fee_covers TO legalbridge_v3_runtime;
+
+-- ---------------------------------------------------------------------
 -- A-074 支払文書の送付・受領・過去分、製造予定、報告期限（paydocs/）
 --   送付済みかどうかは、これまで画面ごとに gmail.send / cloudsign.send だけを見ていた。
 --   CloudSign の画面から送ったもの・郵送・手渡し・別のメールで送ったもの・V1 から移した
@@ -2999,6 +3043,12 @@ SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' 
 \echo '--- 相手方の文書番号（A-072。列 1 であること） ---'
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no';
+\echo '--- 制作対価を利用許諾料で払う発注（A-075。列 3・表 1・CHECK 1 で 5 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
+         AND column_name IN ('reward_label', 'royalty_exempt_first_copies', 'royalty_exempt_later_pct'))
+     + (SELECT count(*) FROM information_schema.tables WHERE table_schema='v3' AND table_name='condition_fee_covers')
+     + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_license_fee_basis_chk'
+         AND pg_get_constraintdef(oid) LIKE '%in_lieu%') AS 列と表とCHECK;
 \echo '--- 支払文書の送付・受領・製造予定・報告期限（A-074。列 2・表 1・関数 1・CHECK 1 で 5 であること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
          AND ((table_name='documents' AND column_name='inbound') OR (table_name='conditions' AND column_name='report_due_days')))

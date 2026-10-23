@@ -1,4 +1,4 @@
-<body data-layout="ipo-v3-2026-09r2">
+<body data-layout="ipo-v3-2026-10r3">
 
 <!-- ===== ヘッダ ===== -->
 <div class="doc-head">
@@ -362,8 +362,8 @@
   <tbody>
     {{#each license_terms}}
     <tr>
-      <td class="l">{{usage}}{{#if condition_no}}<div style="font-size:7.5pt;color:#666;">{{condition_no}}</div>{{/if}}</td>
-      <td class="l">{{fee}}</td>
+      <td class="l">{{usage}}{{#if condition_no}}<div style="font-size:7.5pt;color:#666;">{{condition_no}}</div>{{/if}}{{#if covers}}<div style="font-size:7.5pt;color:#666;">{{covers}}</div>{{/if}}{{#if contract}}<div style="font-size:7.5pt;color:#666;">{{contract}}</div>{{/if}}</td>
+      <td class="l">{{fee}}{{#if note}}<div style="font-size:7.5pt;color:#666;">{{note}}</div>{{/if}}</td>
       <td class="l">{{guarantee}}</td>
       <td class="l">{{term}}</td>
       <td class="l">{{scope}}</td>

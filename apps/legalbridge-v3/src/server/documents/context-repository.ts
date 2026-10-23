@@ -620,7 +620,7 @@ export class DocumentContextRepository {
               c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
               c.auto_renew, c.renew_months, c.renew_stopped_on,
-              c.notes, c.spec, c.deliverable_ownership,
+              c.notes, c.spec, c.deliverable_ownership, c.reward_label,
               c.order_no, c.usage_type,
               -- 条件が載っている単体契約の番号（取り込んだ発注書を契約として登録したもの）。
               -- 検収書の行の発注番号が、発注書の文書も控えも無いときにこれを使う。
@@ -710,6 +710,8 @@ export class DocumentContextRepository {
         notes: str(row.notes),
         spec: str(row.spec),
         deliverableOwnership: str(row.deliverable_ownership),
+        /** 報酬名の上書き（保証利用許諾料 など。A-075）。空なら計算方式と帰属先から導く。 */
+        rewardLabel: str(row.reward_label),
         /** 外部で出した発注番号。V3 の発注書が無いときの控え。 */
         orderNo: str(row.order_no),
         /** 条件が載っている単体契約の番号。発注書の文書も控えも無いときの発注番号。 */
@@ -885,13 +887,23 @@ export class DocumentContextRepository {
       `SELECT c.id, c.condition_no, c.name, c.work_id, c.counterparty_id, c.usage_type,
               c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount,
               c.currency, c.term_start, c.term_end, c.exclusivity, c.license_fee_basis,
+              c.royalty_exempt_first_copies, c.royalty_exempt_later_pct,
               w.title AS work_title,
               (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
                  FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'region')   AS regions,
               (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
-                 FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'language') AS languages
+                 FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'language') AS languages,
+              -- この利用許諾料が制作対価を兼ねる委託料の条件（A-075）。発注書の表が対象の行番号を出す。
+              (SELECT array_agg(f.service_condition_id ORDER BY f.service_condition_id)
+                 FROM condition_fee_covers f WHERE f.license_condition_id = c.id) AS covers,
+              (SELECT array_agg(sc.name ORDER BY f.service_condition_id)
+                 FROM condition_fee_covers f JOIN conditions sc ON sc.id = f.service_condition_id
+                WHERE f.license_condition_id = c.id) AS cover_names,
+              -- 利用許諾条件を載せる契約（出版基本契約）。発注書の表と特約が「その個別契約」と書く。
+              la.agreement_no AS agreement_no, la.title AS agreement_title
          FROM conditions c
          LEFT JOIN works w ON w.id = c.work_id
+         LEFT JOIN agreements la ON la.id = c.agreement_id
         WHERE c.kind = 'license' AND c.direction = 'in'
           AND c.work_id = ANY($1::bigint[]) AND c.counterparty_id = ANY($2::bigint[])
           AND (c.status = 'active'
@@ -919,10 +931,19 @@ export class DocumentContextRepository {
           termStart: dateStr(row.term_start),
           termEnd: dateStr(row.term_end),
           exclusivity: str(row.exclusivity),
-          /** 許諾料の扱い（A-048）。separate / included / free。 */
+          /** 許諾料の扱い（A-048）。separate / included / free / in_lieu（A-075）。 */
           licenseFeeBasis: String(row.license_fee_basis ?? "separate"),
           regions: (row.regions ?? []) as string[],
-          languages: (row.languages ?? []) as string[]
+          languages: (row.languages ?? []) as string[],
+          /** 印税対象外（献本等。A-075）。 */
+          royaltyExemptFirstCopies: int(row.royalty_exempt_first_copies),
+          royaltyExemptLaterPct: num(row.royalty_exempt_later_pct),
+          /** この利用許諾料が制作対価を兼ねる委託料の条件（A-075）。id と名前。 */
+          covers: ((row.covers ?? []) as unknown[]).map(Number),
+          coverNames: ((row.cover_names ?? []) as unknown[]).map(String),
+          /** 利用許諾条件を載せる契約（出版基本契約）。無ければ空。 */
+          agreementNo: str(row.agreement_no),
+          agreementTitle: str(row.agreement_title)
         };
       });
   }

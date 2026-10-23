@@ -307,6 +307,13 @@ SELECT * FROM (
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
   UNION ALL
+  SELECT 75, '制作対価を利用許諾料で払う発注（A-075。列 3・表 1・CHECK 1 で 5 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
+            AND column_name IN ('reward_label', 'royalty_exempt_first_copies', 'royalty_exempt_later_pct'))
+        + (SELECT count(*) FROM information_schema.tables WHERE table_schema='v3' AND table_name='condition_fee_covers')
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_license_fee_basis_chk'
+            AND pg_get_constraintdef(oid) LIKE '%in_lieu%'))::text
+  UNION ALL
   SELECT 74, '支払文書の送付・受領・製造予定・報告期限（A-074。列 2・表 1・関数 1・CHECK 1 で 5 であること）',
          ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3'
             AND ((table_name='documents' AND column_name='inbound') OR (table_name='conditions' AND column_name='report_due_days')))

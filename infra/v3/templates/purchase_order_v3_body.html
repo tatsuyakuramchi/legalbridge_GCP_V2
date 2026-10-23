@@ -1,4 +1,4 @@
-<body data-layout="po-v3-2026-09r2">
+<body data-layout="po-v3-2026-10r3">
 
 <!-- ===== ヘッダ ===== -->
 <div class="doc-head">
@@ -210,13 +210,13 @@
       </td>
       <td class="right">{{or quantity qty}}{{#if unit}} {{unit}}{{/if}}</td>
       <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}{{formatYen (or unit_price unitPrice)}}{{else}}<span style="color:#888;">-</span>{{/if}}{{else}}{{formatYen (or unit_price unitPrice)}}{{/if}}</td>
-      <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong><div class="incl-note">{{or reward_label "執筆料"}}（{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}は別途）</div>{{else}}<div class="incl-note">報酬は<br>{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}に含む</div>{{/if}}{{else}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong>{{/if}}</td>
+      <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong><div class="incl-note">{{or reward_label "執筆料"}}（{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}は別途）</div>{{else}}<div class="incl-note">報酬は<br>{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}に含む</div>{{/if}}{{else}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong>{{#if reward_label}}<div class="incl-note">{{reward_label}}{{#if (eq deliverable_ownership "受注者")}}（利用許諾料は別途）{{/if}}</div>{{/if}}{{/if}}</td>
     </tr>
     <tr class="item-detail">
       <td></td>
       <td colspan="4">
         {{#if payment_terms}}契約種別：{{payment_terms}}　／　{{/if}}成果物の帰属先：{{#if (eq deliverable_ownership "受注者")}}受注者（利用許諾型）{{else}}発注者（譲渡型）{{/if}}
-        　／　支払方法：{{#if (eq calc_method "SUBSCRIPTION")}}定期払い{{else}}{{#if (eq calc_method "ROYALTY")}}{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}{{else}}固定額{{/if}}{{/if}}
+        　／　支払方法：{{#if (eq calc_method "SUBSCRIPTION")}}定期払い{{else}}{{#if (eq calc_method "ROYALTY")}}{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}{{else}}{{#if reward_label}}{{reward_label}}（確定額）{{else}}固定額{{/if}}{{/if}}{{/if}}
         　／　{{#if period_text}}{{period_label}}：{{period_text}}{{else}}{{#if (eq calc_method "SUBSCRIPTION")}}役務提供期間{{else}}納期{{/if}}：{{#if (eq calc_method "SUBSCRIPTION")}}{{#if term_start}}{{formatDateCompact term_start}}{{else}}—{{/if}} 〜 {{#if term_end}}{{formatDateCompact term_end}}{{else}}継続中{{/if}}{{else}}{{formatDate delivery_date}}{{/if}}{{/if}}
         　／　支払日：{{#if (eq calc_method "SUBSCRIPTION")}}{{or (billingDayLabel billing_day cycle billing_timing) "支払日未設定"}}{{else}}{{#if (eq calc_method "ROYALTY")}}{{#unless (gt (or amount_ex_tax amount) 0)}}{{#if (eq deliverable_ownership "受注者")}}利用許諾料計算書の通り{{else}}インセンティブ報酬の算定による{{/if}}{{else}}{{formatDate payment_date}}{{/unless}}{{else}}{{formatDate payment_date}}{{/if}}{{/if}}
         {{#if (or spec detailText)}}
@@ -361,8 +361,8 @@
   <tbody>
     {{#each license_terms}}
     <tr>
-      <td class="l">{{usage}}{{#if condition_no}}<div style="font-size:7.5pt;color:#666;">{{condition_no}}</div>{{/if}}</td>
-      <td class="l">{{fee}}</td>
+      <td class="l">{{usage}}{{#if condition_no}}<div style="font-size:7.5pt;color:#666;">{{condition_no}}</div>{{/if}}{{#if covers}}<div style="font-size:7.5pt;color:#666;">{{covers}}</div>{{/if}}{{#if contract}}<div style="font-size:7.5pt;color:#666;">{{contract}}</div>{{/if}}</td>
+      <td class="l">{{fee}}{{#if note}}<div style="font-size:7.5pt;color:#666;">{{note}}</div>{{/if}}</td>
       <td class="l">{{guarantee}}</td>
       <td class="l">{{term}}</td>
       <td class="l">{{scope}}</td>
@@ -370,7 +370,7 @@
     {{/each}}
   </tbody>
 </table>
-<p style="margin-top:4px; font-size:8.5pt; color:#555;">※ 料率型の許諾料は、発注の確定額（小計）には含まれず、別途、利用許諾料計算書により算定・支払われます。</p>
+<p style="margin-top:4px; font-size:8.5pt; color:#555;">※ 料率型の許諾料は、発注の確定額（小計）には含まれず、別途、利用許諾料計算書により算定・支払われます。「制作対価を兼ねる」利用許諾料は、明細の保証利用許諾料を既払いの利用許諾料として扱い、その超過分を計算書により支払います（特約参照）。</p>
 {{/if}}
 {{/if}}
 
