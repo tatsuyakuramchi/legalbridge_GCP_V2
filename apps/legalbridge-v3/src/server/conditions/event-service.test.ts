@@ -340,8 +340,12 @@ test("結びつけの検査：無効な文書に結びついたままの実績�
 });
 
 test("結びつけの検査：訂正版は、元の文書（まとめて訂正する文書を含む）に載った実績を引き継げる。それ以外の文書のものは止める", async () => {
-  const database = new FakeDatabase((t) => {
-    if (t.includes("CASE WHEN d.status = 'void'")) return [{ id: 70, status: "active", document_id: 300 }, { id: 71, status: "active", document_id: 301 }];
+  const database = new FakeDatabase((t, params) => {
+    if (t.includes("CASE WHEN d.status = 'void'")) {
+      const wanted = new Set((params[0] as number[]).map(Number));
+      return [{ id: 70, status: "active", document_id: 300 }, { id: 71, status: "active", document_id: 301 }]
+        .filter((r) => wanted.has(r.id));
+    }
     return undefined;
   });
   const svc = new ConditionEventService(database);
