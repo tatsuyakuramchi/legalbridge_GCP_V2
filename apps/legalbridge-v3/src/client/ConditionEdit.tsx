@@ -99,6 +99,10 @@ export function ConditionEdit(
     licenseFeeBasis: detail.licenseFeeBasis ?? "separate",
     creditNotice: detail.creditNotice ?? "",
     creditFromWork: detail.creditFromWork ? "1" : "",
+    // 報酬名の上書き・印税対象外（A-075）。既存の発注を印税型に直すときにここで入れる。
+    rewardLabel: detail.rewardLabel ?? "",
+    royaltyExemptFirstCopies: detail.royaltyExemptFirstCopies === null || detail.royaltyExemptFirstCopies === undefined ? "" : String(detail.royaltyExemptFirstCopies),
+    royaltyExemptLaterPct: detail.royaltyExemptLaterPct === null || detail.royaltyExemptLaterPct === undefined ? "" : String(detail.royaltyExemptLaterPct),
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
     settlementMode: detail.settlementMode ?? "",
@@ -191,6 +195,9 @@ export function ConditionEdit(
       ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)],
       ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")],
       ["creditNotice", patchText(v.creditNotice, detail.creditNotice)],
+      ["rewardLabel", patchText(v.rewardLabel, detail.rewardLabel)],
+      ["royaltyExemptFirstCopies", patchInt(v.royaltyExemptFirstCopies, detail.royaltyExemptFirstCopies ?? null)],
+      ["royaltyExemptLaterPct", patchNum(v.royaltyExemptLaterPct, detail.royaltyExemptLaterPct ?? null)],
       ["reportDueDays", patchInt(v.reportDueDays, detail.reportDueDays ?? null)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
@@ -472,13 +479,16 @@ export function ConditionEdit(
                 ? `${minorUnitHint(detail.currency)}　いまの値 ${money(detail.flatAmount, detail.currency)}`
                 : `単価×個数 = ${computedFlat.toLocaleString("ja-JP")}。直せば手の値が勝つ` })}
 
-          {detail.direction === "out" && (<>
+          {/* 取得側（IN）の許諾条件にも出す：保証利用許諾料（A-075）は AG で持つ。 */}
+          {(detail.direction === "out" || detail.kind === "license") && (<>
             {field("mgAmount", "MG 最低保証", { type: "number",
               hint: "毎期独立の下限。消化しないので残高を持たない" })}
             {field("agAmount", "AG 前払保証", { type: "number",
               hint: detail.balance
                 ? `消化済み ${money(detail.balance.agConsumed, detail.currency)}／残 ${money(detail.balance.agRemaining, detail.currency)}`
-                : "累積で充当する。消化しきるまで実額が出ない" })}
+                : detail.direction === "in"
+                  ? "累積で充当する。「制作対価を兼ねる」なら保証利用許諾料（委託料の行の合計）をここに入れる"
+                  : "累積で充当する。消化しきるまで実額が出ない" })}
           </>)}
           {detail.kind === "license" && (
             <label className="field">
@@ -548,6 +558,12 @@ export function ConditionEdit(
               <small className="faint">発注書の利用許諾条件の下と特約に出る（A-076）</small>
             </label>
           )}
+          {detail.kind === "license" && detail.direction === "in" && v.licenseFeeBasis === "in_lieu" && (<>
+            {field("royaltyExemptFirstCopies", "印税対象外：初版（部）", { type: "number",
+              placeholder: "100", hint: "献本等。空なら対象外なし（A-075）" })}
+            {field("royaltyExemptLaterPct", "印税対象外：2 版目以降（発行部数の %）", { type: "number",
+              placeholder: "1", hint: "献本等。空なら対象外なし" })}
+          </>)}
           {detail.kind === "license" && (
             <label className="field">
               <span>独占性</span>
@@ -689,6 +705,9 @@ export function ConditionEdit(
             </select>
             <small className="faint">発注書の明細に出る</small>
           </label>
+          {detail.kind === "service" && field("rewardLabel", "報酬名（上書き）", {
+            placeholder: "保証利用許諾料",
+            hint: "発注書・検収書の金額欄の小さな行に出る。制作対価を利用許諾料で払う発注なら「保証利用許諾料」。空なら計算方式と帰属先から導く（A-075）" })}
           {detail.kind === "license" && (<>
             {field("regions", "地域（許諾範囲）", { type: "regions", wide: true,
               hint: "何も選ばなければ無制限（全世界）。媒体・チャネルは下の「権利の範囲」で" })}
