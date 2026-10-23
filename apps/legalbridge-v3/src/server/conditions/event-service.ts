@@ -737,10 +737,12 @@ export class ConditionEventService {
    * 元の文書を無効にする手間が要る（それが二重作業の原因だった）。
    */
   async assertLinkable(
-    conditionId: number, eventIds: number[], heldBy?: number | null
+    conditionId: number, eventIds: number[], heldBy?: number | Array<number | null> | null
   ): Promise<void> {
     const ids = [...new Set(eventIds.map((n) => Math.trunc(n)))].filter((n) => n > 0);
     if (!ids.length) return;
+    // 訂正版は、元の文書（まとめて訂正する文書を含む）に結び付いた実績をそのまま受け取れる。
+    const held = new Set((Array.isArray(heldBy) ? heldBy : [heldBy]).filter((n): n is number => n != null).map(Number));
     const rows = await this.database.query(
       `SELECT e.id, e.status,
               -- 無効にした文書に結びついたままの実績は、空いているものとして扱う。
@@ -756,8 +758,7 @@ export class ConditionEventService {
       throw new DomainError("CONFLICT",
         `取り消し済みの実績は結びつけられません（#${voided.map((r) => r.id).join("・")}）`);
     }
-    const taken = found.filter((r) =>
-      r.document_id !== null && (!heldBy || Number(r.document_id) !== Number(heldBy)));
+    const taken = found.filter((r) => r.document_id !== null && !held.has(Number(r.document_id)));
     if (taken.length) {
       throw new DomainError("CONFLICT",
         `すでに別の文書に結びついている実績があります（#${taken.map((r) => r.id).join("・")}）。` +

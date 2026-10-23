@@ -4188,7 +4188,9 @@ export function createRoutes(database: Transactable) {
     const settles = settlesEvents(draft.templateKey);
     if (settles) {
       for (const [conditionId, ids] of groups) {
-        await conditionEvents.assertLinkable(conditionId, ids, draft.supersedesId);
+        const extraHeld = Array.isArray(draft.manualInputs?._supersedesExtra)
+          ? (draft.manualInputs!._supersedesExtra as unknown[]).map(Number).filter(Number.isFinite) : [];
+        await conditionEvents.assertLinkable(conditionId, ids, [draft.supersedesId, ...extraHeld]);
       }
       // 実績を 1 件も選ばずに決済文書を決定すると、実績が文書に繋がらず、板では「作れる」のまま、
       // 支払も立てられない（役務提供完了通知書で実際に起きた）。選べる実績が残っているなら止める。
