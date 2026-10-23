@@ -26,6 +26,7 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
+import { exemptRuleShort, inLieuSpecialTerms } from "../conditions/royalty-in-lieu.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
@@ -119,9 +120,13 @@ export { OWNERSHIP_LABEL } from "../core/reward.js";
 const ownershipOf = (condition: Ctx) => ownershipLabelOf(condition?.deliverableOwnership);
 /** 明細の支払方法。FIXED / ROYALTY / SUBSCRIPTION。判定は画面と共通。 */
 export const calcMethodOf = (condition: Ctx): string => calcMethodFor(condition?.pricingModel);
-/** 業績連動のときの報酬の名前（利用許諾料・インセンティブ報酬）。判定は画面と共通。 */
+/**
+ * 業績連動のときの報酬の名前（利用許諾料・インセンティブ報酬）。判定は画面と共通。
+ * 条件に報酬名の上書き（reward_label。保証利用許諾料 など。A-075）があればそれが勝つ。
+ */
 export const rewardLabelOf = (condition: Ctx): string | null =>
-  rewardLabelFor(condition?.pricingModel, condition?.deliverableOwnership);
+  String(condition?.rewardLabel ?? "").trim()
+    || rewardLabelFor(condition?.pricingModel, condition?.deliverableOwnership);
 
 /**
  * 計算書の行の見出し（人が直せるぶん）。実績1件が1行。
@@ -557,6 +562,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
     .map((c: Ctx) => ({
       item_name: c.name ?? "",
       spec: specOf(c),
+      // 条件の id。利用許諾条件の表が「対象：No.1 原稿」と行番号で指すのに使う（A-075）。紙には出ない。
+      condition_id: c.id ?? null,
       deliverable_ownership: ownershipOf(c),
       // 条件に個数があればそれを使う。無ければ「一式1」として出す。
       quantity: c.quantity ?? 1,
@@ -969,6 +976,10 @@ export interface LicenseTermRow {
   term: string;
   scope: string;
   condition_no: string;
+  /** この利用許諾料が対価を兼ねる明細（「対象：No.1 原稿、No.2 イラスト」。A-075）。無ければ空。 */
+  covers: string;
+  /** 印税対象外の短い言い方（「対象外：初版100部／2版以降1%」）。無ければ空。 */
+  note: string;
 }
 
 const compactDate = (value: unknown): string => {
@@ -1026,7 +1037,7 @@ const moneyOf = (amount: unknown, currency: string, lang: "ja" | "en" = "ja"): s
  * 料率・額は許諾料の扱い（A-048）で出し分ける。「業務委託報酬に含む」は
  * 追加の許諾料が 0 円という意味なので、率や額の代わりにその旨を書く。
  */
-export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja"): LicenseTermRow[] {
+export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: Row[] = []): LicenseTermRow[] {
   const en = lang === "en";
   // 並びは利用形態の定義順（自社製造・自社販売 → 再許諾 → … → 出版）。
   const order = (t: Ctx) => {
@@ -1035,13 +1046,30 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja"): License
   };
   const terms = [...((context.licenseTerms ?? []) as Ctx[])]
     .sort((a, b) => order(a) - order(b) || Number(a.id ?? 0) - Number(b.id ?? 0));
+  // 対価を兼ねる明細（A-075）を「No.1 原稿」と行番号で指す。明細の行に条件 id があれば
+  // その並びの番号、無ければ条件の名前だけ。
+  const coversText = (t: Ctx): string => {
+    const ids = ((t.covers ?? []) as unknown[]).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    const names = ((t.coverNames ?? []) as unknown[]).map(String);
+    if (!ids.length) return "";
+    const labels = ids.map((id, i) => {
+      const at = items.findIndex((r) => Number(r.condition_id) === id);
+      const name = at >= 0 ? String(items[at].condition_name ?? items[at].item_name ?? names[i] ?? "") : (names[i] ?? "");
+      return at >= 0 ? `No.${items[at].line_no ?? at + 1} ${name}`.trim() : name;
+    }).filter(Boolean);
+    if (!labels.length) return "";
+    return en ? `Covers: ${labels.join(", ")}` : `対象：${labels.join("、")}`;
+  };
   return terms.map((t) => {
     const currency = String(t.currency ?? "JPY");
     const basis = String(t.licenseFeeBasis ?? "separate");
     let fee: string;
     if (basis === "included") fee = en ? "License fee included in the service fee" : "利用許諾料は業務委託報酬に含む";
     else if (basis === "free") fee = en ? "Royalty-free" : "無償";
-    else if (t.ratePct !== null && t.ratePct !== undefined && String(t.pricingModel) === "revenue_rate") {
+    else if (basis === "in_lieu" && t.ratePct !== null && t.ratePct !== undefined) {
+      // 保証利用許諾料が制作対価を兼ねる（A-075）。料率はその超過分だけ計算書で払う。
+      fee = en ? `${t.ratePct} % (in lieu of a production fee)` : `${t.ratePct} %（制作対価を兼ねる）`;
+    } else if (t.ratePct !== null && t.ratePct !== undefined && String(t.pricingModel) === "revenue_rate") {
       fee = `${t.ratePct} %`;
     } else if (String(t.pricingModel) === "unit_rate" && t.unitAmount !== null && t.unitAmount !== undefined) {
       fee = en ? `${moneyOf(t.unitAmount, currency, "en")} per unit` : `${moneyOf(t.unitAmount, currency)}／単位`;
@@ -1053,7 +1081,14 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja"): License
     const guarantee = basis === "separate"
       ? [t.mgAmount ? `MG ${moneyOf(t.mgAmount, currency, lang)}` : "",
          t.agAmount ? `AG ${moneyOf(t.agAmount, currency, lang)}` : ""].filter(Boolean).join(en ? " / " : "／") || "—"
+      // in_lieu の MG は保証利用許諾料（明細の確定額と同じ額）。紙では名前で呼ぶ。
+      : basis === "in_lieu"
+      ? (t.mgAmount ? (en ? `Guaranteed ${moneyOf(t.mgAmount, currency, "en")}` : `保証利用許諾料 ${moneyOf(t.mgAmount, currency)}`)
+                    : (en ? "(see above)" : "（上の行の保証利用許諾料に含む）"))
       : "—";
+    const note = basis === "in_lieu" && !en
+      ? exemptRuleShort({ firstEditionCopies: t.royaltyExemptFirstCopies ?? null, laterEditionPct: t.royaltyExemptLaterPct ?? null })
+      : "";
     const term = t.termStart || t.termEnd
       ? (en
         ? `${t.termStart ? compactDate(t.termStart) : ""} – ${t.termEnd ? compactDate(t.termEnd) : "(no end date)"}`
@@ -1069,7 +1104,42 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja"): License
          t.exclusivity === "exclusive" ? " (exclusive)" : ""].join("")
       : [conditionUsageLabel(t.usageType) || (t.name ?? ""),
          t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
-    return { usage, fee, guarantee, term, scope, condition_no: String(t.conditionNo ?? "") };
+    return { usage, fee, guarantee, term, scope, condition_no: String(t.conditionNo ?? ""),
+             covers: coversText(t), note };
+  });
+}
+
+/**
+ * 利用許諾料で払う発注（A-075）の特約の文。発注書の SPECIAL_TERMS の既定値。
+ *
+ * 台帳の値（対価を兼ねる明細・料率・保証利用許諾料・支払期日・対象外）から組む。
+ * in_lieu の利用許諾条件が無ければ空（特約を立てない）。人が欄で直したらそちらが勝つ。
+ */
+export function inLieuSpecialTermsFor(context: Ctx): string {
+  const terms = ((context.licenseTerms ?? []) as Ctx[]).filter((t) => String(t.licenseFeeBasis) === "in_lieu");
+  if (!terms.length) return "";
+  const coveredIds = new Set(terms.flatMap((t) => ((t.covers ?? []) as unknown[]).map(Number)));
+  const conditions = ((context.conditions ?? []) as Ctx[]);
+  const covered = conditions.filter((c) => coveredIds.has(Number(c.id)));
+  // 対象の明細が読めない（古い登録）なら、受注者帰属の委託料の行を対象とみなす。
+  const deliverableRows = covered.length ? covered
+    : conditions.filter((c) => c.kind === "service" && c.deliverableOwnership === "contractor");
+  const amountOf = (c: Ctx) => Number(c.flatAmount
+    ?? (c.unitAmount === null || c.unitAmount === undefined ? 0 : Number(c.unitAmount) * Number(c.quantity ?? 1))) || 0;
+  const deliverables = deliverableRows.map((c) => ({ name: String(c.name ?? ""), amount: amountOf(c) }));
+  const guaranteeFromMg = terms.reduce((sum, t) => sum + (Number(t.mgAmount) || 0), 0);
+  const guaranteeAmount = guaranteeFromMg || deliverables.reduce((sum, d) => sum + d.amount, 0);
+  // 支払期日は対象の行の予定明細（1 回・支払日）から。
+  const payOn = ((context.schedules ?? []) as Ctx[])
+    .find((s) => deliverableRows.some((c) => Number(c.id) === Number(s.conditionId)) && s.payOn)?.payOn ?? null;
+  const first = terms[0];
+  return inLieuSpecialTerms({
+    deliverables,
+    rates: terms.filter((t) => t.ratePct !== null && t.ratePct !== undefined)
+      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) })),
+    guaranteeAmount,
+    payOn: payOn ? String(payOn) : null,
+    exempt: { firstEditionCopies: first.royaltyExemptFirstCopies ?? null, laterEditionPct: first.royaltyExemptLaterPct ?? null }
   });
 }
 
@@ -1131,7 +1201,8 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
   // 件数・契約種別・帰属先・支払条件はここで 1 行にまとめる。
   const ownerships = [...new Set(items.map((r) => String(r.deliverable_ownership ?? "").trim()).filter(Boolean))];
   const hasContractorOwned = ownerships.includes("受注者") || ownerships.includes("contractor");
-  const licenseTerms = licenseTermRows(context, lang);
+  // 明細の並びを渡す（利用許諾条件の表が対象の行を「No.1 原稿」と指す。A-075）。
+  const licenseTerms = licenseTermRows(context, lang, items);
   const paymentTermsSummary = distinctJoin(((context.conditions ?? []) as Ctx[])
     .filter((c) => !isSettlementKind(c.kind)).map((c) => c.paymentTerms));
   const ownershipEn = (v: string) => (v === "受注者" || v === "contractor" ? "Contractor"
@@ -1212,11 +1283,16 @@ export function suggestionsFor(
     // そちらが勝つ（手入力が先）。
     const signDefaults = PURCHASE_ORDER_KEYS.has(templateKey)
       ? { SHOW_SIGN_SECTION: true, SHOW_ORDER_SIGN_SECTION: false } : {};
+    // 利用許諾料で払う発注（A-075）の特約。台帳から組んだ文を既定にする。人が欄に書いていればそちら。
+    const specialTerms = PURCHASE_ORDER_KEYS.has(templateKey) && !String(bound.SPECIAL_TERMS ?? "").trim()
+      ? inLieuSpecialTermsFor(context) : "";
+    const inLieuDefaults = specialTerms ? { SPECIAL_TERMS: specialTerms } : {};
     const condition = singleCondition(context) ?? context.condition;
-    if (!condition) return signDefaults;
+    if (!condition) return { ...signDefaults, ...inLieuDefaults };
     const reward = rewardLabelOf(condition);
     return {
       ...signDefaults,
+      ...inLieuDefaults,
       calc_method: calcMethodOf(condition),
       ...(ownershipOf(condition) ? { deliverable_ownership: ownershipOf(condition) } : {}),
       ...(reward ? { reward_label: reward } : {}),

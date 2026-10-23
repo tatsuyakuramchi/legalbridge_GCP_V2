@@ -526,8 +526,9 @@ export function ConditionEdit(
                 <option value="separate">別途（料率・額で定める）</option>
                 <option value="included">業務委託報酬に含む（追加の許諾料なし）</option>
                 <option value="free">無償</option>
+                <option value="in_lieu">保証利用許諾料が制作対価を兼ねる（原稿・イラストを印税で払う）</option>
               </select>
-              <small className="faint">発注書の利用許諾条件の「料率・額」に出る（A-048）</small>
+              <small className="faint">発注書の利用許諾条件の「料率・額」に出る（A-048）。「制作対価を兼ねる」は MG が委託料の行の保証利用許諾料と同じ額（A-075）</small>
             </label>
           )}
           {detail.kind === "license" && (

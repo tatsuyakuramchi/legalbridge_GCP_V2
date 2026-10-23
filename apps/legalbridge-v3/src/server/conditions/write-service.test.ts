@@ -496,3 +496,65 @@ test("出版セット：支払条件が空なら媒体ごとの既定（紙は�
   }, "a");
   assert.deepEqual(given.all("INSERT INTO conditions").map((q) => q.params[22]), ["月末締め翌月末払い", "月末締め翌月末払い"]);
 });
+
+test("業務委託の明細：保証利用許諾料に代える（A-075）。行の金額が保証額（MG）、利用形態ごとに許諾条件、対象の対応と予定明細が立つ", async () => {
+  const db: FakeDatabase = new FakeDatabase((t) => {
+    if (t.includes("FROM parties WHERE id = $1")) return [{ id: 3, name: "山田 太郎" }];
+    if (t.includes("SELECT title FROM works")) return [{ title: "夜明けの設計者" }];
+    if (t.includes("FROM works WHERE id")) return [{ id: 5, title: "夜明けの設計者" }];
+    if (t.includes("current_value")) return [{ current_value: 1 }];
+    if (t.includes("INSERT INTO conditions")) return [{ id: 10 + db.all("INSERT INTO conditions").length, condition_no: "CL-x" }];
+    if (t.includes("usage_type = $3 AND status IN")) return [];
+    if (t.includes("SELECT id, status, pricing_model, kind FROM conditions WHERE id = $1")) {
+      return [{ id: 11, status: "active", pricing_model: "unit_rate", kind: "service" }];
+    }
+    return [];
+  });
+  const svc = new ConditionWriteService(db);
+  const base = {
+    title: "書籍『夜明けの設計者』 制作", counterpartyId: 3, workId: 5, contractForm: "請負",
+    deliverableOwnership: "contractor" as const,
+    rows: [
+      { kind: "service" as const, name: "原稿", pricingModel: "unit_rate" as const, unitAmount: 250000, quantity: 1, unitLabel: "式", deliveryDue: "2026-11-30" },
+      { kind: "service" as const, name: "イラスト", pricingModel: "unit_rate" as const, unitAmount: 50000, quantity: 1, unitLabel: "点", deliveryDue: "2026-11-30" }
+    ],
+    payment: { mode: "per_delivery" as const }
+  };
+  const license = {
+    mode: "in_lieu" as const, rates: [{ usageType: "pub_print" as const, ratePct: 10 }, { usageType: "pub_digital" as const, ratePct: 15 }],
+    guaranteeAmount: 300000, payOn: "2026-12-25", exemptFirstCopies: 100, exemptLaterPct: 1
+  };
+  const r = await svc.createServiceSet({ ...base, license }, "a");
+  const inserts = db.all("INSERT INTO conditions");
+  assert.equal(inserts.length, 4, "委託料 2 本＋利用許諾（紙・電子）2 本");
+  const [manuscript, art, print, digital] = inserts.map((q) => q.params);
+  assert.equal(manuscript[46], "保証利用許諾料", "受注者帰属の行の報酬名");
+  assert.equal(art[46], "保証利用許諾料");
+  assert.equal(manuscript[18], 250000); assert.equal(art[18], 50000);
+  assert.equal(print[3], "license"); assert.equal(print[4], "夜明けの設計者｜紙出版");
+  assert.equal(print[34], "in_lieu", "許諾料の扱い");
+  assert.equal(print[15], "revenue_rate"); assert.equal(print[16], 100000, "10% = 100000 ppm");
+  assert.equal(print[19], 300000, "保証利用許諾料は先頭の利用形態の MG");
+  assert.equal(print[47], 100, "対象外：初版の部数"); assert.equal(print[48], 1, "対象外：2 版目以降の割合");
+  assert.equal(digital[16], 150000); assert.equal(digital[19], null, "MG は 2 重に載せない");
+  assert.equal(digital[34], "in_lieu");
+  const covers = db.all("INSERT INTO condition_fee_covers");
+  assert.equal(covers.length, 4, "許諾 2 本 × 委託料 2 本");
+  assert.deepEqual(covers.map((q) => q.params), [[13, 11], [13, 12], [14, 11], [14, 12]]);
+  const schedules = db.all("INSERT INTO condition_schedules");
+  assert.equal(schedules.length, 2, "各行に 1 回の予定明細");
+  assert.equal(schedules[0].params[3], 250000); assert.equal(schedules[0].params[4], "2026-11-30", "締め＝納期");
+  assert.equal(schedules[0].params[6], "2026-12-25", "支払日＝保証利用許諾料の支払期日");
+  assert.equal(r.licenseConditions.length, 2); assert.equal(r.scheduled, 2);
+
+  // 検証：60 日超・保証額の不一致・0 円の行・料率なし・定期払い
+  await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, payOn: "2027-02-10" } }, "a"), /60 日を超えています/);
+  await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, guaranteeAmount: 280000 } }, "a"), /合いません/);
+  await assert.rejects(() => svc.createServiceSet({ ...base,
+    rows: [{ kind: "service", name: "原稿", pricingModel: "unit_rate", unitAmount: 0, quantity: 1, deliveryDue: "2026-11-30" }],
+    license: { ...license, guaranteeAmount: null } }, "a"), /0 円にはできません/);
+  await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, rates: [] } }, "a"), /料率/);
+  await assert.rejects(() => svc.createServiceSet({ ...base, license,
+    payment: { mode: "periodic", periodicFrom: "2026-11-01", periodicTo: "2027-01-31" } }, "a"), /定期払い/);
+  await assert.rejects(() => svc.createServiceSet({ ...base, deliverableOwnership: "orderer", license }, "a"), /帰属先が受注者/);
+});

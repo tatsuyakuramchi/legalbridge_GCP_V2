@@ -2048,8 +2048,8 @@ export function createRoutes(database: Transactable) {
     .nullable().optional();
   /** 再許諾ごとの別途合意（A-033）。covered=不要／required=要。 */
   const sublicenseConsentSchema = z.enum(["covered", "required"]).nullable().optional();
-  /** 許諾料の扱い（A-048）。separate=別途／included=業務委託報酬に含む／free=無償。 */
-  const licenseFeeBasisSchema = z.enum(["separate", "included", "free"]).nullable().optional();
+  /** 許諾料の扱い（A-048）。separate=別途／included=業務委託報酬に含む／free=無償／in_lieu=保証利用許諾料が制作対価を兼ねる（A-075）。 */
+  const licenseFeeBasisSchema = z.enum(["separate", "included", "free", "in_lieu"]).nullable().optional();
   /**
    * 自動更新（A-039）。期間そのものは termStart / termEnd。
    * 更新した回数は持たない（終了日・単位・基準日から数える）。
@@ -2090,6 +2090,9 @@ export function createRoutes(database: Transactable) {
     sublicensable: z.boolean().nullable().optional(),
     sublicenseConsent: sublicenseConsentSchema,
     licenseFeeBasis: licenseFeeBasisSchema,
+    rewardLabel: z.string().trim().max(60).nullable().optional(),
+    royaltyExemptFirstCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
+    royaltyExemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
     ...renewalFields,
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
@@ -2254,10 +2257,11 @@ export function createRoutes(database: Transactable) {
       deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),
       workId: z.coerce.number().int().positive().nullable().optional(),
       taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional(),
+      rewardLabel: z.string().trim().max(60).nullable().optional(),
       ...timeSettlementFields
     })).min(1).max(60),
     license: z.object({
-      mode: z.enum(["separate", "included", "free", "none"]),
+      mode: z.enum(["separate", "included", "free", "in_lieu", "none"]),
       workId: z.coerce.number().int().positive().nullable().optional(),
       usageType: z.enum(
         CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]).nullable().optional(),
@@ -2268,7 +2272,16 @@ export function createRoutes(database: Transactable) {
       scopes: z.array(z.object({
         scopeType: z.enum(["region", "language"]), label: z.string().trim().min(1).max(100),
         code: z.string().trim().max(20).nullable().optional()
-      })).max(100).optional()
+      })).max(100).optional(),
+      // 制作対価を利用許諾料で払う発注（A-075）。要る値の組み合わせはサービス側で確かめる。
+      rates: z.array(z.object({
+        usageType: z.enum(CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),
+        ratePct: z.coerce.number().min(0).max(100)
+      })).max(10).nullable().optional(),
+      guaranteeAmount: z.coerce.number().int().min(0).nullable().optional(),
+      payOn: z.string().date().nullable().optional(),
+      exemptFirstCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
+      exemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional()
     }).nullable().optional(),
     payment: z.object({
       mode: z.enum(["per_delivery", "periodic", "lump"]),
@@ -2346,6 +2359,9 @@ export function createRoutes(database: Transactable) {
     sublicenseConsent: sublicenseConsentSchema,
     targetPartyId: z.coerce.number().int().positive().nullable().optional(),
     licenseFeeBasis: licenseFeeBasisSchema,
+    rewardLabel: z.string().trim().max(60).nullable().optional(),
+    royaltyExemptFirstCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
+    royaltyExemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
     ...renewalFields,
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),

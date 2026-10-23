@@ -12,11 +12,14 @@ export type ConditionStatus = "draft" | "active" | "scheduled" | "superseded" | 
 export type MatterKind = "work" | "outsourcing" | "single";
 export type MatterStatus = "open" | "waiting" | "blocked" | "done" | "canceled";
 export type ScopeType = "region" | "language" | "media" | "channel";
-/** 許諾料の扱い（A-048）。 */
-export type LicenseFeeBasis = "separate" | "included" | "free";
-export const LICENSE_FEE_BASIS_VALUES: readonly LicenseFeeBasis[] = ["separate", "included", "free"];
+/**
+ * 許諾料の扱い（A-048）。in_lieu は制作対価を利用許諾料で払う発注（A-075）：
+ * 委託料の行の確定額が保証利用許諾料（＝MG）で、料率型の許諾料はその超過分だけ計算書で払う。
+ */
+export type LicenseFeeBasis = "separate" | "included" | "free" | "in_lieu";
+export const LICENSE_FEE_BASIS_VALUES: readonly LicenseFeeBasis[] = ["separate", "included", "free", "in_lieu"];
 export const LICENSE_FEE_BASIS_LABEL: Record<LicenseFeeBasis, string> = {
-  separate: "別途", included: "業務委託報酬に含む", free: "無償"
+  separate: "別途", included: "業務委託報酬に含む", free: "無償", in_lieu: "保証利用許諾料が制作対価を兼ねる"
 };
 
 export interface PartyRef { id: number; name: string; kind: "corporate" | "individual" }
@@ -100,6 +103,11 @@ export interface ConditionDetail extends ConditionSummary {
    * separate=別途（率・額）／included=業務委託報酬に含む／free=無償。許諾条件だけが意味を持つ。
    */
   licenseFeeBasis: LicenseFeeBasis;
+  /** 報酬名の上書き（保証利用許諾料 など。A-075）。空なら計算方式と帰属先から導く。 */
+  rewardLabel: string | null;
+  /** 印税対象外（献本等。A-075）。初版の部数と 2 版目以降の割合（%）。許諾条件だけが持つ。 */
+  royaltyExemptFirstCopies: number | null;
+  royaltyExemptLaterPct: number | null;
   /**
    * 自動更新（A-039）。許諾期間（termStart / termEnd）を条件ごとに更新する。
    * 更新した回数は持たない。終了日・単位・基準日から数える（renewal.ts）。
