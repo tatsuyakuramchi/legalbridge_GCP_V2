@@ -217,6 +217,12 @@ export interface ServiceLicenseInput {
   /** in_lieu：印税対象外（献本等）。初版の部数と 2 版目以降の割合（%）。空なら対象外なし。 */
   exemptFirstCopies?: number | null;
   exemptLaterPct?: number | null;
+  /**
+   * クレジット表記（A-076）。成果物を使うときの表示。creditFromWork なら作品のクレジット表記
+   * （work_credits）を引用し、文書を作る日時点の表記が差さる（creditNotice は控え）。
+   */
+  creditNotice?: string | null;
+  creditFromWork?: boolean | null;
 }
 
 /** 支払方法。定期払いは委託料の各条件に期ごとの予定明細を立てる。 */
@@ -375,6 +381,9 @@ export interface ConditionInput {
   /** 印税対象外（献本等。A-075）。初版の部数と 2 版目以降の割合（%）。許諾条件だけが持つ。 */
   royaltyExemptFirstCopies?: number | null;
   royaltyExemptLaterPct?: number | null;
+  /** クレジット表記（A-076）。許諾条件だけが持つ。creditFromWork なら文書は作品の今の表記を差す。 */
+  creditNotice?: string | null;
+  creditFromWork?: boolean | null;
   /** 外部で出した発注書の番号。V3 で出した発注書があればそちらを優先する。 */
   orderNo?: string | null;
   conditionNo?: string | null;
@@ -430,6 +439,9 @@ export interface EconomicsPatch {
   /** 印税対象外（献本等。A-075）。 */
   royaltyExemptFirstCopies?: number | null;
   royaltyExemptLaterPct?: number | null;
+  /** クレジット表記（A-076）。 */
+  creditNotice?: string | null;
+  creditFromWork?: boolean | null;
   orderNo?: string | null;
   usageType?: ConditionUsageType | null;
   /** 直接編集のときだけ変えられる。種類は案件で使える範囲、計算方式は金額の欄と一緒に。 */
@@ -459,6 +471,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
   rewardLabel: "reward_label",
   royaltyExemptFirstCopies: "royalty_exempt_first_copies", royaltyExemptLaterPct: "royalty_exempt_later_pct",
+  creditNotice: "credit_notice", creditFromWork: "credit_from_work",
   usageType: "usage_type",
   targetPartyId: "target_party_id",
   settlementMode: "settlement_mode", settlementCount: "settlement_count",
@@ -478,6 +491,8 @@ const COPY_COLUMNS = [
   "quantity", "unit_label", "contract_form", "auto_renew", "renew_months", "renew_stopped_on",
   // 報酬名の上書き・印税対象外（A-075）。改訂しても紙の言い方と献本の定めは変わらない。
   "reward_label", "royalty_exempt_first_copies", "royalty_exempt_later_pct",
+  // クレジット表記（A-076）。
+  "credit_notice", "credit_from_work",
   // 利用形態も版をまたいで引き継ぐ（落とすと改訂した許諾条件が形態なしになる）。
   "usage_type",
   // 計算書の出し方（A-059）。改訂しても時限式・イベント式は変わらない。
@@ -900,8 +915,11 @@ export class ConditionWriteService {
       }
       for (const workId of workIds) {
         if (inLieu) {
-          // 利用形態ごとに 1 本（紙 10%・電子 15%）。保証利用許諾料（MG）はその作品の受注者帰属の
-          // 行の合計で、先頭の利用形態に 1 回だけ載せる（2 本に載せると保証が 2 重に見える）。
+          // 利用形態ごとに 1 本（紙 10%・電子 15%）。保証利用許諾料はその作品の受注者帰属の行の
+          // 合計で、先頭の利用形態に 1 回だけ載せる（2 本に載せると保証が 2 重に見える）。
+          // 持ち方は AG（前払保証・累積消化）：検収書で先に払い、計算書では発生した印税から累積で
+          // 相殺して超過分だけ払う（calc.ts の AG offset）。MG（毎期の floor）にすると計算書の
+          // たびに保証額が最低支払になってしまう。
           const guarantee = contractorRows
             .filter((r) => (workOf(r) ?? fallback) === workId)
             .reduce((sum, r) => sum + rowAmount(r), 0);
@@ -911,9 +929,10 @@ export class ConditionWriteService {
               counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId,
               usageType: rate.usageType, licenseFeeBasis: "in_lieu",
               pricingModel: "revenue_rate", ratePpm: Math.round(rate.ratePct * 10000),
-              mgAmount: index === 0 && guarantee > 0 ? guarantee : null,
+              agAmount: index === 0 && guarantee > 0 ? guarantee : null,
               royaltyExemptFirstCopies: license.exemptFirstCopies ?? null,
               royaltyExemptLaterPct: license.exemptLaterPct ?? null,
+              creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
               currency: input.currency ?? "JPY",
               termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
               exclusivity: "non_exclusive",
@@ -929,6 +948,7 @@ export class ConditionWriteService {
           matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
           counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId,
           usageType, licenseFeeBasis: basis,
+          creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
           pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",
           ratePpm: ratePct != null ? Math.round(ratePct * 10000) : null,
           flatAmount: flat, currency: input.currency ?? "JPY",
@@ -1067,11 +1087,12 @@ export class ConditionWriteService {
                                    target_party_id, statement_timing, unit_label,
                                    settlement_mode, settlement_count, settlement_cycle, settlement_grace_days,
                                    time_settlement, hours_included, overage_unit_amount, shortfall_unit_amount,
-                                   reward_label, royalty_exempt_first_copies, royalty_exempt_later_pct)
+                                   reward_label, royalty_exempt_first_copies, royalty_exempt_later_pct,
+                                   credit_notice, credit_from_work)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
                    $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42,
-                   $43, $44, $45, $46, $47, $48, $49)
+                   $43, $44, $45, $46, $47, $48, $49, $50, $51)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -1091,7 +1112,8 @@ export class ConditionWriteService {
            settlement.mode, settlement.count, settlement.cycle, settlement.graceDays,
            time.timeSettlement, time.hoursIncluded, time.overageUnitAmount, time.shortfallUnitAmount,
            String(input.rewardLabel ?? "").trim() || null,
-           input.royaltyExemptFirstCopies ?? null, input.royaltyExemptLaterPct ?? null]);
+           input.royaltyExemptFirstCopies ?? null, input.royaltyExemptLaterPct ?? null,
+           String(input.creditNotice ?? "").trim() || null, input.creditFromWork === true]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

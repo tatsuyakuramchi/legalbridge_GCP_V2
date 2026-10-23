@@ -982,6 +982,8 @@ export interface LicenseTermRow {
   note: string;
   /** 載っている契約（「出版基本契約 AGR-… の個別契約」）。契約に載っていなければ空。 */
   contract: string;
+  /** クレジット表記（A-076）。作品の表記を引用する条件は文書の日付時点の作品の表記。無ければ空。 */
+  credit: string;
 }
 
 const compactDate = (value: unknown): string => {
@@ -1083,9 +1085,9 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
     const guarantee = basis === "separate"
       ? [t.mgAmount ? `MG ${moneyOf(t.mgAmount, currency, lang)}` : "",
          t.agAmount ? `AG ${moneyOf(t.agAmount, currency, lang)}` : ""].filter(Boolean).join(en ? " / " : "／") || "—"
-      // in_lieu の MG は保証利用許諾料（明細の確定額と同じ額）。紙では名前で呼ぶ。
+      // in_lieu の保証利用許諾料は AG（前払保証・累積消化）で持つ。明細の確定額と同じ額。紙では名前で呼ぶ。
       : basis === "in_lieu"
-      ? (t.mgAmount ? (en ? `Guaranteed ${moneyOf(t.mgAmount, currency, "en")}` : `保証利用許諾料 ${moneyOf(t.mgAmount, currency)}`)
+      ? (t.agAmount ? (en ? `Guaranteed ${moneyOf(t.agAmount, currency, "en")} (advance)` : `保証利用許諾料 ${moneyOf(t.agAmount, currency)}（既払いとして相殺）`)
                     : (en ? "(see above)" : "（上の行の保証利用許諾料に含む）"))
       : "—";
     const note = basis === "in_lieu" && !en
@@ -1112,8 +1114,20 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
       ? (en ? `Individual contract under ${agreementRef}` : `${agreementRef} の個別契約`)
       : "";
     return { usage, fee, guarantee, term, scope, condition_no: String(t.conditionNo ?? ""),
-             covers: coversText(t), note, contract };
+             covers: coversText(t), note, contract, credit: String(t.creditNotice ?? "").trim() };
   });
+}
+
+/**
+ * 発注書の利用許諾条件の下に出すクレジット表記（A-076）。全部同じなら 1 行、利用形態ごとに
+ * 違えば「出版（紙）：…／出版（電子）：…」。無ければ空（段落を出さない）。
+ */
+export function licenseCreditNotice(rows: LicenseTermRow[]): string {
+  const withCredit = rows.filter((r) => r.credit);
+  if (!withCredit.length) return "";
+  const distinct = [...new Set(withCredit.map((r) => r.credit))];
+  if (distinct.length === 1) return distinct[0];
+  return withCredit.map((r) => `${r.usage}：${r.credit}`).join("／");
 }
 
 /**
@@ -1134,8 +1148,9 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
   const amountOf = (c: Ctx) => Number(c.flatAmount
     ?? (c.unitAmount === null || c.unitAmount === undefined ? 0 : Number(c.unitAmount) * Number(c.quantity ?? 1))) || 0;
   const deliverables = deliverableRows.map((c) => ({ name: String(c.name ?? ""), amount: amountOf(c) }));
-  const guaranteeFromMg = terms.reduce((sum, t) => sum + (Number(t.mgAmount) || 0), 0);
-  const guaranteeAmount = guaranteeFromMg || deliverables.reduce((sum, d) => sum + d.amount, 0);
+  // 保証利用許諾料は許諾条件の AG（前払保証）。無ければ対象の行の合計。
+  const guaranteeFromAg = terms.reduce((sum, t) => sum + (Number(t.agAmount) || 0), 0);
+  const guaranteeAmount = guaranteeFromAg || deliverables.reduce((sum, d) => sum + d.amount, 0);
   // 支払期日は対象の行の予定明細（1 回・支払日）から。
   const payOn = ((context.schedules ?? []) as Ctx[])
     .find((s) => deliverableRows.some((c) => Number(c.id) === Number(s.conditionId)) && s.payOn)?.payOn ?? null;
@@ -1150,7 +1165,9 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
     // 利用許諾条件が載っている契約（出版基本契約）。あれば「その個別契約として扱う」と書く。
     masterAgreement: first.agreementNo || first.agreementTitle
       ? { no: first.agreementNo ? String(first.agreementNo) : null, title: first.agreementTitle ? String(first.agreementTitle) : null }
-      : null
+      : null,
+    // クレジット表記（A-076）。許諾条件のどれかにあれば特約にも書く。
+    creditNotice: terms.map((t) => String(t.creditNotice ?? "").trim()).find(Boolean) ?? null
   });
 }
 
@@ -1255,6 +1272,8 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
     // 「利用許諾の条件は別途定める」と 1 行で出す（黙って空にしない）。
     license_terms: licenseTerms,
     license_terms_missing: hasContractorOwned && !licenseTerms.length,
+    // クレジット表記（A-076）。表の下の段落。無ければ空で段落が出ない。
+    license_credit_notice: licenseCreditNotice(licenseTerms),
     itemsSubtotalExTax: totals.itemsSubtotalExTax,
     otherFeesTotal: totals.otherFeesTotal,
     // 明細も手数料も無い発注書は総額を手入力する運用が残っている。

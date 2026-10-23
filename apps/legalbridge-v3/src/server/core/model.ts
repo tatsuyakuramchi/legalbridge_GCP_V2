@@ -108,6 +108,9 @@ export interface ConditionDetail extends ConditionSummary {
   /** 印税対象外（献本等。A-075）。初版の部数と 2 版目以降の割合（%）。許諾条件だけが持つ。 */
   royaltyExemptFirstCopies: number | null;
   royaltyExemptLaterPct: number | null;
+  /** クレジット表記（A-076）。許諾条件だけが持つ。creditFromWork なら文書は作品の今の表記を差す。 */
+  creditNotice: string | null;
+  creditFromWork: boolean;
   /**
    * 自動更新（A-039）。許諾期間（termStart / termEnd）を条件ごとに更新する。
    * 更新した回数は持たない。終了日・単位・基準日から数える（renewal.ts）。
