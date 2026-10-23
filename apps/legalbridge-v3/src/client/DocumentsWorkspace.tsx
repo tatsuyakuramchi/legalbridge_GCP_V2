@@ -1056,7 +1056,7 @@ export function DocumentsWorkspace(
         id: number; documentNo: string | null; templateKey: string | null;
         matterId: number | null; agreementId: number | null;
         manualInputs: Record<string, unknown>;
-        conditions: Array<{ id: number }>;
+        conditions: Array<{ id: number; currentId?: number }>;
         eventIds: number[];
         supersedesId: number | null; supersedeReason: string | null;
       }>(`/documents/${id}`);
@@ -1087,7 +1087,8 @@ export function DocumentsWorkspace(
       setComposing(true);
       setDraft({ id: d.id, no: d.documentNo });
       setTemplateKey(d.templateKey);
-      setPicked(d.conditions.map((c) => c.id));
+      // 改訂で旧版になった条件は、いまの版を選び直す（実績は系列で突き合わせるので残る）。
+      setPicked([...new Set(d.conditions.map((c) => c.currentId ?? c.id))]);
       // 実績も戻す。訂正版の下書きなら、前の版が結んでいた実績が返ってくる。
       // ここを空にすると、直して発行するたびに実績を選び直す羽目になる。
       // 実績は 前の版のもの（訂正版）→ 下書きに控えたもの の順で戻す。

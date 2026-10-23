@@ -449,3 +449,29 @@ test("文書フォームで選んだ番号は manual_inputs の内部の名前�
   // まだ無い基本契約の試算の相手先。
   assert.equal(chosenRefs({ _partyId: 7 }).partyId, 7);
 });
+
+test("下書きのあとに条件が改訂されていれば、決定の時点でいまの版に付け替えてから出す（旧版で止めない）", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    // 条件 5 は改訂されて 9 が今の版。
+    if (text.includes("WITH RECURSIVE chain")) return [{ start_id: 5, id: 9 }];
+    if (text.includes("AND status IN ('void', 'superseded')")) return [];
+    return base(text);
+  });
+  await new DocumentIssueService(db).issue(1, "kuramochi");
+  assert.ok(db.find("DELETE FROM document_conditions WHERE document_id = $1"), "旧版の繋ぎを張り直す");
+  const relink = db.all("INSERT INTO document_conditions").find((q) => q.params[1] === 9);
+  assert.ok(relink, "今の版（9）を繋ぐ");
+  const audit = db.all("INSERT INTO audit_events").find((q) => q.params[1] === "document.conditions_revised");
+  assert.ok(audit, "付け替えを記録する");
+});
+
+test("改訂されていなければ繋ぎは張り直さない", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("WITH RECURSIVE chain")) return [{ start_id: 5, id: 5 }];
+    return base(text);
+  });
+  await new DocumentIssueService(db).issue(1, "kuramochi");
+  assert.equal(db.find("DELETE FROM document_conditions WHERE document_id = $1"), undefined);
+});
