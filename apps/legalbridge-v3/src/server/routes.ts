@@ -2093,6 +2093,8 @@ export function createRoutes(database: Transactable) {
     rewardLabel: z.string().trim().max(60).nullable().optional(),
     royaltyExemptFirstCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
     royaltyExemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
+    creditNotice: z.string().trim().max(600).nullable().optional(),
+    creditFromWork: z.boolean().nullable().optional(),
     ...renewalFields,
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
@@ -2283,7 +2285,10 @@ export function createRoutes(database: Transactable) {
       guaranteeAmount: z.coerce.number().int().min(0).nullable().optional(),
       payOn: z.string().date().nullable().optional(),
       exemptFirstCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
-      exemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional()
+      exemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
+      // クレジット表記（A-076）。作品の表記を引用するか、この条件で文言を持つ。
+      creditNotice: z.string().trim().max(600).nullable().optional(),
+      creditFromWork: z.boolean().nullable().optional()
     }).nullable().optional(),
     payment: z.object({
       mode: z.enum(["per_delivery", "periodic", "lump"]),
@@ -2364,6 +2369,8 @@ export function createRoutes(database: Transactable) {
     rewardLabel: z.string().trim().max(60).nullable().optional(),
     royaltyExemptFirstCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
     royaltyExemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
+    creditNotice: z.string().trim().max(600).nullable().optional(),
+    creditFromWork: z.boolean().nullable().optional(),
     ...renewalFields,
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),

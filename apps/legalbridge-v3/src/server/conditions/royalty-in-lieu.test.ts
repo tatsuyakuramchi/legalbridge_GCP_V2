@@ -61,6 +61,14 @@ test("特約の文：成果物の列挙・料率・保証利用許諾料と内�
   assert.match(withMaster, /3\. 本特約に定める利用許諾の条件および個別出版条件書は、出版基本契約（AGR-2026-0088 出版基本契約）の個別契約として取り扱い/);
   assert.match(withMaster, /本制作の委託（成果物の制作・納入・検収）については、業務委託基本契約約款による/);
   assert.match(withMaster, /7\. 甲および乙は/);
+  assert.doesNotMatch(withMaster, /クレジット表記/, "クレジット表記が無ければ項を立てない");
+  // クレジット表記があれば第 4 項に立ち、以降の番号が 1 つずれる。
+  const withCredit = inLieuSpecialTerms({ deliverables: [{ name: "原稿", amount: 300000 }],
+    rates: [{ usageType: "pub_print", ratePct: 10 }], guaranteeAmount: 300000, payOn: null, exempt: null,
+    creditNotice: "© 2026 山田太郎／イラスト：山田太郎" });
+  assert.match(withCredit, /4\. 甲は、成果物を利用するに際し、次のクレジット表記を行う。表記の変更は甲乙協議の上で定める。\n　© 2026 山田太郎／イラスト：山田太郎/);
+  assert.match(withCredit, /5\. 甲は、成果物を受領した日から60日以内/);
+  assert.match(withCredit, /8\. 甲および乙は/);
 });
 
 test("60 日以内の判定：当日・60 日目は可、61 日目と受領前は不可、日付が無ければ判定しない", () => {

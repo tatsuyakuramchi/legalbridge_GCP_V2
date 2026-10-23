@@ -491,6 +491,7 @@ $q$;
     {{/each}}
   </tbody>
 </table>
+{{#if license_credit_notice}}<p style="margin-top:4px; font-size:8.5pt;"><strong>Credit line</strong> (to be displayed when the deliverable is used): {{license_credit_notice}}</p>{{/if}}
 <p style="margin-top:4px; font-size:8.5pt; color:#555;">Rate-based license fees are not included in the Fixed Fee Subtotal and are calculated and paid separately under a royalty statement.</p>
 {{/if}}
 {{/if}}

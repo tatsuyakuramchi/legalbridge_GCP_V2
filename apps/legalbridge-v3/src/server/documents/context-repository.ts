@@ -900,7 +900,16 @@ export class DocumentContextRepository {
                  FROM condition_fee_covers f JOIN conditions sc ON sc.id = f.service_condition_id
                 WHERE f.license_condition_id = c.id) AS cover_names,
               -- 利用許諾条件を載せる契約（出版基本契約）。発注書の表と特約が「その個別契約」と書く。
-              la.agreement_no AS agreement_no, la.title AS agreement_title
+              la.agreement_no AS agreement_no, la.title AS agreement_title,
+              -- クレジット表記（A-076）。作品を引用するなら、文書の日付時点の作品の表記（A-031 の履歴。
+              -- 無ければ works の写し）。
+              c.credit_notice, c.credit_from_work,
+              COALESCE((SELECT wc.copyright_notice FROM work_credits wc
+                         WHERE wc.work_id = c.work_id AND wc.effective_from <= $3::date
+                         ORDER BY wc.effective_from DESC, wc.id DESC LIMIT 1), w.copyright_notice) AS work_copyright_notice,
+              COALESCE((SELECT wc.third_party_rights FROM work_credits wc
+                         WHERE wc.work_id = c.work_id AND wc.effective_from <= $3::date
+                         ORDER BY wc.effective_from DESC, wc.id DESC LIMIT 1), w.third_party_rights) AS work_third_party_rights
          FROM conditions c
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN agreements la ON la.id = c.agreement_id
@@ -943,7 +952,15 @@ export class DocumentContextRepository {
           coverNames: ((row.cover_names ?? []) as unknown[]).map(String),
           /** 利用許諾条件を載せる契約（出版基本契約）。無ければ空。 */
           agreementNo: str(row.agreement_no),
-          agreementTitle: str(row.agreement_title)
+          agreementTitle: str(row.agreement_title),
+          /**
+           * クレジット表記（A-076）。作品を引用する条件は文書の日付時点の作品の表記
+           * （著作権表示／第三者権利）。作品に無ければ条件の控え。引用しない条件は条件の文言。
+           */
+          creditNotice: row.credit_from_work === true
+            ? ([str(row.work_copyright_notice), str(row.work_third_party_rights)].filter(Boolean).join("／") || str(row.credit_notice))
+            : str(row.credit_notice),
+          creditFromWork: row.credit_from_work === true
         };
       });
   }

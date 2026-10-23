@@ -2609,6 +2609,21 @@ COMMENT ON TABLE v3.condition_fee_covers IS
 GRANT SELECT, INSERT, UPDATE, DELETE ON v3.condition_fee_covers TO legalbridge_v3_runtime;
 
 -- ---------------------------------------------------------------------
+-- A-076 利用許諾条件のクレジット表記（works/credits.ts と対）
+--   受注者帰属の成果物を当社が使うとき（出版・再許諾・自社製造）に表示するクレジット。
+--   条件ごとに文言を持つか、作品のクレジット表記（work_credits。A-031）を引用する。
+--   引用のときは文書を作る日時点の作品の表記（適用開始日が当日以前で最新の行）を差す。
+--     credit_notice     … クレジット表記の文言（引用しないとき、または引用の控え）
+--     credit_from_work  … 作品のクレジット表記を引用する（true なら作品の表記が勝つ）
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS credit_notice text;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS credit_from_work boolean NOT NULL DEFAULT false;
+COMMENT ON COLUMN v3.conditions.credit_notice IS
+  'クレジット表記（成果物を利用するときの表示。© 2026 著作者名／イラスト：◯◯ など）。許諾条件だけが意味を持つ。A-076';
+COMMENT ON COLUMN v3.conditions.credit_from_work IS
+  '作品のクレジット表記（work_credits）を引用するか。true なら文書は作品の今の表記を差す。A-076';
+
+-- ---------------------------------------------------------------------
 -- A-074 支払文書の送付・受領・過去分、製造予定、報告期限（paydocs/）
 --   送付済みかどうかは、これまで画面ごとに gmail.send / cloudsign.send だけを見ていた。
 --   CloudSign の画面から送ったもの・郵送・手渡し・別のメールで送ったもの・V1 から移した
@@ -2982,6 +2997,10 @@ SELECT * FROM (
   SELECT 72, '相手方の文書番号（A-072。列 1 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
+  UNION ALL
+  SELECT 76, '利用許諾条件のクレジット表記（A-076。列 2 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
+            AND column_name IN ('credit_notice', 'credit_from_work')))::text
   UNION ALL
   SELECT 75, '制作対価を利用許諾料で払う発注（A-075。列 3・表 1・CHECK 1 で 5 であること）',
          ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'

@@ -524,7 +524,9 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
     mode: "in_lieu" as const, rates: [{ usageType: "pub_print" as const, ratePct: 10 }, { usageType: "pub_digital" as const, ratePct: 15 }],
     guaranteeAmount: 300000, payOn: "2026-12-25", exemptFirstCopies: 100, exemptLaterPct: 1,
     // 利用許諾条件は出版基本契約（8）の個別契約。業務委託の基本契約（7）とは別。
-    agreementId: 8
+    agreementId: 8,
+    // クレジット表記は作品から引用（文言は控え）。
+    creditFromWork: true, creditNotice: "© 2026 山田太郎"
   };
   const r = await svc.createServiceSet({ ...base, agreementId: 7, license }, "a");
   const inserts = db.all("INSERT INTO conditions");
@@ -538,10 +540,13 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
   assert.equal(print[3], "license"); assert.equal(print[4], "夜明けの設計者｜紙出版");
   assert.equal(print[34], "in_lieu", "許諾料の扱い");
   assert.equal(print[15], "revenue_rate"); assert.equal(print[16], 100000, "10% = 100000 ppm");
-  assert.equal(print[19], 300000, "保証利用許諾料は先頭の利用形態の MG");
+  assert.equal(print[20], 300000, "保証利用許諾料は先頭の利用形態の AG（前払保証・累積消化）");
+  assert.equal(print[19], null, "MG（毎期の floor）には載せない");
   assert.equal(print[47], 100, "対象外：初版の部数"); assert.equal(print[48], 1, "対象外：2 版目以降の割合");
-  assert.equal(digital[16], 150000); assert.equal(digital[19], null, "MG は 2 重に載せない");
-  assert.equal(digital[34], "in_lieu");
+  assert.equal(print[49], "© 2026 山田太郎", "クレジット表記の控え"); assert.equal(print[50], true, "作品から引用");
+  assert.equal(digital[16], 150000); assert.equal(digital[20], null, "AG は 2 重に載せない");
+  assert.equal(digital[34], "in_lieu"); assert.equal(digital[50], true);
+  assert.equal(manuscript[49], null, "委託料の行はクレジット表記を持たない"); assert.equal(manuscript[50], false);
   const covers = db.all("INSERT INTO condition_fee_covers");
   assert.equal(covers.length, 4, "許諾 2 本 × 委託料 2 本");
   assert.deepEqual(covers.map((q) => q.params), [[13, 11], [13, 12], [14, 11], [14, 12]]);

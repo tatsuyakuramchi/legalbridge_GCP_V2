@@ -127,6 +127,23 @@ export function ServiceLinesForm(
    * "none" は契約に載せない。
    */
   const [licAgreementId, setLicAgreementId] = useState("");
+  // クレジット表記（A-076）。作品のクレジット表記（WorksWorkspace の履歴）を引用するか、この条件で文言を持つ。
+  const [creditFromWork, setCreditFromWork] = useState(true);
+  const [creditNotice, setCreditNotice] = useState("");
+  /** 引用する作品の今のクレジット表記（著作権表示／第三者権利）。作品が無い・未登録なら null。 */
+  const [workCredit, setWorkCredit] = useState<string | null>(null);
+  const licenseWorkId = [...new Set(lines.filter((l) => l.kind === "service" && (l.ownership || ownership) === "contractor")
+    .map((l) => (l.workId === "" ? workId : l.workId === "none" ? "" : l.workId)).filter(Boolean))][0] ?? "";
+  useEffect(() => {
+    if (!licenseWorkId) { setWorkCredit(null); return; }
+    let alive = true;
+    api.get<{ current: { copyrightNotice: string; thirdPartyRights: string | null } | null }>(`/works/${licenseWorkId}/credits`)
+      .then((r) => { if (alive) setWorkCredit(r.current ? [r.current.copyrightNotice, r.current.thirdPartyRights].filter(Boolean).join("／") : null); })
+      .catch(() => { if (alive) setWorkCredit(null); });
+    return () => { alive = false; };
+  }, [licenseWorkId]);
+  /** 文書に出るクレジット表記（引用なら作品の今の表記。無ければ手入力の文言）。 */
+  const creditText = creditFromWork ? (workCredit ?? creditNotice.trim()) : creditNotice.trim();
   const [exemptFirst, setExemptFirst] = useState(String(DEFAULT_ROYALTY_EXEMPT.firstEditionCopies ?? ""));
   const [exemptLater, setExemptLater] = useState(String(DEFAULT_ROYALTY_EXEMPT.laterEditionPct ?? ""));
   const [showTermsPreview, setShowTermsPreview] = useState(false);
@@ -192,7 +209,8 @@ export function ServiceLinesForm(
       const id = licAgreementId === "" ? agreementId : licAgreementId === "none" ? "" : licAgreementId;
       const a = agreements.find((x) => String(x.id) === id);
       return a ? { no: a.agreementNo, title: a.title } : null;
-    })()
+    })(),
+    creditNotice: creditText || null
   }) : "";
 
   const ready = Boolean(partyId) && title.trim() !== "" && serviceLines.length > 0
@@ -305,6 +323,8 @@ export function ServiceLinesForm(
           mode: licMode, workId: int(workId) ?? null, usageType: licUsage,
           // 出版基本契約。"" は送らない（業務委託の基本契約と同じ）、"none" は null（載せない）。
           ...(licAgreementId === "" ? {} : { agreementId: licAgreementId === "none" ? null : int(licAgreementId) ?? null }),
+          // クレジット表記（A-076）。引用なら文書が作品の今の表記を差す（文言は控え）。
+          creditFromWork, creditNotice: text(creditNotice) ?? null,
           ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
           flatAmount: licMode === "separate" && !licRate.trim() && licFlat.trim() ? Math.round(num(licFlat)) : null,
           termStart: text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
@@ -576,6 +596,26 @@ export function ServiceLinesForm(
                     {agreementId && <option value="none">契約に載せない（個別出版条件書のみ）</option>}
                   </select>
                   <small className="faint">成果物を出版・再許諾するときの利用許諾は、業務委託の基本契約とは別に、出版基本契約の個別契約として扱えます。発注書の利用許諾条件の表と特約に「その個別契約」と出ます</small></label>
+                <div className="field wide stack" style={{ gap: 4 }}>
+                  <span>クレジット表記（成果物を利用するときの表示）</span>
+                  <div className="row" style={{ flexWrap: "wrap" }}>
+                    <button type="button" className="chip" aria-pressed={creditFromWork} onClick={() => setCreditFromWork(true)}>作品のクレジット表記を引用</button>
+                    <button type="button" className="chip" aria-pressed={!creditFromWork} onClick={() => setCreditFromWork(false)}>この条件で文言を定める</button>
+                  </div>
+                  {creditFromWork ? (
+                    <small className="faint">
+                      {licenseWorkId
+                        ? (workCredit
+                          ? <>作品の今の表記：<b>{workCredit}</b>（文書を作る日時点の表記を差します。重版で変われば作品側で履歴を足してください）</>
+                          : <>作品にクレジット表記が登録されていません。作品の画面で登録するか、下に文言を入れると控えとして使います。</>)
+                        : "受注者帰属の行に作品を選ぶと、その作品のクレジット表記を引用できます"}
+                    </small>
+                  ) : null}
+                  <textarea rows={2} value={creditNotice} aria-label="クレジット表記の文言"
+                            placeholder={creditFromWork ? "（作品に表記が無いときの控え）© 2026 山田太郎／イラスト：山田太郎" : "© 2026 山田太郎／イラスト：山田太郎"}
+                            onChange={(e) => setCreditNotice(e.target.value)} />
+                  <small className="faint">発注書の利用許諾条件の下と特約に出ます。</small>
+                </div>
                 {licMode !== "in_lieu" && (
                 <label className="field"><span>利用形態</span>
                   <select value={licUsage} onChange={(e) => setLicUsage(e.target.value)}>

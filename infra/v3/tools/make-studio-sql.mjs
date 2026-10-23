@@ -307,6 +307,10 @@ SELECT * FROM (
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
   UNION ALL
+  SELECT 76, '利用許諾条件のクレジット表記（A-076。列 2 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
+            AND column_name IN ('credit_notice', 'credit_from_work')))::text
+  UNION ALL
   SELECT 75, '制作対価を利用許諾料で払う発注（A-075。列 3・表 1・CHECK 1 で 5 であること）',
          ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
             AND column_name IN ('reward_label', 'royalty_exempt_first_copies', 'royalty_exempt_later_pct'))
