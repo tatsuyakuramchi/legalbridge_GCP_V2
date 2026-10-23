@@ -607,6 +607,7 @@ docker compose run --rm ops backup-begin    # 記録を始める（写しを入�
 docker compose up -d app
 #   …予備系で作業する（文書番号は 9000 番台。CloudSign は止まったまま。メールは docs/v3-local-gmail.md で開けられる）…
 docker compose run --rm ops backup-status   # 書いた変更の数
+docker compose run --rm ops backup-attach   # 停止中に移行 SQL で表を足したなら（172 など）、その表にも引き金を付ける
 docker compose run --rm ops backup-export   # 本番が戻ったら、持ち帰る SQL を作る（dumps\merge\）
 #   → Cloud Shell で、試す（check）→ 確定（apply）
 docker compose run --rm ops backup-close merged   # 持ち帰ったら閉じる。READ_ONLY=true に戻す

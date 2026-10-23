@@ -22,6 +22,7 @@
 #                           流すのは Cloud Shell の psql。docs/v3-push-local-to-prod.md）
 #   ops backup-begin      予備系で書き始める（本番が止まったとき。ここからの変更を記録する）
 #   ops backup-status     予備系で書いた変更の数
+#   ops backup-attach     停止中に移行 SQL で足した表にも記録の引き金を付ける（backup-export の前に）
 #   ops backup-export     予備系で書いた変更を、本番へ持ち帰る SQL 1 本にまとめる
 #                         （本番にも書き込みがあってよい。流すのは Cloud Shell の psql。
 #                           docs/v3-backup-merge.md）
@@ -1157,6 +1158,14 @@ SELECT row_number() OVER (ORDER BY last_seq) AS no, table_name, op, pk,
 SQL
 }
 
+# 停止中に表を足す移行 SQL（172 など）を流したあとに。引き金の無い表に付け、いまの行を記録する。
+backup_attach() {
+  [ -f "$LOCAL_SQL/backup_attach.sql" ] || die "$LOCAL_SQL/backup_attach.sql がありません"
+  local sid; sid=$(backup_session)
+  [ -n "$sid" ] || die "予備系の書き込みは始まっていません"
+  psql -v ON_ERROR_STOP=1 -f "$LOCAL_SQL/backup_attach.sql"
+}
+
 backup_status() {
   local sid; sid=$(backup_session)
   if [ -z "$sid" ]; then
@@ -1328,6 +1337,7 @@ case "${1:-}" in
   push-export) push_export ;;
   backup-begin) backup_begin ;;
   backup-status) backup_status ;;
+  backup-attach) backup_attach ;;
   backup-export) backup_export ;;
   backup-close) shift; backup_close "${1:-}" ;;
   status) status ;;
