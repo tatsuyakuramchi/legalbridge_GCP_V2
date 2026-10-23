@@ -1009,3 +1009,34 @@ test("画面で直した明細の発注番号は、いまの文脈で出し直�
     { delivery_line_items: [{ item_name: "追加", order_no: "KEEP", inspected_amount_ex_tax: 1000, inspection_status: "now" }] });
   assert.equal((d.delivery_line_items as Array<Record<string, unknown>>)[0].order_no, "KEEP");
 });
+
+test("保存した明細行の役務提供期間・納品日が空なら、いまの実績（同じ条件）から埋める。人が入れた値は触らない", () => {
+  const c = buildTemplateContext("inspection_certificate", ctx({
+    conditions: [condition({ termStart: "2026-10-17", termEnd: "2026-10-18" })],
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-18", amount: 116000, serviceFrom: "2026-10-17", serviceTo: "2026-10-18" }]
+  }), {
+    delivery_line_items: [
+      { condition_id: 1, item_name: "場内アナウンス", spec: "x", amount_ex_tax: 116000, inspected_amount_ex_tax: 116000, tax_category: "taxable",
+        term_start: null, term_end: null, delivery_date: "" }
+    ]
+  }) as Record<string, any>;
+  const [line] = c.delivery_line_items;
+  assert.equal(line.term_start, "2026-10-17");
+  assert.equal(line.term_end, "2026-10-18");
+  assert.equal(line.delivery_date, "2026-10-18");
+  const typed = buildTemplateContext("inspection_certificate", ctx({
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-18", amount: 116000, serviceFrom: "2026-10-17", serviceTo: "2026-10-18" }]
+  }), {
+    delivery_line_items: [{ condition_id: 1, item_name: "x", spec: "x", amount_ex_tax: 1, inspected_amount_ex_tax: 1, tax_category: "taxable",
+                            term_start: "2026-09-01", term_end: "2026-09-30" }]
+  }) as Record<string, any>;
+  assert.equal(typed.delivery_line_items[0].term_start, "2026-09-01", "人が入れた期間はそのまま");
+});
+
+test("実績に役務提供期間が無ければ、条件の契約期間（両端あるとき）を行の期間にする", () => {
+  const [line] = deliveryLinesFrom(ctx({ conditions: [condition({ termStart: "2026-10-17", termEnd: "2026-10-18" })] })) as Array<Record<string, any>>;
+  assert.equal(line.term_start, "2026-10-17");
+  assert.equal(line.term_end, "2026-10-18");
+  const [open] = deliveryLinesFrom(ctx({ conditions: [condition({ termStart: "2026-10-17", termEnd: null })] })) as Array<Record<string, any>>;
+  assert.equal(open.term_start, null, "片方だけなら出さない（納品日で出る）");
+});

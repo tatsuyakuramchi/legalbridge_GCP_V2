@@ -442,9 +442,9 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 契約種別・支払条件の欄には契約形式（請負・委任）を出す。実績 →
         // 予定 → 条件 の順に、書いてあるものを使う。
         payment_terms: contractFormFor(event.contractForm, condition.contractForm),
-        // 定期払いの役務提供期間。本文の「役務提供期間」がここを読む。
-        term_start: event.serviceFrom ?? null,
-        term_end: event.serviceTo ?? null,
+        // 役務提供期間。本文の「役務提供期間」がここを読む。実績に無ければ条件の契約期間（両端あるとき）。
+        term_start: event.serviceFrom ?? (condition.termStart && condition.termEnd ? condition.termStart : null),
+        term_end: event.serviceTo ?? (condition.termStart && condition.termEnd ? condition.termEnd : null),
         delivery_date: event.occurredOn ?? null,
         inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
         payment_date: payOnFor(event, condition) ?? event.schedule?.dueOn ?? null,
@@ -732,9 +732,23 @@ function conditionTotalFor(context: Ctx): number {
 }
 
 function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate: number) {
-  const lines = rows(manual.delivery_line_items).length
-    ? rows(manual.delivery_line_items)
-    : deliveryLinesFrom(context);
+  const saved = rows(manual.delivery_line_items);
+  const lines = saved.length ? saved : deliveryLinesFrom(context);
+  // 下書きに保存した行は、作ったときの日付のまま。実績を選ぶ前に作った行（条件から組んだ行）は
+  // 役務提供期間・納品日が空なので、いまの実績（同じ条件の行）から埋める。人が入れた値は触らない。
+  if (saved.length && (context.events ?? []).length) {
+    const fresh = deliveryLinesFrom(context);
+    const used = new Set<number>();
+    for (const line of lines) {
+      if (line.condition_id === null || line.condition_id === undefined) continue;
+      const idx = fresh.findIndex((f, i) => !used.has(i) && Number(f.condition_id) === Number(line.condition_id));
+      if (idx < 0) continue;
+      used.add(idx);
+      for (const k of ["term_start", "term_end", "delivery_date", "inspection_date"] as const) {
+        if ((line[k] === null || line[k] === undefined || line[k] === "") && fresh[idx][k]) line[k] = fresh[idx][k];
+      }
+    }
+  }
   // 手数料・経費は画面が条件から種を作って手入力として送ってくる。欄そのものが無い
   // （画面を通らない API や試算）ときだけ、条件から組む。空の配列は「消した」なので尊重する。
   const otherFees = manual.other_fees === undefined
