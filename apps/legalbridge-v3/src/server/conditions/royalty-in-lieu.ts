@@ -85,6 +85,17 @@ export interface InLieuTermsInput {
   exempt?: RoyaltyExemptRule | null;
   /** 細目を定める書面の名前。空なら「個別出版条件書」。 */
   detailDocument?: string | null;
+  /**
+   * 利用許諾条件を載せる出版基本契約（業務委託の基本契約とは別）。あれば、利用許諾の条件と
+   * 個別出版条件書はその個別契約として扱う旨を書く。無ければ「出版基本契約があるときは」の形。
+   */
+  masterAgreement?: { no: string | null; title: string | null } | null;
+}
+
+/** 契約の呼び方（「出版基本契約（AGR-2026-0088 出版基本契約）」）。番号も名前も無ければ「出版基本契約」。 */
+export function masterAgreementText(agreement: { no: string | null; title: string | null } | null | undefined): string {
+  const ref = [String(agreement?.no ?? "").trim(), String(agreement?.title ?? "").trim()].filter(Boolean).join(" ");
+  return ref ? `出版基本契約（${ref}）` : "出版基本契約";
 }
 
 const jaDate = (iso: string) => {
@@ -112,23 +123,33 @@ export function inLieuSpecialTerms(input: InLieuTermsInput): string {
     ? `（内訳：${input.deliverables.map((d) => `${d.name.trim()} 金${yen(d.amount)}円`).join("、")}）`
     : "";
   const due = input.payOn ? `${jaDate(input.payOn)}` : "本発注書記載の支払期日";
+  // 出版基本契約があれば、利用許諾の条件と個別出版条件書はその個別契約（業務委託の基本契約とは別）。
+  const master = input.masterAgreement ? masterAgreementText(input.masterAgreement) : null;
+  const detailClause = master
+    ? `細目は、甲乙間の${master}に基づく個別契約として締結する${detailDoc}で定める。`
+    : `細目は甲乙間の${detailDoc}で定める（甲乙間に出版基本契約があるときは、その個別契約として締結する）。`;
+  const contractClause = master
+    ? `本特約に定める利用許諾の条件および${detailDoc}は、${master}の個別契約として取り扱い、本特約および${detailDoc}に定めのない事項は同契約の定めによる。本制作の委託（成果物の制作・納入・検収）については、業務委託基本契約約款による。`
+    : `本特約に定める利用許諾の条件および${detailDoc}は、甲乙間に出版基本契約があるときはその個別契約として取り扱い、定めのない事項は同契約の定めによる。本制作の委託（成果物の制作・納入・検収）については、業務委託基本契約約款による。`;
   return [
     "特約（制作対価を利用許諾料で支払う旨の特則）",
     "",
     `1. 本業務のうち${subject}（以下「本制作」）については、乙に別途の制作報酬を支払わず、乙が著作権を有する成果物の利用許諾に対する利用許諾料（以下「印税」）をもってその対価とする。本制作の対価については、本特約が業務委託基本契約約款に優先する。`,
     "",
-    `2. 印税の算定方法は次のとおりとし、細目は甲乙間の${detailDoc}で定める。`,
+    `2. 印税の算定方法は次のとおりとし、${detailClause}`,
     ...formulas,
     `　・保証利用許諾料：金${yen(input.guaranteeAmount)}円（税抜）${breakdown}`,
     ...(exempt ? [`　・${exempt}。`] : []),
     "",
-    `3. 甲は、成果物を受領した日から60日以内である${due}までに、保証利用許諾料を支払う。保証利用許諾料は、成果物の発行の有無および時期にかかわらず支払うものとし、乙は返還を要しない。`,
+    `3. ${contractClause}`,
     "",
-    `4. 第2項により算定した印税の累計額が保証利用許諾料の額を超えたときは、甲はその超過額を${detailDoc}の定めにより支払う。保証利用許諾料は、この超過額の算定において既払いの印税として扱う。`,
+    `4. 甲は、成果物を受領した日から60日以内である${due}までに、保証利用許諾料を支払う。保証利用許諾料は、成果物の発行の有無および時期にかかわらず支払うものとし、乙は返還を要しない。`,
     "",
-    "5. 甲の都合により、成果物の受領前に本制作の全部または一部を取り消し、または変更する場合、甲は乙と協議の上、履行済みの割合および乙が要した費用を考慮した相当額を支払う。",
+    `5. 第2項により算定した印税の累計額が保証利用許諾料の額を超えたときは、甲はその超過額を${detailDoc}の定めにより支払う。保証利用許諾料は、この超過額の算定において既払いの印税として扱う。`,
     "",
-    "6. 甲および乙は、本特約の対価の定め方が、乙による著作権の留保と印税の収受を前提として、協議の上で合意されたものであることを確認する。"
+    "6. 甲の都合により、成果物の受領前に本制作の全部または一部を取り消し、または変更する場合、甲は乙と協議の上、履行済みの割合および乙が要した費用を考慮した相当額を支払う。",
+    "",
+    "7. 甲および乙は、本特約の対価の定め方が、乙による著作権の留保と印税の収受を前提として、協議の上で合意されたものであることを確認する。"
   ].join("\n");
 }
 

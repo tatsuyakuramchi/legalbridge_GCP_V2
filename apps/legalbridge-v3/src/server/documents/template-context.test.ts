@@ -750,7 +750,7 @@ test("発注書：利用許諾条件は許諾料の扱いで料率・額の欄�
   assert.equal(rows.length, 3);
   assert.deepEqual(rows[1], { usage: "出版（紙）（独占）", fee: "8 %", guarantee: "MG ¥ 100,000",
                               term: "2026/10/01 〜 2029/09/30", scope: "日本 ／ 日本語", condition_no: "CL-1",
-                              covers: "", note: "" });
+                              covers: "", note: "", contract: "" });
   assert.equal(rows[2].fee, "利用許諾料は業務委託報酬に含む");
   assert.equal(rows[2].guarantee, "—");
   assert.equal(rows[2].term, "期間の定めなし");
@@ -1047,7 +1047,9 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
     { id: 13, usageType: "pub_print", pricingModel: "revenue_rate", ratePct: 10, mgAmount: 300000, agAmount: null,
       currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: ["日本"], languages: ["日本語"],
       licenseFeeBasis: "in_lieu", conditionNo: "CL-13", exclusivity: "non_exclusive",
-      royaltyExemptFirstCopies: 100, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"] },
+      royaltyExemptFirstCopies: 100, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"],
+      // 利用許諾条件は出版基本契約の個別契約（業務委託の基本契約とは別）。
+      agreementNo: "AGR-2026-0088", agreementTitle: "出版基本契約" },
     { id: 14, usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 15, mgAmount: null, agAmount: null,
       currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: [], languages: [],
       licenseFeeBasis: "in_lieu", conditionNo: "CL-14", exclusivity: "non_exclusive",
@@ -1073,10 +1075,14 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.equal(rows[0].guarantee, "保証利用許諾料 ¥ 300,000");
   assert.equal(rows[0].covers, "対象：No.1 原稿、No.2 イラスト");
   assert.equal(rows[0].note, "対象外：初版100部／2版以降1%");
+  assert.equal(rows[0].contract, "AGR-2026-0088 出版基本契約 の個別契約");
   assert.equal(rows[1].guarantee, "（上の行の保証利用許諾料に含む）");
+  assert.equal(rows[1].contract, "", "契約に載っていない行は空");
 
   const s = suggestionsFor("purchase_order", context) as Record<string, string>;
   assert.match(s.SPECIAL_TERMS, /原稿およびイラストの制作/);
+  assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書/);
+  assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）の個別契約として取り扱い/);
   assert.match(s.SPECIAL_TERMS, /保証利用許諾料：金300,000円（税抜）（内訳：原稿 金250,000円、イラスト 金50,000円）/);
   assert.match(s.SPECIAL_TERMS, /2026年12月25日までに/);
   assert.match(s.SPECIAL_TERMS, /紙版：本体価格 × 発行部数 × 10％/);

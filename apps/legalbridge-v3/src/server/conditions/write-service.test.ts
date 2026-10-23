@@ -522,12 +522,16 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
   };
   const license = {
     mode: "in_lieu" as const, rates: [{ usageType: "pub_print" as const, ratePct: 10 }, { usageType: "pub_digital" as const, ratePct: 15 }],
-    guaranteeAmount: 300000, payOn: "2026-12-25", exemptFirstCopies: 100, exemptLaterPct: 1
+    guaranteeAmount: 300000, payOn: "2026-12-25", exemptFirstCopies: 100, exemptLaterPct: 1,
+    // 利用許諾条件は出版基本契約（8）の個別契約。業務委託の基本契約（7）とは別。
+    agreementId: 8
   };
-  const r = await svc.createServiceSet({ ...base, license }, "a");
+  const r = await svc.createServiceSet({ ...base, agreementId: 7, license }, "a");
   const inserts = db.all("INSERT INTO conditions");
   assert.equal(inserts.length, 4, "委託料 2 本＋利用許諾（紙・電子）2 本");
   const [manuscript, art, print, digital] = inserts.map((q) => q.params);
+  assert.equal(manuscript[1], 7, "委託料は業務委託の基本契約");
+  assert.equal(print[1], 8, "利用許諾は出版基本契約"); assert.equal(digital[1], 8);
   assert.equal(manuscript[46], "保証利用許諾料", "受注者帰属の行の報酬名");
   assert.equal(art[46], "保証利用許諾料");
   assert.equal(manuscript[18], 250000); assert.equal(art[18], 50000);

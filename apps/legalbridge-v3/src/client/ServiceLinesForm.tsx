@@ -121,6 +121,12 @@ export function ServiceLinesForm(
   const [inLieuRates, setInLieuRates] = useState<Array<{ key: number; usageType: string; ratePct: string }>>(
     [{ key: keySeq++, usageType: "pub_print", ratePct: "10" }, { key: keySeq++, usageType: "pub_digital", ratePct: "15" }]);
   const [inLieuPayOn, setInLieuPayOn] = useState("");
+  /**
+   * 利用許諾条件を載せる契約（出版基本契約）。業務委託の基本契約とは別に選ぶ：成果物を出版・
+   * 再許諾するときの利用許諾は、出版基本契約の個別契約として扱う。"" は業務委託の基本契約と同じ、
+   * "none" は契約に載せない。
+   */
+  const [licAgreementId, setLicAgreementId] = useState("");
   const [exemptFirst, setExemptFirst] = useState(String(DEFAULT_ROYALTY_EXEMPT.firstEditionCopies ?? ""));
   const [exemptLater, setExemptLater] = useState(String(DEFAULT_ROYALTY_EXEMPT.laterEditionPct ?? ""));
   const [showTermsPreview, setShowTermsPreview] = useState(false);
@@ -181,7 +187,12 @@ export function ServiceLinesForm(
     rates: inLieuRates.filter((r) => num(r.ratePct) > 0).map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct) })),
     guaranteeAmount: guarantee, payOn: inLieuPayOn || null,
     exempt: { firstEditionCopies: exemptFirst.trim() === "" ? null : num(exemptFirst),
-              laterEditionPct: exemptLater.trim() === "" ? null : num(exemptLater) }
+              laterEditionPct: exemptLater.trim() === "" ? null : num(exemptLater) },
+    masterAgreement: (() => {
+      const id = licAgreementId === "" ? agreementId : licAgreementId === "none" ? "" : licAgreementId;
+      const a = agreements.find((x) => String(x.id) === id);
+      return a ? { no: a.agreementNo, title: a.title } : null;
+    })()
   }) : "";
 
   const ready = Boolean(partyId) && title.trim() !== "" && serviceLines.length > 0
@@ -292,6 +303,8 @@ export function ServiceLinesForm(
         })),
         license: hasContractor ? {
           mode: licMode, workId: int(workId) ?? null, usageType: licUsage,
+          // 出版基本契約。"" は送らない（業務委託の基本契約と同じ）、"none" は null（載せない）。
+          ...(licAgreementId === "" ? {} : { agreementId: licAgreementId === "none" ? null : int(licAgreementId) ?? null }),
           ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
           flatAmount: licMode === "separate" && !licRate.trim() && licFlat.trim() ? Math.round(num(licFlat)) : null,
           termStart: text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
@@ -555,10 +568,19 @@ export function ServiceLinesForm(
             )}
             {licMode !== "none" && (
               <div className="form-grid">
+                <label className="field"><span>利用許諾条件を載せる契約（出版基本契約）</span>
+                  <select value={licAgreementId} onChange={(e) => setLicAgreementId(e.target.value)}>
+                    <option value="">{agreementId ? "業務委託の基本契約と同じ" : "（業務委託と同じ：契約に載せない）"}</option>
+                    {agreementOptions.filter((a) => String(a.id) !== agreementId).map((a) =>
+                      <option key={a.id} value={a.id}>{[a.agreementNo, a.title].filter(Boolean).join(" ")}</option>)}
+                    {agreementId && <option value="none">契約に載せない（個別出版条件書のみ）</option>}
+                  </select>
+                  <small className="faint">成果物を出版・再許諾するときの利用許諾は、業務委託の基本契約とは別に、出版基本契約の個別契約として扱えます。発注書の利用許諾条件の表と特約に「その個別契約」と出ます</small></label>
+                {licMode !== "in_lieu" && (
                 <label className="field"><span>利用形態</span>
                   <select value={licUsage} onChange={(e) => setLicUsage(e.target.value)}>
                     {CONDITION_USAGE_TYPES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-                  </select></label>
+                  </select></label>)}
                 {licMode === "separate" && (<>
                   <label className="field"><span>料率（%）</span><input value={licRate} placeholder="8" onChange={(e) => setLicRate(e.target.value)} /></label>
                   <label className="field"><span>または 定額（税抜）</span><input value={licFlat} placeholder="料率が空のとき" onChange={(e) => setLicFlat(e.target.value)} /></label>

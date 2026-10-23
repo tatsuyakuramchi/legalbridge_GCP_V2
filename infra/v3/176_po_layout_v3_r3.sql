@@ -458,7 +458,7 @@ $q$;
   <tbody>
     {{#each license_terms}}
     <tr>
-      <td class="l">{{usage}}{{#if condition_no}}<div style="font-size:7.5pt;color:#666;">{{condition_no}}</div>{{/if}}{{#if covers}}<div style="font-size:7.5pt;color:#666;">{{covers}}</div>{{/if}}</td>
+      <td class="l">{{usage}}{{#if condition_no}}<div style="font-size:7.5pt;color:#666;">{{condition_no}}</div>{{/if}}{{#if covers}}<div style="font-size:7.5pt;color:#666;">{{covers}}</div>{{/if}}{{#if contract}}<div style="font-size:7.5pt;color:#666;">{{contract}}</div>{{/if}}</td>
       <td class="l">{{fee}}{{#if note}}<div style="font-size:7.5pt;color:#666;">{{note}}</div>{{/if}}</td>
       <td class="l">{{guarantee}}</td>
       <td class="l">{{term}}</td>

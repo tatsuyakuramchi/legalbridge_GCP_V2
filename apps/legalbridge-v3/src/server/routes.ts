@@ -2263,6 +2263,8 @@ export function createRoutes(database: Transactable) {
     license: z.object({
       mode: z.enum(["separate", "included", "free", "in_lieu", "none"]),
       workId: z.coerce.number().int().positive().nullable().optional(),
+      // 利用許諾条件を載せる契約（出版基本契約）。未指定なら束の基本契約、null なら載せない。
+      agreementId: z.coerce.number().int().positive().nullable().optional(),
       usageType: z.enum(
         CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]).nullable().optional(),
       ratePct: z.coerce.number().min(0).max(100).nullable().optional(),

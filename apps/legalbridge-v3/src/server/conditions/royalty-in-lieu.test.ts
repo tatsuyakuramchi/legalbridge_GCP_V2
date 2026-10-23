@@ -50,6 +50,17 @@ test("特約の文：成果物の列挙・料率・保証利用許諾料と内�
   assert.match(one, /60日以内である本発注書記載の支払期日までに/);
   assert.doesNotMatch(one, /内訳/);
   assert.doesNotMatch(one, /対象外/);
+  // 出版基本契約が無ければ「あるときはその個別契約」の形。
+  assert.match(one, /細目は甲乙間の個別出版条件書で定める（甲乙間に出版基本契約があるときは、その個別契約として締結する）/);
+  assert.match(one, /甲乙間に出版基本契約があるときはその個別契約として取り扱い/);
+  // 出版基本契約があれば、その個別契約として締結・取り扱う旨を番号つきで書く。
+  const withMaster = inLieuSpecialTerms({ deliverables: [{ name: "原稿", amount: 300000 }],
+    rates: [{ usageType: "pub_print", ratePct: 10 }], guaranteeAmount: 300000, payOn: null, exempt: null,
+    masterAgreement: { no: "AGR-2026-0088", title: "出版基本契約" } });
+  assert.match(withMaster, /細目は、甲乙間の出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書で定める。/);
+  assert.match(withMaster, /3\. 本特約に定める利用許諾の条件および個別出版条件書は、出版基本契約（AGR-2026-0088 出版基本契約）の個別契約として取り扱い/);
+  assert.match(withMaster, /本制作の委託（成果物の制作・納入・検収）については、業務委託基本契約約款による/);
+  assert.match(withMaster, /7\. 甲および乙は/);
 });
 
 test("60 日以内の判定：当日・60 日目は可、61 日目と受領前は不可、日付が無ければ判定しない", () => {

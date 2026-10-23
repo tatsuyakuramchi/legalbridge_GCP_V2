@@ -898,9 +898,12 @@ export class DocumentContextRepository {
                  FROM condition_fee_covers f WHERE f.license_condition_id = c.id) AS covers,
               (SELECT array_agg(sc.name ORDER BY f.service_condition_id)
                  FROM condition_fee_covers f JOIN conditions sc ON sc.id = f.service_condition_id
-                WHERE f.license_condition_id = c.id) AS cover_names
+                WHERE f.license_condition_id = c.id) AS cover_names,
+              -- 利用許諾条件を載せる契約（出版基本契約）。発注書の表と特約が「その個別契約」と書く。
+              la.agreement_no AS agreement_no, la.title AS agreement_title
          FROM conditions c
          LEFT JOIN works w ON w.id = c.work_id
+         LEFT JOIN agreements la ON la.id = c.agreement_id
         WHERE c.kind = 'license' AND c.direction = 'in'
           AND c.work_id = ANY($1::bigint[]) AND c.counterparty_id = ANY($2::bigint[])
           AND (c.status = 'active'
@@ -937,7 +940,10 @@ export class DocumentContextRepository {
           royaltyExemptLaterPct: num(row.royalty_exempt_later_pct),
           /** この利用許諾料が制作対価を兼ねる委託料の条件（A-075）。id と名前。 */
           covers: ((row.covers ?? []) as unknown[]).map(Number),
-          coverNames: ((row.cover_names ?? []) as unknown[]).map(String)
+          coverNames: ((row.cover_names ?? []) as unknown[]).map(String),
+          /** 利用許諾条件を載せる契約（出版基本契約）。無ければ空。 */
+          agreementNo: str(row.agreement_no),
+          agreementTitle: str(row.agreement_title)
         };
       });
   }

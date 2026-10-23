@@ -193,6 +193,12 @@ export interface ServiceLicenseInput {
    */
   mode: "separate" | "included" | "free" | "in_lieu" | "none";
   workId?: number | null;
+  /**
+   * 利用許諾条件を載せる契約（出版基本契約など）。業務委託の基本契約とは別に選べる：
+   * 成果物を出版・再許諾するときの利用許諾は、出版基本契約の個別契約として扱う。
+   * 未指定（undefined）なら束の基本契約、null なら契約に載せない。
+   */
+  agreementId?: number | null;
   usageType?: ConditionUsageType | null;
   ratePct?: number | null;
   flatAmount?: number | null;
@@ -875,6 +881,10 @@ export class ConditionWriteService {
     }
     if (contractorRows.length && license && license.mode !== "none") {
       const fallback = license.workId ?? input.workId ?? null;
+      // 利用許諾条件を載せる契約。出版基本契約を選んでいればそれ（個別契約として扱う）。
+      // 未指定なら業務委託の基本契約、null（明示）なら契約に載せない。
+      const licenseAgreementId: number | null =
+        license.agreementId === undefined ? (input.agreementId ?? null) : license.agreementId;
       const workIds: number[] = [];
       for (const row of contractorRows) {
         const w = workOf(row) ?? fallback;
@@ -898,7 +908,7 @@ export class ConditionWriteService {
           for (const [index, rate] of inLieuRates.entries()) {
             const one: ConditionInput = {
               matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
-              counterpartyId: input.counterpartyId, agreementId: input.agreementId ?? null, workId,
+              counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId,
               usageType: rate.usageType, licenseFeeBasis: "in_lieu",
               pricingModel: "revenue_rate", ratePpm: Math.round(rate.ratePct * 10000),
               mgAmount: index === 0 && guarantee > 0 ? guarantee : null,
@@ -917,7 +927,7 @@ export class ConditionWriteService {
         }
         const one: ConditionInput = {
           matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
-          counterpartyId: input.counterpartyId, agreementId: input.agreementId ?? null, workId,
+          counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId,
           usageType, licenseFeeBasis: basis,
           pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",
           ratePpm: ratePct != null ? Math.round(ratePct * 10000) : null,

@@ -980,6 +980,8 @@ export interface LicenseTermRow {
   covers: string;
   /** 印税対象外の短い言い方（「対象外：初版100部／2版以降1%」）。無ければ空。 */
   note: string;
+  /** 載っている契約（「出版基本契約 AGR-… の個別契約」）。契約に載っていなければ空。 */
+  contract: string;
 }
 
 const compactDate = (value: unknown): string => {
@@ -1104,8 +1106,13 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
          t.exclusivity === "exclusive" ? " (exclusive)" : ""].join("")
       : [conditionUsageLabel(t.usageType) || (t.name ?? ""),
          t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
+    // 載っている契約。出版・再許諾の利用許諾は出版基本契約の個別契約として扱う（業務委託の基本契約とは別）。
+    const agreementRef = [String(t.agreementNo ?? "").trim(), String(t.agreementTitle ?? "").trim()].filter(Boolean).join(" ");
+    const contract = agreementRef
+      ? (en ? `Individual contract under ${agreementRef}` : `${agreementRef} の個別契約`)
+      : "";
     return { usage, fee, guarantee, term, scope, condition_no: String(t.conditionNo ?? ""),
-             covers: coversText(t), note };
+             covers: coversText(t), note, contract };
   });
 }
 
@@ -1139,7 +1146,11 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
       .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) })),
     guaranteeAmount,
     payOn: payOn ? String(payOn) : null,
-    exempt: { firstEditionCopies: first.royaltyExemptFirstCopies ?? null, laterEditionPct: first.royaltyExemptLaterPct ?? null }
+    exempt: { firstEditionCopies: first.royaltyExemptFirstCopies ?? null, laterEditionPct: first.royaltyExemptLaterPct ?? null },
+    // 利用許諾条件が載っている契約（出版基本契約）。あれば「その個別契約として扱う」と書く。
+    masterAgreement: first.agreementNo || first.agreementTitle
+      ? { no: first.agreementNo ? String(first.agreementNo) : null, title: first.agreementTitle ? String(first.agreementTitle) : null }
+      : null
   });
 }
 
