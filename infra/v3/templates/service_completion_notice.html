@@ -173,6 +173,7 @@
   {{#if expenses.length}}<tr><th>実費（税込）</th><td>{{expensesTotalIncTaxStr}}</td></tr>{{/if}}
   <tr class="grand"><th>源泉徴収税計算前お支払額</th><td>{{grandTotalPayableStr}}</td></tr>
   {{#if sc_payment_date}}<tr class="date"><th>お支払予定日</th><td>{{formatDate sc_payment_date}}</td></tr>{{/if}}
+  {{#if BANK_NAME}}<tr class="date"><th>振込先</th><td>{{BANK_NAME}} {{BRANCH_NAME}}　{{ACCOUNT_TYPE}} {{ACCOUNT_NUMBER}}　{{ACCOUNT_HOLDER_KANA}}</td></tr>{{/if}}
 </table>
 
 
