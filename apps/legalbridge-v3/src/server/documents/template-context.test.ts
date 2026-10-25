@@ -1044,11 +1044,12 @@ test("実績に役務提供期間が無ければ、条件の契約期間（両�
 
 test("発注書：保証利用許諾料に代える（A-075）。利用許諾条件の表に対象の行・対象外、特約の既定文", () => {
   const licenseTerms = [
-    // 保証利用許諾料は AG（前払保証・累積消化）。検収書で先に払い、計算書で相殺する。
-    { id: 13, usageType: "pub_print", pricingModel: "revenue_rate", ratePct: 10, mgAmount: null, agAmount: 300000,
+    // 初版の利用許諾料は委託報酬として払う（A-077）。紙の 1 本が初版の算定の基礎（見込み）を持つ。AG・MG は無い。
+    { id: 13, usageType: "pub_print", pricingModel: "revenue_rate", ratePct: 10, mgAmount: null, agAmount: null,
+      firstEditionPrice: 1000, firstEditionCopies: 3000, firstEditionRatePct: 10, confirmWithinDays: 45,
       currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: ["日本"], languages: ["日本語"],
       licenseFeeBasis: "in_lieu", conditionNo: "CL-13", exclusivity: "non_exclusive",
-      royaltyExemptFirstCopies: 100, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"],
+      royaltyExemptFirstCopies: null, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"],
       // 利用許諾条件は出版基本契約の個別契約（業務委託の基本契約とは別）。
       agreementNo: "AGR-2026-0088", agreementTitle: "出版基本契約",
       // クレジット表記は作品から引用（文脈は文書の日付時点の表記を解いて渡す）。
@@ -1056,13 +1057,13 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
     { id: 14, usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 15, mgAmount: null, agAmount: null,
       currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: [], languages: [],
       licenseFeeBasis: "in_lieu", conditionNo: "CL-14", exclusivity: "non_exclusive",
-      royaltyExemptFirstCopies: 100, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"] }
+      royaltyExemptFirstCopies: null, royaltyExemptLaterPct: 1, covers: [11, 12], coverNames: ["原稿", "イラスト"] }
   ];
   const conditions = [
     { id: 11, kind: "service", name: "原稿", flatAmount: 250000, unitAmount: 250000, quantity: 1, deliverableOwnership: "contractor",
-      pricingModel: "unit_rate", rewardLabel: "保証利用許諾料", taxCategory: "taxable" },
+      pricingModel: "unit_rate", rewardLabel: "初版利用許諾料", taxCategory: "taxable" },
     { id: 12, kind: "service", name: "イラスト", flatAmount: 50000, unitAmount: 50000, quantity: 1, deliverableOwnership: "contractor",
-      pricingModel: "unit_rate", rewardLabel: "保証利用許諾料", taxCategory: "taxable" }
+      pricingModel: "unit_rate", rewardLabel: "初版利用許諾料", taxCategory: "taxable" }
   ];
   const context = { conditions, licenseTerms, events: [],
                     schedules: [{ id: 1, conditionId: 11, seq: 1, plannedAmount: 250000, dueOn: "2026-11-30", payOn: "2026-12-25" },
@@ -1070,28 +1071,31 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   const c = buildTemplateContext("purchase_order", context, {});
   const items = c.items as Array<Record<string, unknown>>;
   assert.equal(items.length, 2);
-  assert.equal(items[0].reward_label, "保証利用許諾料", "条件の報酬名の上書きが行に出る");
+  assert.equal(items[0].reward_label, "初版利用許諾料", "条件の報酬名の上書きが行に出る");
+  assert.equal(items[0].provisional, true, "対象の行は仮計算の印");
   assert.equal(items[0].payment_date, "2026-12-25");
+  assert.equal(c.provisional_note, "仮計算額。確定の方法は特約のとおり（確定額が下回っても本額を支払います）。");
   const rows = c.license_terms as Array<Record<string, string>>;
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].fee, "10 %（制作対価を兼ねる）");
-  assert.equal(rows[0].guarantee, "保証利用許諾料 ¥ 300,000（既払いとして相殺）");
+  assert.equal(rows[0].fee, "10 %（2版目以降）");
+  assert.equal(rows[0].guarantee, "—", "AG・MG は持たない");
   assert.equal(rows[0].covers, "対象：No.1 原稿、No.2 イラスト");
-  assert.equal(rows[0].note, "対象外：初版100部／2版以降1%");
+  assert.equal(rows[0].note, "初版は明細の初版利用許諾料で支払済み／2版以降は発行部数の1%を非加算");
   assert.equal(rows[0].contract, "AGR-2026-0088 出版基本契約 の個別契約");
   assert.equal(rows[0].credit, "© 2026 山田太郎／イラスト：山田太郎");
-  assert.equal(rows[1].guarantee, "（上の行の保証利用許諾料に含む）");
+  assert.equal(rows[1].guarantee, "—"); assert.equal(rows[1].note, "配信開始から適用");
   assert.equal(rows[1].contract, "", "契約に載っていない行は空");
   assert.equal(c.license_credit_notice, "© 2026 山田太郎／イラスト：山田太郎", "表の下のクレジット表記（全部同じなら 1 行）");
 
   const s = suggestionsFor("purchase_order", context) as Record<string, string>;
   assert.match(s.SPECIAL_TERMS, /原稿およびイラストの制作/);
-  assert.match(s.SPECIAL_TERMS, /4\. 甲は、成果物を利用するに際し、次のクレジット表記を行う。[^\n]*\n　© 2026 山田太郎／イラスト：山田太郎/);
+  assert.match(s.SPECIAL_TERMS, /6\. 甲は、成果物を利用するに際し、次のクレジット表記を行う。[^\n]*\n　© 2026 山田太郎／イラスト：山田太郎/);
   assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書/);
-  assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）の個別契約として取り扱い/);
-  assert.match(s.SPECIAL_TERMS, /保証利用許諾料：金300,000円（税抜）（内訳：原稿 金250,000円、イラスト 金50,000円）/);
-  assert.match(s.SPECIAL_TERMS, /2026年12月25日までに/);
-  assert.match(s.SPECIAL_TERMS, /紙版：本体価格 × 発行部数 × 10％/);
+  assert.match(s.SPECIAL_TERMS, /同契約の個別契約として取り扱い/);
+  assert.match(s.SPECIAL_TERMS, /算定方法は、本体価格（税抜）× 初版発行部数 × 10％ とする。本発注書記載の金額（金300,000円。以下「仮計算額」）は、本体価格1,000円・初版3,000部の見込みによる仮計算である（内訳：原稿 金250,000円、イラスト 金50,000円）。/);
+  assert.match(s.SPECIAL_TERMS, /受領した日から45日以内に/);
+  assert.match(s.SPECIAL_TERMS, /60日以内である2026年12月25日までに、確定額を支払う/);
+  assert.match(s.SPECIAL_TERMS, /紙版：本体価格 ×（発行部数 − 発行部数の1％にあたる献本等の非加算部数）× 10％、電子版：甲の受領額 × 15％/);
   // 人が欄に書いていればそちら。in_lieu が無ければ特約は立てない。
   assert.equal((suggestionsFor("purchase_order", context, { SPECIAL_TERMS: "自前" }) as Record<string, unknown>).SPECIAL_TERMS, undefined);
   assert.equal("SPECIAL_TERMS" in suggestionsFor("purchase_order", { conditions, licenseTerms: [] }), false);

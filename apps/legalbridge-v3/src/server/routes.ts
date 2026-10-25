@@ -2095,6 +2095,10 @@ export function createRoutes(database: Transactable) {
     royaltyExemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
     creditNotice: z.string().trim().max(600).nullable().optional(),
     creditFromWork: z.boolean().nullable().optional(),
+    firstEditionPrice: z.coerce.number().int().min(0).nullable().optional(),
+    firstEditionCopies: z.coerce.number().int().min(0).nullable().optional(),
+    firstEditionRatePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
+    confirmWithinDays: z.coerce.number().int().min(1).max(60).nullable().optional(),
     ...renewalFields,
     termStart: z.string().date().nullable().optional(),
     termEnd: z.string().date().nullable().optional(),
@@ -2282,9 +2286,14 @@ export function createRoutes(database: Transactable) {
         usageType: z.enum(CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),
         ratePct: z.coerce.number().min(0).max(100)
       })).max(10).nullable().optional(),
-      guaranteeAmount: z.coerce.number().int().min(0).nullable().optional(),
+      // 初版の算定の基礎（見込み。A-077）。仮計算額が行の合計と合うかはサービス側で確かめる。
+      firstEdition: z.object({
+        price: z.coerce.number().int().min(0), copies: z.coerce.number().int().min(0),
+        ratePct: z.coerce.number().min(0).max(100),
+        exemptCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional()
+      }).nullable().optional(),
+      confirmWithinDays: z.coerce.number().int().min(1).max(60).nullable().optional(),
       payOn: z.string().date().nullable().optional(),
-      exemptFirstCopies: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
       exemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
       // クレジット表記（A-076）。作品の表記を引用するか、この条件で文言を持つ。
       creditNotice: z.string().trim().max(600).nullable().optional(),
@@ -2371,6 +2380,10 @@ export function createRoutes(database: Transactable) {
     royaltyExemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
     creditNotice: z.string().trim().max(600).nullable().optional(),
     creditFromWork: z.boolean().nullable().optional(),
+    firstEditionPrice: z.coerce.number().int().min(0).nullable().optional(),
+    firstEditionCopies: z.coerce.number().int().min(0).nullable().optional(),
+    firstEditionRatePpm: z.coerce.number().int().min(0).max(1_000_000).nullable().optional(),
+    confirmWithinDays: z.coerce.number().int().min(1).max(60).nullable().optional(),
     ...renewalFields,
     spec: z.string().trim().max(4000).nullable().optional(),
     deliverableOwnership: z.enum(["orderer", "contractor"]).nullable().optional(),

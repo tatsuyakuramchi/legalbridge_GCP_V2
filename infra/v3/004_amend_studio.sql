@@ -2581,7 +2581,7 @@ ALTER TABLE v3.conditions DROP CONSTRAINT IF EXISTS conditions_license_fee_basis
 ALTER TABLE v3.conditions ADD CONSTRAINT conditions_license_fee_basis_chk
   CHECK (license_fee_basis IN ('separate', 'included', 'free', 'in_lieu'));
 COMMENT ON COLUMN v3.conditions.license_fee_basis IS
-  '許諾料の扱い（separate=別途 / included=業務委託報酬に含む / free=無償 / in_lieu=保証利用許諾料が制作対価を兼ねる）。許諾条件だけが意味を持つ。';
+  '許諾料の扱い（separate=別途 / included=業務委託報酬に含む / free=無償 / in_lieu=初版の利用許諾料を委託報酬として支払済み）。許諾条件だけが意味を持つ。';
 ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS reward_label text;
 COMMENT ON COLUMN v3.conditions.reward_label IS
   '報酬名の上書き（保証利用許諾料 など）。発注書・検収書の金額欄の小さな行に出る。空なら導く。A-075';
@@ -2622,6 +2622,34 @@ COMMENT ON COLUMN v3.conditions.credit_notice IS
   'クレジット表記（成果物を利用するときの表示。© 2026 著作者名／イラスト：◯◯ など）。許諾条件だけが意味を持つ。A-076';
 COMMENT ON COLUMN v3.conditions.credit_from_work IS
   '作品のクレジット表記（work_credits）を引用するか。true なら文書は作品の今の表記を差す。A-076';
+
+-- ---------------------------------------------------------------------
+-- A-077 初版の利用許諾料を委託報酬として払う発注（conditions/royalty-in-lieu.ts。T17）
+--   発注時は見込みの本体価格・初版部数・料率（・非加算部数）で仮計算した額を委託料の行の
+--   確定額にし、納品後 60 日以内に本体価格と初版部数を確定して検収書で払う（下回れば仮計算額）。
+--   2 版目以降は出版基本契約の個別契約による印税で、初版は計算書の対象外。
+--     first_edition_price / first_edition_copies / first_edition_rate_ppm / confirm_within_days
+--   いずれも利用許諾条件（license_fee_basis = in_lieu）の先頭の 1 本が持つ。AG は使わない。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS first_edition_price    bigint;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS first_edition_copies   integer;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS first_edition_rate_ppm integer;
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS confirm_within_days    integer;
+DO $a077$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_first_edition_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_first_edition_chk
+      CHECK ((first_edition_price IS NULL OR first_edition_price >= 0)
+         AND (first_edition_copies IS NULL OR first_edition_copies >= 0)
+         AND (first_edition_rate_ppm IS NULL OR (first_edition_rate_ppm >= 0 AND first_edition_rate_ppm <= 1000000))
+         AND (confirm_within_days IS NULL OR (confirm_within_days >= 1 AND confirm_within_days <= 60)));
+  END IF;
+END $a077$;
+COMMENT ON COLUMN v3.conditions.first_edition_price    IS '初版の本体価格（最小通貨単位）。発注時は見込み、確定後は確定値。A-077';
+COMMENT ON COLUMN v3.conditions.first_edition_copies   IS '初版発行部数。発注時は見込み、確定後は確定値。A-077';
+COMMENT ON COLUMN v3.conditions.first_edition_rate_ppm IS '初版の料率（百万分率）。2 版目以降の rate_ppm とは別。A-077';
+COMMENT ON COLUMN v3.conditions.confirm_within_days    IS '受領から何日以内に本体価格・初版部数を確定するか（60 以内）。A-077';
 
 -- ---------------------------------------------------------------------
 -- A-074 支払文書の送付・受領・過去分、製造予定、報告期限（paydocs/）
@@ -2997,6 +3025,11 @@ SELECT * FROM (
   SELECT 72, '相手方の文書番号（A-072。列 1 であること）',
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
+  UNION ALL
+  SELECT 77, '初版の利用許諾料を委託報酬として払う発注（A-077。列 4・CHECK 1 で 5 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
+            AND column_name IN ('first_edition_price', 'first_edition_copies', 'first_edition_rate_ppm', 'confirm_within_days'))
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_first_edition_chk'))::text
   UNION ALL
   SELECT 76, '利用許諾条件のクレジット表記（A-076。列 2 であること）',
          ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'

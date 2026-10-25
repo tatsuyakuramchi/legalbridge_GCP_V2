@@ -8,7 +8,7 @@ import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract
 import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
-import { DEFAULT_ROYALTY_EXEMPT, inLieuSpecialTerms, withinSixtyDays } from "../server/conditions/royalty-in-lieu.js";
+import { firstEditionBasisText, firstEditionFee, inLieuSpecialTerms, withinSixtyDays } from "../server/conditions/royalty-in-lieu.js";
 
 /**
  * 業務委託の明細を表で登録する（1 行＝条件明細 1 本）。
@@ -116,11 +116,17 @@ export function ServiceLinesForm(
   // 権利の扱い
   const [licMode, setLicMode] = useState<"separate" | "included" | "free" | "in_lieu" | "none">("included");
   const [licUsage, setLicUsage] = useState("in_house");
-  // 制作対価を利用許諾料で払う（A-075）。受注者帰属の行の金額が保証利用許諾料（＝MG）。
-  // 料率は利用形態ごと（紙・電子）。印税対象外（献本等）は初版の部数と 2 版目以降の割合。
+  // 初版の利用許諾料を報酬として払う（A-077）。見込みの本体価格・初版部数・料率（・非加算）で仮計算した額が
+  // 受注者帰属の行の金額。納品後 60 日以内に確定して検収書で払う。2 版目以降・電子の料率は利用形態ごと。
   const [inLieuRates, setInLieuRates] = useState<Array<{ key: number; usageType: string; ratePct: string }>>(
     [{ key: keySeq++, usageType: "pub_print", ratePct: "10" }, { key: keySeq++, usageType: "pub_digital", ratePct: "15" }]);
   const [inLieuPayOn, setInLieuPayOn] = useState("");
+  const [fePrice, setFePrice] = useState("");
+  const [feCopies, setFeCopies] = useState("");
+  const [feRate, setFeRate] = useState("10");
+  /** 初版の非加算部数（献本・見本等）。既定 0＝全部数。方針が決まるまで 0 のまま。 */
+  const [feExempt, setFeExempt] = useState("0");
+  const [confirmDays, setConfirmDays] = useState("45");
   /**
    * 利用許諾条件を載せる契約（出版基本契約）。業務委託の基本契約とは別に選ぶ：成果物を出版・
    * 再許諾するときの利用許諾は、出版基本契約の個別契約として扱う。"" は業務委託の基本契約と同じ、
@@ -144,8 +150,8 @@ export function ServiceLinesForm(
   }, [licenseWorkId]);
   /** 文書に出るクレジット表記（引用なら作品の今の表記。無ければ手入力の文言）。 */
   const creditText = creditFromWork ? (workCredit ?? creditNotice.trim()) : creditNotice.trim();
-  const [exemptFirst, setExemptFirst] = useState(String(DEFAULT_ROYALTY_EXEMPT.firstEditionCopies ?? ""));
-  const [exemptLater, setExemptLater] = useState(String(DEFAULT_ROYALTY_EXEMPT.laterEditionPct ?? ""));
+  /** 2 版目以降の非加算（献本等。発行部数の %）。既定 1。 */
+  const [exemptLater, setExemptLater] = useState("1");
   const [showTermsPreview, setShowTermsPreview] = useState(false);
   const [licRate, setLicRate] = useState("");
   const [licFlat, setLicFlat] = useState("");
@@ -187,24 +193,39 @@ export function ServiceLinesForm(
   const licenseWorks = [...new Set(contractorLines.map((l) => rowWork(l) || workId).filter(Boolean))];
   const agreementOptions = agreements.filter((a) => !partyId || String(a.counterparty?.id ?? "") === partyId);
 
-  // 保証利用許諾料に代える（A-075）。保証額＝受注者帰属の行の金額の合計。表面・明細・利用許諾条件の
-  // 表・特約で同じ額が出るので、ここで配分して入れる（0 円の行にはしない）。
+  // 初版の利用許諾料を報酬として払う（A-077）。仮計算額＝本体価格 ×（初版部数 − 非加算）× 率。
+  // 表面・明細・特約で同じ額が出るので、受注者帰属の行の合計を仮計算額に合わせる（0 円の行にはしない）。
   const inLieu = hasContractor && licMode === "in_lieu";
-  const guarantee = useMemo(() => contractorLines.reduce((a, l) => a + amountOf(l), 0), [contractorLines]);
+  const rowsTotal = useMemo(() => contractorLines.reduce((a, l) => a + amountOf(l), 0), [contractorLines]);
+  const firstEdition = { price: num(fePrice), copies: Math.floor(num(feCopies)), ratePct: num(feRate),
+                         exemptCopies: feExempt.trim() === "" ? 0 : Math.floor(num(feExempt)) };
+  const provisional = firstEditionFee(firstEdition);
+  const feOk = firstEdition.price > 0 && firstEdition.copies > 0 && firstEdition.ratePct > 0 && firstEdition.ratePct <= 100
+    && (firstEdition.exemptCopies ?? 0) >= 0 && (firstEdition.exemptCopies ?? 0) < firstEdition.copies;
   const inLieuRatesOk = inLieuRates.length > 0
     && inLieuRates.every((r) => r.usageType && num(r.ratePct) > 0 && num(r.ratePct) <= 100)
     && new Set(inLieuRates.map((r) => r.usageType)).size === inLieuRates.length;
+  const confirmDaysOk = Number.isInteger(num(confirmDays)) && num(confirmDays) >= 1 && num(confirmDays) <= 60;
   /** 支払期日が納期から 60 日を超えている行（取適法・フリーランス法）。納期の無い行は確かめない。 */
   const sixtyDayOver = inLieu && inLieuPayOn
     ? contractorLines.filter((l) => withinSixtyDays(l.deliveryDue || null, inLieuPayOn) === false) : [];
-  const inLieuReady = !inLieu || (inLieuRatesOk && Boolean(inLieuPayOn) && guarantee > 0
-    && contractorLines.every((l) => amountOf(l) > 0) && sixtyDayOver.length === 0 && payMode !== "periodic");
+  const inLieuReady = !inLieu || (feOk && provisional > 0 && rowsTotal === provisional && inLieuRatesOk && confirmDaysOk
+    && Boolean(inLieuPayOn) && contractorLines.every((l) => amountOf(l) > 0) && sixtyDayOver.length === 0 && payMode !== "periodic");
+  /** 仮計算額を受注者帰属の行に入れる（1 行ならその行、複数なら先頭の行に残りを入れる）。 */
+  const fillProvisional = () => {
+    if (!contractorLines.length || provisional <= 0) return;
+    const [first, ...rest] = contractorLines;
+    const others = rest.reduce((a, l) => a + amountOf(l), 0);
+    const mine = Math.max(0, provisional - others);
+    update(first.key, { quantity: "1", unitPrice: String(mine) });
+  };
   const termsPreview = inLieu ? inLieuSpecialTerms({
     deliverables: contractorLines.map((l) => ({ name: l.name || title, amount: amountOf(l) })),
-    rates: inLieuRates.filter((r) => num(r.ratePct) > 0).map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct) })),
-    guaranteeAmount: guarantee, payOn: inLieuPayOn || null,
-    exempt: { firstEditionCopies: exemptFirst.trim() === "" ? null : num(exemptFirst),
-              laterEditionPct: exemptLater.trim() === "" ? null : num(exemptLater) },
+    firstEdition, provisionalAmount: rowsTotal || provisional,
+    confirmWithinDays: confirmDaysOk ? num(confirmDays) : null,
+    payOn: inLieuPayOn || null,
+    laterRates: inLieuRates.filter((r) => num(r.ratePct) > 0).map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct) })),
+    laterExemptPct: exemptLater.trim() === "" ? null : num(exemptLater),
     masterAgreement: (() => {
       const id = licAgreementId === "" ? agreementId : licAgreementId === "none" ? "" : licAgreementId;
       const a = agreements.find((x) => String(x.id) === id);
@@ -229,12 +250,15 @@ export function ServiceLinesForm(
     payMode === "periodic" && !(periodFrom && periodTo) ? "定期払いの期間（開始・終了）" : null,
     timeSettled && !(num(hoursIncluded) > 0) ? "月間包括枠（時間）" : null,
     timeSettled && overageUnit.trim() === "" ? "超過単価" : null,
-    inLieu && !inLieuRatesOk ? "利用形態ごとの料率（0 より大きく、重複なし）" : null,
-    inLieu && !inLieuPayOn ? "保証利用許諾料の支払期日" : null,
-    inLieu && contractorLines.some((l) => amountOf(l) <= 0) ? "受注者帰属の行の金額（保証利用許諾料の配分。0 円にはしない）" : null,
+    inLieu && !feOk ? "初版の算定の基礎（見込みの本体価格・初版部数・料率。非加算は部数より少なく）" : null,
+    inLieu && feOk && rowsTotal !== provisional ? `受注者帰属の行の金額の合計を仮計算額 ¥${yen(provisional)} に合わせる` : null,
+    inLieu && !inLieuRatesOk ? "2 版目以降・電子の料率（0 より大きく、重複なし）" : null,
+    inLieu && !confirmDaysOk ? "確定の期限（受領後 1〜60 日）" : null,
+    inLieu && !inLieuPayOn ? "支払期日" : null,
+    inLieu && contractorLines.some((l) => amountOf(l) <= 0) ? "受注者帰属の行の金額（仮計算額の配分。0 円にはしない）" : null,
     inLieu && sixtyDayOver.length > 0
       ? `支払期日が納期から 60 日を超えている行（${sixtyDayOver.map((l) => lines.indexOf(l) + 1).join("・")} 行目）` : null,
-    inLieu && payMode === "periodic" ? "支払方法（保証利用許諾料は定期払いにできない）" : null
+    inLieu && payMode === "periodic" ? "支払方法（初版利用許諾料は定期払いにできない）" : null
   ].filter((m): m is string => Boolean(m));
 
   /**
@@ -329,11 +353,12 @@ export function ServiceLinesForm(
           flatAmount: licMode === "separate" && !licRate.trim() && licFlat.trim() ? Math.round(num(licFlat)) : null,
           termStart: text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
           scopes: scopes.length ? scopes : undefined,
-          // 保証利用許諾料に代える（A-075）。保証額は行の合計（サーバが突き合わせる）。
+          // 初版の利用許諾料を報酬として払う（A-077）。仮計算額と行の合計はサーバが突き合わせる。
           ...(licMode === "in_lieu" ? {
             rates: inLieuRates.map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct) })),
-            guaranteeAmount: guarantee, payOn: text(inLieuPayOn) ?? null,
-            exemptFirstCopies: exemptFirst.trim() === "" ? null : Math.round(num(exemptFirst)),
+            firstEdition: { price: Math.round(firstEdition.price), copies: firstEdition.copies, ratePct: firstEdition.ratePct,
+                            exemptCopies: firstEdition.exemptCopies || null },
+            confirmWithinDays: num(confirmDays), payOn: text(inLieuPayOn) ?? null,
             exemptLaterPct: exemptLater.trim() === "" ? null : num(exemptLater)
           } : {})
         } : null,
@@ -529,26 +554,41 @@ export function ServiceLinesForm(
             <span className="faint">受注者に権利が残る成果物は、当社は許諾を受けて使います。許諾の条件を作品 × 受託者の利用許諾条件（IN）として立て、発注書の「■ 利用許諾条件」に差し込みます。</span>
             <div className="row" style={{ flexWrap: "wrap" }}>
               {([["separate", "別途（許諾料を払う）"], ["included", "委託報酬に含む（推奨）"], ["free", "無償"],
-                 ["in_lieu", "保証利用許諾料に代える（原稿・イラストを印税で払う）"], ["none", "条件を立てない（例外）"]] as const).map(([v, label]) => (
+                 ["in_lieu", "初版の利用許諾料を報酬として払う（仮計算 → 納品後に確定）"], ["none", "条件を立てない（例外）"]] as const).map(([v, label]) => (
                 <button key={v} className="chip" aria-pressed={licMode === v} onClick={() => setLicMode(v)}>{label}</button>
               ))}
             </div>
             {licMode === "in_lieu" && (
               <div className="stack" style={{ gap: 8 }}>
                 <span className="faint">
-                  別途の制作報酬は払わず、利用許諾料（印税）を対価にします。受注者帰属の行（{contractorLines.map((l) => `${lines.indexOf(l) + 1} 行目`).join("・")}）の金額が
-                  <b>保証利用許諾料</b>（発行の有無にかかわらず受領後 60 日以内に払う最低保証＝利用許諾条件の MG）になり、料率型の利用許諾料はその超過分だけ計算書で払います。
-                  0 円の委託料にすると取適法・フリーランス法（60 日以内・買いたたき・一方的決定）の外観になるので、従来の制作報酬に相当する額を行に配分してください。
+                  別途の制作報酬は払わず、<b>初版の出版に係る利用許諾料</b>を対価にします。発注時は見込みの本体価格・初版部数・料率で<b>仮計算</b>した額を
+                  受注者帰属の行（{contractorLines.map((l) => `${lines.indexOf(l) + 1} 行目`).join("・")}）の確定額にし、納品後 60 日以内に本体価格・部数を確定して検収書で払います
+                  （確定額が仮計算額を下回っても仮計算額＝減額にしない）。2 版目以降・電子は出版基本契約の個別契約による印税で、初版は計算書の対象外です。
                   発注書には特約（下の文）が既定で入ります（文書の欄で直せます）。
                 </span>
-                <div className="row" style={{ gap: 18, flexWrap: "wrap" }}>
-                  <span>保証利用許諾料（受注者帰属の行の合計・税抜） <b>¥{yen(guarantee)}</b></span>
+                <div className="form-grid">
+                  <label className="field"><span>見込み本体価格（税抜・円）</span>
+                    <input inputMode="numeric" value={fePrice} placeholder="1000" onChange={(e) => setFePrice(e.target.value)} /></label>
+                  <label className="field"><span>見込み初版部数</span>
+                    <input inputMode="numeric" value={feCopies} placeholder="3000" onChange={(e) => setFeCopies(e.target.value)} /></label>
+                  <label className="field"><span>初版の料率（%）</span>
+                    <input inputMode="decimal" value={feRate} placeholder="10" onChange={(e) => setFeRate(e.target.value)} /></label>
+                  <label className="field"><span>初版の非加算部数（献本・見本等）</span>
+                    <input inputMode="numeric" value={feExempt} placeholder="0" onChange={(e) => setFeExempt(e.target.value)} />
+                    <small className="faint">既定 0（全部数）。入れると算定方法に「− ○部」が明記される。方針が決まるまで 0 のまま</small></label>
+                </div>
+                <div className="row" style={{ gap: 18, flexWrap: "wrap", alignItems: "center" }}>
+                  <span>仮計算額 <b>¥{yen(provisional)}</b>{feOk && <span className="faint">　{firstEditionBasisText(firstEdition).replace("算定の基礎（見込み）：", "＝ ")}</span>}</span>
+                  <span className={rowsTotal === provisional ? "faint" : "tag warn"}>受注者帰属の行の合計 ¥{yen(rowsTotal)}{rowsTotal !== provisional && feOk ? "（仮計算額と合っていません）" : ""}</span>
+                  {feOk && rowsTotal !== provisional && (
+                    <button type="button" className="btn btn-sm" onClick={fillProvisional}>仮計算額を{contractorLines.length > 1 ? "先頭の受注者帰属の行" : "行"}に入れる</button>
+                  )}
                   {contractorLines.length > 1 && (
                     <span className="faint">内訳：{contractorLines.map((l) => `${l.name || title} ¥${yen(amountOf(l))}`).join("、")}</span>
                   )}
                 </div>
                 <div className="stack" style={{ gap: 4 }}>
-                  <b style={{ fontSize: "0.9em" }}>料率（利用形態ごとに利用許諾条件が 1 本立ちます）</b>
+                  <b style={{ fontSize: "0.9em" }}>2 版目以降・電子の料率（利用形態ごとに利用許諾条件が 1 本立ちます）</b>
                   {inLieuRates.map((r, i) => (
                     <div key={r.key} className="row" style={{ gap: 6, alignItems: "center" }}>
                       <select value={r.usageType} aria-label={`${i + 1} 番目の利用形態`}
@@ -565,15 +605,15 @@ export function ServiceLinesForm(
                   <div><button className="btn btn-sm" onClick={() => setInLieuRates((p) => [...p, { key: keySeq++, usageType: "in_house", ratePct: "" }])}>利用形態を足す</button></div>
                 </div>
                 <div className="form-grid">
-                  <label className="field"><span>保証利用許諾料の支払期日</span>
+                  <label className="field"><span>確定の期限（受領後 ○ 日）</span>
+                    <input inputMode="numeric" value={confirmDays} placeholder="45" onChange={(e) => setConfirmDays(e.target.value)} />
+                    <small className="faint">本体価格・初版部数を書面で通知し乙の確認を得る期限。60 日以内</small></label>
+                  <label className="field"><span>支払期日</span>
                     <input type="date" value={inLieuPayOn} onChange={(e) => setInLieuPayOn(e.target.value)} />
-                    <small className="faint">成果物の受領（納期）から 60 日以内。各行の予定明細の支払日になり、発注書の支払期日に出る</small></label>
-                  <label className="field"><span>印税対象外：初版（部）</span>
-                    <input inputMode="numeric" value={exemptFirst} placeholder="100" onChange={(e) => setExemptFirst(e.target.value)} />
-                    <small className="faint">献本等。空なら対象外なし</small></label>
-                  <label className="field"><span>印税対象外：2 版目以降（発行部数の %）</span>
+                    <small className="faint">成果物の受領（納期）から 60 日以内。各行の予定明細の支払日になり、発注書の支払期日に出る。期限までに確定しなければ仮計算額を払い、差額は確定後 30 日以内</small></label>
+                  <label className="field"><span>非加算：2 版目以降（発行部数の %）</span>
                     <input inputMode="decimal" value={exemptLater} placeholder="1" onChange={(e) => setExemptLater(e.target.value)} />
-                    <small className="faint">献本等。空なら対象外なし</small></label>
+                    <small className="faint">献本等。空なら非加算なし。初版の非加算とは別の欄</small></label>
                 </div>
                 {sixtyDayOver.length > 0 && (
                   <div className="alert">支払期日 {inLieuPayOn} が納期から 60 日を超えている行があります（{sixtyDayOver.map((l) => `${lines.indexOf(l) + 1} 行目 ${l.deliveryDue}`).join("・")}）。取適法・フリーランス法の支払期日に合わせてください</div>
@@ -676,11 +716,11 @@ export function ServiceLinesForm(
           <div className="row" style={{ flexWrap: "wrap" }}>
             {([["per_delivery", "納品ごとに検収して支払（既定）"], ["periodic", "定期払い（毎月・四半期）"], ["lump", "一括（全納品後にまとめて検収）"]] as const).map(([v, label]) => (
               <button key={v} className="chip" aria-pressed={payMode === v} disabled={inLieu && v === "periodic"}
-                      title={inLieu && v === "periodic" ? "保証利用許諾料は受領後に 1 回で払うので定期払いにできません" : undefined}
+                      title={inLieu && v === "periodic" ? "初版利用許諾料は受領後に 1 回で払うので定期払いにできません" : undefined}
                       onClick={() => setPayMode(v)}>{label}</button>
             ))}
           </div>
-          {inLieu && <span className="faint">保証利用許諾料に代える発注は、各行に 1 回の予定明細（納期・支払期日）が立ちます。</span>}
+          {inLieu && <span className="faint">初版の利用許諾料を報酬として払う発注は、各行に 1 回の予定明細（納期・支払期日）が立ちます。確定額は検収のときに入れます（予定と違う額として変更履歴に残り、検収書に出ます）。</span>}
           {payMode === "periodic" && (
             <div className="form-grid">
               <label className="field"><span>期間 開始</span><input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} /></label>

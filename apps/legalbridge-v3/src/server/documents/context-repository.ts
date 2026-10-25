@@ -904,6 +904,8 @@ export class DocumentContextRepository {
               -- クレジット表記（A-076）。作品を引用するなら、文書の日付時点の作品の表記（A-031 の履歴。
               -- 無ければ works の写し）。
               c.credit_notice, c.credit_from_work,
+              -- 初版の算定の基礎（A-077）。特約の第 2 項と明細の注記が使う。
+              c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm, c.confirm_within_days,
               COALESCE((SELECT wc.copyright_notice FROM work_credits wc
                          WHERE wc.work_id = c.work_id AND wc.effective_from <= $3::date
                          ORDER BY wc.effective_from DESC, wc.id DESC LIMIT 1), w.copyright_notice) AS work_copyright_notice,
@@ -960,7 +962,13 @@ export class DocumentContextRepository {
           creditNotice: row.credit_from_work === true
             ? ([str(row.work_copyright_notice), str(row.work_third_party_rights)].filter(Boolean).join("／") || str(row.credit_notice))
             : str(row.credit_notice),
-          creditFromWork: row.credit_from_work === true
+          creditFromWork: row.credit_from_work === true,
+          /** 初版の算定の基礎（A-077）。本体価格は通貨の単位に戻す。料率は %。 */
+          firstEditionPrice: toMajor(int(row.first_edition_price), currency),
+          firstEditionCopies: int(row.first_edition_copies),
+          firstEditionRatePct: row.first_edition_rate_ppm === null || row.first_edition_rate_ppm === undefined
+            ? null : Number(row.first_edition_rate_ppm) / 10000,
+          confirmWithinDays: int(row.confirm_within_days)
         };
       });
   }

@@ -26,7 +26,7 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
-import { exemptRuleShort, inLieuSpecialTerms } from "../conditions/royalty-in-lieu.js";
+import { inLieuShortNote, inLieuSpecialTerms } from "../conditions/royalty-in-lieu.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
@@ -1071,8 +1071,8 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
     if (basis === "included") fee = en ? "License fee included in the service fee" : "利用許諾料は業務委託報酬に含む";
     else if (basis === "free") fee = en ? "Royalty-free" : "無償";
     else if (basis === "in_lieu" && t.ratePct !== null && t.ratePct !== undefined) {
-      // 保証利用許諾料が制作対価を兼ねる（A-075）。料率はその超過分だけ計算書で払う。
-      fee = en ? `${t.ratePct} % (in lieu of a production fee)` : `${t.ratePct} %（制作対価を兼ねる）`;
+      // 初版の利用許諾料は委託報酬として支払済み（A-077）。この料率は 2 版目以降・電子のもの。
+      fee = en ? `${t.ratePct} % (from the 2nd printing)` : `${t.ratePct} %（2版目以降）`;
     } else if (t.ratePct !== null && t.ratePct !== undefined && String(t.pricingModel) === "revenue_rate") {
       fee = `${t.ratePct} %`;
     } else if (String(t.pricingModel) === "unit_rate" && t.unitAmount !== null && t.unitAmount !== undefined) {
@@ -1085,14 +1085,11 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
     const guarantee = basis === "separate"
       ? [t.mgAmount ? `MG ${moneyOf(t.mgAmount, currency, lang)}` : "",
          t.agAmount ? `AG ${moneyOf(t.agAmount, currency, lang)}` : ""].filter(Boolean).join(en ? " / " : "／") || "—"
-      // in_lieu の保証利用許諾料は AG（前払保証・累積消化）で持つ。明細の確定額と同じ額。紙では名前で呼ぶ。
-      : basis === "in_lieu"
-      ? (t.agAmount ? (en ? `Guaranteed ${moneyOf(t.agAmount, currency, "en")} (advance)` : `保証利用許諾料 ${moneyOf(t.agAmount, currency)}（既払いとして相殺）`)
-                    : (en ? "(see above)" : "（上の行の保証利用許諾料に含む）"))
       : "—";
-    const note = basis === "in_lieu" && !en
-      ? exemptRuleShort({ firstEditionCopies: t.royaltyExemptFirstCopies ?? null, laterEditionPct: t.royaltyExemptLaterPct ?? null })
-      : "";
+    // 初版は明細の初版利用許諾料で支払済み（A-077）。紙の行（初版の算定の基礎を持つ 1 本）にだけ注記を出す。
+    const note = basis === "in_lieu" && !en && (t.firstEditionCopies || t.usageType === "pub_print")
+      ? inLieuShortNote(t.royaltyExemptFirstCopies ?? null, t.royaltyExemptLaterPct ?? null)
+      : basis === "in_lieu" && !en && t.usageType === "pub_digital" ? "配信開始から適用" : "";
     const term = t.termStart || t.termEnd
       ? (en
         ? `${t.termStart ? compactDate(t.termStart) : ""} – ${t.termEnd ? compactDate(t.termEnd) : "(no end date)"}`
@@ -1131,14 +1128,18 @@ export function licenseCreditNotice(rows: LicenseTermRow[]): string {
 }
 
 /**
- * 利用許諾料で払う発注（A-075）の特約の文。発注書の SPECIAL_TERMS の既定値。
+ * 初版の利用許諾料を報酬として払う発注（A-077）の特約の文。発注書の SPECIAL_TERMS の既定値。
  *
- * 台帳の値（対価を兼ねる明細・料率・保証利用許諾料・支払期日・対象外）から組む。
- * in_lieu の利用許諾条件が無ければ空（特約を立てない）。人が欄で直したらそちらが勝つ。
+ * 台帳の値（対価を兼ねる明細・初版の算定の基礎・2 版目以降の料率・支払期日・非加算・契約・
+ * クレジット）から組む。in_lieu の利用許諾条件が無ければ空（特約を立てない）。人が欄で直したらそちらが勝つ。
  */
 export function inLieuSpecialTermsFor(context: Ctx): string {
   const terms = ((context.licenseTerms ?? []) as Ctx[]).filter((t) => String(t.licenseFeeBasis) === "in_lieu");
   if (!terms.length) return "";
+  // 初版の算定の基礎を持つ 1 本（紙）。無ければ組めない。
+  const head = terms.find((t) => t.firstEditionCopies && t.firstEditionPrice !== null && t.firstEditionPrice !== undefined
+                                 && t.firstEditionRatePct !== null && t.firstEditionRatePct !== undefined) ?? null;
+  if (!head) return "";
   const coveredIds = new Set(terms.flatMap((t) => ((t.covers ?? []) as unknown[]).map(Number)));
   const conditions = ((context.conditions ?? []) as Ctx[]);
   const covered = conditions.filter((c) => coveredIds.has(Number(c.id)));
@@ -1148,25 +1149,22 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
   const amountOf = (c: Ctx) => Number(c.flatAmount
     ?? (c.unitAmount === null || c.unitAmount === undefined ? 0 : Number(c.unitAmount) * Number(c.quantity ?? 1))) || 0;
   const deliverables = deliverableRows.map((c) => ({ name: String(c.name ?? ""), amount: amountOf(c) }));
-  // 保証利用許諾料は許諾条件の AG（前払保証）。無ければ対象の行の合計。
-  const guaranteeFromAg = terms.reduce((sum, t) => sum + (Number(t.agAmount) || 0), 0);
-  const guaranteeAmount = guaranteeFromAg || deliverables.reduce((sum, d) => sum + d.amount, 0);
   // 支払期日は対象の行の予定明細（1 回・支払日）から。
   const payOn = ((context.schedules ?? []) as Ctx[])
     .find((s) => deliverableRows.some((c) => Number(c.id) === Number(s.conditionId)) && s.payOn)?.payOn ?? null;
-  const first = terms[0];
   return inLieuSpecialTerms({
     deliverables,
-    rates: terms.filter((t) => t.ratePct !== null && t.ratePct !== undefined)
-      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) })),
-    guaranteeAmount,
+    firstEdition: { price: Number(head.firstEditionPrice), copies: Number(head.firstEditionCopies),
+                    ratePct: Number(head.firstEditionRatePct), exemptCopies: head.royaltyExemptFirstCopies ?? null },
+    provisionalAmount: deliverables.reduce((sum, d) => sum + d.amount, 0) || null,
+    confirmWithinDays: head.confirmWithinDays ?? null,
     payOn: payOn ? String(payOn) : null,
-    exempt: { firstEditionCopies: first.royaltyExemptFirstCopies ?? null, laterEditionPct: first.royaltyExemptLaterPct ?? null },
-    // 利用許諾条件が載っている契約（出版基本契約）。あれば「その個別契約として扱う」と書く。
-    masterAgreement: first.agreementNo || first.agreementTitle
-      ? { no: first.agreementNo ? String(first.agreementNo) : null, title: first.agreementTitle ? String(first.agreementTitle) : null }
+    laterRates: terms.filter((t) => t.ratePct !== null && t.ratePct !== undefined)
+      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) })),
+    laterExemptPct: head.royaltyExemptLaterPct ?? null,
+    masterAgreement: head.agreementNo || head.agreementTitle
+      ? { no: head.agreementNo ? String(head.agreementNo) : null, title: head.agreementTitle ? String(head.agreementTitle) : null }
       : null,
-    // クレジット表記（A-076）。許諾条件のどれかにあれば特約にも書く。
     creditNotice: terms.map((t) => String(t.creditNotice ?? "").trim()).find(Boolean) ?? null
   });
 }
@@ -1231,6 +1229,16 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
   const hasContractorOwned = ownerships.includes("受注者") || ownerships.includes("contractor");
   // 明細の並びを渡す（利用許諾条件の表が対象の行を「No.1 原稿」と指す。A-075）。
   const licenseTerms = licenseTermRows(context, lang, items);
+  // 初版の利用許諾料を報酬として払う発注（A-077）：対象の行は仮計算額なので、本文が報酬名の後ろに
+  // 「（仮計算。確定は特約第3項）」と書けるよう行に印を付け、表面の確定額にも注記を出す。
+  const provisionalIds = new Set(((context.licenseTerms ?? []) as Ctx[])
+    .filter((t) => String(t.licenseFeeBasis) === "in_lieu")
+    .flatMap((t) => ((t.covers ?? []) as unknown[]).map(Number)));
+  for (const r of items) if (provisionalIds.has(Number(r.condition_id))) r.provisional = true;
+  const provisionalNote = items.some((r) => r.provisional)
+    ? (intl ? "Provisional amount; to be finalized as set out in the Special Terms (the finalized amount shall not be less than this amount)."
+            : "仮計算額。確定の方法は特約のとおり（確定額が下回っても本額を支払います）。")
+    : "";
   const paymentTermsSummary = distinctJoin(((context.conditions ?? []) as Ctx[])
     .filter((c) => !isSettlementKind(c.kind)).map((c) => c.paymentTerms));
   const ownershipEn = (v: string) => (v === "受注者" || v === "contractor" ? "Contractor"
@@ -1274,6 +1282,7 @@ function orderBlock(templateKey: string, context: Ctx, manual: Record<string, un
     license_terms_missing: hasContractorOwned && !licenseTerms.length,
     // クレジット表記（A-076）。表の下の段落。無ければ空で段落が出ない。
     license_credit_notice: licenseCreditNotice(licenseTerms),
+    provisional_note: provisionalNote,
     itemsSubtotalExTax: totals.itemsSubtotalExTax,
     otherFeesTotal: totals.otherFeesTotal,
     // 明細も手数料も無い発注書は総額を手入力する運用が残っている。

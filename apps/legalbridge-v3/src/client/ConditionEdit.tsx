@@ -486,9 +486,7 @@ export function ConditionEdit(
             {field("agAmount", "AG 前払保証", { type: "number",
               hint: detail.balance
                 ? `消化済み ${money(detail.balance.agConsumed, detail.currency)}／残 ${money(detail.balance.agRemaining, detail.currency)}`
-                : detail.direction === "in"
-                  ? "累積で充当する。「制作対価を兼ねる」なら保証利用許諾料（委託料の行の合計）をここに入れる"
-                  : "累積で充当する。消化しきるまで実額が出ない" })}
+                : "累積で充当する。消化しきるまで実額が出ない" })}
           </>)}
           {detail.kind === "license" && (
             <label className="field">
@@ -541,9 +539,9 @@ export function ConditionEdit(
                 <option value="separate">別途（料率・額で定める）</option>
                 <option value="included">業務委託報酬に含む（追加の許諾料なし）</option>
                 <option value="free">無償</option>
-                <option value="in_lieu">保証利用許諾料が制作対価を兼ねる（原稿・イラストを印税で払う）</option>
+                <option value="in_lieu">初版の利用許諾料を委託報酬として支払済み（2 版目以降がこの料率）</option>
               </select>
-              <small className="faint">発注書の利用許諾条件の「料率・額」に出る（A-048）。「制作対価を兼ねる」は AG（前払保証）が委託料の行の保証利用許諾料と同じ額（A-075）</small>
+              <small className="faint">発注書の利用許諾条件の「料率・額」に出る（A-048）。「初版…支払済み」は初版分を委託料の行で払い、計算書の対象は 2 版目以降（A-077）</small>
             </label>
           )}
           {detail.kind === "license" && detail.direction === "in" && (
@@ -559,10 +557,10 @@ export function ConditionEdit(
             </label>
           )}
           {detail.kind === "license" && detail.direction === "in" && v.licenseFeeBasis === "in_lieu" && (<>
-            {field("royaltyExemptFirstCopies", "印税対象外：初版（部）", { type: "number",
-              placeholder: "100", hint: "献本等。空なら対象外なし（A-075）" })}
-            {field("royaltyExemptLaterPct", "印税対象外：2 版目以降（発行部数の %）", { type: "number",
-              placeholder: "1", hint: "献本等。空なら対象外なし" })}
+            {field("royaltyExemptFirstCopies", "初版の非加算部数（献本・見本等）", { type: "number",
+              placeholder: "0", hint: "初版利用許諾料の算定方法に「− ○部」として明記される。空・0 なら全部数（A-077）" })}
+            {field("royaltyExemptLaterPct", "非加算：2 版目以降（発行部数の %）", { type: "number",
+              placeholder: "1", hint: "献本等。空なら非加算なし" })}
           </>)}
           {detail.kind === "license" && (
             <label className="field">

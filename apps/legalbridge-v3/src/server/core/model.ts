@@ -111,6 +111,11 @@ export interface ConditionDetail extends ConditionSummary {
   /** クレジット表記（A-076）。許諾条件だけが持つ。creditFromWork なら文書は作品の今の表記を差す。 */
   creditNotice: string | null;
   creditFromWork: boolean;
+  /** 初版の算定の基礎（A-077）。本体価格（最小通貨単位）・部数・料率（ppm）・確定の期限（日）。in_lieu の許諾条件が持つ。 */
+  firstEditionPrice: number | null;
+  firstEditionCopies: number | null;
+  firstEditionRatePpm: number | null;
+  confirmWithinDays: number | null;
   /**
    * 自動更新（A-039）。許諾期間（termStart / termEnd）を条件ごとに更新する。
    * 更新した回数は持たない。終了日・単位・基準日から数える（renewal.ts）。
