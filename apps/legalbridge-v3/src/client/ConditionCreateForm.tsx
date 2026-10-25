@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm } from "./CreateForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
+import type { ServiceLinesSeed } from "./ServiceLinesForm.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
@@ -67,7 +68,7 @@ const renewMonths = (v: unknown) => {
 };
 
 export function ConditionCreateForm(
-  { title = "条件の登録", preset, presetLabels, onDone, onCancel, onRegisterAgreement }: {
+  { title = "条件の登録", preset, presetLabels, onDone, onCancel, onRegisterAgreement, onSwitchToService }: {
     title?: string;
     /**
      * 分かっている項目を埋めた状態で開く。案件から作るなら相手先も
@@ -83,8 +84,17 @@ export function ConditionCreateForm(
     onCancel: () => void;
     /** 相手先に締結済みの契約が無いとき、その場で契約の登録へ移る口。 */
     onRegisterAgreement?: (partyId: number) => void;
+    /**
+     * 受注者帰属（利用許諾型）を選んだとき、委託料・利用許諾条件・特約をまとめて作る
+     * 『業務委託（発注）』のフォームへ、打ちかけの内容ごと切り替える口（A-081）。
+     * 1 本だけ登録すると利用許諾条件・算定の基礎・支払期日が無いまま発注書に出て、
+     * 「原稿料 0 円／許諾料は別途」の旧い見え方になる。条件が文書の骨格なので、ここで形ごと切り替える。
+     */
+    onSwitchToService?: (seed: ServiceLinesSeed) => void;
   }
 ) {
+  /** 『業務委託（発注）』へ切り替えるときに引き継ぐ種。受注者帰属を選んだ時点から持つ。 */
+  const [switchSeed, setSwitchSeed] = useState<ServiceLinesSeed | null>(null);
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   /**
@@ -162,7 +172,17 @@ export function ConditionCreateForm(
           } else if (v.payScheme && v.pricingModel !== v.payScheme) {
             set("pricingModel", v.payScheme);
           }
-        }
+          // 受注者帰属なら、切り替え先に引き継ぐ種を持ち続ける（切り替えボタンは下に出る）。
+          if (v.deliverableOwnership === "contractor") {
+            const line: NonNullable<ServiceLinesSeed["lines"]>[number] = {
+              name: String(v.name ?? ""), spec: String(v.spec ?? ""), quantity: String(v.quantity ?? "") || "1",
+              unitPrice: String(v.unitAmount ?? ""), deliveryDue: String(v.deliveryDue ?? ""),
+              contractForm: String(v.contractForm ?? ""), ownership: "contractor", workId: ""
+            };
+            setSwitchSeed({ title: String(v.name ?? ""), ownership: "contractor",
+                            licMode: v.paySchemeLic === "in_lieu" ? "in_lieu" : "separate", lines: [line] });
+          } else if (switchSeed) setSwitchSeed(null);
+        } else if (switchSeed) setSwitchSeed(null);
         const party = String(v.counterpartyId ?? "");
         if (party !== partyFor) { setPartyFor(party); setNoAgreement(false); return; }
         // 候補が 1 本で、まだ何も入っていなければ自動で入れる。人が空にしたら戻さない。
@@ -474,6 +494,20 @@ export function ConditionCreateForm(
   onDone={onDone}
   onCancel={onCancel}
 >
+  {/* 受注者帰属：この 1 本だけでは利用許諾条件・算定の基礎・支払期日が作られない。形ごと切り替えてもらう。 */}
+  {onSwitchToService && switchSeed && (
+    <div className={`note ${switchSeed.licMode === "in_lieu" ? "warn" : ""}`} style={{ marginTop: 8 }}>
+      {switchSeed.licMode === "in_lieu"
+        ? "「初版の利用許諾料を報酬として払う」は、この 1 本だけでは成立しません。発注書には 算定の基礎（見込み価格 × 部数 × 料率）・仮計算額・確定期限・支払期日・2 版目以降の利用許諾条件・特約 が要り、これらは『業務委託（発注）』のフォームでまとめて作ります。"
+        : "受注者帰属の成果物は、利用許諾の条件（許諾料の扱い・クレジット表記・再許諾）を別の条件『利用許諾』で持ちます。この 1 本だけ登録すると、発注書は「利用許諾料は別途」とだけ出ます。"}
+      <span className="row" style={{ gap: 8, marginTop: 6 }}>
+        <button type="button" className="btn btn-sm primary" onClick={() => onSwitchToService(switchSeed)}>
+          『業務委託（発注）』のフォームに切り替える（入力した品目・金額・納期は引き継ぐ）
+        </button>
+        <span className="faint">{switchSeed.licMode === "in_lieu" ? "切り替え先では「初版の利用許諾料を報酬として払う」が選ばれた状態で開きます" : "そのまま 1 本だけ登録することもできます"}</span>
+      </span>
+    </div>
+  )}
   {/* 相手に締結済みの契約が無い。黙って契約なしの条件を増やさず、ここで決めてもらう。 */}
   {partyFor && candidates && candidates.length === 0 && !noAgreement && (
     <div className="note warn" style={{ marginTop: 8 }}>

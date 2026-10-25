@@ -3,7 +3,7 @@ import { ConditionCreateForm } from "./ConditionCreateForm.js";
 import { LicenseSetForm } from "./LicenseSetForm.js";
 import { PubConditionSetForm } from "./PubConditionSetForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
-import { ServiceLinesForm } from "./ServiceLinesForm.js";
+import { ServiceLinesForm, type ServiceLinesSeed } from "./ServiceLinesForm.js";
 import type { WorkOption } from "./WorkChooser.js";
 
 /**
@@ -47,6 +47,8 @@ export function ConditionEntryForm(
   }
 ) {
   const [kind, setKind] = useState<ConditionEntryKind | null>(initialKind ?? null);
+  /** 「1 本だけ」から業務委託（発注）へ切り替えたときの種（支払の形・打ちかけの行）。A-081 */
+  const [seed, setSeed] = useState<ServiceLinesSeed | null>(null);
   const common = {
     counterpartyId: preset?.counterpartyId ? String(preset.counterpartyId) : undefined,
     workId: preset?.workId ? String(preset.workId) : undefined,
@@ -86,13 +88,14 @@ export function ConditionEntryForm(
       )}
       {kind === "service" && (
         <ServiceLinesForm preset={common} counterpartyName={preset?.counterpartyName ?? null} workTitle={preset?.workTitle ?? null}
-                          workOptions={preset?.workOptions}
+                          workOptions={preset?.workOptions} seed={seed}
                           onDone={(r) => done(r.conditions.map((c) => c.id), "purchase_order")} onCancel={onCancel} />
       )}
       {kind === "one" && (
         <ConditionCreateForm presetLabels={labels}
                              preset={{ ...common, ...(preset?.direction ? { direction: preset.direction } : {}),
                                        ...(preset?.kind ? { kind: preset.kind } : {}), ...(preset?.currency ? { currency: preset.currency } : {}) }}
+                             onSwitchToService={(s) => { setSeed(s); setKind("service"); }}
                              onDone={(r: { id: number }) => done([r.id], null)} onCancel={onCancel} />
       )}
     </div>
