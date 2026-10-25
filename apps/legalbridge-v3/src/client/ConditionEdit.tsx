@@ -1,5 +1,5 @@
 import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
 import { api, ApiError, money, rate } from "./api.js";
@@ -142,7 +142,8 @@ export function ConditionEdit(
    */
   const [inPlace, setInPlace] = useState(false);
   const hasPayment = ["payment_planned", "partly_paid", "paid"].includes(detail.settlement?.state ?? "");
-  const set = (k: string, value: string) => setV({ ...v, [k]: value });
+  /** 関数更新にする。1 つのハンドラで 2 回呼んでも先の値が消えない（チップで計算方式と報酬名を同時に入れる）。 */
+  const set = (k: string, value: string) => setV((prev) => ({ ...prev, [k]: value }));
   /** 電子書籍の集計のしかた（年 1 回・年 2 回・年 4 回）。支払条件の文と決済の型をまとめて入れる。 */
   const readCycle = readDigitalCycle(detail.paymentTerms);
   const [cyc, setCyc] = useState<DigitalCycleInput>(readCycle ?? DIGITAL_CYCLE_DEFAULTS.year);
@@ -482,8 +483,12 @@ export function ConditionEdit(
                  ["revenue_rate", "売上連動（インセンティブ報酬）", "料率で計算"]];
             const choose = (key: string) => {
               if (lic) {
-                if (key === "in_lieu") { if (inPlace || v.pricingModel === "fixed") set("pricingModel", "fixed"); set("rewardLabel", IN_LIEU_REWARD_LABEL); }
-                else if (v.rewardLabel === IN_LIEU_REWARD_LABEL) set("rewardLabel", "");
+                if (key === "in_lieu") {
+                  set("rewardLabel", IN_LIEU_REWARD_LABEL);
+                  if (v.confirmWithinDays.trim() === "") set("confirmWithinDays", "45");
+                  // 定額でなければ定額に直す。計算方式の変更は直接編集でしか送られないので、支払が無ければ直接編集に切り替える。
+                  if (v.pricingModel !== "fixed") { set("pricingModel", "fixed"); if (!hasPayment) setInPlace(true); }
+                } else if (v.rewardLabel === IN_LIEU_REWARD_LABEL) set("rewardLabel", "");
               } else if (inPlace) set("pricingModel", key);
             };
             return (
@@ -501,6 +506,7 @@ export function ConditionEdit(
                     ? "受注者帰属の成果物は、利用許諾の条件（許諾料の扱い・クレジット・再許諾）を別の条件『利用許諾』で持ちます（上の手順ナビの「関連する条件」から開けます）"
                     : inPlace ? "選ぶと計算方式が入る（下で直せる）" : "計算方式を変えるには「直接編集」にする（改訂では変えられない）"}
                 </small>
+                {lic && current === "in_lieu" && <InLieuServiceBlock v={v} set={set} pm={pm} field={field} />}
               </div>
             );
           })()}
@@ -826,6 +832,79 @@ export function ConditionEdit(
           {!changedCount && <span className="faint">変更された項目がありません</span>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 仕様の末尾の「算定の基礎（見込み）：…」の行を差し替える（無ければ足す）。 */
+function withBasisLine(spec: string, line: string | null): string {
+  const kept = spec.split(/\r?\n/).filter((l) => !l.startsWith("算定の基礎")).join("\n").replace(/\n+$/, "");
+  if (!line) return kept;
+  return kept ? `${kept}\n${line}` : line;
+}
+
+/**
+ * 委託料の行で「初版の利用許諾料を報酬として払う」を選んだときに、チップの直下に出すブロック（A-083）。
+ *
+ * 選んでも報酬名が ⑤ で変わるだけで、画面の見える範囲では何も起きなかった。発注書をモックの
+ * 見え方にするには 見込み価格 × 部数 × 料率 の仮計算額が行の金額に入っていることが要るので、
+ * ここで入れさせ、金額と仕様の「算定の基礎」の行を自動で合わせる。算定の基礎はこの条件にも保存する
+ * （紙の利用許諾条件にも同じ値を入れる。発注書の特約はそちらから読む）。
+ */
+function InLieuServiceBlock(
+  { v, set, pm, field }:
+  { v: Record<string, string>; set: (name: string, value: string) => void; pm: string;
+    field: (name: string, label: string, extra?: { type?: string; hint?: string; wide?: boolean; placeholder?: string }) => ReactElement }
+) {
+  const num = (x: string) => Number(String(x ?? "").replace(/[^0-9.-]/g, "")) || 0;
+  const fe = { price: num(v.firstEditionPrice), copies: Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
+               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)) };
+  const ok = fe.price > 0 && fe.copies > 0 && fe.ratePct > 0 && fe.exemptCopies >= 0 && fe.exemptCopies < fe.copies;
+  const provisional = ok ? firstEditionFee(fe) : 0;
+  const basis = ok ? firstEditionBasisText(fe, "見込み") : null;
+  const amount = pm === "unit_rate" ? num(v.unitAmount) * (num(v.quantity) || 1) : num(v.flatAmount);
+  // 仮計算額が出たら、金額と仕様の算定の基礎を合わせる（人が金額を別に打っても、この形では仮計算額と同じ額にする決まり）。
+  useEffect(() => {
+    if (!ok || provisional <= 0) return;
+    if (amount !== provisional) {
+      if (pm === "unit_rate") { set("quantity", "1"); set("unitAmount", String(provisional)); }
+      else set("flatAmount", String(provisional));
+    }
+    const next = withBasisLine(v.spec ?? "", basis);
+    if (next !== (v.spec ?? "")) set("spec", next);
+  }, [ok, provisional, amount, basis, pm]);
+  const checks: Array<[boolean, string]> = [
+    [v.rewardLabel === IN_LIEU_REWARD_LABEL, "報酬名「初版利用許諾料」（⑤）"],
+    [pm === "fixed", pm === "fixed" ? "計算方式 定額" : "計算方式 定額（支払が立っているので変えられない。新しい条件を『業務委託（発注）』で作る）"],
+    [ok && amount === provisional, ok ? `金額 ＝ 仮計算額 ¥${provisional.toLocaleString("ja-JP")}` : "金額 ＝ 仮計算額（下の 3 つを入れると入る）"],
+    [Boolean(basis) && String(v.spec ?? "").includes("算定の基礎"), "仕様の末尾に「算定の基礎（見込み）」の行（⑤）"],
+    [Boolean(v.deliveryDue), "納期（②）。支払期日は受領から 60 日以内"],
+    [num(v.confirmWithinDays) >= 1 && num(v.confirmWithinDays) <= 60, "確定の期限（60 日以内）"]
+  ];
+  return (
+    <div className="note" style={{ marginTop: 8 }}>
+      <b>この選択で変わること</b>
+      <ul style={{ margin: "4px 0 8px 18px" }}>
+        {checks.map(([done, label]) => <li key={label}>{done ? "✓" : "□"} {label}</li>)}
+      </ul>
+      <b>初版の算定の基礎（見込み）</b>
+      <span className="faint">　仮計算額 ＝ 本体価格 ×（初版部数 − 非加算部数）× 料率。入れると行の金額と仕様の算定の基礎に入る</span>
+      <div className="form-grid" style={{ marginTop: 6 }}>
+        {field("firstEditionPrice", "見込み本体価格（税抜・円）", { type: "number", placeholder: "1000" })}
+        {field("firstEditionCopies", "初版発行部数", { type: "number", placeholder: "3000" })}
+        {field("firstEditionRatePct", "初版の料率（%）", { type: "number", placeholder: "10" })}
+        {field("royaltyExemptFirstCopies", "初版の非加算部数", { type: "number", placeholder: "0", hint: "既定 0。入れると算定方法に「− ○部」と明記" })}
+        {field("confirmWithinDays", "確定の期限（受領後 ○ 日）", { type: "number", placeholder: "45", hint: "60 日以内" })}
+        <div className="field">
+          <span>仮計算額</span>
+          <b style={{ fontSize: "1.1em" }}>{ok ? `¥${provisional.toLocaleString("ja-JP")}` : "—"}</b>
+          <small className="faint">{basis ?? "本体価格・部数・料率を入れると出ます"}</small>
+        </div>
+      </div>
+      <small className="faint">
+        保存後：「予定」に 1 回（締め＝納期、支払日＝受領から 60 日以内、金額＝この額）を立て、紙の利用許諾条件の
+        許諾料の扱いを「初版…支払済み」にして同じ算定の基礎を入れる（上の手順ナビ）。決定済みの発注書は訂正版を起こす。
+      </small>
     </div>
   );
 }
