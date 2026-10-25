@@ -1145,6 +1145,25 @@ export function licenseCreditNotice(rows: LicenseTermRow[]): string {
  * 台帳の値（対価を兼ねる明細・初版の算定の基礎・2 版目以降の料率・支払期日・非加算・契約・
  * クレジット）から組む。in_lieu の利用許諾条件が無ければ空（特約を立てない）。人が欄で直したらそちらが勝つ。
  */
+/**
+ * 発注書の「対象」（初版の利用許諾料が対価を兼ねる明細）を、文書の手入力で選び直す（A-085）。
+ *
+ * 台帳の対応（condition_fee_covers）は条件の登録時に決まるが、発注書を組む段で
+ * 「この行は対象、この行は別途の報酬」を人が切り替えたい。manual._inLieuCovers に
+ * 条件 id の配列があれば、初版…支払済みの利用許諾条件すべての対象をそれに置き換える。
+ * 文書に載っていない条件は落とす。無ければ台帳どおり。
+ */
+export function withManualCovers(context: Ctx, manual: Record<string, unknown>): Ctx {
+  const raw = manual?._inLieuCovers;
+  if (!Array.isArray(raw)) return context;
+  const conditions = ((context.conditions ?? []) as Ctx[]);
+  const ids = raw.map(Number).filter((n) => Number.isInteger(n) && n > 0 && conditions.some((c) => Number(c.id) === n));
+  const names = ids.map((id) => String(conditions.find((c) => Number(c.id) === id)?.name ?? ""));
+  const terms = ((context.licenseTerms ?? []) as Ctx[]).map((t) =>
+    String(t.licenseFeeBasis) === "in_lieu" ? { ...t, covers: ids, coverNames: names } : t);
+  return { ...context, licenseTerms: terms };
+}
+
 export function inLieuSpecialTermsFor(context: Ctx): string {
   const terms = ((context.licenseTerms ?? []) as Ctx[]).filter((t) => String(t.licenseFeeBasis) === "in_lieu");
   if (!terms.length) return "";
@@ -1222,8 +1241,10 @@ export function staffEn(owner: Record<string, unknown> | null | undefined): Reco
 const distinctJoin = (values: unknown[]): string =>
   [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))].join("／");
 
-function orderBlock(templateKey: string, context: Ctx, manual: Record<string, unknown>) {
+function orderBlock(templateKey: string, context0: Ctx, manual: Record<string, unknown>) {
   const intl = templateKey === "intl_purchase_order";
+  // 対象の選び直し（A-085）。利用許諾条件の表の「対象」と仮計算の印に効く。
+  const context = withManualCovers(context0, manual);
   // 海外版は行の契約種別（請負 など）も英語で刷る。英語で書いてあればそのまま。
   const rawItems = rows(manual.items).length ? rows(manual.items) : orderLinesFrom(context);
   const lang: "ja" | "en" = intl ? "en" : "ja";
@@ -1342,7 +1363,7 @@ export function suggestionsFor(
       ? { SHOW_SIGN_SECTION: true, SHOW_ORDER_SIGN_SECTION: false } : {};
     // 利用許諾料で払う発注（A-075）の特約。台帳から組んだ文を既定にする。人が欄に書いていればそちら。
     const specialTerms = PURCHASE_ORDER_KEYS.has(templateKey) && !String(bound.SPECIAL_TERMS ?? "").trim()
-      ? inLieuSpecialTermsFor(context) : "";
+      ? inLieuSpecialTermsFor(withManualCovers(context, bound)) : "";
     const inLieuDefaults = specialTerms ? { SPECIAL_TERMS: specialTerms } : {};
     const condition = singleCondition(context) ?? context.condition;
     if (!condition) return { ...signDefaults, ...inLieuDefaults };

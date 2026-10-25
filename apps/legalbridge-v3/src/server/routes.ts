@@ -1045,6 +1045,26 @@ export function createRoutes(database: Transactable) {
   }));
 
   // 選んだ条件の取り分（共著。A-068）。文書作成で「受取人」を選ぶ材料。:id より前に置く。
+  /**
+   * 文書の作成フォーム用：選んだ条件のうち「初版の利用許諾料を委託報酬として支払済み」の利用許諾条件と、
+   * その対価を兼ねる明細（台帳の対応）。明細の行ごとの「対象」スイッチの初期値に使う（A-085）。
+   */
+  router.get("/conditions/fee-covers", asyncRoute(async (req, res) => {
+    const ids = String(req.query.ids ?? "").split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
+    if (!ids.length) { res.json({ licenses: [] }); return; }
+    const r = await database.query(
+      `SELECT c.id, c.condition_no, c.name, c.usage_type,
+              COALESCE((SELECT array_agg(f.service_condition_id ORDER BY f.service_condition_id)
+                          FROM condition_fee_covers f WHERE f.license_condition_id = c.id), '{}') AS covers
+         FROM conditions c
+        WHERE c.id = ANY($1::bigint[]) AND c.kind = 'license' AND c.license_fee_basis = 'in_lieu'
+        ORDER BY c.id`, [ids]);
+    res.json({ licenses: r.rows.map((row: any) => ({
+      id: Number(row.id), conditionNo: row.condition_no ?? null, name: String(row.name ?? ""), usageType: row.usage_type ?? null,
+      covers: ((row.covers ?? []) as unknown[]).map(Number)
+    })) });
+  }));
+
   router.get("/conditions/shares", asyncRoute(async (req, res) => {
     const ids = String(req.query.ids ?? "").split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200);
     const out = [];

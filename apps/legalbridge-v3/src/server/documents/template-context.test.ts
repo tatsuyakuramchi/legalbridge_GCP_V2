@@ -1107,3 +1107,20 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.equal((suggestionsFor("purchase_order", context, { SPECIAL_TERMS: "自前" }) as Record<string, unknown>).SPECIAL_TERMS, undefined);
   assert.equal("SPECIAL_TERMS" in suggestionsFor("purchase_order", { conditions, licenseTerms: [] }), false);
 });
+
+test("A-085：手入力 _inLieuCovers で、初版…支払済みの利用許諾条件の対象を選び直す（載っていない条件は落とす）", async () => {
+  const { withManualCovers } = await import("./template-context.js");
+  const context = {
+    conditions: [{ id: 11, name: "原稿" }, { id: 12, name: "イラスト" }],
+    licenseTerms: [
+      { id: 21, licenseFeeBasis: "in_lieu", covers: [11], coverNames: ["原稿"] },
+      { id: 22, licenseFeeBasis: "separate", covers: [], coverNames: [] }
+    ]
+  };
+  assert.equal(withManualCovers(context, {}), context, "指定が無ければ台帳どおり");
+  const out = withManualCovers(context, { _inLieuCovers: [12, 11, 99] });
+  assert.deepEqual(out.licenseTerms[0].covers, [12, 11]);
+  assert.deepEqual(out.licenseTerms[0].coverNames, ["イラスト", "原稿"]);
+  assert.deepEqual(out.licenseTerms[1].covers, [], "別途の条件は触らない");
+  assert.deepEqual(withManualCovers(context, { _inLieuCovers: [] }).licenseTerms[0].covers, [], "空の配列は対象なし");
+});
