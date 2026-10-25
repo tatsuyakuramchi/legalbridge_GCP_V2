@@ -16,6 +16,7 @@ import { validateShareInput } from "../royalty/shares.js";
 import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
 import { normalizeTimeSettlement } from "./time-settlement.js";
 import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee, withinSixtyDays } from "./royalty-in-lieu.js";
+import { partRoleOf, type PartRole } from "../core/part-role.js";
 import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
@@ -168,8 +169,15 @@ export interface ServiceSetRow {
   contractForm?: string | null;
   deliverableOwnership?: "orderer" | "contractor" | null;
   taxCategory?: "taxable" | "reduced" | "exempt" | "included" | null;
-  /** 報酬名の上書き（保証利用許諾料 など。A-075）。空なら計算方式と帰属先から導く。 */
+  /** 報酬名の上書き（初版利用許諾料 など。A-075）。空なら計算方式と帰属先から導く。 */
   rewardLabel?: string | null;
+  /**
+   * 行の構成要素（作品のパート。A-078）。受注者帰属の行の利用許諾条件は 作品 × パート で立つ。
+   * workPartId は既存のパート、newPartRole は「この行の品目名で新しく作る」（core=コアロジック／sub=サブコンポーネント）。
+   * どちらも無ければ作品全体。
+   */
+  workPartId?: number | null;
+  newPartRole?: PartRole | null;
   /** 準委任の時間精算（A-073）。行ごとの上書き。空なら束の既定。 */
   timeSettlement?: boolean | null;
   hoursIncluded?: number | null;
@@ -925,17 +933,31 @@ export class ConditionWriteService {
         inputs[index].spec = spec.includes(basisLine) ? spec : [spec, basisLine].filter(Boolean).join("\n");
       }
     }
+    // 利用許諾条件は 作品 × 構成要素（パート）で立てる（A-078）。原稿がコア、イラスト等がサブ。
+    // 行ごとに既存のパートを選ぶか、新しく作る（コア／サブ）。パートの無い行は作品全体。
+    // 権利の上限はパートの取得条件で決まるので、パートが違えば別の条件になる。
+    type Target = { workId: number; partId: number | null; newPartRole: PartRole | null; newPartName: string | null;
+                    rowIndexes: number[]; role: PartRole | null };
+    const targets: Target[] = [];
+    // 利用許諾条件を載せる契約。出版基本契約を選んでいればそれ（個別契約として扱う）。
+    // 未指定なら業務委託の基本契約、null（明示）なら契約に載せない。
+    const licenseAgreementId: number | null =
+      license?.agreementId === undefined ? (input.agreementId ?? null) : (license?.agreementId ?? null);
+    /** 利用許諾条件 1 本の入力と、それがどの対象（作品 × パート）のものか。名前とパートは取引の中で決まる。 */
+    const licensePlan: Array<{ target: Target; input: ConditionInput; head: boolean }> = [];
     if (contractorRows.length && license && license.mode !== "none") {
       const fallback = license.workId ?? input.workId ?? null;
-      // 利用許諾条件を載せる契約。出版基本契約を選んでいればそれ（個別契約として扱う）。
-      // 未指定なら業務委託の基本契約、null（明示）なら契約に載せない。
-      const licenseAgreementId: number | null =
-        license.agreementId === undefined ? (input.agreementId ?? null) : license.agreementId;
-      const workIds: number[] = [];
-      for (const row of contractorRows) {
+      for (const [index, row] of rows.entries()) {
+        if (ownershipOf(row) !== "contractor") continue;
         const w = workOf(row) ?? fallback;
         if (!w) throw new DomainError("VALIDATION", "受注者帰属の成果物の利用許諾条件には作品が要ります（行に作品を入れるか、作品を登録するか、「条件を立てない」を選ぶ）");
-        if (!workIds.includes(w)) workIds.push(w);
+        const partId = row.workPartId ?? null;
+        const newRole = partId ? null : (row.newPartRole ?? null);
+        // 新しく作るパートは行ごとに 1 つ。既存のパート（または作品全体）は同じものなら 1 つにまとめる。
+        const found = newRole ? undefined : targets.find((t) => t.workId === w && t.partId === partId && !t.newPartRole);
+        if (found) found.rowIndexes.push(index);
+        else targets.push({ workId: w, partId, newPartRole: newRole, newPartName: newRole ? (String(row.name ?? "").trim() || title) : null,
+                            rowIndexes: [index], role: newRole });
       }
       const usageType: ConditionUsageType = license.usageType ?? "in_house";
       const basis: LicenseFeeBasis = license.mode;
@@ -944,18 +966,22 @@ export class ConditionWriteService {
       if (basis === "separate" && ratePct == null && flat == null) {
         throw new DomainError("VALIDATION", "許諾料を別途にするなら、料率か定額を入れてください");
       }
-      for (const workId of workIds) {
+      // 初版の算定の基礎（A-077）はコアのパート（無ければ先頭）の先頭の利用形態 1 本だけが持つ。
+      // 既存のパートの役割は取引の中で読むので、ここでは「新しく作るコア」だけを優先して決める。
+      const headTarget = targets.find((t) => t.newPartRole === "core") ?? targets[0] ?? null;
+      for (const target of targets) {
         if (inLieu && fe) {
-          // 利用形態ごとに 1 本（2 版目以降・電子の料率）。初版の算定の基礎（見込みの本体価格・部数・
-          // 料率・非加算）と確定の期限は先頭の 1 本が持つ。初版分は委託料の行で払うので AG・MG は
+          // 利用形態ごとに 1 本（2 版目以降・電子の料率）。初版分は委託料の行で払うので AG・MG は
           // 持たない（計算書の対象は 2 版目以降）。
           for (const [index, rate] of inLieuRates.entries()) {
+            const head = target === headTarget && index === 0;
             const one: ConditionInput = {
               matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
-              counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId,
+              counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId: target.workId,
+              workPartId: target.partId,
               usageType: rate.usageType, licenseFeeBasis: "in_lieu",
               pricingModel: "revenue_rate", ratePpm: Math.round(rate.ratePct * 10000),
-              ...(index === 0 ? {
+              ...(head ? {
                 firstEditionPrice: Math.round(fe.price), firstEditionCopies: Math.floor(fe.copies),
                 firstEditionRatePpm: Math.round(fe.ratePct * 10000),
                 royaltyExemptFirstCopies: fe.exemptCopies ? Math.floor(fe.exemptCopies) : null,
@@ -970,13 +996,14 @@ export class ConditionWriteService {
               notes: `業務委託（${title}）の成果物の利用許諾。初版の利用許諾料（仮計算 金${provisional.toLocaleString("ja-JP")}円）は委託料として支払い、受領後${license.confirmWithinDays ?? 45}日以内に確定。支払期日 ${license.payOn}。計算書の対象は 2 版目以降`
             };
             validateConditionInput(one);
-            licenseInputs.push(one);
+            licensePlan.push({ target, input: one, head });
           }
           continue;
         }
         const one: ConditionInput = {
           matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
-          counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId,
+          counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId: target.workId,
+          workPartId: target.partId,
           usageType, licenseFeeBasis: basis,
           creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
           pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",
@@ -989,7 +1016,7 @@ export class ConditionWriteService {
             basis === "separate" ? "別途" : basis === "included" ? "委託報酬に含む" : "無償"}`
         };
         validateConditionInput(one);
-        licenseInputs.push(one);
+        licensePlan.push({ target, input: one, head: false });
       }
     }
 
@@ -997,37 +1024,64 @@ export class ConditionWriteService {
     try {
       result = await inTransaction(this.database, async (client) => {
         const out: ServiceSetResult = { conditions: [], licenseConditions: [], scheduled: 0 };
+        // 1) 構成要素（パート）。新しく作る行はここで作品に足す。既存のパートは名前と役割を読む。
+        //    委託料の行にも同じパートを付ける（検収・台帳でどの要素の対価か分かる）。
+        for (const target of targets) {
+          if (target.newPartRole) {
+            const made = await client.query(
+              `INSERT INTO work_parts (work_id, part_no, name, part_type, part_role)
+               VALUES ($1, (SELECT COALESCE(max(part_no), 0) + 1 FROM work_parts WHERE work_id = $1), $2, 'unspecified', $3)
+               RETURNING id`, [target.workId, target.newPartName, target.newPartRole]);
+            target.partId = Number((made.rows[0] as { id: number }).id);
+            await recordAudit(client, { actor, action: "work.add_part", targetType: "work", targetId: target.workId,
+              detail: { partId: target.partId, name: target.newPartName, role: target.newPartRole, from: "service-set" } });
+          } else if (target.partId) {
+            const part = (await client.query("SELECT name, part_type, part_role FROM work_parts WHERE id = $1 AND work_id = $2",
+                                             [target.partId, target.workId])).rows[0] as { name: string; part_type: string; part_role: string | null } | undefined;
+            if (!part) throw new DomainError("VALIDATION", "行の構成要素（パート）がその作品のものではありません");
+            target.newPartName = part.name;
+            target.role = partRoleOf(part.part_type, part.part_role);
+          }
+          for (const index of target.rowIndexes) inputs[index].workPartId = target.partId;
+        }
+        // 2) 委託料・実費・手数料の行
         for (const [index, one] of inputs.entries()) {
           const made = await this.createWithin(client, one, actor);
           out.conditions.push({ usageType: rows[index].kind as unknown as ConditionUsageType, ...made });
         }
-        for (const licenseInput of licenseInputs) {
-          const w = await client.query("SELECT title FROM works WHERE id = $1", [licenseInput.workId]);
-          const workTitle = (w.rows[0] as { title?: string } | undefined)?.title ?? null;
-          if (!workTitle) throw new DomainError("NOT_FOUND", `作品 ${licenseInput.workId} が見つかりません`);
-          licenseInput.name = conditionNameFor({ workTitle, usageType: licenseInput.usageType! }) ?? `${workTitle}｜利用許諾`;
-          // 同じ作品 × 受注者 × 利用形態の生きた条件があれば作らず、それを返す。
+        // 3) 利用許諾条件（作品 × パート × 利用形態）
+        const titles = new Map<number, string>();
+        for (const plan of licensePlan) {
+          const licenseInput = plan.input;
+          if (!titles.has(plan.target.workId)) {
+            const w = await client.query("SELECT title FROM works WHERE id = $1", [plan.target.workId]);
+            const workTitle = (w.rows[0] as { title?: string } | undefined)?.title ?? null;
+            if (!workTitle) throw new DomainError("NOT_FOUND", `作品 ${plan.target.workId} が見つかりません`);
+            titles.set(plan.target.workId, workTitle);
+          }
+          const workTitle = titles.get(plan.target.workId)!;
+          licenseInput.workPartId = plan.target.partId;
+          licenseInput.name = conditionNameFor({ workTitle, usageType: licenseInput.usageType!, partName: plan.target.newPartName })
+            ?? `${workTitle}｜利用許諾`;
+          // 同じ作品 × パート × 受注者 × 利用形態の生きた条件があれば作らず、それを返す。
           const existing = await client.query(
             `SELECT id, condition_no FROM conditions
               WHERE work_id = $1 AND counterparty_id = $2 AND direction = 'in' AND kind = 'license'
-                AND usage_type = $3 AND status IN ('active', 'scheduled') LIMIT 1`,
-            [licenseInput.workId, input.counterpartyId, licenseInput.usageType]);
+                AND usage_type = $3 AND work_part_id IS NOT DISTINCT FROM $4
+                AND status IN ('active', 'scheduled') LIMIT 1`,
+            [plan.target.workId, input.counterpartyId, licenseInput.usageType, plan.target.partId]);
           const found = existing.rows[0] as { id: number; condition_no: string | null } | undefined;
-          if (found) out.licenseConditions.push({ id: Number(found.id), conditionNo: found.condition_no, existed: true });
-          else {
-            const made = await this.createWithin(client, licenseInput, actor);
-            out.licenseConditions.push({ ...made, existed: false });
-          }
-        }
-        // 利用許諾料で払う発注（A-075）：利用許諾条件 × 対価を兼ねる委託料の行。発注書の
-        // 「■ 利用許諾条件」が対象の行番号を出し、台帳からも「この印税は何の対価か」が追える。
-        if (inLieu) {
-          const covered = rows.flatMap((r, index) => ownershipOf(r) === "contractor" ? [out.conditions[index].id] : []);
-          for (const lic of out.licenseConditions) {
-            for (const serviceId of covered) {
+          const made = found
+            ? { id: Number(found.id), conditionNo: found.condition_no, existed: true }
+            : { ...(await this.createWithin(client, licenseInput, actor)), existed: false };
+          out.licenseConditions.push(made);
+          // 4) 利用許諾料で払う発注（A-077）：利用許諾条件 × 対価を兼ねる委託料の行（同じパートの行）。
+          //    発注書の「■ 利用許諾条件」が対象の行番号を出し、台帳からも「この印税は何の対価か」が追える。
+          if (inLieu) {
+            for (const index of plan.target.rowIndexes) {
               await client.query(
                 `INSERT INTO condition_fee_covers (license_condition_id, service_condition_id)
-                 VALUES ($1, $2) ON CONFLICT DO NOTHING`, [lic.id, serviceId]);
+                 VALUES ($1, $2) ON CONFLICT DO NOTHING`, [made.id, out.conditions[index].id]);
             }
           }
         }

@@ -47,12 +47,16 @@ export interface NamingInput {
   sublicensee?: string | null;
   /** 再許諾の目的（例：英語版の製造販売、翻訳出版）。再許諾のときだけ。 */
   purpose?: string | null;
+  /** 構成要素（作品のパート）の名前。パート単位の条件なら 作品名｜パート｜取引モデル（A-078）。 */
+  partName?: string | null;
 }
 
 /** 規則どおりの条件名。再許諾で再許諾先が無ければ null（付けられない）。 */
 export function conditionNameFor(input: NamingInput): string | null {
-  const title = String(input.workTitle ?? "").trim();
-  if (!title) return null;
+  const base = String(input.workTitle ?? "").trim();
+  if (!base) return null;
+  const part = String(input.partName ?? "").trim();
+  const title = part ? `${base}${NAME_SEPARATOR}${part}` : base;
   const label = USAGE_NAME_LABEL[input.usageType];
   if (!label) return null;
   const to = String(input.sublicensee ?? "").trim();

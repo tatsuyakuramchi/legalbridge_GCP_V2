@@ -1889,6 +1889,7 @@ export function createRoutes(database: Transactable) {
   const partSchema = z.object({
     name: z.string().trim().min(1).max(300),
     partType: z.string().trim().max(60).optional(),
+    partRole: z.enum(["core", "sub"]).nullable().optional(),
     royaltyBearing: z.boolean().optional(),
     remarks: z.string().trim().max(2000).nullable().optional(),
     partNo: z.coerce.number().int().positive().nullable().optional()
@@ -2264,6 +2265,9 @@ export function createRoutes(database: Transactable) {
       workId: z.coerce.number().int().positive().nullable().optional(),
       taxCategory: z.enum(["taxable", "reduced", "exempt", "included"]).nullable().optional(),
       rewardLabel: z.string().trim().max(60).nullable().optional(),
+      // 行の構成要素（A-078）。既存のパートか、この行の品目名で新しく作る役割。
+      workPartId: z.coerce.number().int().positive().nullable().optional(),
+      newPartRole: z.enum(["core", "sub"]).nullable().optional(),
       ...timeSettlementFields
     })).min(1).max(60),
     license: z.object({
@@ -3348,6 +3352,7 @@ export function createRoutes(database: Transactable) {
   const partPatchSchema = z.object({
     name: z.string().trim().min(1).max(300).optional(),
     partType: z.string().trim().max(60).optional(),
+    partRole: z.enum(["core", "sub"]).nullable().optional(),
     royaltyBearing: z.boolean().optional(),
     remarks: z.string().trim().max(2000).nullable().optional(),
     partNo: z.coerce.number().int().positive().optional()

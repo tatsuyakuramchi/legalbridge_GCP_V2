@@ -36,6 +36,8 @@ interface Line {
   deliveryDue: string; contractForm: string; ownership: string; tax: string;
   /** 行の作品。"" は上と同じ、"none" は作品なし、ほかは作品 id。 */
   workId: string;
+  /** 行の構成要素（A-078）。"" は作品全体、"new:core"／"new:sub" はこの行の品目名で新しく作る、ほかはパート id。 */
+  partId: string;
   /** 一覧に無い作品を探している最中。 */
   pickingWork?: boolean;
 }
@@ -52,7 +54,7 @@ const text = (v: string) => { const s = String(v ?? "").trim(); return s || unde
 const yen = (n: number) => n.toLocaleString("ja-JP");
 let keySeq = 1;
 const blank = (kind: Line["kind"] = "service"): Line =>
-  ({ key: keySeq++, kind, name: "", spec: "", quantity: "1", unit: "式", unitPrice: "", deliveryDue: "", contractForm: "", ownership: "", tax: "", workId: "" });
+  ({ key: keySeq++, kind, name: "", spec: "", quantity: "1", unit: "式", unitPrice: "", deliveryDue: "", contractForm: "", ownership: "", tax: "", workId: "", partId: "" });
 const amountOf = (l: Line) => Math.round(num(l.quantity || "1") * num(l.unitPrice));
 
 /** Excel／CSV の貼り付け。列は 品目・仕様・数量・単位・単価・納期 の順（足りなければ右が空）。 */
@@ -148,6 +150,18 @@ export function ServiceLinesForm(
       .catch(() => { if (alive) setWorkCredit(null); });
     return () => { alive = false; };
   }, [licenseWorkId]);
+  /** 作品ごとの構成要素（パート）。受注者帰属の行で選ぶ（A-078）。 */
+  const [partsByWork, setPartsByWork] = useState<Record<string, Array<{ id: number; name: string; partRole: string }>>>({});
+  const contractorWorkIds = [...new Set(lines.filter((l) => l.kind === "service" && (l.ownership || ownership) === "contractor")
+    .map((l) => (l.workId === "" ? workId : l.workId === "none" ? "" : l.workId)).filter(Boolean))].join(",");
+  useEffect(() => {
+    for (const id of contractorWorkIds.split(",").filter(Boolean)) {
+      if (partsByWork[id]) continue;
+      api.get<{ parts: Array<{ id: number; name: string; partRole: string }> }>(`/works/${id}`)
+        .then((r) => setPartsByWork((p) => ({ ...p, [id]: r.parts ?? [] })))
+        .catch(() => setPartsByWork((p) => ({ ...p, [id]: [] })));
+    }
+  }, [contractorWorkIds]);
   /** 文書に出るクレジット表記（引用なら作品の今の表記。無ければ手入力の文言）。 */
   const creditText = creditFromWork ? (workCredit ?? creditNotice.trim()) : creditNotice.trim();
   /** 2 版目以降の非加算（献本等。発行部数の %）。既定 1。 */
@@ -341,7 +355,10 @@ export function ServiceLinesForm(
           // 時間精算は準委任の委託料の行だけ。束の既定が時間精算でも、請負の行には付けない。
           ...(timeSettled && l.kind === "service" && !isQuasiMandate(l.contractForm || contractForm) ? { timeSettlement: false } : {}),
           // 「上と同じ」は送らない（サーバが上の作品を使う）。
-          ...(l.workId === "" ? {} : { workId: l.workId === "none" ? null : int(l.workId) ?? null })
+          ...(l.workId === "" ? {} : { workId: l.workId === "none" ? null : int(l.workId) ?? null }),
+          // 構成要素（A-078）。受注者帰属の行だけ。
+          ...((l.ownership || ownership) === "contractor" && l.partId.startsWith("new:") ? { newPartRole: l.partId.slice(4) }
+             : (l.ownership || ownership) === "contractor" && l.partId ? { workPartId: int(l.partId) ?? null } : {})
         })),
         license: hasContractor ? {
           mode: licMode, workId: int(workId) ?? null, usageType: licUsage,
@@ -492,6 +509,17 @@ export function ServiceLinesForm(
                           <option value={l.workId}>{workName(l.workId)}</option>}
                         <option value="none">作品なし</option>
                         <option value="?">ほかの作品を探す…</option>
+                      </select>
+                    )}
+                    {/* 構成要素（A-078）。受注者帰属の行は、作品のどの要素か（コアロジック／サブコンポーネント）を持つ。 */}
+                    {l.kind === "service" && (l.ownership || ownership) === "contractor" && rowWork(l) && (
+                      <select value={l.partId} aria-label={`${i + 1} 行目の構成要素`} style={{ marginTop: 4 }}
+                              onChange={(e) => update(l.key, { partId: e.target.value })}>
+                        <option value="">構成要素：作品全体</option>
+                        {(partsByWork[rowWork(l)] ?? []).map((p) => (
+                          <option key={p.id} value={String(p.id)}>{p.name}（{p.partRole === "core" ? "コアロジック" : "サブコンポーネント"}）</option>))}
+                        <option value="new:core">新しく作る：コアロジック（{l.name || "この行の品目名"}）</option>
+                        <option value="new:sub">新しく作る：サブコンポーネント（{l.name || "この行の品目名"}）</option>
                       </select>
                     )}
                   </td>

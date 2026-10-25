@@ -1053,7 +1053,9 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
       // 利用許諾条件は出版基本契約の個別契約（業務委託の基本契約とは別）。
       agreementNo: "AGR-2026-0088", agreementTitle: "出版基本契約",
       // クレジット表記は作品から引用（文脈は文書の日付時点の表記を解いて渡す）。
-      creditNotice: "© 2026 山田太郎／イラスト：山田太郎", creditFromWork: true },
+      creditNotice: "© 2026 山田太郎／イラスト：山田太郎", creditFromWork: true,
+      // 構成要素（A-078）：原稿のパート（コアロジック）。
+      partName: "原稿", partRole: "core" },
     { id: 14, usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 15, mgAmount: null, agAmount: null,
       currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: [], languages: [],
       licenseFeeBasis: "in_lieu", conditionNo: "CL-14", exclusivity: "non_exclusive",
@@ -1077,6 +1079,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.equal(c.provisional_note, "仮計算額。確定の方法は特約のとおり（確定額が下回っても本額を支払います）。");
   const rows = c.license_terms as Array<Record<string, string>>;
   assert.equal(rows.length, 2);
+  assert.equal(rows[0].usage, "原稿（コアロジック）｜出版（紙）", "パートがあれば利用形態の前に添える");
   assert.equal(rows[0].fee, "10 %（2版目以降）");
   assert.equal(rows[0].guarantee, "—", "AG・MG は持たない");
   assert.equal(rows[0].covers, "対象：No.1 原稿、No.2 イラスト");

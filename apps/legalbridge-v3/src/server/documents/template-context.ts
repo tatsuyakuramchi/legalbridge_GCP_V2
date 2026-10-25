@@ -27,6 +27,7 @@ import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
 import { inLieuShortNote, inLieuSpecialTerms } from "../conditions/royalty-in-lieu.js";
+import { PART_ROLE_LABEL, type PartRole } from "../core/part-role.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
@@ -1100,11 +1101,15 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
     const scope = en
       ? `${regions.length ? regions.join(", ") : "Worldwide"} / ${languages.length ? languages.join(", ") : "All languages"}`
       : `${regions.length ? regions.join("・") : "全世界"} ／ ${languages.length ? languages.join("・") : "全言語"}`;
-    const usage = en
+    // 構成要素（パート。A-078）があれば「原稿（コアロジック）｜出版（紙）」。作品全体なら利用形態だけ。
+    const partPrefix = t.partName
+      ? (en ? `${t.partName} (${t.partRole === "core" ? "core" : "sub-component"}) | ` : `${t.partName}（${PART_ROLE_LABEL[(t.partRole as PartRole) ?? "sub"]}）｜`)
+      : "";
+    const usage = partPrefix + (en
       ? [USAGE_LABEL_EN[String(t.usageType)] ?? conditionUsageLabel(t.usageType) ?? String(t.name ?? ""),
          t.exclusivity === "exclusive" ? " (exclusive)" : ""].join("")
       : [conditionUsageLabel(t.usageType) || (t.name ?? ""),
-         t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
+         t.exclusivity === "exclusive" ? "（独占）" : ""].join(""));
     // 載っている契約。出版・再許諾の利用許諾は出版基本契約の個別契約として扱う（業務委託の基本契約とは別）。
     const agreementRef = [String(t.agreementNo ?? "").trim(), String(t.agreementTitle ?? "").trim()].filter(Boolean).join(" ");
     const contract = agreementRef
@@ -1159,8 +1164,10 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
     provisionalAmount: deliverables.reduce((sum, d) => sum + d.amount, 0) || null,
     confirmWithinDays: head.confirmWithinDays ?? null,
     payOn: payOn ? String(payOn) : null,
+    // 2 版目以降の式。パートごとに条件があっても、同じ利用形態・同じ率は 1 つにまとめる。
     laterRates: terms.filter((t) => t.ratePct !== null && t.ratePct !== undefined)
-      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) })),
+      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) }))
+      .filter((r, i, all) => all.findIndex((x) => x.usageType === r.usageType && x.ratePct === r.ratePct) === i),
     laterExemptPct: head.royaltyExemptLaterPct ?? null,
     masterAgreement: head.agreementNo || head.agreementTitle
       ? { no: head.agreementNo ? String(head.agreementNo) : null, title: head.agreementTitle ? String(head.agreementTitle) : null }

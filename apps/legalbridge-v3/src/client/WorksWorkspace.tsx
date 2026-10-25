@@ -45,7 +45,9 @@ interface TreeWork {
 interface Tree { works: TreeWork[]; lineage: Array<{ parentId: number; childId: number }> }
 
 interface WorkRefRow { id: number; workCode: string | null; title: string; kind: string }
-interface Part { id: number; partNo: number; name: string; partType: string; royaltyBearing: boolean }
+interface Part { id: number; partNo: number; name: string; partType: string; royaltyBearing: boolean;
+  /** 役割（コア／サブ。A-078）。 */
+  partRole: "core" | "sub"; partRoleExplicit?: boolean }
 interface WorkDetail {
   id: number; workCode: string | null; title: string; titleKana: string | null; kind: string;
   status: string; businessLine: string | null; remarks: string | null; legacy: boolean;
@@ -1033,10 +1035,14 @@ export function WorksWorkspace(
                     fields={[
                       { name: "name", label: "パート名", required: true, placeholder: "本文 / 挿絵 / Original_Core_Logic など" },
                       { name: "partType", label: "種類", type: "select", options: PART_TYPES },
+                      { name: "partRole", label: "役割", type: "select",
+                        options: [{ value: "core", label: "コアロジック（作品の中心：原作のゲームデザイン・原稿）" },
+                                  { value: "sub", label: "サブコンポーネント（追加の要素：イラスト・装丁・音楽など）" }],
+                        hint: "利用許諾条件の中心になるか、追加要素かを決める。空なら種別から導く（ゲームデザイン・文章はコア）" },
                       { name: "royaltyBearing", label: "ロイヤリティの対象", type: "checkbox" },
                       { name: "remarks", label: "備考", type: "textarea" }
                     ]}
-                    toPayload={(v) => ({ name: text(v.name), partType: text(v.partType),
+                    toPayload={(v) => ({ name: text(v.name), partType: text(v.partType), partRole: text(v.partRole) ?? null,
                                          royaltyBearing: v.royaltyBearing === "1", remarks: text(v.remarks) })}
                     onDone={() => { setCreating(null); void reloadWork(); void reloadTree(); }}
                     onCancel={() => setCreating(null)} />
@@ -1044,7 +1050,7 @@ export function WorksWorkspace(
               )}
               <div className="tablewrap">
                 <table>
-                  <thead><tr><th>No</th><th>名称</th><th>種類</th><th>課金</th><th></th></tr></thead>
+                  <thead><tr><th>No</th><th>名称</th><th>種類</th><th>役割</th><th>課金</th><th></th></tr></thead>
                   <tbody>
                     {work.parts.map((p) => (
                       <tr key={p.id}>
@@ -1061,6 +1067,13 @@ export function WorksWorkspace(
                           </select>
                         </td>
                         <td>
+                          <select className="inline-input" value={p.partRole} disabled={!editable} title={p.partRoleExplicit ? "明示した役割" : "種別から導いた役割（選ぶと明示になる）"}
+                                  onChange={(e) => void savePart(p, { partRole: e.target.value as "core" | "sub" })}>
+                            <option value="core">コアロジック</option>
+                            <option value="sub">サブコンポーネント</option>
+                          </select>
+                        </td>
+                        <td>
                           <label className="ledger-check">
                             <input type="checkbox" checked={p.royaltyBearing} disabled={!editable}
                                    onChange={(e) => void savePart(p, { royaltyBearing: e.target.checked })} />
@@ -1070,7 +1083,7 @@ export function WorksWorkspace(
                         <td>{editable && <button className="btn btn-sm" onClick={() => void removePart(p)}>削除</button>}</td>
                       </tr>
                     ))}
-                    {!work.parts.length && <tr><td colSpan={5} className="faint">パートがありません</td></tr>}
+                    {!work.parts.length && <tr><td colSpan={6} className="faint">パートがありません</td></tr>}
                   </tbody>
                 </table>
               </div>

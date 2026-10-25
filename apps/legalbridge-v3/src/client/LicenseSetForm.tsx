@@ -60,11 +60,11 @@ export function LicenseSetForm(
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   // 構成要素（作品のパート）。選んだ作品のぶんを引く。条件書の構成要素の行は
   // これでまとまる（無いと条件名が構成要素として出る）。
-  const [partsOf, setPartsOf] = useState<{ workId: string; parts: Array<{ id: number; name: string; partType: string }> }>({ workId: "", parts: [] });
+  const [partsOf, setPartsOf] = useState<{ workId: string; parts: Array<{ id: number; name: string; partType: string; partRole?: string }> }>({ workId: "", parts: [] });
   const loadParts = (workId: string) => {
     if (!workId || partsOf.workId === workId) return;
     setPartsOf({ workId, parts: [] });
-    api.get<{ parts: Array<{ id: number; name: string; partType: string }> }>(`/works/${workId}`)
+    api.get<{ parts: Array<{ id: number; name: string; partType: string; partRole?: string }> }>(`/works/${workId}`)
       .then((w) => setPartsOf({ workId, parts: w.parts ?? [] })).catch(() => undefined);
   };
 
@@ -148,7 +148,7 @@ export function LicenseSetForm(
         { name: "workPartId", label: "構成要素（作品のパート）", type: "select",
           options: [{ value: "", label: partsOf.parts.length ? "（作品全体）" : "（作品にパートが無い。作品の画面で足せる）" },
                     ...partsOf.parts.map((p) => ({ value: String(p.id),
-                      label: `${p.name}（${p.partType === "game_design" ? "コアロジック" : "サブコンポーネント"}）` }))],
+                      label: `${p.name}（${(p.partRole ?? (p.partType === "game_design" ? "core" : "sub")) === "core" ? "コアロジック" : "サブコンポーネント"}）` }))],
           visibleWhen: (v) => String(v.workId ?? "").trim() !== "",
           hint: "条件書の構成要素の行はここでまとまる。原作のゲームデザインがコアロジック、追加のイラスト等がサブコンポーネント。追加要素の条件は要素ごとに別の束で登録する" },
         { name: "agreementId", label: "基本契約（合意）", type: "search",

@@ -2653,6 +2653,25 @@ COMMENT ON COLUMN v3.conditions.first_edition_rate_ppm IS '初版の料率（百
 COMMENT ON COLUMN v3.conditions.confirm_within_days    IS '受領から何日以内に本体価格・初版部数を確定するか（60 以内）。A-077';
 
 -- ---------------------------------------------------------------------
+-- A-078 作品の構成要素の役割：コアロジック／サブコンポーネント（core/part-role.ts）
+--   ゲームでは原作のゲームデザインがコア、追加のイラスト等がサブ。出版では原稿がコア、イラスト・
+--   装丁等がサブ。役割を種別（part_type）から読むだけでは出版の素材に読める種別が無いので、
+--   part_role に明示で持つ（空なら種別から導く）。利用許諾条件は 作品 × パート × 利用形態 で立つ。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.work_parts ADD COLUMN IF NOT EXISTS part_role text;
+DO $a078$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.work_parts'::regclass AND conname = 'work_parts_part_role_chk') THEN
+    ALTER TABLE v3.work_parts ADD CONSTRAINT work_parts_part_role_chk
+      CHECK (part_role IS NULL OR part_role IN ('core', 'sub'));
+  END IF;
+END $a078$;
+COMMENT ON COLUMN v3.work_parts.part_role IS
+  '役割（core=コアロジック / sub=サブコンポーネント）。空なら種別から導く（game_design・text はコア）。A-078';
+UPDATE v3.work_parts SET part_role = 'core' WHERE part_role IS NULL AND part_type = 'game_design';
+
+-- ---------------------------------------------------------------------
 -- A-074 支払文書の送付・受領・過去分、製造予定、報告期限（paydocs/）
 --   送付済みかどうかは、これまで画面ごとに gmail.send / cloudsign.send だけを見ていた。
 --   CloudSign の画面から送ったもの・郵送・手渡し・別のメールで送ったもの・V1 から移した
@@ -3086,6 +3105,9 @@ SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' 
 \echo '--- 相手方の文書番号（A-072。列 1 であること） ---'
 SELECT count(*) AS 列 FROM information_schema.columns
  WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no';
+\echo '--- 作品の構成要素の役割（A-078。列 1・CHECK 1 で 2 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='work_parts' AND column_name='part_role')
+     + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.work_parts'::regclass AND conname='work_parts_part_role_chk') AS 列とCHECK;
 \echo '--- 初版の利用許諾料を委託報酬として払う発注（A-077。列 4・CHECK 1 で 5 であること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
          AND column_name IN ('first_edition_price', 'first_edition_copies', 'first_edition_rate_ppm', 'confirm_within_days'))

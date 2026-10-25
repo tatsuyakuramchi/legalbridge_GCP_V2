@@ -1,5 +1,6 @@
 import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, num, str } from "../core/db.js";
+import { partRoleOf } from "../core/part-role.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
 import { agreementDatedTitle, masterAgreementOf } from "./legacy-variables.js";
@@ -901,6 +902,8 @@ export class DocumentContextRepository {
                 WHERE f.license_condition_id = c.id) AS cover_names,
               -- 利用許諾条件を載せる契約（出版基本契約）。発注書の表と特約が「その個別契約」と書く。
               la.agreement_no AS agreement_no, la.title AS agreement_title,
+              -- 構成要素（パート。A-078）。利用許諾条件の表の利用形態に「原稿（コアロジック）」と添える。
+              wp.name AS part_name, wp.part_type AS part_type, wp.part_role AS part_role,
               -- クレジット表記（A-076）。作品を引用するなら、文書の日付時点の作品の表記（A-031 の履歴。
               -- 無ければ works の写し）。
               c.credit_notice, c.credit_from_work,
@@ -915,6 +918,7 @@ export class DocumentContextRepository {
          FROM conditions c
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN agreements la ON la.id = c.agreement_id
+         LEFT JOIN work_parts wp ON wp.id = c.work_part_id
         WHERE c.kind = 'license' AND c.direction = 'in'
           AND c.work_id = ANY($1::bigint[]) AND c.counterparty_id = ANY($2::bigint[])
           AND (c.status = 'active'
@@ -968,7 +972,10 @@ export class DocumentContextRepository {
           firstEditionCopies: int(row.first_edition_copies),
           firstEditionRatePct: row.first_edition_rate_ppm === null || row.first_edition_rate_ppm === undefined
             ? null : Number(row.first_edition_rate_ppm) / 10000,
-          confirmWithinDays: int(row.confirm_within_days)
+          confirmWithinDays: int(row.confirm_within_days),
+          /** 構成要素（パート。A-078）。無ければ作品全体。 */
+          partName: str(row.part_name),
+          partRole: row.part_name ? partRoleOf(row.part_type, row.part_role) : null
         };
       });
   }
