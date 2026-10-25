@@ -872,9 +872,10 @@ function InLieuServiceBlock(
   // 仮計算額が出たら、金額と仕様の算定の基礎を合わせる（人が金額を別に打っても、この形では仮計算額と同じ額にする決まり）。
   useEffect(() => {
     if (!ok || provisional <= 0) return;
-    if (amount !== provisional) {
-      if (pm === "unit_rate") { set("quantity", "1"); set("unitAmount", String(provisional)); }
-      else set("flatAmount", String(provisional));
+    // 定額でも 単価＝仮計算額・個数 1 を揃える。単価 0 のまま残ると発注書の行が「単価 ¥0」と刷られる。
+    if (amount !== provisional || num(v.unitAmount) !== provisional) {
+      set("quantity", "1"); set("unitAmount", String(provisional));
+      if (pm !== "unit_rate") set("flatAmount", String(provisional));
     }
     const next = withBasisLine(v.spec ?? "", basis);
     if (next !== (v.spec ?? "")) set("spec", next);
