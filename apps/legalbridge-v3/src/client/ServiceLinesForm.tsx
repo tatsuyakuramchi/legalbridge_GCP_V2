@@ -42,6 +42,13 @@ interface Line {
   pickingWork?: boolean;
 }
 interface WorkOption { id: number; title: string }
+/** 1 本だけの登録画面から切り替えて開くときの種。選んだ支払の形と、打ちかけの行を引き継ぐ（A-081）。 */
+export interface ServiceLinesSeed {
+  title?: string;
+  ownership?: "orderer" | "contractor";
+  licMode?: "separate" | "included" | "free" | "in_lieu" | "none";
+  lines?: Array<Partial<Pick<Line, "name" | "spec" | "quantity" | "unit" | "unitPrice" | "deliveryDue" | "contractForm" | "ownership" | "workId">>>;
+}
 export interface ServiceLinesCreated {
   conditions: Array<{ usageType: string; id: number; conditionNo: string | null }>;
   licenseConditions: Array<{ id: number; conditionNo: string | null; existed: boolean }>;
@@ -73,7 +80,9 @@ function parsePaste(raw: string): Line[] {
 }
 
 export function ServiceLinesForm(
-  { preset, counterpartyName, workTitle, workOptions, initialTitle, onDone, onCancel }: {
+  { preset, counterpartyName, workTitle, workOptions, initialTitle, seed, onDone, onCancel }: {
+    /** 1 本だけの登録画面から切り替えて開いたときの種（支払の形・行）。 */
+    seed?: ServiceLinesSeed | null;
     preset?: Partial<Record<"counterpartyId" | "agreementId" | "matterId" | "workId", string>>;
     counterpartyName?: string | null;
     /** preset.workId の作品名（無いと「#489」のように番号で出る）。 */
@@ -89,7 +98,7 @@ export function ServiceLinesForm(
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [partyId, setPartyId] = useState(preset?.counterpartyId ?? "");
   const [partyLabel, setPartyLabel] = useState<string | null>(counterpartyName ?? null);
-  const [title, setTitle] = useState(initialTitle ?? "");
+  const [title, setTitle] = useState(seed?.title ?? initialTitle ?? "");
   const [agreementId, setAgreementId] = useState(preset?.agreementId ?? "");
   const [workId, setWorkId] = useState(preset?.workId ?? "");
   const [workLabel, setWorkLabel] = useState<string | null>(workTitle ?? null);
@@ -107,18 +116,18 @@ export function ServiceLinesForm(
   /** 行の実際の作品 id（"" は作品なし）。 */
   const rowWork = (l: Line) => (l.workId === "" ? workId : l.workId === "none" ? "" : l.workId);
   const [contractForm, setContractForm] = useState("");
-  const [ownership, setOwnership] = useState("orderer");
+  const [ownership, setOwnership] = useState<string>(seed?.ownership ?? "orderer");
   const [paymentTerms, setPaymentTerms] = useState("");
   const [tax, setTax] = useState("taxable");
   const [currency, setCurrency] = useState("JPY");
   const [termStart, setTermStart] = useState("");
-  const [lines, setLines] = useState<Line[]>([blank()]);
+  const [lines, setLines] = useState<Line[]>(seed?.lines?.length ? seed.lines.map((l) => ({ ...blank(), ...l })) : [blank()]);
   const [paste, setPaste] = useState("");
   const [showPaste, setShowPaste] = useState(false);
   /** 「仕様・成果物」を広げて編集している行の key。表のセルは狭いので、長文は表の下の大きな欄で書く。 */
   const [specOpen, setSpecOpen] = useState<number | null>(null);
   // 権利の扱い
-  const [licMode, setLicMode] = useState<"separate" | "included" | "free" | "in_lieu" | "none">("included");
+  const [licMode, setLicMode] = useState<"separate" | "included" | "free" | "in_lieu" | "none">(seed?.licMode ?? "included");
   const [licUsage, setLicUsage] = useState("in_house");
   // 初版の利用許諾料を報酬として払う（A-077）。見込みの本体価格・初版部数・料率（・非加算）で仮計算した額が
   // 受注者帰属の行の金額。納品後 60 日以内に確定して検収書で払う。2 版目以降・電子の料率は利用形態ごと。
