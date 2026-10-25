@@ -1,3 +1,4 @@
+import { firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
 import { useEffect, useState } from "react";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
@@ -103,6 +104,11 @@ export function ConditionEdit(
     rewardLabel: detail.rewardLabel ?? "",
     royaltyExemptFirstCopies: detail.royaltyExemptFirstCopies === null || detail.royaltyExemptFirstCopies === undefined ? "" : String(detail.royaltyExemptFirstCopies),
     royaltyExemptLaterPct: detail.royaltyExemptLaterPct === null || detail.royaltyExemptLaterPct === undefined ? "" : String(detail.royaltyExemptLaterPct),
+    // 初版の算定の基礎（A-077）。本体価格は最小通貨単位のまま、料率は % で見せる（保存は ppm）。
+    firstEditionPrice: detail.firstEditionPrice === null || detail.firstEditionPrice === undefined ? "" : String(detail.firstEditionPrice),
+    firstEditionCopies: detail.firstEditionCopies === null || detail.firstEditionCopies === undefined ? "" : String(detail.firstEditionCopies),
+    firstEditionRatePct: detail.firstEditionRatePpm === null || detail.firstEditionRatePpm === undefined ? "" : String(detail.firstEditionRatePpm / 10000),
+    confirmWithinDays: detail.confirmWithinDays === null || detail.confirmWithinDays === undefined ? "" : String(detail.confirmWithinDays),
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
     settlementMode: detail.settlementMode ?? "",
@@ -198,11 +204,18 @@ export function ConditionEdit(
       ["rewardLabel", patchText(v.rewardLabel, detail.rewardLabel)],
       ["royaltyExemptFirstCopies", patchInt(v.royaltyExemptFirstCopies, detail.royaltyExemptFirstCopies ?? null)],
       ["royaltyExemptLaterPct", patchNum(v.royaltyExemptLaterPct, detail.royaltyExemptLaterPct ?? null)],
+      ["firstEditionPrice", patchInt(v.firstEditionPrice, detail.firstEditionPrice ?? null)],
+      ["firstEditionCopies", patchInt(v.firstEditionCopies, detail.firstEditionCopies ?? null)],
+      ["confirmWithinDays", patchInt(v.confirmWithinDays, detail.confirmWithinDays ?? null)],
       ["reportDueDays", patchInt(v.reportDueDays, detail.reportDueDays ?? null)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
     // クレジット表記を作品から引用するか（A-076）。変わったときだけ送る。
     if ((v.creditFromWork === "1") !== Boolean(detail.creditFromWork)) patch.creditFromWork = v.creditFromWork === "1";
+    // 初版の料率は % で見せて ppm で保存する（A-077）。
+    const feRate = patchNum(v.firstEditionRatePct,
+      detail.firstEditionRatePpm === null || detail.firstEditionRatePpm === undefined ? null : detail.firstEditionRatePpm / 10000);
+    if (feRate !== undefined) patch.firstEditionRatePpm = feRate === null ? null : Math.round(feRate * 10000);
 
     // 決済の型（A-071）。4 つで 1 組なので、どれか変わったら 4 つとも送る（型に要らない値はサーバが捨てる）。
     const sMode = v.settlementMode || null;
@@ -561,6 +574,23 @@ export function ConditionEdit(
               placeholder: "0", hint: "初版利用許諾料の算定方法に「− ○部」として明記される。空・0 なら全部数（A-077）" })}
             {field("royaltyExemptLaterPct", "非加算：2 版目以降（発行部数の %）", { type: "number",
               placeholder: "1", hint: "献本等。空なら非加算なし" })}
+            {field("firstEditionPrice", "初版の本体価格（税抜・最小通貨単位）", { type: "number",
+              placeholder: "1000", hint: "発注時は見込み、確定したら確定値に直す。特約第2項と明細の算定の基礎に出る（A-077）" })}
+            {field("firstEditionCopies", "初版発行部数", { type: "number",
+              placeholder: "3000", hint: "発注時は見込み、確定したら確定値に直す" })}
+            {field("firstEditionRatePct", "初版の料率（%）", { type: "number",
+              placeholder: "10", hint: "初版利用許諾料の料率。2 版目以降の料率（上の料率）とは別" })}
+            {field("confirmWithinDays", "確定の期限（受領後 ○ 日）", { type: "number",
+              placeholder: "45", hint: "本体価格・初版部数を書面で通知し乙の確認を得る期限。60 日以内" })}
+            <div className="field wide">
+              <span className="faint">
+                仮計算額：{(() => {
+                  const fee = firstEditionFee({ price: Number(v.firstEditionPrice) || 0, copies: Number(v.firstEditionCopies) || 0,
+                    ratePct: Number(v.firstEditionRatePct) || 0, exemptCopies: Number(v.royaltyExemptFirstCopies) || 0 });
+                  return fee > 0 ? `¥${fee.toLocaleString("ja-JP")}（委託料の行の合計と同じ額にする）` : "本体価格・部数・料率を入れると出ます";
+                })()}
+              </span>
+            </div>
           </>)}
           {detail.kind === "license" && (
             <label className="field">
