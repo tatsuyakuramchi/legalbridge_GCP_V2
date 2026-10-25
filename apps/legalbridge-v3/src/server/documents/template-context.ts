@@ -250,7 +250,10 @@ const singleCondition = (c: Ctx) => (c.conditions?.length === 1 ? c.conditions[0
  * 書類でも経理の表でも二つの数が食い違う。
  */
 function unitPriceOf(held: unknown, amount: unknown, quantity: unknown): number | null {
-  if (held !== null && held !== undefined && String(held) !== "") return num(held);
+  // 条件の単価が 0 で金額が付いている行（料率から定額に直した条件など）は、単価を持っていないものとして扱う。
+  // 「単価 ¥0 × 1 ＝ ¥568,000」と刷られるのは変で、経理の表でも単価と金額が食い違う。
+  const heldN = held === null || held === undefined || String(held) === "" ? null : num(held);
+  if (heldN !== null && (heldN !== 0 || !(num(amount, 0) > 0))) return heldN;
   const total = num(amount, Number.NaN);
   const count = num(quantity, Number.NaN);
   if (!Number.isFinite(total) || !Number.isFinite(count) || count === 0) return null;
@@ -490,8 +493,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
     condition_no: condition.conditionNo ?? null,
     quantity: null,
     inspected_quantity: null,
-    // 単発の1行は数量を持たない。総額がそのまま単価にあたる。
-    unit_price: condition.unitAmount ?? condition.flatAmount,
+    // 単発の1行は数量を持たない。総額がそのまま単価にあたる（単価 0 で定額が付いていれば定額）。
+    unit_price: unitPriceOf(condition.unitAmount, condition.flatAmount, 1) ?? condition.flatAmount,
     payment_terms: contractFormFor(condition.contractForm),
     // 納期。条件が持っていればそれ。無ければ契約期間の終了日に落ちる
     // （納期の置き場が無かったころの紙は、そこに入れてあった）。
@@ -569,7 +572,9 @@ export function orderLinesFrom(context: Ctx): Row[] {
       // 条件に個数があればそれを使う。無ければ「一式1」として出す。
       quantity: c.quantity ?? 1,
       unit: c.unitLabel ?? null,
-      unit_price: c.unitAmount ?? c.flatAmount ?? 0,
+      // 単価。条件の単価が 0 や空で定額が付いていれば 定額 ÷ 個数（割り切れなければ個数 1 として定額）。
+      unit_price: unitPriceOf(c.unitAmount, c.flatAmount, c.quantity ?? 1)
+        ?? (c.flatAmount !== null && c.flatAmount !== undefined ? c.flatAmount : 0),
       payment_terms: contractFormFor(c.contractForm),
       delivery_kind: deliveryKindFor(c.contractForm),
       term_start: c.termStart ?? null,
