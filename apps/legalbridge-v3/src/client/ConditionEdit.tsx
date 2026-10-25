@@ -348,6 +348,8 @@ export function ConditionEdit(
     </label>
   );
 
+  /** 出し分けに使う種類。直接編集で種類を変えたら、その種類の欄を出す（保存前でも）。 */
+  const kindNow = inPlace ? (v.kind || detail.kind) : detail.kind;
   return (
     <div className="panel create-form">
       <div className="panel-hd">
@@ -388,7 +390,7 @@ export function ConditionEdit(
         </div>
 
         {/* 初版の利用許諾料を報酬として払う形に直すときの手順ナビ（委託料・取得側の利用許諾のとき）。 */}
-        {detail.direction === "in" && (detail.kind === "service" || detail.kind === "license") && (
+        {detail.direction === "in" && (kindNow === "service" || kindNow === "license") && (
           <InLieuGuide detail={detail} v={v} set={set} onOpenCondition={onOpenCondition} />
         )}
 
@@ -426,6 +428,18 @@ export function ConditionEdit(
                           placeholder="作品名で探す"
                           onChange={(id) => set("workId", id)} />
           </label>
+          {/* まず権利の帰属先、次に支払の形。ここで分岐してから金額の欄に進む。 */}
+          {(kindNow === "service" || kindNow === "product") && (
+            <label className="field" id="f-deliverableOwnership">
+              <span>成果物の権利の帰属先</span>
+              <select value={v.deliverableOwnership} onChange={(e) => set("deliverableOwnership", e.target.value)}>
+                <option value="">—</option>
+                <option value="orderer">発注者（譲渡型）：権利は当社に移る</option>
+                <option value="contractor">受注者（利用許諾型）：権利は相手に残り、当社は許諾を受ける</option>
+              </select>
+              <small className="faint">発注書の明細に出る。ここで③の「支払の形」の選択肢が変わる</small>
+            </label>
+          )}
           <div className="form-section"><b>② 期間・納期</b><small>契約期間（開始・終了）と納期は別。終了日があると自動更新の欄が出ます</small></div>
           {field("termStart", "開始", { type: "date" })}
           {field("termEnd", "終了", { type: "date", hint: "空欄は期限なし" })}
@@ -455,6 +469,41 @@ export function ConditionEdit(
               { type: "date", hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" })}
           </>)}
           <div className="form-section"><b>③ 金額の決め方</b><small>通貨・計算方式と、その方式に要る金額。金額は最小通貨単位（JPY は円）</small></div>
+          {kindNow === "service" && (() => {
+            // 支払の形（帰属先で分岐）。いまの値から読み、選ぶと計算方式・報酬名を入れる。
+            const lic = v.deliverableOwnership === "contractor";
+            const current = lic
+              ? (v.rewardLabel === IN_LIEU_REWARD_LABEL ? "in_lieu" : "fixed")
+              : (v.pricingModel || "fixed");
+            const options: Array<[string, string, string]> = lic
+              ? [["fixed", "委託報酬（固定額）", "利用許諾料の扱い（別途／含む）は利用許諾の条件で決める"],
+                 ["in_lieu", "初版の利用許諾料を報酬として払う", "仮計算 → 納品後 60 日以内に確定。報酬名が「初版利用許諾料」になる"]]
+              : [["fixed", "固定額（納品ごと）", ""], ["unit_rate", "単価 × 数量", ""], ["subscription", "定期払い", "毎月・毎期の 1 回あたり"],
+                 ["revenue_rate", "売上連動（インセンティブ報酬）", "料率で計算"]];
+            const choose = (key: string) => {
+              if (lic) {
+                if (key === "in_lieu") { if (inPlace || v.pricingModel === "fixed") set("pricingModel", "fixed"); set("rewardLabel", IN_LIEU_REWARD_LABEL); }
+                else if (v.rewardLabel === IN_LIEU_REWARD_LABEL) set("rewardLabel", "");
+              } else if (inPlace) set("pricingModel", key);
+            };
+            return (
+              <div className="field wide">
+                <span>支払の形（{lic ? "受注者帰属：利用許諾型" : "発注者帰属：譲渡型"}）</span>
+                <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+                  {options.map(([key, label, hint]) => (
+                    <button key={key} type="button" className="chip" aria-pressed={current === key} title={hint || undefined}
+                            disabled={!lic && !inPlace && key !== current}
+                            onClick={() => choose(key)}>{label}</button>
+                  ))}
+                </div>
+                <small className="faint">
+                  {lic
+                    ? "受注者帰属の成果物は、利用許諾の条件（許諾料の扱い・クレジット・再許諾）を別の条件『利用許諾』で持ちます（上の手順ナビの「関連する条件」から開けます）"
+                    : inPlace ? "選ぶと計算方式が入る（下で直せる）" : "計算方式を変えるには「直接編集」にする（改訂では変えられない）"}
+                </small>
+              </div>
+            );
+          })()}
           <label className="field">
             <span>通貨</span>
             <select value={v.currency} onChange={(e) => set("currency", e.target.value)}>
@@ -503,7 +552,7 @@ export function ConditionEdit(
                 : `単価×個数 = ${computedFlat.toLocaleString("ja-JP")}。直せば手の値が勝つ` })}
 
           {/* 取得側（IN）の許諾条件にも出す：保証利用許諾料（A-075）は AG で持つ。 */}
-          {(detail.direction === "out" || detail.kind === "license") && (<>
+          {(detail.direction === "out" || kindNow === "license") && (<>
             {field("mgAmount", "MG 最低保証", { type: "number",
               hint: "毎期独立の下限。消化しないので残高を持たない" })}
             {field("agAmount", "AG 前払保証", { type: "number",
@@ -520,8 +569,12 @@ export function ConditionEdit(
               <option value="included">税込（海外・内税）</option>
             </select>
           </label>
-          <div className="form-section"><b>⑥ 利用許諾の条件</b><small>利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます</small></div>
-          {detail.kind === "license" && (
+          {kindNow === "license"
+            ? <div className="form-section"><b>⑥ 利用許諾の条件</b><small>利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます</small></div>
+            : v.deliverableOwnership === "contractor"
+            ? <div className="form-section"><b>⑥ 利用許諾の条件 — この条件では持ちません</b><small>受注者帰属の成果物の利用許諾（許諾料の扱い・クレジット表記・再許諾・地域と言語）は、別の条件『利用許諾』で持ちます。作品 × 構成要素 × 利用形態で 1 本。上の手順ナビの「関連する条件」から開けます</small></div>
+            : null}
+          {kindNow === "license" && (
             <label className="field">
               <span>利用形態</span>
               <select value={v.usageType} onChange={(e) => set("usageType", e.target.value)}>
@@ -537,7 +590,7 @@ export function ConditionEdit(
               </small>
             </label>
           )}
-          {detail.kind === "license" && detail.direction === "in" && (v.usageType === "sublicense" || v.usageType === "oem") && (
+          {kindNow === "license" && detail.direction === "in" && (v.usageType === "sublicense" || v.usageType === "oem") && (
             <label className="field">
               <span>対象の許諾先</span>
               <SearchSelect value={v.targetPartyId} search={searchParties}
@@ -564,7 +617,7 @@ export function ConditionEdit(
               <small className="faint">出版条件書の翻訳版の欄と本文（第4条）に出る</small>
             </label>
           )}
-          {detail.kind === "license" && detail.direction === "in" && (
+          {kindNow === "license" && detail.direction === "in" && (
             <label className="field" id="f-licenseFeeBasis">
               <span>許諾料の扱い</span>
               <select value={v.licenseFeeBasis}
@@ -577,7 +630,7 @@ export function ConditionEdit(
               <small className="faint">発注書の利用許諾条件の「料率・額」に出る（A-048）。「初版…支払済み」は初版分を委託料の行で払い、計算書の対象は 2 版目以降（A-077）</small>
             </label>
           )}
-          {detail.kind === "license" && detail.direction === "in" && (
+          {kindNow === "license" && detail.direction === "in" && (
             <label className="field" id="f-creditNotice">
               <span>クレジット表記</span>
               <select value={v.creditFromWork} onChange={(e) => set("creditFromWork", e.target.value)}>
@@ -589,7 +642,7 @@ export function ConditionEdit(
               <small className="faint">発注書の利用許諾条件の下と特約に出る（A-076）</small>
             </label>
           )}
-          {detail.kind === "license" && detail.direction === "in" && v.licenseFeeBasis === "in_lieu" && (<>
+          {kindNow === "license" && detail.direction === "in" && v.licenseFeeBasis === "in_lieu" && (<>
             {field("royaltyExemptFirstCopies", "初版の非加算部数（献本・見本等）", { type: "number",
               placeholder: "0", hint: "初版利用許諾料の算定方法に「− ○部」として明記される。空・0 なら全部数（A-077）" })}
             {field("royaltyExemptLaterPct", "非加算：2 版目以降（発行部数の %）", { type: "number",
@@ -612,7 +665,7 @@ export function ConditionEdit(
               </span>
             </div>
           </>)}
-          {detail.kind === "license" && (
+          {kindNow === "license" && (
             <label className="field">
               <span>独占性</span>
               <select value={v.exclusivity} onChange={(e) => set("exclusivity", e.target.value)}>
@@ -622,7 +675,7 @@ export function ConditionEdit(
               </select>
             </label>
           )}
-          {detail.kind === "license" && (<>
+          {kindNow === "license" && (<>
             {field("regions", "地域（許諾範囲）", { type: "regions", wide: true,
               hint: "何も選ばなければ無制限（全世界）。媒体・チャネルは下の「権利の範囲」で" })}
             {field("languages", "言語（許諾範囲）", { type: "languages", wide: true })}
@@ -706,16 +759,7 @@ export function ConditionEdit(
           {field("orderNo", "発注番号（外部）", {
             placeholder: "ARC-PO-2025-0123",
             hint: "V1・V2 や紙で出した発注書の番号。検収書の発注番号に出る。V3 で発注書を出したらそちらが優先される" })}
-          <label className="field" id="f-deliverableOwnership">
-            <span>成果物の帰属先</span>
-            <select value={v.deliverableOwnership} onChange={(e) => set("deliverableOwnership", e.target.value)}>
-              <option value="">—</option>
-              <option value="orderer">発注者（譲渡型）</option>
-              <option value="contractor">受注者（利用許諾型）</option>
-            </select>
-            <small className="faint">発注書の明細に出る</small>
-          </label>
-          {detail.kind === "service" && field("rewardLabel", "報酬名（上書き）", {
+          {kindNow === "service" && field("rewardLabel", "報酬名（上書き）", {
             placeholder: "初版利用許諾料",
             hint: "発注書・検収書の金額欄の小さな行に出る。初版の利用許諾料を報酬として払う発注なら「初版利用許諾料」。空なら計算方式と帰属先から導く（A-077）" })}
           <label className="field">
@@ -732,7 +776,7 @@ export function ConditionEdit(
             </small>
           </label>
           {/* 準委任の時間精算（A-073）。委託料だけ。契約形式が準委任のときに出す（他の形式でも付けてあれば出す）。 */}
-          {(inPlace ? v.kind : detail.kind) === "service" && (isQuasiMandate(v.contractForm) || v.timeSettlement === "1") && (
+          {kindNow === "service" && (isQuasiMandate(v.contractForm) || v.timeSettlement === "1") && (
             <label className="field">
               <span>精算の仕方（準委任）</span>
               <select value={v.timeSettlement} onChange={(e) => set("timeSettlement", e.target.value)}>
@@ -746,7 +790,7 @@ export function ConditionEdit(
               </small>
             </label>
           )}
-          {(inPlace ? v.kind : detail.kind) === "service" && v.timeSettlement === "1" && (<>
+          {kindNow === "service" && v.timeSettlement === "1" && (<>
             {field("hoursIncluded", "月間包括枠（時間）", { type: "number", placeholder: "64",
               hint: "この時間までは定額（上の定額の欄が月額）。コアタイム" })}
             {field("overageUnitAmount", "超過単価（1 時間あたり・最小通貨単位）", { type: "number", placeholder: "3125",
