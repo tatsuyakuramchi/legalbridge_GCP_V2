@@ -160,7 +160,7 @@ export class DocumentIssueService {
       // 文案（条件から組み立てた地域・言語・許諾範囲）。1回目の束縛で埋まった
       // 値を見るので、人が欄で直していればそちらで組み直る。本文もこれを差すので、
       // 計算ブロックより先に作って渡す。
-      const suggested = suggestionsFor(template.templateKey, context, first.values);
+      const suggested = suggestionsFor(template.templateKey, context, withCoversKey(first.values, manual));
       const computed = buildTemplateContext(template.templateKey, context, manual,
         { ...suggested, ...first.values });
       const binding = bindVariables(template.variables, context, manual,
@@ -480,7 +480,7 @@ export class DocumentIssueService {
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
         const first = bindVariables(template.variables, context, manual,
           { templateKey: template.templateKey });
-        const suggested = suggestionsFor(template.templateKey, context, first.values);
+        const suggested = suggestionsFor(template.templateKey, context, withCoversKey(first.values, manual));
         const computed = buildTemplateContext(template.templateKey, context, manual,
           { ...suggested, ...first.values });
         const binding = bindVariables(template.variables, context, manual,
@@ -1122,6 +1122,11 @@ export interface ChosenRefs {
   partyId?: number | null;
   /** 番号の出し方（manual_inputs._refNoMode）。当社番号／相手方番号／両方。A-072 */
   refNoMode?: RefNoMode | null;
+}
+
+/** 文案の既定（特約）にも「対象」の選び直し（A-085）を渡す。束縛の結果には欄の値しか無い。 */
+function withCoversKey(values: Record<string, unknown>, manual: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  return Array.isArray(manual?._inLieuCovers) ? { ...values, _inLieuCovers: manual!._inLieuCovers } : values;
 }
 
 export function chosenRefs(manual: Record<string, unknown> | null | undefined): ChosenRefs {

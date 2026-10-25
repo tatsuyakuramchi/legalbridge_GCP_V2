@@ -290,6 +290,13 @@ export function DocumentsWorkspace(
   }, [refs]);
   /** 検収書の「発注番号」。空なら同じ条件から出ている発注書を自動で辿る。manual_inputs._parentPoNo。 */
   const [parentPoNo, setParentPoNo] = useState("");
+  /**
+   * 発注書の「対象」（初版の利用許諾料が対価を兼ねる明細）の選び直し（A-085）。
+   * null は台帳どおり。配列なら、その条件 id の行だけが対象。manual_inputs._inLieuCovers に保存。
+   */
+  const [inLieuCovers, setInLieuCovers] = useState<number[] | null>(null);
+  /** 選んだ条件のうち「初版…支払済み」の利用許諾条件と、台帳上の対象。 */
+  const [feeCovers, setFeeCovers] = useState<Array<{ id: number; conditionNo: string | null; name: string; covers: number[] }>>([]);
   /** 計算書の「契約番号」の個別契約。空なら決定済みの条件書を自動で使う。manual_inputs._termsNo。 */
   const [termsNo, setTermsNo] = useState("");
   /** 引用する番号の出し方（当社／相手方／両方）。manual_inputs._refNoMode。A-072 */
@@ -576,11 +583,25 @@ export function DocumentsWorkspace(
   }, []);
   const inputs = useMemo(() => ({ ...manual, ...lines, ...(ownerStaffId ? { _ownerStaffId: ownerStaffId } : {}),
                                   ...(parentPoNo ? { _parentPoNo: parentPoNo } : {}),
+                                  ...(inLieuCovers ? { _inLieuCovers: inLieuCovers } : {}),
                                   ...(termsNo ? { _termsNo: termsNo } : {}),
                                   ...(refNoMode !== "ours" ? { _refNoMode: refNoMode } : {}),
                                   // 訂正版だけ。新規の文書に印は無い。
                                   ...(reviseCtx ? { _showRevision: showRevision ? "1" : "0" } : {}) }),
-                         [manual, lines, ownerStaffId, parentPoNo, termsNo, refNoMode, reviseCtx, showRevision]);
+                         [manual, lines, ownerStaffId, parentPoNo, inLieuCovers, termsNo, refNoMode, reviseCtx, showRevision]);
+  const isPurchaseOrder = templateKey === "purchase_order" || templateKey === "intl_purchase_order";
+  useEffect(() => {
+    if (!isPurchaseOrder || !picked.length) { setFeeCovers([]); return; }
+    let live = true;
+    api.get<{ licenses: typeof feeCovers }>(`/conditions/fee-covers?ids=${[...picked].sort((a, b) => a - b).join(",")}`)
+      .then((r) => { if (live) setFeeCovers(r.licenses); })
+      .catch(() => { if (live) setFeeCovers([]); });
+    return () => { live = false; };
+  }, [isPurchaseOrder, [...picked].sort((a, b) => a - b).join(",")]);
+  /** いま対象になっている明細（手で選び直していなければ台帳の対応）。 */
+  const effectiveCovers = inLieuCovers ?? [...new Set(feeCovers.flatMap((l) => l.covers))];
+  const toggleCover = (id: number, on: boolean) =>
+    setInLieuCovers(on ? [...new Set([...effectiveCovers, id])] : effectiveCovers.filter((x) => x !== id));
 
   // 検収書・納品書は実績1件が明細1行。実績を選ぶ枠を出すかどうかの判断に使う。
   const usesDeliveryLines = (spec?.lines ?? []).some((l) => l.name === "delivery_line_items");
@@ -1078,11 +1099,13 @@ export function DocumentsWorkspace(
         ? (d.manualInputs._eventIds as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
       setOwnerStaffId(Number(d.manualInputs?._ownerStaffId) > 0 ? Number(d.manualInputs._ownerStaffId) : "");
       setParentPoNo(String(d.manualInputs?._parentPoNo ?? ""));
+      setInLieuCovers(Array.isArray(d.manualInputs?._inLieuCovers)
+        ? (d.manualInputs._inLieuCovers as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : null);
       setTermsNo(String(d.manualInputs?._termsNo ?? ""));
       setRefNoMode(refNoModeOf(d.manualInputs?._refNoMode));
       setShowRevision(String(d.manualInputs?._showRevision ?? "1") !== "0");
       for (const [k, v] of Object.entries(d.manualInputs ?? {})) {
-        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_termsNo" || k === "_refNoMode" || k === "_showRevision") continue;
+        if (k === "_eventIds" || k === "_ownerStaffId" || k === "_parentPoNo" || k === "_inLieuCovers" || k === "_termsNo" || k === "_refNoMode" || k === "_showRevision") continue;
         if (Array.isArray(v)) arrays[k] = v as Row[];
         else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
       }
@@ -1398,6 +1421,16 @@ export function DocumentsWorkspace(
                           業務委託は件名と金額で見分ける。 */}
                       <ConditionLabel c={c} />
                       {c.settlement && c.settlement.state !== "open" && <SettlementTag settlement={c.settlement} compact />}
+                      {/* 発注書で「初版…支払済み」の利用許諾条件を載せるとき、委託料の行ごとに対象かどうかを切り替える（A-085）。 */}
+                      {isPurchaseOrder && feeCovers.length > 0 && c.kind === "service" && picked.includes(c.id) && (
+                        <label className="row" style={{ gap: 4, marginLeft: 8 }}
+                               title="初版の利用許諾料がこの行の対価を兼ねる（発注書の利用許諾条件の「対象」と仮計算の印、特約の対象に出る）"
+                               onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={effectiveCovers.includes(c.id)}
+                                 onChange={(e) => toggleCover(c.id, e.target.checked)} />
+                          <span className="faint">初版利用許諾料の対象</span>
+                        </label>
+                      )}
                       {/* どの契約の明細かが分かると、選び間違いが減る。 */}
                       <span className="faint" style={{ marginLeft: "auto" }}>
                         {c.agreement ? c.agreement.title : "契約なし"}
@@ -2032,7 +2065,7 @@ export function carryOverInputs(manual: Record<string, unknown>): {
   ownerStaffId: number | null; parentPoNo: string; termsNo: string; refNoMode: "ours" | "theirs" | "both";
 } {
   const computed = new Set(["statementMode", "rs_bundle_lines", "rs_bundle_tax", "rs_stage_notes",
-                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_termsNo", "_refNoMode", "_showRevision"]);
+                            "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_inLieuCovers", "_termsNo", "_refNoMode", "_showRevision"]);
   const values: Record<string, string> = {};
   const arrays: Record<string, Row[]> = {};
   for (const [k, v] of Object.entries(manual)) {
