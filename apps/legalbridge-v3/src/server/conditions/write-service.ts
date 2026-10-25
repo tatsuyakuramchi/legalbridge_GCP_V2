@@ -15,7 +15,7 @@ import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
 import { validateShareInput } from "../royalty/shares.js";
 import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
 import { normalizeTimeSettlement } from "./time-settlement.js";
-import { IN_LIEU_REWARD_LABEL, withinSixtyDays } from "./royalty-in-lieu.js";
+import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee, withinSixtyDays } from "./royalty-in-lieu.js";
 import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
@@ -188,8 +188,9 @@ export interface ServiceSetRow {
  */
 export interface ServiceLicenseInput {
   /**
-   * in_lieu は制作対価を利用許諾料で払う発注（A-075）。受注者帰属の委託料の行の金額が
-   * 保証利用許諾料（＝利用許諾条件の MG）で、料率型の許諾料はその超過分だけ計算書で払う。
+   * in_lieu は初版の利用許諾料を委託報酬として払う発注（A-077）。見込みの本体価格・初版部数・
+   * 料率で仮計算した額が受注者帰属の委託料の行の金額になり、納品後 60 日以内に確定して検収書で払う。
+   * 2 版目以降・電子は利用許諾条件（出版基本契約の個別契約）の料率で計算書に載り、初版は対象外。
    */
   mode: "separate" | "included" | "free" | "in_lieu" | "none";
   workId?: number | null;
@@ -205,17 +206,19 @@ export interface ServiceLicenseInput {
   termStart?: string | null;
   termEnd?: string | null;
   scopes?: ConditionScope[];
-  /** in_lieu：利用形態ごとの料率（紙 10%・電子 15% など）。利用形態ごとに許諾条件が 1 本立つ。 */
+  /** in_lieu：2 版目以降・電子の料率（紙 10%・電子 15% など）。利用形態ごとに許諾条件が 1 本立つ。 */
   rates?: Array<{ usageType: ConditionUsageType; ratePct: number }> | null;
   /**
-   * in_lieu：保証利用許諾料（税抜）。受注者帰属の委託料の行の合計と同じでなければならない
-   * （表面・明細・利用許諾条件の表・特約で同じ額が出るように）。空なら行の合計。
+   * in_lieu：初版の算定の基礎（見込み）。本体価格（円）・初版部数・料率（%）・非加算部数（既定 0）。
+   * 仮計算額 ＝ 本体価格 ×（部数 − 非加算）× 率 が、受注者帰属の委託料の行の合計と同じでなければならない
+   * （表面・明細・特約で同じ額が出るように）。
    */
-  guaranteeAmount?: number | null;
-  /** in_lieu：保証利用許諾料の支払期日。受領（納期）から 60 日以内。各行の予定明細の支払日になる。 */
+  firstEdition?: { price: number; copies: number; ratePct: number; exemptCopies?: number | null } | null;
+  /** in_lieu：受領から何日以内に本体価格・部数を確定するか（1〜60）。空なら 45。 */
+  confirmWithinDays?: number | null;
+  /** in_lieu：支払期日。受領（納期）から 60 日以内。各行の予定明細の支払日になる。 */
   payOn?: string | null;
-  /** in_lieu：印税対象外（献本等）。初版の部数と 2 版目以降の割合（%）。空なら対象外なし。 */
-  exemptFirstCopies?: number | null;
+  /** in_lieu：2 版目以降の非加算（献本等。発行部数の %）。空なら非加算なし。 */
   exemptLaterPct?: number | null;
   /**
    * クレジット表記（A-076）。成果物を使うときの表示。creditFromWork なら作品のクレジット表記
@@ -384,6 +387,11 @@ export interface ConditionInput {
   /** クレジット表記（A-076）。許諾条件だけが持つ。creditFromWork なら文書は作品の今の表記を差す。 */
   creditNotice?: string | null;
   creditFromWork?: boolean | null;
+  /** 初版の算定の基礎（A-077）。本体価格（最小通貨単位）・部数・料率（ppm）・確定の期限（日）。in_lieu の許諾条件が持つ。 */
+  firstEditionPrice?: number | null;
+  firstEditionCopies?: number | null;
+  firstEditionRatePpm?: number | null;
+  confirmWithinDays?: number | null;
   /** 外部で出した発注書の番号。V3 で出した発注書があればそちらを優先する。 */
   orderNo?: string | null;
   conditionNo?: string | null;
@@ -442,6 +450,11 @@ export interface EconomicsPatch {
   /** クレジット表記（A-076）。 */
   creditNotice?: string | null;
   creditFromWork?: boolean | null;
+  /** 初版の算定の基礎（A-077）。確定のときに本体価格・部数を確定値に直す。 */
+  firstEditionPrice?: number | null;
+  firstEditionCopies?: number | null;
+  firstEditionRatePpm?: number | null;
+  confirmWithinDays?: number | null;
   orderNo?: string | null;
   usageType?: ConditionUsageType | null;
   /** 直接編集のときだけ変えられる。種類は案件で使える範囲、計算方式は金額の欄と一緒に。 */
@@ -472,6 +485,8 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   rewardLabel: "reward_label",
   royaltyExemptFirstCopies: "royalty_exempt_first_copies", royaltyExemptLaterPct: "royalty_exempt_later_pct",
   creditNotice: "credit_notice", creditFromWork: "credit_from_work",
+  firstEditionPrice: "first_edition_price", firstEditionCopies: "first_edition_copies",
+  firstEditionRatePpm: "first_edition_rate_ppm", confirmWithinDays: "confirm_within_days",
   usageType: "usage_type",
   targetPartyId: "target_party_id",
   settlementMode: "settlement_mode", settlementCount: "settlement_count",
@@ -491,8 +506,9 @@ const COPY_COLUMNS = [
   "quantity", "unit_label", "contract_form", "auto_renew", "renew_months", "renew_stopped_on",
   // 報酬名の上書き・印税対象外（A-075）。改訂しても紙の言い方と献本の定めは変わらない。
   "reward_label", "royalty_exempt_first_copies", "royalty_exempt_later_pct",
-  // クレジット表記（A-076）。
+  // クレジット表記（A-076）。初版の算定の基礎（A-077）。
   "credit_notice", "credit_from_work",
+  "first_edition_price", "first_edition_copies", "first_edition_rate_ppm", "confirm_within_days",
   // 利用形態も版をまたいで引き継ぐ（落とすと改訂した許諾条件が形態なしになる）。
   "usage_type",
   // 計算書の出し方（A-059）。改訂しても時限式・イベント式は変わらない。
@@ -849,15 +865,23 @@ export class ConditionWriteService {
     const contractorRows = rows.filter((r) => ownershipOf(r) === "contractor");
     const license = input.license ?? null;
     const licenseInputs: ConditionInput[] = [];
-    // 制作対価を利用許諾料で払う発注（A-075）の検証。保証利用許諾料は受注者帰属の行の
-    // 金額の合計で、0 円にはしない（0 円の委託料は買いたたき・一方的決定の外観になる）。
-    // 支払期日は必須（受領後 60 日以内に払う旨を書面に出す）。
+    // 初版の利用許諾料を委託報酬として払う発注（A-077）の検証。仮計算額（本体価格 × 部数 × 率）
+    // が受注者帰属の行の金額の合計と同じこと、0 円でないこと（0 円の委託料は買いたたき・一方的
+    // 決定の外観になる）、支払期日が受領後 60 日以内にあること。
     const inLieuRates = inLieu ? (license?.rates ?? []).filter((r) => r && r.usageType) : [];
+    const fe = inLieu ? license?.firstEdition ?? null : null;
+    const provisional = fe ? firstEditionFee(fe) : 0;
     if (inLieu && license) {
       if (!contractorRows.length) {
-        throw new DomainError("VALIDATION", "利用許諾料で払う発注には、帰属先が受注者の委託料の行が要ります");
+        throw new DomainError("VALIDATION", "初版の利用許諾料を報酬として払う発注には、帰属先が受注者の委託料の行が要ります");
       }
-      if (!inLieuRates.length) throw new DomainError("VALIDATION", "利用形態ごとの料率（紙・電子 など）を 1 つ以上入れてください");
+      if (!fe || !(fe.price > 0) || !(fe.copies > 0) || !(fe.ratePct > 0) || fe.ratePct > 100) {
+        throw new DomainError("VALIDATION", "初版の算定の基礎（見込みの本体価格・初版部数・料率）を入れてください");
+      }
+      if ((fe.exemptCopies ?? 0) < 0 || (fe.exemptCopies ?? 0) >= fe.copies) {
+        throw new DomainError("VALIDATION", "初版の非加算部数は 0 以上、初版部数より少なく入れてください");
+      }
+      if (!inLieuRates.length) throw new DomainError("VALIDATION", "2 版目以降・電子の料率（紙・電子 など）を 1 つ以上入れてください");
       if (new Set(inLieuRates.map((r) => r.usageType)).size !== inLieuRates.length) {
         throw new DomainError("VALIDATION", "同じ利用形態の料率が 2 回入っています");
       }
@@ -866,16 +890,19 @@ export class ConditionWriteService {
           throw new DomainError("VALIDATION", `${conditionUsageLabel(r.usageType)}の料率は 0 より大きく 100% 以下で入れてください`);
         }
       }
-      const guarantee = contractorRows.reduce((sum, r) => sum + rowAmount(r), 0);
-      if (guarantee <= 0) {
-        throw new DomainError("VALIDATION", "保証利用許諾料（受注者帰属の行の金額）を 0 円にはできません。従来の制作報酬に相当する額を目安に入れてください");
+      const total = contractorRows.reduce((sum, r) => sum + rowAmount(r), 0);
+      if (provisional <= 0) {
+        throw new DomainError("VALIDATION", "仮計算額が 0 円になります。見込みの本体価格・初版部数・料率を見直してください");
       }
-      if (license.guaranteeAmount !== undefined && license.guaranteeAmount !== null
-          && Math.round(license.guaranteeAmount) !== guarantee) {
+      if (total !== provisional) {
         throw new DomainError("VALIDATION",
-          `保証利用許諾料（${license.guaranteeAmount.toLocaleString("ja-JP")}）が受注者帰属の行の金額の合計（${guarantee.toLocaleString("ja-JP")}）と合いません。行の金額を配分し直してください`);
+          `受注者帰属の行の金額の合計（${total.toLocaleString("ja-JP")}）が仮計算額（${provisional.toLocaleString("ja-JP")}＝本体価格 × （初版部数 − 非加算）× 率）と合いません。行の金額を配分し直してください`);
       }
-      if (!license.payOn) throw new DomainError("VALIDATION", "保証利用許諾料の支払期日を入れてください（成果物の受領から 60 日以内）");
+      if (license.confirmWithinDays !== undefined && license.confirmWithinDays !== null
+          && (license.confirmWithinDays < 1 || license.confirmWithinDays > 60)) {
+        throw new DomainError("VALIDATION", "確定の期限は受領後 1〜60 日で入れてください（60 日以内に支払うため）");
+      }
+      if (!license.payOn) throw new DomainError("VALIDATION", "支払期日を入れてください（成果物の受領から 60 日以内）");
       for (const row of contractorRows) {
         const due = row.deliveryDue ?? input.termEnd ?? null;
         if (withinSixtyDays(due, license.payOn) === false) {
@@ -883,15 +910,19 @@ export class ConditionWriteService {
             `支払期日 ${license.payOn} が「${String(row.name ?? "").trim() || title}」の納期 ${due} から 60 日を超えています（取適法・フリーランス法）`);
         }
       }
-      if (license.exemptFirstCopies !== undefined && license.exemptFirstCopies !== null && license.exemptFirstCopies < 0) {
-        throw new DomainError("VALIDATION", "印税対象外の部数は 0 以上で入れてください");
-      }
       if (license.exemptLaterPct !== undefined && license.exemptLaterPct !== null
           && (license.exemptLaterPct < 0 || license.exemptLaterPct > 100)) {
-        throw new DomainError("VALIDATION", "印税対象外の割合は 0〜100% で入れてください");
+        throw new DomainError("VALIDATION", "2 版目以降の非加算の割合は 0〜100% で入れてください");
       }
       if (input.payment?.mode === "periodic") {
-        throw new DomainError("VALIDATION", "利用許諾料で払う発注は定期払いにできません（保証利用許諾料は受領後に 1 回で払う）");
+        throw new DomainError("VALIDATION", "初版の利用許諾料を報酬として払う発注は定期払いにできません（受領後に 1 回で払う）");
+      }
+      // 明細の仕様に算定の基礎（見込み）を足す。発注書の明細に出て、確定のときの比較の起点になる。
+      const basisLine = firstEditionBasisText(fe, "見込み");
+      for (const [index, row] of rows.entries()) {
+        if (ownershipOf(row) !== "contractor") continue;
+        const spec = String(inputs[index].spec ?? "").trim();
+        inputs[index].spec = spec.includes(basisLine) ? spec : [spec, basisLine].filter(Boolean).join("\n");
       }
     }
     if (contractorRows.length && license && license.mode !== "none") {
@@ -914,30 +945,29 @@ export class ConditionWriteService {
         throw new DomainError("VALIDATION", "許諾料を別途にするなら、料率か定額を入れてください");
       }
       for (const workId of workIds) {
-        if (inLieu) {
-          // 利用形態ごとに 1 本（紙 10%・電子 15%）。保証利用許諾料はその作品の受注者帰属の行の
-          // 合計で、先頭の利用形態に 1 回だけ載せる（2 本に載せると保証が 2 重に見える）。
-          // 持ち方は AG（前払保証・累積消化）：検収書で先に払い、計算書では発生した印税から累積で
-          // 相殺して超過分だけ払う（calc.ts の AG offset）。MG（毎期の floor）にすると計算書の
-          // たびに保証額が最低支払になってしまう。
-          const guarantee = contractorRows
-            .filter((r) => (workOf(r) ?? fallback) === workId)
-            .reduce((sum, r) => sum + rowAmount(r), 0);
+        if (inLieu && fe) {
+          // 利用形態ごとに 1 本（2 版目以降・電子の料率）。初版の算定の基礎（見込みの本体価格・部数・
+          // 料率・非加算）と確定の期限は先頭の 1 本が持つ。初版分は委託料の行で払うので AG・MG は
+          // 持たない（計算書の対象は 2 版目以降）。
           for (const [index, rate] of inLieuRates.entries()) {
             const one: ConditionInput = {
               matterId: input.matterId ?? null, name: "（作品名から付ける）", direction: "in", kind: "license",
               counterpartyId: input.counterpartyId, agreementId: licenseAgreementId, workId,
               usageType: rate.usageType, licenseFeeBasis: "in_lieu",
               pricingModel: "revenue_rate", ratePpm: Math.round(rate.ratePct * 10000),
-              agAmount: index === 0 && guarantee > 0 ? guarantee : null,
-              royaltyExemptFirstCopies: license.exemptFirstCopies ?? null,
+              ...(index === 0 ? {
+                firstEditionPrice: Math.round(fe.price), firstEditionCopies: Math.floor(fe.copies),
+                firstEditionRatePpm: Math.round(fe.ratePct * 10000),
+                royaltyExemptFirstCopies: fe.exemptCopies ? Math.floor(fe.exemptCopies) : null,
+                confirmWithinDays: license.confirmWithinDays ?? 45
+              } : {}),
               royaltyExemptLaterPct: license.exemptLaterPct ?? null,
               creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
               currency: input.currency ?? "JPY",
               termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
               exclusivity: "non_exclusive",
               scopes: license.scopes?.length ? license.scopes : undefined,
-              notes: `業務委託（${title}）の成果物の利用許諾。許諾料の扱い：保証利用許諾料（金${guarantee.toLocaleString("ja-JP")}円）が制作対価を兼ねる。支払期日 ${license.payOn}`
+              notes: `業務委託（${title}）の成果物の利用許諾。初版の利用許諾料（仮計算 金${provisional.toLocaleString("ja-JP")}円）は委託料として支払い、受領後${license.confirmWithinDays ?? 45}日以内に確定。支払期日 ${license.payOn}。計算書の対象は 2 版目以降`
             };
             validateConditionInput(one);
             licenseInputs.push(one);
@@ -1088,11 +1118,12 @@ export class ConditionWriteService {
                                    settlement_mode, settlement_count, settlement_cycle, settlement_grace_days,
                                    time_settlement, hours_included, overage_unit_amount, shortfall_unit_amount,
                                    reward_label, royalty_exempt_first_copies, royalty_exempt_later_pct,
-                                   credit_notice, credit_from_work)
+                                   credit_notice, credit_from_work,
+                                   first_edition_price, first_edition_copies, first_edition_rate_ppm, confirm_within_days)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
                    $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42,
-                   $43, $44, $45, $46, $47, $48, $49, $50, $51)
+                   $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -1113,7 +1144,9 @@ export class ConditionWriteService {
            time.timeSettlement, time.hoursIncluded, time.overageUnitAmount, time.shortfallUnitAmount,
            String(input.rewardLabel ?? "").trim() || null,
            input.royaltyExemptFirstCopies ?? null, input.royaltyExemptLaterPct ?? null,
-           String(input.creditNotice ?? "").trim() || null, input.creditFromWork === true]);
+           String(input.creditNotice ?? "").trim() || null, input.creditFromWork === true,
+           input.firstEditionPrice ?? null, input.firstEditionCopies ?? null,
+           input.firstEditionRatePpm ?? null, input.confirmWithinDays ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

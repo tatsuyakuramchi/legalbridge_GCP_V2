@@ -522,7 +522,9 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
   };
   const license = {
     mode: "in_lieu" as const, rates: [{ usageType: "pub_print" as const, ratePct: 10 }, { usageType: "pub_digital" as const, ratePct: 15 }],
-    guaranteeAmount: 300000, payOn: "2026-12-25", exemptFirstCopies: 100, exemptLaterPct: 1,
+    // 初版の算定の基礎（見込み）：1,000 円 × 3,000 部 × 10% ＝ 300,000 ＝ 原稿 250,000 ＋ イラスト 50,000。
+    firstEdition: { price: 1000, copies: 3000, ratePct: 10, exemptCopies: null },
+    confirmWithinDays: 45, payOn: "2026-12-25", exemptLaterPct: 1,
     // 利用許諾条件は出版基本契約（8）の個別契約。業務委託の基本契約（7）とは別。
     agreementId: 8,
     // クレジット表記は作品から引用（文言は控え）。
@@ -534,17 +536,19 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
   const [manuscript, art, print, digital] = inserts.map((q) => q.params);
   assert.equal(manuscript[1], 7, "委託料は業務委託の基本契約");
   assert.equal(print[1], 8, "利用許諾は出版基本契約"); assert.equal(digital[1], 8);
-  assert.equal(manuscript[46], "保証利用許諾料", "受注者帰属の行の報酬名");
-  assert.equal(art[46], "保証利用許諾料");
+  assert.equal(manuscript[46], "初版利用許諾料", "受注者帰属の行の報酬名");
+  assert.equal(art[46], "初版利用許諾料");
+  assert.match(String(manuscript[25]), /算定の基礎（見込み）：本体価格 1,000円（税抜）× 初版 3,000部 × 10%/, "仕様に算定の基礎が足される");
   assert.equal(manuscript[18], 250000); assert.equal(art[18], 50000);
   assert.equal(print[3], "license"); assert.equal(print[4], "夜明けの設計者｜紙出版");
   assert.equal(print[34], "in_lieu", "許諾料の扱い");
   assert.equal(print[15], "revenue_rate"); assert.equal(print[16], 100000, "10% = 100000 ppm");
-  assert.equal(print[20], 300000, "保証利用許諾料は先頭の利用形態の AG（前払保証・累積消化）");
-  assert.equal(print[19], null, "MG（毎期の floor）には載せない");
-  assert.equal(print[47], 100, "対象外：初版の部数"); assert.equal(print[48], 1, "対象外：2 版目以降の割合");
+  assert.equal(print[19], null, "MG は持たない"); assert.equal(print[20], null, "AG も持たない（初版分は委託料の行で払う）");
+  assert.equal(print[51], 1000, "初版の本体価格（見込み）"); assert.equal(print[52], 3000, "初版部数（見込み）");
+  assert.equal(print[53], 100000, "初版の料率 10% = 100000 ppm"); assert.equal(print[54], 45, "確定の期限（受領後 45 日）");
+  assert.equal(print[47], null, "初版の非加算は 0 → 空"); assert.equal(print[48], 1, "2 版目以降の非加算 1%");
   assert.equal(print[49], "© 2026 山田太郎", "クレジット表記の控え"); assert.equal(print[50], true, "作品から引用");
-  assert.equal(digital[16], 150000); assert.equal(digital[20], null, "AG は 2 重に載せない");
+  assert.equal(digital[16], 150000); assert.equal(digital[51], null, "初版の算定の基礎は先頭の 1 本だけ");
   assert.equal(digital[34], "in_lieu"); assert.equal(digital[50], true);
   assert.equal(manuscript[49], null, "委託料の行はクレジット表記を持たない"); assert.equal(manuscript[50], false);
   const covers = db.all("INSERT INTO condition_fee_covers");
@@ -558,10 +562,15 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
 
   // 検証：60 日超・保証額の不一致・0 円の行・料率なし・定期払い
   await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, payOn: "2027-02-10" } }, "a"), /60 日を超えています/);
-  await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, guaranteeAmount: 280000 } }, "a"), /合いません/);
+  await assert.rejects(() => svc.createServiceSet({ ...base,
+    license: { ...license, firstEdition: { price: 1000, copies: 2800, ratePct: 10 } } }, "a"), /合いません/);
+  await assert.rejects(() => svc.createServiceSet({ ...base,
+    license: { ...license, firstEdition: { price: 1000, copies: 3000, ratePct: 10, exemptCopies: 3000 } } }, "a"), /非加算部数/);
+  await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, firstEdition: null } }, "a"), /算定の基礎/);
+  await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, confirmWithinDays: 61 } }, "a"), /確定の期限/);
   await assert.rejects(() => svc.createServiceSet({ ...base,
     rows: [{ kind: "service", name: "原稿", pricingModel: "unit_rate", unitAmount: 0, quantity: 1, deliveryDue: "2026-11-30" }],
-    license: { ...license, guaranteeAmount: null } }, "a"), /0 円にはできません/);
+    license }, "a"), /合いません/);
   await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, rates: [] } }, "a"), /料率/);
   await assert.rejects(() => svc.createServiceSet({ ...base, license,
     payment: { mode: "periodic", periodicFrom: "2026-11-01", periodicTo: "2027-01-31" } }, "a"), /定期払い/);

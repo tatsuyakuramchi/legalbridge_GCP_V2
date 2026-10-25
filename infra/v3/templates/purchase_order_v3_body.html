@@ -1,4 +1,4 @@
-<body data-layout="po-v3-2026-10r3">
+<body data-layout="po-v3-2026-10r4">
 
 <!-- ===== ヘッダ ===== -->
 <div class="doc-head">
@@ -47,7 +47,7 @@
     <td>
       {{#if (gt grandTotalExTax 0)}}
       <strong class="total-amount">¥ {{formatCurrency grandTotalExTax}}</strong>
-      <span class="amount-note">　※ 消費税等の精算は、支払通知または請求処理にて行います。</span>
+      <span class="amount-note">　※ {{#if provisional_note}}{{provisional_note}}{{/if}}消費税等の精算は、支払通知または請求処理にて行います。</span>
       {{#if has_performance_incentive}}
       <div class="amount-note" style="margin-top:2px; color:#92400e;">※ 本件業務の報酬は、上記確定額のほかインセンティブ報酬が加算された額とします。計算方法は明細のとおり。</div>
       {{/if}}
@@ -210,7 +210,7 @@
       </td>
       <td class="right">{{or quantity qty}}{{#if unit}} {{unit}}{{/if}}</td>
       <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}{{formatYen (or unit_price unitPrice)}}{{else}}<span style="color:#888;">-</span>{{/if}}{{else}}{{formatYen (or unit_price unitPrice)}}{{/if}}</td>
-      <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong><div class="incl-note">{{or reward_label "執筆料"}}（{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}は別途）</div>{{else}}<div class="incl-note">報酬は<br>{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}に含む</div>{{/if}}{{else}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong>{{#if reward_label}}<div class="incl-note">{{reward_label}}{{#if (eq deliverable_ownership "受注者")}}（利用許諾料は別途）{{/if}}</div>{{/if}}{{/if}}</td>
+      <td class="right">{{#if (eq calc_method "ROYALTY")}}{{#if (gt (or amount_ex_tax amount) 0)}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong><div class="incl-note">{{or reward_label "執筆料"}}（{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}は別途）</div>{{else}}<div class="incl-note">報酬は<br>{{#if (eq deliverable_ownership "受注者")}}利用許諾料{{else}}インセンティブ報酬{{/if}}に含む</div>{{/if}}{{else}}<strong>{{formatYen (or amount_ex_tax amount)}}</strong>{{#if reward_label}}<div class="incl-note">{{reward_label}}{{#if provisional}}（仮計算。確定は特約第3項）{{else}}{{#if (eq deliverable_ownership "受注者")}}（利用許諾料は別途）{{/if}}{{/if}}</div>{{/if}}{{/if}}</td>
     </tr>
     <tr class="item-detail">
       <td></td>
@@ -371,7 +371,7 @@
   </tbody>
 </table>
 {{#if license_credit_notice}}<p style="margin-top:4px; font-size:8.5pt;"><strong>クレジット表記</strong>（成果物を利用するときの表示）：{{license_credit_notice}}</p>{{/if}}
-<p style="margin-top:4px; font-size:8.5pt; color:#555;">※ 料率型の許諾料は、発注の確定額（小計）には含まれず、別途、利用許諾料計算書により算定・支払われます。「制作対価を兼ねる」利用許諾料は、明細の保証利用許諾料を既払いの利用許諾料として扱い、その超過分を計算書により支払います（特約参照）。</p>
+<p style="margin-top:4px; font-size:8.5pt; color:#555;">※ 料率型の許諾料は、発注の確定額（小計）には含まれず、別途、利用許諾料計算書により算定・支払われます。初版の利用許諾料を報酬として支払う発注では、初版分は明細の確定額で支払い、計算書の対象は2版目以降です（特約参照）。</p>
 {{/if}}
 {{/if}}
 

@@ -7,6 +7,9 @@ import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
+import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { isQuasiMandate } from "../server/conditions/time-settlement.js";
+import { firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { SETTLEMENT_CYCLES, SETTLEMENT_CYCLE_LABEL, SETTLEMENT_GRACE_DAYS_DEFAULT, SETTLEMENT_MODES, SETTLEMENT_MODE_LABEL }
@@ -273,6 +276,32 @@ export function ConditionCreateForm(
         { name: "deliverableOwnership", label: "成果物の帰属先", type: "select",
           options: [{ value: "orderer", label: "発注者（譲渡型）" }, { value: "contractor", label: "受注者（利用許諾型）" }],
           hint: "発注書の明細に出る。業績連動のとき 受注者=利用許諾料／発注者=インセンティブ報酬 として表記される" },
+        // 編集画面と同じ欄（契約形式・個数・報酬名・準委任の時間精算）。作成と編集で入れられるものを揃える。
+        { name: "quantity", label: "個数", type: "number", placeholder: "1",
+          visibleWhen: (v) => v.pricingModel === "unit_rate",
+          hint: "単価×個数が定額の既定値になる。小数も入る（0.5 人月など）" },
+        { name: "contractForm", label: "契約形式", type: "select",
+          visibleWhen: (v) => v.kind === "service",
+          options: [{ value: "", label: "（未定）" },
+                    ...CONTRACT_FORMS.map((f) => ({ value: f, label: f })),
+                    ...CONTRACT_FORMS_EN.map((f) => ({ value: f, label: `${f}（海外版）` }))],
+          hint: "発注書・検収書の「契約種別」に出る。支払条件とは別" },
+        { name: "rewardLabel", label: "報酬名（上書き）", placeholder: "初版利用許諾料",
+          visibleWhen: (v) => v.kind === "service",
+          hint: "発注書・検収書の金額欄の小さな行に出る。空なら計算方式と帰属先から導く（A-075）" },
+        { name: "timeSettlement", label: "準委任の精算の仕方", type: "select",
+          visibleWhen: (v) => v.kind === "service" && isQuasiMandate(String(v.contractForm ?? "")),
+          options: [{ value: "", label: "固定額・成果物で精算（検収書）" }, { value: "1", label: "時間精算：月間包括枠 ＋ 実績時間（役務提供完了通知書）" }],
+          hint: "時間精算の回は役務提供完了通知書で確認する（A-073）" },
+        { name: "hoursIncluded", label: "月間包括枠（時間）", type: "number", required: true, placeholder: "64",
+          visibleWhen: (v) => v.kind === "service" && Boolean(v.timeSettlement),
+          hint: "この時間までは定額（基本委託料／月）" },
+        { name: "overageUnitAmount", label: "超過単価（最小通貨単位／時間）", type: "money", required: true, placeholder: "3125",
+          visibleWhen: (v) => v.kind === "service" && Boolean(v.timeSettlement),
+          hint: "枠を超えた時間 × 超過単価 を追加精算" },
+        { name: "shortfallUnitAmount", label: "控除単価（最小通貨単位／時間）", type: "money", placeholder: "空なら減額しない",
+          visibleWhen: (v) => v.kind === "service" && Boolean(v.timeSettlement),
+          hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" },
         { name: "regions", label: "地域（許諾範囲）", type: "regions",
           visibleWhen: (v) => v.kind === "license",
           hint: "何も選ばなければ、その次元は無制限（全世界）として扱われます" },
@@ -310,8 +339,41 @@ export function ConditionCreateForm(
           visibleWhen: (v) => v.kind === "license" && v.direction === "in",
           options: [{ value: "separate", label: "別途（料率・額で定める）" },
                     { value: "included", label: "業務委託報酬に含む（追加の許諾料なし）" },
-                    { value: "free", label: "無償" }],
-          hint: "発注書の利用許諾条件の「料率・額」に出る。含む／無償なら料率は空でよい" },
+                    { value: "free", label: "無償" },
+                    { value: "in_lieu", label: "初版の利用許諾料を委託報酬として支払済み（2 版目以降がこの料率）" }],
+          hint: "発注書の利用許諾条件の「料率・額」に出る。含む／無償なら料率は空でよい。「初版…支払済み」は初版分を委託料の行で払い、計算書の対象は 2 版目以降（A-077）" },
+        // クレジット表記（A-076）。編集画面と同じ欄。
+        { name: "creditFromWork", label: "クレジット表記", type: "select",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
+          options: [{ value: "1", label: "作品のクレジット表記を引用（文書を作る日時点の表記）" }, { value: "", label: "この条件の文言を使う" }],
+          hint: "発注書の利用許諾条件の下と特約に出る" },
+        { name: "creditNotice", label: "クレジット表記の文言", type: "textarea",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
+          placeholder: "© 2026 著作者名／イラスト：◯◯",
+          hint: (v) => v.creditFromWork ? "引用するときは、作品に表記が無いときの控えとして使う" : "そのまま文書に出る" },
+        // 初版の算定の基礎（A-077）。編集画面と同じ欄。
+        { name: "royaltyExemptFirstCopies", label: "初版の非加算部数（献本・見本等）", type: "number", placeholder: "0",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
+          hint: "初版利用許諾料の算定方法に「− ○部」として明記される。空・0 なら全部数" },
+        { name: "royaltyExemptLaterPct", label: "非加算：2 版目以降（発行部数の %）", type: "number", placeholder: "1",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
+          hint: "献本等。空なら非加算なし" },
+        { name: "firstEditionPrice", label: "初版の本体価格（税抜・最小通貨単位）", type: "money", placeholder: "1000",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
+          hint: "発注時は見込み、確定したら確定値に直す。特約第2項と明細の算定の基礎に出る" },
+        { name: "firstEditionCopies", label: "初版発行部数", type: "number", placeholder: "3000",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
+          hint: "発注時は見込み、確定したら確定値に直す" },
+        { name: "firstEditionRatePct", label: "初版の料率（%）", type: "number", placeholder: "10",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
+          hint: (v) => {
+            const fee = firstEditionFee({ price: Number(v.firstEditionPrice) || 0, copies: Number(v.firstEditionCopies) || 0,
+              ratePct: Number(v.firstEditionRatePct) || 0, exemptCopies: Number(v.royaltyExemptFirstCopies) || 0 });
+            return fee > 0 ? `仮計算額 ¥${fee.toLocaleString("ja-JP")}（委託料の行の合計と同じ額にする）` : "初版利用許諾料の料率。2 版目以降の料率（上の料率）とは別";
+          } },
+        { name: "confirmWithinDays", label: "確定の期限（受領後 ○ 日）", type: "number", placeholder: "45",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
+          hint: "本体価格・初版部数を書面で通知し乙の確認を得る期限。60 日以内" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
           visibleWhen: (v) => v.kind === "license" },
         { name: "notes", label: "備考", type: "textarea" }
@@ -350,6 +412,24 @@ export function ConditionCreateForm(
           settlementMode: text(v.settlementMode), settlementCount: int(v.settlementCount),
           settlementCycle: text(v.settlementCycle), settlementGraceDays: int(v.settlementGraceDays),
           spec: text(v.spec), deliverableOwnership: text(v.deliverableOwnership),
+          // 編集画面と同じ欄（契約形式・個数・報酬名・時間精算・クレジット・初版の算定の基礎）。
+          quantity: v.pricingModel === "unit_rate" && String(v.quantity ?? "").trim() !== "" ? Number(v.quantity) : undefined,
+          contractForm: v.kind === "service" ? text(v.contractForm) : undefined,
+          rewardLabel: v.kind === "service" ? text(v.rewardLabel) : undefined,
+          ...(v.kind === "service" && v.timeSettlement ? {
+            timeSettlement: true, hoursIncluded: Number(v.hoursIncluded) || null,
+            overageUnitAmount: int(v.overageUnitAmount), shortfallUnitAmount: int(v.shortfallUnitAmount)
+          } : {}),
+          ...(v.kind === "license" && v.direction === "in" ? {
+            creditFromWork: Boolean(v.creditFromWork), creditNotice: text(v.creditNotice),
+            ...(v.licenseFeeBasis === "in_lieu" ? {
+              royaltyExemptFirstCopies: int(v.royaltyExemptFirstCopies),
+              royaltyExemptLaterPct: String(v.royaltyExemptLaterPct ?? "").trim() !== "" ? Number(v.royaltyExemptLaterPct) : undefined,
+              firstEditionPrice: int(v.firstEditionPrice), firstEditionCopies: int(v.firstEditionCopies),
+              firstEditionRatePpm: String(v.firstEditionRatePct ?? "").trim() !== "" ? Math.round(Number(v.firstEditionRatePct) * 10000) : undefined,
+              confirmWithinDays: int(v.confirmWithinDays)
+            } : {})
+          } : {}),
           scopes: scopes.length ? scopes : undefined
         };
       }}
