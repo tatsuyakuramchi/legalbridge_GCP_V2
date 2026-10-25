@@ -351,6 +351,16 @@ export function ConditionEdit(
 
   /** 出し分けに使う種類。直接編集で種類を変えたら、その種類の欄を出す（保存前でも）。 */
   const kindNow = inPlace ? (v.kind || detail.kind) : detail.kind;
+  /**
+   * 「初版の利用許諾料を報酬として払う」を選ぶ（支払の形のチップと手順ナビの両方から）。
+   * 報酬名・確定期限を入れ、計算方式が定額でなければ定額に直す。計算方式の変更は直接編集でしか
+   * 送られないので、支払が無ければ直接編集に切り替える。
+   */
+  const chooseInLieu = () => {
+    set("rewardLabel", IN_LIEU_REWARD_LABEL);
+    if (v.confirmWithinDays.trim() === "") set("confirmWithinDays", "45");
+    if (v.pricingModel !== "fixed") { set("pricingModel", "fixed"); if (!hasPayment) setInPlace(true); }
+  };
   return (
     <div className="panel create-form">
       <div className="panel-hd">
@@ -392,7 +402,7 @@ export function ConditionEdit(
 
         {/* 初版の利用許諾料を報酬として払う形に直すときの手順ナビ（委託料・取得側の利用許諾のとき）。 */}
         {detail.direction === "in" && (kindNow === "service" || kindNow === "license") && (
-          <InLieuGuide detail={detail} v={v} set={set} onOpenCondition={onOpenCondition} />
+          <InLieuGuide detail={detail} v={v} set={set} pm={pm} hasPayment={hasPayment} chooseInLieu={chooseInLieu} onOpenCondition={onOpenCondition} />
         )}
 
         {/* 並びは登録のフォームと同じ。 */}
@@ -483,16 +493,12 @@ export function ConditionEdit(
                  ["revenue_rate", "売上連動（インセンティブ報酬）", "料率で計算"]];
             const choose = (key: string) => {
               if (lic) {
-                if (key === "in_lieu") {
-                  set("rewardLabel", IN_LIEU_REWARD_LABEL);
-                  if (v.confirmWithinDays.trim() === "") set("confirmWithinDays", "45");
-                  // 定額でなければ定額に直す。計算方式の変更は直接編集でしか送られないので、支払が無ければ直接編集に切り替える。
-                  if (v.pricingModel !== "fixed") { set("pricingModel", "fixed"); if (!hasPayment) setInPlace(true); }
-                } else if (v.rewardLabel === IN_LIEU_REWARD_LABEL) set("rewardLabel", "");
+                if (key === "in_lieu") chooseInLieu();
+                else if (v.rewardLabel === IN_LIEU_REWARD_LABEL) set("rewardLabel", "");
               } else if (inPlace) set("pricingModel", key);
             };
             return (
-              <div className="field wide">
+              <div className="field wide" id="f-payScheme">
                 <span>支払の形（{lic ? "受注者帰属：利用許諾型" : "発注者帰属：譲渡型"}）</span>
                 <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
                   {options.map(([key, label, hint]) => (
@@ -918,8 +924,10 @@ function InLieuServiceBlock(
  * 関連する条件（同じ相手先・作品の委託料／利用許諾）は一覧して開ける。
  */
 function InLieuGuide(
-  { detail, v, set, onOpenCondition }:
+  { detail, v, set, pm, hasPayment, chooseInLieu, onOpenCondition }:
   { detail: ConditionDetail; v: Record<string, string>; set: (name: string, value: string) => void;
+    /** いま画面に出ている計算方式（直接編集なら入力値、改訂なら保存値）。金額の欄はこれで決まる。 */
+    pm: string; hasPayment: boolean; chooseInLieu: () => void;
     onOpenCondition?: (id: number) => void }
 ) {
   const [open, setOpen] = useState<boolean>(
@@ -935,16 +943,19 @@ function InLieuGuide(
       .catch(() => { if (alive) setSiblings([]); });
     return () => { alive = false; };
   }, [open, detail.id, detail.counterparty?.id, detail.work?.id]);
-  const jump = (id: string) => {
-    const el = document.getElementById(`f-${id}`);
+  /** 欄へ飛ぶ。計算方式や支払の形によって出ていない欄なら、次の候補（最後は「支払の形」）へ飛ぶ。 */
+  const jump = (...ids: string[]) => {
+    const el = [...ids, "payScheme"].map((id) => document.getElementById(`f-${id}`)).find((e): e is HTMLElement => Boolean(e));
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
-    (el?.querySelector("input, select, textarea") as HTMLElement | null)?.focus();
+    (el?.querySelector("input, select, textarea, button") as HTMLElement | null)?.focus();
   };
   const num = (s: string) => Number(String(s ?? "").replace(/[,，]/g, "")) || 0;
-  const amount = v.pricingModel === "unit_rate" ? num(v.unitAmount) * (num(v.quantity) || 1) : num(v.flatAmount);
+  // 金額は画面に出ている計算方式で読む。料率（売上連動）のままなら定額の欄が無いので 0。
+  const amount = pm === "unit_rate" ? num(v.unitAmount) * (num(v.quantity) || 1) : pm === "revenue_rate" ? 0 : num(v.flatAmount);
   const fe = { price: num(v.firstEditionPrice), copies: Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
                exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)) };
   const provisional = firstEditionFee(fe);
+  const schemeDone = v.rewardLabel === IN_LIEU_REWARD_LABEL && pm === "fixed";
   const basisLine = fe.price > 0 && fe.copies > 0 && fe.ratePct > 0 ? firstEditionBasisText(fe) : null;
   const Step = ({ done, title, hint, acts }: { done: boolean; title: string; hint?: string; acts?: React.ReactNode }) => (
     <li className={done ? "done" : ""}>
@@ -952,7 +963,7 @@ function InLieuGuide(
       <span className="body">{title}{acts && <span className="acts">{acts}</span>}{hint && <small>{hint}</small>}</span>
     </li>
   );
-  const to = (id: string) => <button type="button" className="linky" onClick={() => jump(id)}>欄へ</button>;
+  const to = (...ids: string[]) => <button type="button" className="linky" onClick={() => jump(...ids)}>欄へ</button>;
   const list = (kind: "service" | "license", empty: string) => {
     const rows = (siblings ?? []).filter((c) => c.kind === kind);
     if (siblings === null) return <small>関連する条件を引いています…</small>;
@@ -977,15 +988,25 @@ function InLieuGuide(
         <ol>
           <Step done={v.deliverableOwnership === "contractor"} title="成果物の帰属先を「受注者（利用許諾型）」にする"
                 acts={<>{v.deliverableOwnership !== "contractor" && <button type="button" className="btn btn-sm" onClick={() => set("deliverableOwnership", "contractor")}>受注者にする</button>}{to("deliverableOwnership")}</>} />
-          <Step done={amount > 0} title="金額を仮計算額（の配分）にする"
-                hint="仮計算額＝見込みの本体価格 ×（初版部数 − 非加算）× 料率。原稿とイラストの 2 行なら配分する。0 円にはしない（買いたたき・一方的決定の外観）"
-                acts={to(v.pricingModel === "unit_rate" ? "unitAmount" : "flatAmount")} />
-          <Step done={v.rewardLabel === IN_LIEU_REWARD_LABEL} title={`報酬名を「${IN_LIEU_REWARD_LABEL}」にする`}
-                hint="発注書の金額欄に「初版利用許諾料（仮計算。確定は特約第3項）」と出る"
-                acts={<>{v.rewardLabel !== IN_LIEU_REWARD_LABEL && <button type="button" className="btn btn-sm" onClick={() => set("rewardLabel", IN_LIEU_REWARD_LABEL)}>入れる</button>}{to("rewardLabel")}</>} />
-          <Step done={Boolean(v.deliveryDue)} title="納期を入れる" hint="受領から 60 日以内の支払期日の起点になる" acts={to("deliveryDue")} />
-          <Step done={String(v.spec ?? "").includes("算定の基礎")} title="仕様の末尾に「算定の基礎（見込み）」の 1 行を書く"
-                hint="例：算定の基礎（見込み）：本体価格 1,000円（税抜）× 初版 3,000部 × 10%　（発注書の明細に出る。確定時の比較の起点）"
+          <Step done={schemeDone} title="支払の形を「初版の利用許諾料を報酬として払う」にする（③）"
+                hint={schemeDone ? `計算方式 定額、報酬名「${IN_LIEU_REWARD_LABEL}」`
+                  : hasPayment && pm !== "fixed"
+                  ? `計算方式が「${pm === "revenue_rate" ? "料率" : pm}」で、支払が立っているので変えられない。この条件は残し、『業務委託（発注）』で新しく作る`
+                  : `計算方式が定額になり（直接編集に切り替わる）、報酬名が「${IN_LIEU_REWARD_LABEL}」になる。発注書の金額欄に「初版利用許諾料（仮計算。確定は特約第3項）」と出る`}
+                acts={<>{!schemeDone && v.deliverableOwnership === "contractor" && !(hasPayment && pm !== "fixed")
+                  && <button type="button" className="btn btn-sm" onClick={chooseInLieu}>選ぶ</button>}{to("payScheme")}</>} />
+          <Step done={Boolean(basisLine) && num(v.confirmWithinDays) >= 1 && num(v.confirmWithinDays) <= 60}
+                title="初版の算定の基礎を入れる：見込み本体価格・初版部数・初版の料率・非加算部数・確定の期限（③ 支払の形の下）"
+                hint={basisLine ? `${basisLine} ＝ 仮計算額 ¥${provisional.toLocaleString("ja-JP")}` : "支払の形を選ぶと欄が出る。仮計算額＝本体価格 ×（初版部数 − 非加算）× 料率"}
+                acts={to("firstEditionPrice")} />
+          <Step done={provisional > 0 && amount === provisional} title="金額 ＝ 仮計算額（原稿とイラストの 2 行なら配分）"
+                hint={provisional > 0 && amount !== provisional
+                  ? `いまの金額 ¥${amount.toLocaleString("ja-JP")}。算定の基礎を入れると自動で入る。2 行に配分するときだけ手で直す（合計を仮計算額に）`
+                  : "算定の基礎を入れると自動で入る。0 円にはしない（買いたたき・一方的決定の外観）"}
+                acts={to(pm === "unit_rate" ? "unitAmount" : "flatAmount", "firstEditionPrice")} />
+          <Step done={Boolean(v.deliveryDue)} title="納期を入れる（②）" hint="受領から 60 日以内の支払期日の起点になる" acts={to("deliveryDue")} />
+          <Step done={String(v.spec ?? "").includes("算定の基礎")} title="仕様の末尾に「算定の基礎（見込み）」の 1 行（⑤）"
+                hint="算定の基礎を入れると自動で書かれる。例：算定の基礎（見込み）：本体価格 1,000円（税抜）× 初版 3,000部 × 10%（発注書の明細に出る。確定時の比較の起点）"
                 acts={to("spec")} />
           <Step done={false} title="保存したら「予定」に 1 回立てる：締め＝納期、支払日＝受領から 60 日以内、金額＝この行の額"
                 hint="発注書の支払期日と明細の支払日はこの予定から出る" />
