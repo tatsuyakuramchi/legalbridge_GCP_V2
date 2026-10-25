@@ -150,6 +150,19 @@ export function ConditionCreateForm(
       path="/conditions"
       onValues={(v, set) => {
         if (v.direction === "out") { setOutFrom({ ...v }); return; }
+        // 支払の形（①）→ 計算方式・報酬名（③・⑤）。人が③で直したらそのまま（同じ値を入れ直すだけ）。
+        if (v.kind === "service") {
+          if (v.deliverableOwnership === "contractor") {
+            if (v.paySchemeLic === "in_lieu") {
+              if (v.pricingModel !== "fixed") set("pricingModel", "fixed");
+              if ((v.rewardLabel ?? "") !== "初版利用許諾料") set("rewardLabel", "初版利用許諾料");
+            } else if (v.paySchemeLic === "fixed" && (v.rewardLabel ?? "") === "初版利用許諾料") {
+              set("rewardLabel", "");
+            }
+          } else if (v.payScheme && v.pricingModel !== v.payScheme) {
+            set("pricingModel", v.payScheme);
+          }
+        }
         const party = String(v.counterpartyId ?? "");
         if (party !== partyFor) { setPartyFor(party); setNoAgreement(false); return; }
         // 候補が 1 本で、まだ何も入っていなければ自動で入れる。人が空にしたら戻さない。
@@ -171,6 +184,23 @@ export function ConditionCreateForm(
             value: k, label: CONDITION_KIND_LABEL[k]
           })),
           hint: "許諾料・製品はライセンスの案件、委託料・実費・手数料は業務委託の案件に繋がる" },
+        // まず権利の帰属先、次に支払の形。ここで分岐してから金額の欄に進む（迷わないように）。
+        { name: "deliverableOwnership", label: "成果物の権利の帰属先", type: "select",
+          visibleWhen: (v) => v.kind === "service" || v.kind === "product",
+          options: [{ value: "orderer", label: "発注者（譲渡型）：権利は当社に移る" }, { value: "contractor", label: "受注者（利用許諾型）：権利は相手に残り、当社は許諾を受ける" }],
+          hint: "発注書の明細に出る。ここで支払の形の選択肢が変わる" },
+        { name: "payScheme", label: "支払の形", type: "select",
+          visibleWhen: (v) => v.kind === "service" && v.deliverableOwnership !== "contractor",
+          options: [{ value: "fixed", label: "固定額（納品ごとに検収して支払）" }, { value: "unit_rate", label: "単価 × 数量" },
+                    { value: "subscription", label: "定期払い（毎月・毎期の 1 回あたり）" }, { value: "revenue_rate", label: "売上連動（インセンティブ報酬）" }],
+          hint: "選ぶと③の計算方式が入る（③で直せる）" },
+        { name: "paySchemeLic", label: "支払の形", type: "select",
+          visibleWhen: (v) => v.kind === "service" && v.deliverableOwnership === "contractor",
+          options: [{ value: "fixed", label: "委託報酬（固定額）。利用許諾料の扱い（別途／含む）は利用許諾の条件で決める" },
+                    { value: "in_lieu", label: "初版の利用許諾料を報酬として払う（仮計算 → 納品後 60 日以内に確定）" }],
+          hint: (v) => v.paySchemeLic === "in_lieu"
+            ? "計算方式は定額、報酬名は「初版利用許諾料」になる。利用許諾条件（紙・電子）と特約は『業務委託（発注）』のフォームからまとめて登録するのが早い"
+            : "受注者帰属の成果物は、利用許諾の条件（許諾料の扱い・クレジット・再許諾）を別の条件『利用許諾』で持つ。『業務委託（発注）』のフォームなら一緒に作れる" },
         // 取引先は 2,500 件ある。一覧から選ばせず、名前で探して決める。
         { name: "counterpartyId", label: "相手先", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
@@ -219,7 +249,7 @@ export function ConditionCreateForm(
           options: [{ value: "fixed", label: "定額" }, { value: "revenue_rate", label: "料率" },
                     { value: "unit_rate", label: "単価×数量" }, { value: "subscription", label: "定期課金" },
                     { value: "none", label: "計算しない" }],
-          hint: "選んだ方式に必要な値が無いと登録できない" },
+          hint: "①の支払の形から入る。直すならここ。選んだ方式に必要な値が無いと登録できない" },
         // 定期課金は「1回あたり」をこの欄に入れる（計算も period_amount として読む）。
         // 出していなかったので、定期課金の条件は金額を持てないまま作られていた。
         { name: "flatAmount",
@@ -279,9 +309,6 @@ export function ConditionCreateForm(
         { name: "orderNo", label: "発注番号（外部）",
           placeholder: "ARC-PO-2025-0123",
           hint: "V1・V2 や紙で出した発注書の番号。検収書の発注番号に出る。V3 で発注書を出したらそちらが優先される" },
-        { name: "deliverableOwnership", label: "成果物の帰属先", type: "select",
-          options: [{ value: "orderer", label: "発注者（譲渡型）" }, { value: "contractor", label: "受注者（利用許諾型）" }],
-          hint: "発注書の明細に出る。業績連動のとき 受注者=利用許諾料／発注者=インセンティブ報酬 として表記される" },
         { name: "contractForm", label: "契約形式", type: "select",
           visibleWhen: (v) => v.kind === "service",
           options: [{ value: "", label: "（未定）" },
@@ -306,6 +333,9 @@ export function ConditionCreateForm(
           hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" },
         { name: "_s6", type: "section", label: "⑥ 利用許諾の条件", hint: "利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます",
           visibleWhen: (v) => v.kind === "license" },
+        { name: "_s6b", type: "section", label: "⑥ 利用許諾の条件 — この条件では持ちません",
+          hint: "受注者帰属の成果物の利用許諾（許諾料の扱い・クレジット表記・再許諾・地域と言語）は、別の条件『利用許諾』で持ちます。作品 × 構成要素 × 利用形態で 1 本。『業務委託（発注）』のフォームなら委託料と一緒に作れます",
+          visibleWhen: (v) => v.kind === "service" && v.deliverableOwnership === "contractor" },
         // 利用形態（A-027）。条件書の行・計算書の製品名はこれで決まる。
         // 作品1点ぶんをまとめて作るなら「許諾セット」「出版セット」のほうが早い。
         { name: "usageType", label: "利用形態（取引モデル）", type: "select",
