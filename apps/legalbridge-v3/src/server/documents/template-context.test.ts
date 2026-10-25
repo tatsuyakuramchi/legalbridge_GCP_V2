@@ -1054,8 +1054,8 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
       agreementNo: "AGR-2026-0088", agreementTitle: "出版基本契約",
       // クレジット表記は作品から引用（文脈は文書の日付時点の表記を解いて渡す）。
       creditNotice: "© 2026 山田太郎／イラスト：山田太郎", creditFromWork: true,
-      // 構成要素（A-078）：原稿のパート（コアロジック）。
-      partName: "原稿", partRole: "core" },
+      // 構成要素（A-078）：原稿のパート（コアロジック）。再許諾は可（都度合意）。
+      partName: "原稿", partRole: "core", sublicensable: true, sublicenseConsent: "required" },
     { id: 14, usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 15, mgAmount: null, agAmount: null,
       currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: [], languages: [],
       licenseFeeBasis: "in_lieu", conditionNo: "CL-14", exclusivity: "non_exclusive",
@@ -1083,7 +1083,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.equal(rows[0].fee, "10 %（2版目以降）");
   assert.equal(rows[0].guarantee, "—", "AG・MG は持たない");
   assert.equal(rows[0].covers, "対象：No.1 原稿、No.2 イラスト");
-  assert.equal(rows[0].note, "初版は明細の初版利用許諾料で支払済み／2版以降は発行部数の1%を非加算");
+  assert.equal(rows[0].note, "初版は明細の初版利用許諾料で支払済み／2版以降は発行部数の1%を非加算／再許諾：可（都度合意）");
   assert.equal(rows[0].contract, "AGR-2026-0088 出版基本契約 の個別契約");
   assert.equal(rows[0].credit, "© 2026 山田太郎／イラスト：山田太郎");
   assert.equal(rows[1].guarantee, "—"); assert.equal(rows[1].note, "配信開始から適用");
@@ -1092,6 +1092,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
 
   const s = suggestionsFor("purchase_order", context) as Record<string, string>;
   assert.match(s.SPECIAL_TERMS, /原稿およびイラストの制作/);
+  assert.match(s.SPECIAL_TERMS, /乙の事前の書面による同意を得て行い/);
   assert.match(s.SPECIAL_TERMS, /6\. 甲は、成果物を利用するに際し、次のクレジット表記を行う。[^\n]*\n　© 2026 山田太郎／イラスト：山田太郎/);
   assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書/);
   assert.match(s.SPECIAL_TERMS, /同契約の個別契約として取り扱い/);

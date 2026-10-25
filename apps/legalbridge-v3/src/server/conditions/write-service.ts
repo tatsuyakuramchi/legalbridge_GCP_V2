@@ -10,12 +10,12 @@ import { readContractForm } from "./contract-form.js";
 import type { ConditionScope, LicenseFeeBasis } from "../core/model.js";
 import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js";
 import { conditionNameFor } from "./naming.js";
-import { conditionUsageLabel, pubMediaOfUsage, usageOfPubMedia,
+import { conditionUsageLabel, isSublicensingUsage, pubMediaOfUsage, usageOfPubMedia,
          type ConditionUsageType } from "../core/condition-usage.js";
 import { validateShareInput } from "../royalty/shares.js";
 import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
 import { normalizeTimeSettlement } from "./time-settlement.js";
-import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee, withinSixtyDays } from "./royalty-in-lieu.js";
+import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee, withinSixtyDays, type SublicenseMode } from "./royalty-in-lieu.js";
 import { partRoleOf, type PartRole } from "../core/part-role.js";
 import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
 
@@ -234,6 +234,8 @@ export interface ServiceLicenseInput {
    */
   creditNotice?: string | null;
   creditFromWork?: boolean | null;
+  /** 再許諾の可否（A-079）。no=不可 / consent=可（都度の同意） / covered=可（包括同意）。利用許諾条件の sublicensable・sublicense_consent に入る。 */
+  sublicense?: SublicenseMode | null;
 }
 
 /** 支払方法。定期払いは委託料の各条件に期ごとの予定明細を立てる。 */
@@ -897,6 +899,9 @@ export class ConditionWriteService {
         if (!Number.isFinite(r.ratePct) || r.ratePct <= 0 || r.ratePct > 100) {
           throw new DomainError("VALIDATION", `${conditionUsageLabel(r.usageType)}の料率は 0 より大きく 100% 以下で入れてください`);
         }
+        if (license.sublicense === "no" && isSublicensingUsage(r.usageType)) {
+          throw new DomainError("VALIDATION", `再許諾を「不可」にしているので、${conditionUsageLabel(r.usageType)}の料率は入れられません`);
+        }
       }
       const total = contractorRows.reduce((sum, r) => sum + rowAmount(r), 0);
       if (provisional <= 0) {
@@ -989,6 +994,8 @@ export class ConditionWriteService {
               } : {}),
               royaltyExemptLaterPct: license.exemptLaterPct ?? null,
               creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
+              sublicensable: license.sublicense ? license.sublicense !== "no" : null,
+              sublicenseConsent: license.sublicense === "covered" ? "covered" : license.sublicense === "consent" ? "required" : null,
               currency: input.currency ?? "JPY",
               termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
               exclusivity: "non_exclusive",
@@ -1006,6 +1013,8 @@ export class ConditionWriteService {
           workPartId: target.partId,
           usageType, licenseFeeBasis: basis,
           creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
+          sublicensable: license.sublicense ? license.sublicense !== "no" : null,
+          sublicenseConsent: license.sublicense === "covered" ? "covered" : license.sublicense === "consent" ? "required" : null,
           pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",
           ratePpm: ratePct != null ? Math.round(ratePct * 10000) : null,
           flatAmount: flat, currency: input.currency ?? "JPY",

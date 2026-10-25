@@ -907,6 +907,8 @@ export class DocumentContextRepository {
               -- クレジット表記（A-076）。作品を引用するなら、文書の日付時点の作品の表記（A-031 の履歴。
               -- 無ければ works の写し）。
               c.credit_notice, c.credit_from_work,
+              -- 再許諾の可否（A-079）。表の注記と特約に出る。
+              c.sublicensable, c.sublicense_consent,
               -- 初版の算定の基礎（A-077）。特約の第 2 項と明細の注記が使う。
               c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm, c.confirm_within_days,
               COALESCE((SELECT wc.copyright_notice FROM work_credits wc
@@ -975,7 +977,10 @@ export class DocumentContextRepository {
           confirmWithinDays: int(row.confirm_within_days),
           /** 構成要素（パート。A-078）。無ければ作品全体。 */
           partName: str(row.part_name),
-          partRole: row.part_name ? partRoleOf(row.part_type, row.part_role) : null
+          partRole: row.part_name ? partRoleOf(row.part_type, row.part_role) : null,
+          /** 再許諾の可否（A-079）。 */
+          sublicensable: row.sublicensable === null || row.sublicensable === undefined ? null : Boolean(row.sublicensable),
+          sublicenseConsent: str(row.sublicense_consent)
         };
       });
   }

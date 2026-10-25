@@ -166,6 +166,8 @@ export function ServiceLinesForm(
   const creditText = creditFromWork ? (workCredit ?? creditNotice.trim()) : creditNotice.trim();
   /** 2 版目以降の非加算（献本等。発行部数の %）。既定 1。 */
   const [exemptLater, setExemptLater] = useState("1");
+  /** 再許諾の可否（A-079）。既定は可（都度合意）：自社出版だけの案件もこれで足り、後から再許諾が出ても個別出版条件書で進められる。 */
+  const [sublicense, setSublicense] = useState<"no" | "consent" | "covered">("consent");
   const [showTermsPreview, setShowTermsPreview] = useState(false);
   const [licRate, setLicRate] = useState("");
   const [licFlat, setLicFlat] = useState("");
@@ -245,7 +247,8 @@ export function ServiceLinesForm(
       const a = agreements.find((x) => String(x.id) === id);
       return a ? { no: a.agreementNo, title: a.title } : null;
     })(),
-    creditNotice: creditText || null
+    creditNotice: creditText || null,
+    sublicense
   }) : "";
 
   const ready = Boolean(partyId) && title.trim() !== "" && serviceLines.length > 0
@@ -366,6 +369,8 @@ export function ServiceLinesForm(
           ...(licAgreementId === "" ? {} : { agreementId: licAgreementId === "none" ? null : int(licAgreementId) ?? null }),
           // クレジット表記（A-076）。引用なら文書が作品の今の表記を差す（文言は控え）。
           creditFromWork, creditNotice: text(creditNotice) ?? null,
+          // 再許諾の可否（A-079）。
+          sublicense,
           ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
           flatAmount: licMode === "separate" && !licRate.trim() && licFlat.trim() ? Math.round(num(licFlat)) : null,
           termStart: text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
@@ -642,6 +647,13 @@ export function ServiceLinesForm(
                   <label className="field"><span>非加算：2 版目以降（発行部数の %）</span>
                     <input inputMode="decimal" value={exemptLater} placeholder="1" onChange={(e) => setExemptLater(e.target.value)} />
                     <small className="faint">献本等。空なら非加算なし。初版の非加算とは別の欄</small></label>
+                  <label className="field"><span>再許諾（第三者への翻訳出版等）</span>
+                    <select value={sublicense} onChange={(e) => setSublicense(e.target.value as "no" | "consent" | "covered")}>
+                      <option value="consent">可（都度合意）：乙の事前の書面同意を得て行う（既定）</option>
+                      <option value="covered">可（包括同意）：本特約で同意済み。翻訳出版が前提の案件だけ</option>
+                      <option value="no">不可：自社出版のみ</option>
+                    </select>
+                    <small className="faint">可否と同意の要否はここで決め、再許諾先・料率・範囲は個別出版条件書で。再許諾の料率を先に決めるなら上の料率に「翻訳版再許諾」を足す</small></label>
                 </div>
                 {sixtyDayOver.length > 0 && (
                   <div className="alert">支払期日 {inLieuPayOn} が納期から 60 日を超えている行があります（{sixtyDayOver.map((l) => `${lines.indexOf(l) + 1} 行目 ${l.deliveryDue}`).join("・")}）。取適法・フリーランス法の支払期日に合わせてください</div>

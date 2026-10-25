@@ -2301,7 +2301,9 @@ export function createRoutes(database: Transactable) {
       exemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
       // クレジット表記（A-076）。作品の表記を引用するか、この条件で文言を持つ。
       creditNotice: z.string().trim().max(600).nullable().optional(),
-      creditFromWork: z.boolean().nullable().optional()
+      creditFromWork: z.boolean().nullable().optional(),
+      // 再許諾の可否（A-079）。
+      sublicense: z.enum(["no", "consent", "covered"]).nullable().optional()
     }).nullable().optional(),
     payment: z.object({
       mode: z.enum(["per_delivery", "periodic", "lump"]),

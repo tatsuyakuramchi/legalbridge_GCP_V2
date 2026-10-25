@@ -530,8 +530,8 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
     confirmWithinDays: 45, payOn: "2026-12-25", exemptLaterPct: 1,
     // 利用許諾条件は出版基本契約（8）の個別契約。業務委託の基本契約（7）とは別。
     agreementId: 8,
-    // クレジット表記は作品から引用（文言は控え）。
-    creditFromWork: true, creditNotice: "© 2026 山田太郎"
+    // クレジット表記は作品から引用（文言は控え）。再許諾は可（都度合意）。
+    creditFromWork: true, creditNotice: "© 2026 山田太郎", sublicense: "consent" as const
   };
   const r = await svc.createServiceSet({ ...base, agreementId: 7, license }, "a");
   const inserts = db.all("INSERT INTO conditions");
@@ -556,6 +556,7 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
   assert.equal(print[53], 100000, "初版の料率 10% = 100000 ppm"); assert.equal(print[54], 45, "確定の期限（受領後 45 日）");
   assert.equal(print[47], null, "初版の非加算は 0 → 空"); assert.equal(print[48], 1, "2 版目以降の非加算 1%");
   assert.equal(print[49], "© 2026 山田太郎", "クレジット表記の控え"); assert.equal(print[50], true, "作品から引用");
+  assert.equal(print[9], true, "再許諾：可"); assert.equal(print[10], "required", "都度の同意");
   assert.equal(digital[16], 150000); assert.equal(digital[51], null, "初版の算定の基礎は先頭の 1 本だけ");
   assert.equal(artPrint[51], null, "サブのパートには初版の算定の基礎を持たせない"); assert.equal(artDigital[34], "in_lieu");
   assert.equal(digital[34], "in_lieu"); assert.equal(digital[50], true);
@@ -577,6 +578,8 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
     license: { ...license, firstEdition: { price: 1000, copies: 3000, ratePct: 10, exemptCopies: 3000 } } }, "a"), /非加算部数/);
   await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, firstEdition: null } }, "a"), /算定の基礎/);
   await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, confirmWithinDays: 61 } }, "a"), /確定の期限/);
+  await assert.rejects(() => svc.createServiceSet({ ...base, license: { ...license, sublicense: "no",
+    rates: [...license.rates, { usageType: "pub_sub_print" as const, ratePct: 50 }] } }, "a"), /再許諾を「不可」/);
   await assert.rejects(() => svc.createServiceSet({ ...base,
     rows: [{ kind: "service", name: "原稿", pricingModel: "unit_rate", unitAmount: 0, quantity: 1, deliveryDue: "2026-11-30" }],
     license }, "a"), /合いません/);

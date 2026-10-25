@@ -26,7 +26,7 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
-import { inLieuShortNote, inLieuSpecialTerms } from "../conditions/royalty-in-lieu.js";
+import { SUBLICENSE_LABEL, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
 import { PART_ROLE_LABEL, type PartRole } from "../core/part-role.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
@@ -1088,9 +1088,16 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
          t.agAmount ? `AG ${moneyOf(t.agAmount, currency, lang)}` : ""].filter(Boolean).join(en ? " / " : "／") || "—"
       : "—";
     // 初版は明細の初版利用許諾料で支払済み（A-077）。紙の行（初版の算定の基礎を持つ 1 本）にだけ注記を出す。
-    const note = basis === "in_lieu" && !en && (t.firstEditionCopies || t.usageType === "pub_print")
+    const baseNote = basis === "in_lieu" && !en && (t.firstEditionCopies || t.usageType === "pub_print")
       ? inLieuShortNote(t.royaltyExemptFirstCopies ?? null, t.royaltyExemptLaterPct ?? null)
       : basis === "in_lieu" && !en && t.usageType === "pub_digital" ? "配信開始から適用" : "";
+    // 再許諾の可否（A-079）。決めてある条件だけ出す（空なら書かない）。
+    const subMode = sublicenseModeOf(t.sublicensable as boolean | null, t.sublicenseConsent as string | null);
+    const subText = subMode
+      ? (en ? `Sublicensing: ${subMode === "no" ? "not permitted" : subMode === "covered" ? "permitted (consent given)" : "permitted with prior consent"}`
+            : `再許諾：${SUBLICENSE_LABEL[subMode]}`)
+      : "";
+    const note = [baseNote, subText].filter(Boolean).join(en ? " / " : "／");
     const term = t.termStart || t.termEnd
       ? (en
         ? `${t.termStart ? compactDate(t.termStart) : ""} – ${t.termEnd ? compactDate(t.termEnd) : "(no end date)"}`
@@ -1172,7 +1179,9 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
     masterAgreement: head.agreementNo || head.agreementTitle
       ? { no: head.agreementNo ? String(head.agreementNo) : null, title: head.agreementTitle ? String(head.agreementTitle) : null }
       : null,
-    creditNotice: terms.map((t) => String(t.creditNotice ?? "").trim()).find(Boolean) ?? null
+    creditNotice: terms.map((t) => String(t.creditNotice ?? "").trim()).find(Boolean) ?? null,
+    // 再許諾の可否（A-079）。
+    sublicense: sublicenseModeOf(head.sublicensable as boolean | null, head.sublicenseConsent as string | null)
   });
 }
 
