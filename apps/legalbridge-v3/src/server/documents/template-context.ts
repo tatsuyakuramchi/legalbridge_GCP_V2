@@ -26,7 +26,7 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
-import { SUBLICENSE_LABEL, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
+import { SUBLICENSE_LABEL, companionOfTemplate, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
 import { PART_ROLE_LABEL, type PartRole } from "../core/part-role.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
@@ -1181,7 +1181,9 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
       : null,
     creditNotice: terms.map((t) => String(t.creditNotice ?? "").trim()).find(Boolean) ?? null,
     // 再許諾の可否（A-079）。
-    sublicense: sublicenseModeOf(head.sublicensable as boolean | null, head.sublicenseConsent as string | null)
+    sublicense: sublicenseModeOf(head.sublicensable as boolean | null, head.sublicenseConsent as string | null),
+    // 併せて締結する条件書（A-080）。どれかの許諾条件を載せた条件書があればそれ。
+    companionDocument: terms.map((t) => companionOfTemplate(t.companionTemplateKey)).find(Boolean) ?? null
   });
 }
 

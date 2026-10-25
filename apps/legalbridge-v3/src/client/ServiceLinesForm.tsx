@@ -46,6 +46,8 @@ export interface ServiceLinesCreated {
   conditions: Array<{ usageType: string; id: number; conditionNo: string | null }>;
   licenseConditions: Array<{ id: number; conditionNo: string | null; existed: boolean }>;
   scheduled: number;
+  /** 併せて作った条件書の下書き（A-080）。選んでいなければ無い。 */
+  companionDocument?: { id: number; templateKey: string } | null;
 }
 
 const num = (v: string) => { const n = Number(String(v ?? "").replace(/[,，¥￥\s]/g, "")); return Number.isFinite(n) ? n : 0; };
@@ -166,6 +168,11 @@ export function ServiceLinesForm(
   const creditText = creditFromWork ? (workCredit ?? creditNotice.trim()) : creditNotice.trim();
   /** 2 版目以降の非加算（献本等。発行部数の %）。既定 1。 */
   const [exemptLater, setExemptLater] = useState("1");
+  /**
+   * 併せて作る条件書（A-080）。出版なら出版等利用許諾条件書（作品追加の合意）、ゲームなら個別利用許諾条件書。
+   * 既存のひな形で、受注者帰属の行の利用許諾条件を載せた下書きを発注書とは別に起こす。選択式（空なら作らない）。
+   */
+  const [companion, setCompanion] = useState<"" | "pub_license_terms_v3" | "individual_license_terms_v4">("");
   /** 再許諾の可否（A-079）。既定は可（都度合意）：自社出版だけの案件もこれで足り、後から再許諾が出ても個別出版条件書で進められる。 */
   const [sublicense, setSublicense] = useState<"no" | "consent" | "covered">("consent");
   const [showTermsPreview, setShowTermsPreview] = useState(false);
@@ -327,7 +334,7 @@ export function ServiceLinesForm(
         ...parseRegions(licRegions).map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
         ...parseLanguages(licLanguages).map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
       ];
-      const r = await api.post<ServiceLinesCreated>("/conditions/service-set", {
+      const posted = await api.post<ServiceLinesCreated>("/conditions/service-set", {
         title: title.trim(), counterpartyId: int(partyId), agreementId: int(agreementId) ?? null,
         matterId: int(preset?.matterId ?? "") ?? null, workId: int(workId) ?? null,
         termStart: text(termStart) ?? null, termEnd: null,
@@ -387,6 +394,16 @@ export function ServiceLinesForm(
         payment: { mode: payMode, periodicFrom: text(periodFrom) ?? null, periodicTo: text(periodTo) ?? null,
                    everyMonths: int(every) ?? 1 }
       });
+      // 併せて作る条件書（A-080）。利用許諾条件を載せた下書きを先に起こす（発注書の特約が「その条件書に当たる」と書けるように）。
+      const r: ServiceLinesCreated = { ...posted, companionDocument: null };
+      if (companion && posted.licenseConditions.length) {
+        const licAgreement = licAgreementId === "" ? int(agreementId) : licAgreementId === "none" ? undefined : int(licAgreementId);
+        const d = await api.post<{ id: number }>("/documents", {
+          templateKey: companion, conditionIds: posted.licenseConditions.map((c) => c.id),
+          matterId: int(preset?.matterId ?? "") ?? null, agreementId: licAgreement ?? null
+        }).catch(() => null);
+        r.companionDocument = d ? { id: d.id, templateKey: companion } : null;
+      }
       onDone(r);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -676,6 +693,13 @@ export function ServiceLinesForm(
                     {agreementId && <option value="none">契約に載せない（個別出版条件書のみ）</option>}
                   </select>
                   <small className="faint">成果物を出版・再許諾するときの利用許諾は、業務委託の基本契約とは別に、出版基本契約の個別契約として扱えます。発注書の利用許諾条件の表と特約に「その個別契約」と出ます</small></label>
+                <label className="field"><span>条件書も併せて作る（任意）</span>
+                  <select value={companion} onChange={(e) => setCompanion(e.target.value as typeof companion)}>
+                    <option value="">作らない（発注書だけ）</option>
+                    <option value="pub_license_terms_v3">出版等利用許諾条件書（作品追加の合意）{inLieuRates.some((r) => r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
+                    <option value="individual_license_terms_v4">個別利用許諾条件書（ゲーム）{licMode !== "in_lieu" || inLieuRates.every((r) => !r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
+                  </select>
+                  <small className="faint">コアロジックを生む利用許諾条件が付く発注では、利用許諾条件を載せた条件書の下書きを発注書とは別に起こします（既存のひな形）。発注書の特約に「本発注書の利用許諾の条件はこの条件書に当たる」と入ります</small></label>
                 <div className="field wide stack" style={{ gap: 4 }}>
                   <span>クレジット表記（成果物を利用するときの表示）</span>
                   <div className="row" style={{ flexWrap: "wrap" }}>

@@ -909,6 +909,16 @@ export class DocumentContextRepository {
               c.credit_notice, c.credit_from_work,
               -- 再許諾の可否（A-079）。表の注記と特約に出る。
               c.sublicensable, c.sublicense_consent,
+              -- 併せて出す条件書（A-080）。この許諾条件を載せた条件書（下書き・決定済み）があれば、そのひな形。
+              (SELECT t.template_key
+                 FROM document_conditions dc
+                 JOIN documents d ON d.id = dc.document_id
+                 JOIN document_template_versions v ON v.id = d.template_version_id
+                 JOIN document_templates t ON t.id = v.template_id
+                WHERE dc.condition_id = c.id AND d.status IN ('draft', 'issued')
+                  AND t.template_key IN ('pub_license_terms_v3', 'pub_license_terms_v3_annex',
+                                         'individual_license_terms_v3', 'individual_license_terms_v4')
+                ORDER BY d.id DESC LIMIT 1) AS companion_template_key,
               -- 初版の算定の基礎（A-077）。特約の第 2 項と明細の注記が使う。
               c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm, c.confirm_within_days,
               COALESCE((SELECT wc.copyright_notice FROM work_credits wc
@@ -980,7 +990,9 @@ export class DocumentContextRepository {
           partRole: row.part_name ? partRoleOf(row.part_type, row.part_role) : null,
           /** 再許諾の可否（A-079）。 */
           sublicensable: row.sublicensable === null || row.sublicensable === undefined ? null : Boolean(row.sublicensable),
-          sublicenseConsent: str(row.sublicense_consent)
+          sublicenseConsent: str(row.sublicense_consent),
+          /** 併せて出す条件書のひな形（A-080）。無ければ空。 */
+          companionTemplateKey: str(row.companion_template_key)
         };
       });
   }

@@ -105,6 +105,22 @@ export interface InLieuTermsInput {
   creditNotice?: string | null;
   /** 再許諾の可否（A-079）。no=不可 / consent=可（都度の同意） / covered=可（本特約で包括同意）。空なら書かない。 */
   sublicense?: SublicenseMode | null;
+  /**
+   * 併せて締結する条件書（A-080）。pub_terms=出版等利用許諾条件書（作品追加の合意）／
+   * license_terms=個別利用許諾条件書（ゲーム）。あれば「本特約の利用許諾の条件はその条件書に当たる」と書く。
+   */
+  companionDocument?: CompanionDocument | null;
+}
+
+/** 発注書と併せて出す条件書。ひな形は既存のもの。 */
+export type CompanionDocument = "pub_terms" | "license_terms";
+export const COMPANION_LABEL: Record<CompanionDocument, string> = { pub_terms: "出版等利用許諾条件書", license_terms: "個別利用許諾条件書" };
+/** ひな形キー → 条件書の種類。条件書でなければ null。 */
+export function companionOfTemplate(templateKey: unknown): CompanionDocument | null {
+  const k = String(templateKey ?? "");
+  if (k === "pub_license_terms_v3" || k === "pub_license_terms_v3_annex") return "pub_terms";
+  if (k === "individual_license_terms_v3" || k === "individual_license_terms_v4") return "license_terms";
+  return null;
 }
 
 /** 再許諾の可否。細目（再許諾先・料率・範囲）は個別出版条件書で決める。 */
@@ -163,13 +179,19 @@ export function inLieuSpecialTerms(input: InLieuTermsInput): string {
     : input.sublicense === "covered"
     ? `成果物の第三者への再許諾（翻訳出版等）は、本特約により乙の同意を得たものとし、その条件（再許諾先・料率・範囲）は${detailDoc}で定める。`
     : "";
+  // 併せて締結する条件書（A-080）。発注書の利用許諾条件はその条件書に当たる、と対応を書く。
+  const companionClause = input.companionDocument
+    ? (input.companionDocument === "pub_terms"
+      ? `本特約および本発注書の利用許諾条件に定める利用許諾の条件は、本発注書と併せて締結する出版等利用許諾条件書（${master ?? "出版基本契約"}に基づく作品追加の合意）に定める条件に当たり、同条件書が締結されたときは、利用許諾に関する事項は同条件書による。`
+      : "本特約および本発注書の利用許諾条件に定める利用許諾の条件は、本発注書と併せて締結する個別利用許諾条件書に定める条件に当たり、同条件書が締結されたときは、利用許諾に関する事項は同条件書による。")
+    : "";
   const credit = String(input.creditNotice ?? "").trim();
   const clauses: string[][] = [
     [`本業務のうち${subject}（以下「本制作」）の対価は、乙が著作権を有する成果物の初版の出版に係る利用許諾料（以下「初版利用許諾料」）とし、別途の制作報酬は支払わない。本制作の対価については、本特約が業務委託基本契約約款に優先する。`],
     [`初版利用許諾料の算定方法は、${firstEditionFormulaText(fe)} とする。本発注書記載の金額（金${yen(provisional)}円。以下「仮計算額」）は、本体価格${fe.price.toLocaleString("ja-JP")}円・初版${fe.copies.toLocaleString("ja-JP")}部の見込みによる仮計算である${breakdown}。`],
     [`甲は、成果物を受領した日から${days}日以内に、本体価格および初版発行部数を乙に書面（電磁的方法を含む）で通知し、乙の確認を得て初版利用許諾料の額を確定する。確定額が仮計算額を下回るときは、仮計算額をもって確定額とする。`],
     [`甲は、成果物を受領した日から60日以内である${due}までに、確定額を支払う。同日までに確定しないときは、同日までに仮計算額を支払い、確定後の差額を確定の日から30日以内に追加して支払う。初版利用許諾料は、初版の発行の有無および時期にかかわらず支払うものとし、乙は返還を要しない。`],
-    [laterClause + sublicenseClause],
+    [laterClause + sublicenseClause + companionClause],
     ...(credit ? [[`甲は、成果物を利用するに際し、次のクレジット表記を行う。表記の変更は甲乙協議の上で定める。\n　${credit}`]] : []),
     ["甲の都合により、成果物の受領前に本制作の全部または一部を取り消し、または変更する場合、甲は乙と協議の上、履行済みの割合および乙が要した費用を考慮した相当額を支払う。"],
     ["甲および乙は、本特約の対価の定め方が、乙による著作権の留保と利用許諾料の収受を前提として、協議の上で合意されたものであることを確認する。"]

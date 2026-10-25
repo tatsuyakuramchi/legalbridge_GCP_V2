@@ -1055,7 +1055,9 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
       // クレジット表記は作品から引用（文脈は文書の日付時点の表記を解いて渡す）。
       creditNotice: "© 2026 山田太郎／イラスト：山田太郎", creditFromWork: true,
       // 構成要素（A-078）：原稿のパート（コアロジック）。再許諾は可（都度合意）。
-      partName: "原稿", partRole: "core", sublicensable: true, sublicenseConsent: "required" },
+      partName: "原稿", partRole: "core", sublicensable: true, sublicenseConsent: "required",
+      // 併せて出す条件書（A-080）：出版等利用許諾条件書の下書きがある。
+      companionTemplateKey: "pub_license_terms_v3" },
     { id: 14, usageType: "pub_digital", pricingModel: "revenue_rate", ratePct: 15, mgAmount: null, agAmount: null,
       currency: "JPY", termStart: "2026-10-23", termEnd: null, regions: [], languages: [],
       licenseFeeBasis: "in_lieu", conditionNo: "CL-14", exclusivity: "non_exclusive",
@@ -1093,6 +1095,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   const s = suggestionsFor("purchase_order", context) as Record<string, string>;
   assert.match(s.SPECIAL_TERMS, /原稿およびイラストの制作/);
   assert.match(s.SPECIAL_TERMS, /乙の事前の書面による同意を得て行い/);
+  assert.match(s.SPECIAL_TERMS, /併せて締結する出版等利用許諾条件書/);
   assert.match(s.SPECIAL_TERMS, /6\. 甲は、成果物を利用するに際し、次のクレジット表記を行う。[^\n]*\n　© 2026 山田太郎／イラスト：山田太郎/);
   assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書/);
   assert.match(s.SPECIAL_TERMS, /同契約の個別契約として取り扱い/);
