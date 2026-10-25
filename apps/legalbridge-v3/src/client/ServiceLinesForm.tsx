@@ -251,6 +251,17 @@ export function ServiceLinesForm(
     const mine = Math.max(0, provisional - others);
     update(first.key, { quantity: "1", unitPrice: String(mine) });
   };
+  /**
+   * 受注者帰属の行が 1 本なら、見込み価格・部数・料率を入れた時点で仮計算額をその行に入れる（A-082）。
+   * 行の金額は仮計算額と一致しないと登録できないので、押す手順を残す意味が無い。
+   * 行が複数なら配分を人が決めるので、ボタン（先頭の行に残りを入れる）のまま。
+   */
+  const soloKey = inLieu && contractorLines.length === 1 ? contractorLines[0]!.key : null;
+  const soloAmount = soloKey !== null ? amountOf(contractorLines[0]!) : null;
+  useEffect(() => {
+    if (soloKey === null || !feOk || provisional <= 0 || soloAmount === provisional) return;
+    update(soloKey, { quantity: "1", unitPrice: String(provisional) });
+  }, [soloKey, feOk, provisional, soloAmount]);
   const termsPreview = inLieu ? inLieuSpecialTerms({
     deliverables: contractorLines.map((l) => ({ name: l.name || title, amount: amountOf(l) })),
     firstEdition, provisionalAmount: rowsTotal || provisional,
@@ -639,8 +650,11 @@ export function ServiceLinesForm(
                 <div className="row" style={{ gap: 18, flexWrap: "wrap", alignItems: "center" }}>
                   <span>仮計算額 <b>¥{yen(provisional)}</b>{feOk && <span className="faint">　{firstEditionBasisText(firstEdition).replace("算定の基礎（見込み）：", "＝ ")}</span>}</span>
                   <span className={rowsTotal === provisional ? "faint" : "tag warn"}>受注者帰属の行の合計 ¥{yen(rowsTotal)}{rowsTotal !== provisional && feOk ? "（仮計算額と合っていません）" : ""}</span>
-                  {feOk && rowsTotal !== provisional && (
-                    <button type="button" className="btn btn-sm" onClick={fillProvisional}>仮計算額を{contractorLines.length > 1 ? "先頭の受注者帰属の行" : "行"}に入れる</button>
+                  {feOk && rowsTotal !== provisional && contractorLines.length > 1 && (
+                    <button type="button" className="btn btn-sm" onClick={fillProvisional}>仮計算額を先頭の受注者帰属の行に入れる</button>
+                  )}
+                  {feOk && contractorLines.length === 1 && (
+                    <span className="faint">行が 1 本なので、仮計算額がそのまま行の金額に入ります（数量 1 × 単価 ¥{yen(provisional)}）</span>
                   )}
                   {contractorLines.length > 1 && (
                     <span className="faint">内訳：{contractorLines.map((l) => `${l.name || title} ¥${yen(amountOf(l))}`).join("、")}</span>
