@@ -36,7 +36,8 @@ test("特約の文：算定方法・仮計算額・確定の手続き・60 日�
     laterRates: [{ usageType: "pub_print", ratePct: 10 }, { usageType: "pub_digital", ratePct: 15 }],
     laterExemptPct: 1,
     masterAgreement: { no: "AGR-2026-0088", title: "出版基本契約" },
-    creditNotice: "© 2026 山田太郎／イラスト：山田太郎"
+    creditNotice: "© 2026 山田太郎／イラスト：山田太郎",
+    sublicense: "consent", companionDocument: "pub_terms"
   });
   assert.match(text, /^特約（初版の利用許諾料を報酬として支払う旨の特則）/);
   assert.match(text, /1\. 本業務のうち原稿およびイラストの制作（以下「本制作」）の対価は、乙が著作権を有する成果物の初版の出版に係る利用許諾料/);
@@ -45,6 +46,14 @@ test("特約の文：算定方法・仮計算額・確定の手続き・60 日�
   assert.match(text, /4\. 甲は、成果物を受領した日から60日以内である2027年1月25日までに、確定額を支払う。同日までに確定しないときは、同日までに仮計算額を支払い、確定後の差額を確定の日から30日以内に追加して支払う。/);
   assert.match(text, /5\. 第2版以降の出版および電子版の配信に係る利用許諾料は、甲乙間の出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書の定めによる（紙版：本体価格 ×（発行部数 − 発行部数の1％にあたる献本等の非加算部数）× 10％、電子版：甲の受領額 × 15％）。/);
   assert.match(text, /本制作の委託（成果物の制作・納入・検収）については業務委託基本契約約款による/);
+  assert.match(text, /成果物の第三者への再許諾（翻訳出版等）は、乙の事前の書面による同意を得て行い、その条件（再許諾先・料率・範囲）は個別出版条件書で定める。/);
+  assert.match(inLieuSpecialTerms({ deliverables: [{ name: "原稿", amount: 1 }], firstEdition: { price: 1, copies: 1, ratePct: 100 }, laterRates: [], sublicense: "no" }),
+    /再許諾（翻訳出版等）は行わない。/);
+  assert.match(inLieuSpecialTerms({ deliverables: [{ name: "原稿", amount: 1 }], firstEdition: { price: 1, copies: 1, ratePct: 100 }, laterRates: [], sublicense: "covered" }),
+    /本特約により乙の同意を得たものとし/);
+  assert.match(text, /本発注書と併せて締結する出版等利用許諾条件書（出版基本契約（AGR-2026-0088 出版基本契約）に基づく作品追加の合意）に定める条件に当たり/);
+  assert.match(inLieuSpecialTerms({ deliverables: [{ name: "原稿", amount: 1 }], firstEdition: { price: 1, copies: 1, ratePct: 100 }, laterRates: [], companionDocument: "license_terms" }),
+    /併せて締結する個別利用許諾条件書に定める条件に当たり/);
   assert.match(text, /6\. 甲は、成果物を利用するに際し、次のクレジット表記を行う。[^\n]*\n　© 2026 山田太郎／イラスト：山田太郎/);
   assert.match(text, /8\. 甲および乙は/);
   assert.doesNotMatch(text, /保証利用許諾料|既払い|相殺/, "AG 相殺型の言い方は使わない");
@@ -57,6 +66,7 @@ test("特約の文：算定方法・仮計算額・確定の手続き・60 日�
   assert.match(plain, /甲乙間に出版基本契約があるときは、本特約に定める利用許諾の条件と個別出版条件書をその個別契約として取り扱う/);
   assert.match(plain, /7\. 甲および乙は/);
   assert.doesNotMatch(plain, /内訳|クレジット表記|非加算部数/);
+  assert.doesNotMatch(plain, /条件に当たり/, "条件書を選んでいなければ書かない");
 });
 
 test("60 日以内の判定：当日・60 日目は可、61 日目と受領前は不可、日付が無ければ判定しない", () => {

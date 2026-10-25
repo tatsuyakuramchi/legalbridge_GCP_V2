@@ -1,4 +1,5 @@
 import type { Transactable } from "../core/db.js";
+import { partRoleOf } from "../core/part-role.js";
 import { dateStr, int, str } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import type { RightsEnvelope, ScopeType } from "../core/model.js";
@@ -147,11 +148,13 @@ export class WorkRepository {
 
   async parts(workId: number) {
     const r = await this.database.query(
-      `SELECT p.id, p.part_no, p.name, p.part_type, p.royalty_bearing
+      `SELECT p.id, p.part_no, p.name, p.part_type, p.part_role, p.royalty_bearing
          FROM work_parts p WHERE p.work_id = $1 ORDER BY p.part_no`, [workId]);
     return r.rows.map((p) => ({
       id: Number(p.id), partNo: int(p.part_no) ?? 0, name: String(p.name),
-      partType: String(p.part_type), royaltyBearing: p.royalty_bearing !== false
+      partType: String(p.part_type), royaltyBearing: p.royalty_bearing !== false,
+      /** 役割（コア／サブ。A-078）。明示が無ければ種別から導く。 */
+      partRole: partRoleOf(p.part_type, p.part_role), partRoleExplicit: p.part_role === "core" || p.part_role === "sub"
     }));
   }
 }

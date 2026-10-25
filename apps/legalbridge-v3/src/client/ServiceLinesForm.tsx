@@ -36,6 +36,8 @@ interface Line {
   deliveryDue: string; contractForm: string; ownership: string; tax: string;
   /** 行の作品。"" は上と同じ、"none" は作品なし、ほかは作品 id。 */
   workId: string;
+  /** 行の構成要素（A-078）。"" は作品全体、"new:core"／"new:sub" はこの行の品目名で新しく作る、ほかはパート id。 */
+  partId: string;
   /** 一覧に無い作品を探している最中。 */
   pickingWork?: boolean;
 }
@@ -44,6 +46,8 @@ export interface ServiceLinesCreated {
   conditions: Array<{ usageType: string; id: number; conditionNo: string | null }>;
   licenseConditions: Array<{ id: number; conditionNo: string | null; existed: boolean }>;
   scheduled: number;
+  /** 併せて作った条件書の下書き（A-080）。選んでいなければ無い。 */
+  companionDocument?: { id: number; templateKey: string } | null;
 }
 
 const num = (v: string) => { const n = Number(String(v ?? "").replace(/[,，¥￥\s]/g, "")); return Number.isFinite(n) ? n : 0; };
@@ -52,7 +56,7 @@ const text = (v: string) => { const s = String(v ?? "").trim(); return s || unde
 const yen = (n: number) => n.toLocaleString("ja-JP");
 let keySeq = 1;
 const blank = (kind: Line["kind"] = "service"): Line =>
-  ({ key: keySeq++, kind, name: "", spec: "", quantity: "1", unit: "式", unitPrice: "", deliveryDue: "", contractForm: "", ownership: "", tax: "", workId: "" });
+  ({ key: keySeq++, kind, name: "", spec: "", quantity: "1", unit: "式", unitPrice: "", deliveryDue: "", contractForm: "", ownership: "", tax: "", workId: "", partId: "" });
 const amountOf = (l: Line) => Math.round(num(l.quantity || "1") * num(l.unitPrice));
 
 /** Excel／CSV の貼り付け。列は 品目・仕様・数量・単位・単価・納期 の順（足りなければ右が空）。 */
@@ -148,10 +152,29 @@ export function ServiceLinesForm(
       .catch(() => { if (alive) setWorkCredit(null); });
     return () => { alive = false; };
   }, [licenseWorkId]);
+  /** 作品ごとの構成要素（パート）。受注者帰属の行で選ぶ（A-078）。 */
+  const [partsByWork, setPartsByWork] = useState<Record<string, Array<{ id: number; name: string; partRole: string }>>>({});
+  const contractorWorkIds = [...new Set(lines.filter((l) => l.kind === "service" && (l.ownership || ownership) === "contractor")
+    .map((l) => (l.workId === "" ? workId : l.workId === "none" ? "" : l.workId)).filter(Boolean))].join(",");
+  useEffect(() => {
+    for (const id of contractorWorkIds.split(",").filter(Boolean)) {
+      if (partsByWork[id]) continue;
+      api.get<{ parts: Array<{ id: number; name: string; partRole: string }> }>(`/works/${id}`)
+        .then((r) => setPartsByWork((p) => ({ ...p, [id]: r.parts ?? [] })))
+        .catch(() => setPartsByWork((p) => ({ ...p, [id]: [] })));
+    }
+  }, [contractorWorkIds]);
   /** 文書に出るクレジット表記（引用なら作品の今の表記。無ければ手入力の文言）。 */
   const creditText = creditFromWork ? (workCredit ?? creditNotice.trim()) : creditNotice.trim();
   /** 2 版目以降の非加算（献本等。発行部数の %）。既定 1。 */
   const [exemptLater, setExemptLater] = useState("1");
+  /**
+   * 併せて作る条件書（A-080）。出版なら出版等利用許諾条件書（作品追加の合意）、ゲームなら個別利用許諾条件書。
+   * 既存のひな形で、受注者帰属の行の利用許諾条件を載せた下書きを発注書とは別に起こす。選択式（空なら作らない）。
+   */
+  const [companion, setCompanion] = useState<"" | "pub_license_terms_v3" | "individual_license_terms_v4">("");
+  /** 再許諾の可否（A-079）。既定は可（都度合意）：自社出版だけの案件もこれで足り、後から再許諾が出ても個別出版条件書で進められる。 */
+  const [sublicense, setSublicense] = useState<"no" | "consent" | "covered">("consent");
   const [showTermsPreview, setShowTermsPreview] = useState(false);
   const [licRate, setLicRate] = useState("");
   const [licFlat, setLicFlat] = useState("");
@@ -231,7 +254,8 @@ export function ServiceLinesForm(
       const a = agreements.find((x) => String(x.id) === id);
       return a ? { no: a.agreementNo, title: a.title } : null;
     })(),
-    creditNotice: creditText || null
+    creditNotice: creditText || null,
+    sublicense
   }) : "";
 
   const ready = Boolean(partyId) && title.trim() !== "" && serviceLines.length > 0
@@ -310,7 +334,7 @@ export function ServiceLinesForm(
         ...parseRegions(licRegions).map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
         ...parseLanguages(licLanguages).map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
       ];
-      const r = await api.post<ServiceLinesCreated>("/conditions/service-set", {
+      const posted = await api.post<ServiceLinesCreated>("/conditions/service-set", {
         title: title.trim(), counterpartyId: int(partyId), agreementId: int(agreementId) ?? null,
         matterId: int(preset?.matterId ?? "") ?? null, workId: int(workId) ?? null,
         termStart: text(termStart) ?? null, termEnd: null,
@@ -341,7 +365,10 @@ export function ServiceLinesForm(
           // 時間精算は準委任の委託料の行だけ。束の既定が時間精算でも、請負の行には付けない。
           ...(timeSettled && l.kind === "service" && !isQuasiMandate(l.contractForm || contractForm) ? { timeSettlement: false } : {}),
           // 「上と同じ」は送らない（サーバが上の作品を使う）。
-          ...(l.workId === "" ? {} : { workId: l.workId === "none" ? null : int(l.workId) ?? null })
+          ...(l.workId === "" ? {} : { workId: l.workId === "none" ? null : int(l.workId) ?? null }),
+          // 構成要素（A-078）。受注者帰属の行だけ。
+          ...((l.ownership || ownership) === "contractor" && l.partId.startsWith("new:") ? { newPartRole: l.partId.slice(4) }
+             : (l.ownership || ownership) === "contractor" && l.partId ? { workPartId: int(l.partId) ?? null } : {})
         })),
         license: hasContractor ? {
           mode: licMode, workId: int(workId) ?? null, usageType: licUsage,
@@ -349,6 +376,8 @@ export function ServiceLinesForm(
           ...(licAgreementId === "" ? {} : { agreementId: licAgreementId === "none" ? null : int(licAgreementId) ?? null }),
           // クレジット表記（A-076）。引用なら文書が作品の今の表記を差す（文言は控え）。
           creditFromWork, creditNotice: text(creditNotice) ?? null,
+          // 再許諾の可否（A-079）。
+          sublicense,
           ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
           flatAmount: licMode === "separate" && !licRate.trim() && licFlat.trim() ? Math.round(num(licFlat)) : null,
           termStart: text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
@@ -365,6 +394,16 @@ export function ServiceLinesForm(
         payment: { mode: payMode, periodicFrom: text(periodFrom) ?? null, periodicTo: text(periodTo) ?? null,
                    everyMonths: int(every) ?? 1 }
       });
+      // 併せて作る条件書（A-080）。利用許諾条件を載せた下書きを先に起こす（発注書の特約が「その条件書に当たる」と書けるように）。
+      const r: ServiceLinesCreated = { ...posted, companionDocument: null };
+      if (companion && posted.licenseConditions.length) {
+        const licAgreement = licAgreementId === "" ? int(agreementId) : licAgreementId === "none" ? undefined : int(licAgreementId);
+        const d = await api.post<{ id: number }>("/documents", {
+          templateKey: companion, conditionIds: posted.licenseConditions.map((c) => c.id),
+          matterId: int(preset?.matterId ?? "") ?? null, agreementId: licAgreement ?? null
+        }).catch(() => null);
+        r.companionDocument = d ? { id: d.id, templateKey: companion } : null;
+      }
       onDone(r);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -494,6 +533,17 @@ export function ServiceLinesForm(
                         <option value="?">ほかの作品を探す…</option>
                       </select>
                     )}
+                    {/* 構成要素（A-078）。受注者帰属の行は、作品のどの要素か（コアロジック／サブコンポーネント）を持つ。 */}
+                    {l.kind === "service" && (l.ownership || ownership) === "contractor" && rowWork(l) && (
+                      <select value={l.partId} aria-label={`${i + 1} 行目の構成要素`} style={{ marginTop: 4 }}
+                              onChange={(e) => update(l.key, { partId: e.target.value })}>
+                        <option value="">構成要素：作品全体</option>
+                        {(partsByWork[rowWork(l)] ?? []).map((p) => (
+                          <option key={p.id} value={String(p.id)}>{p.name}（{p.partRole === "core" ? "コアロジック" : "サブコンポーネント"}）</option>))}
+                        <option value="new:core">新しく作る：コアロジック（{l.name || "この行の品目名"}）</option>
+                        <option value="new:sub">新しく作る：サブコンポーネント（{l.name || "この行の品目名"}）</option>
+                      </select>
+                    )}
                   </td>
                   <td style={{ minWidth: 260 }}>
                     {/* 改行を落とさないよう input ではなく 1 行の textarea。長文は「広げる」で表の下の欄に出す。 */}
@@ -614,6 +664,13 @@ export function ServiceLinesForm(
                   <label className="field"><span>非加算：2 版目以降（発行部数の %）</span>
                     <input inputMode="decimal" value={exemptLater} placeholder="1" onChange={(e) => setExemptLater(e.target.value)} />
                     <small className="faint">献本等。空なら非加算なし。初版の非加算とは別の欄</small></label>
+                  <label className="field"><span>再許諾（第三者への翻訳出版等）</span>
+                    <select value={sublicense} onChange={(e) => setSublicense(e.target.value as "no" | "consent" | "covered")}>
+                      <option value="consent">可（都度合意）：乙の事前の書面同意を得て行う（既定）</option>
+                      <option value="covered">可（包括同意）：本特約で同意済み。翻訳出版が前提の案件だけ</option>
+                      <option value="no">不可：自社出版のみ</option>
+                    </select>
+                    <small className="faint">可否と同意の要否はここで決め、再許諾先・料率・範囲は個別出版条件書で。再許諾の料率を先に決めるなら上の料率に「翻訳版再許諾」を足す</small></label>
                 </div>
                 {sixtyDayOver.length > 0 && (
                   <div className="alert">支払期日 {inLieuPayOn} が納期から 60 日を超えている行があります（{sixtyDayOver.map((l) => `${lines.indexOf(l) + 1} 行目 ${l.deliveryDue}`).join("・")}）。取適法・フリーランス法の支払期日に合わせてください</div>
@@ -636,6 +693,13 @@ export function ServiceLinesForm(
                     {agreementId && <option value="none">契約に載せない（個別出版条件書のみ）</option>}
                   </select>
                   <small className="faint">成果物を出版・再許諾するときの利用許諾は、業務委託の基本契約とは別に、出版基本契約の個別契約として扱えます。発注書の利用許諾条件の表と特約に「その個別契約」と出ます</small></label>
+                <label className="field"><span>条件書も併せて作る（任意）</span>
+                  <select value={companion} onChange={(e) => setCompanion(e.target.value as typeof companion)}>
+                    <option value="">作らない（発注書だけ）</option>
+                    <option value="pub_license_terms_v3">出版等利用許諾条件書（作品追加の合意）{inLieuRates.some((r) => r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
+                    <option value="individual_license_terms_v4">個別利用許諾条件書（ゲーム）{licMode !== "in_lieu" || inLieuRates.every((r) => !r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
+                  </select>
+                  <small className="faint">コアロジックを生む利用許諾条件が付く発注では、利用許諾条件を載せた条件書の下書きを発注書とは別に起こします（既存のひな形）。発注書の特約に「本発注書の利用許諾の条件はこの条件書に当たる」と入ります</small></label>
                 <div className="field wide stack" style={{ gap: 4 }}>
                   <span>クレジット表記（成果物を利用するときの表示）</span>
                   <div className="row" style={{ flexWrap: "wrap" }}>

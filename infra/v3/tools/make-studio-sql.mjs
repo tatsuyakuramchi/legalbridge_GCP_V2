@@ -307,6 +307,10 @@ SELECT * FROM (
          ((SELECT count(*) FROM information_schema.columns
             WHERE table_schema='v3' AND table_name='documents' AND column_name='counterparty_doc_no'))::text
   UNION ALL
+  SELECT 78, '作品の構成要素の役割（A-078。列 1・CHECK 1 で 2 であること）',
+         ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='work_parts' AND column_name='part_role')
+        + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.work_parts'::regclass AND conname='work_parts_part_role_chk'))::text
+  UNION ALL
   SELECT 77, '初版の利用許諾料を委託報酬として払う発注（A-077。列 4・CHECK 1 で 5 であること）',
          ((SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
             AND column_name IN ('first_edition_price', 'first_edition_copies', 'first_edition_rate_ppm', 'confirm_within_days'))

@@ -1,4 +1,4 @@
-import { firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
+import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
 import { useEffect, useState } from "react";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
@@ -70,8 +70,10 @@ const PRICING_LABEL: Record<string, string> = {
 };
 
 export function ConditionEdit(
-  { detail, onDone, onCancel }:
-  { detail: ConditionDetail; onDone: (result: EditResult) => void; onCancel: () => void }
+  { detail, onDone, onCancel, onOpenCondition }:
+  { detail: ConditionDetail; onDone: (result: EditResult) => void; onCancel: () => void;
+    /** 関連する条件（同じ相手先・作品の委託料／利用許諾）を開く。手順ナビの「開く」が使う。 */
+    onOpenCondition?: (id: number) => void }
 ) {
   const [v, setV] = useState<Values>({
     name: detail.name,
@@ -324,7 +326,7 @@ export function ConditionEdit(
   }
 
   const field = (name: string, label: string, extra?: { type?: string; hint?: string; wide?: boolean; placeholder?: string }) => (
-    <label className={extra?.wide ? "field wide" : "field"} key={name}>
+    <label className={extra?.wide ? "field wide" : "field"} key={name} id={`f-${name}`}>
       <span>{label}</span>
       {extra?.type === "regions" || extra?.type === "languages"
         ? <RightsScopePicker kind={extra.type === "regions" ? "region" : "language"}
@@ -384,6 +386,11 @@ export function ConditionEdit(
             : <>実績がまだ無いので、保存すると<b>その場で書き換えます</b>。
                 実績が付いたあとは、同じ操作が改訂（新版の作成）になります。</>}
         </div>
+
+        {/* 初版の利用許諾料を報酬として払う形に直すときの手順ナビ（委託料・取得側の利用許諾のとき）。 */}
+        {detail.direction === "in" && (detail.kind === "service" || detail.kind === "license") && (
+          <InLieuGuide detail={detail} v={v} set={set} onOpenCondition={onOpenCondition} />
+        )}
 
         {/* 並びは登録のフォームと同じ。 */}
         <div className="form-grid">
@@ -558,7 +565,7 @@ export function ConditionEdit(
             </label>
           )}
           {detail.kind === "license" && detail.direction === "in" && (
-            <label className="field">
+            <label className="field" id="f-licenseFeeBasis">
               <span>許諾料の扱い</span>
               <select value={v.licenseFeeBasis}
                       onChange={(e) => set("licenseFeeBasis", e.target.value)}>
@@ -571,7 +578,7 @@ export function ConditionEdit(
             </label>
           )}
           {detail.kind === "license" && detail.direction === "in" && (
-            <label className="field">
+            <label className="field" id="f-creditNotice">
               <span>クレジット表記</span>
               <select value={v.creditFromWork} onChange={(e) => set("creditFromWork", e.target.value)}>
                 <option value="1">作品のクレジット表記を引用（文書を作る日時点の表記）</option>
@@ -699,7 +706,7 @@ export function ConditionEdit(
           {field("orderNo", "発注番号（外部）", {
             placeholder: "ARC-PO-2025-0123",
             hint: "V1・V2 や紙で出した発注書の番号。検収書の発注番号に出る。V3 で発注書を出したらそちらが優先される" })}
-          <label className="field">
+          <label className="field" id="f-deliverableOwnership">
             <span>成果物の帰属先</span>
             <select value={v.deliverableOwnership} onChange={(e) => set("deliverableOwnership", e.target.value)}>
               <option value="">—</option>
@@ -775,6 +782,118 @@ export function ConditionEdit(
           {!changedCount && <span className="faint">変更された項目がありません</span>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 手順ナビ：初版の利用許諾料を報酬として払う形（A-077）に、既存の条件を直すとき。
+ *
+ * 編集画面は欄が多く、「どの条件のどの欄を、どの順に」が分からなかった。委託料の行と
+ * 利用許諾条件（紙・電子）で手順が違うので、開いている条件の種類に合わせて並べ、
+ * いまの入力値から済み／未を出す。「入れる」は既定値を欄に入れるだけ（保存は下のボタン）。
+ * 関連する条件（同じ相手先・作品の委託料／利用許諾）は一覧して開ける。
+ */
+function InLieuGuide(
+  { detail, v, set, onOpenCondition }:
+  { detail: ConditionDetail; v: Record<string, string>; set: (name: string, value: string) => void;
+    onOpenCondition?: (id: number) => void }
+) {
+  const [open, setOpen] = useState<boolean>(
+    detail.kind === "license" ? detail.licenseFeeBasis === "in_lieu" : detail.rewardLabel === IN_LIEU_REWARD_LABEL);
+  type Sibling = { id: number; conditionNo: string | null; name: string; kind: string; status: string; work: { id: number } | null };
+  const [siblings, setSiblings] = useState<Sibling[] | null>(null);
+  useEffect(() => {
+    if (!open || !detail.counterparty) return;
+    let alive = true;
+    api.get<{ conditions: Sibling[] }>(`/conditions?counterpartyId=${detail.counterparty.id}&direction=in`)
+      .then((r) => { if (alive) setSiblings(r.conditions.filter((c) => c.id !== detail.id && ["active", "draft", "scheduled"].includes(c.status)
+        && (!detail.work || !c.work || c.work.id === detail.work.id))); })
+      .catch(() => { if (alive) setSiblings([]); });
+    return () => { alive = false; };
+  }, [open, detail.id, detail.counterparty?.id, detail.work?.id]);
+  const jump = (id: string) => {
+    const el = document.getElementById(`f-${id}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    (el?.querySelector("input, select, textarea") as HTMLElement | null)?.focus();
+  };
+  const num = (s: string) => Number(String(s ?? "").replace(/[,，]/g, "")) || 0;
+  const amount = v.pricingModel === "unit_rate" ? num(v.unitAmount) * (num(v.quantity) || 1) : num(v.flatAmount);
+  const fe = { price: num(v.firstEditionPrice), copies: Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
+               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)) };
+  const provisional = firstEditionFee(fe);
+  const basisLine = fe.price > 0 && fe.copies > 0 && fe.ratePct > 0 ? firstEditionBasisText(fe) : null;
+  const Step = ({ done, title, hint, acts }: { done: boolean; title: string; hint?: string; acts?: React.ReactNode }) => (
+    <li className={done ? "done" : ""}>
+      <span className="mark">{done ? "✓" : ""}</span>
+      <span className="body">{title}{acts && <span className="acts">{acts}</span>}{hint && <small>{hint}</small>}</span>
+    </li>
+  );
+  const to = (id: string) => <button type="button" className="linky" onClick={() => jump(id)}>欄へ</button>;
+  const list = (kind: "service" | "license", empty: string) => {
+    const rows = (siblings ?? []).filter((c) => c.kind === kind);
+    if (siblings === null) return <small>関連する条件を引いています…</small>;
+    if (!rows.length) return <small>{empty}</small>;
+    return <span>{rows.map((c) => (
+      <span key={c.id} className="sibling">
+        <span className="code">{c.conditionNo ?? `#${c.id}`}</span>{c.name}
+        {onOpenCondition && <button type="button" className="btn btn-sm" onClick={() => onOpenCondition(c.id)}>開く</button>}
+      </span>))}</span>;
+  };
+  const isService = detail.kind === "service";
+  return (
+    <div className="guide">
+      <div className="guide-hd">
+        <b>初版の利用許諾料を報酬として払う形に直す{isService ? "（委託料の行）" : "（利用許諾条件）"}</b>
+        <span className="faint">原稿・イラストの対価を、別途の制作報酬ではなく初版の利用許諾料にする運用（A-077）</span>
+        <button type="button" className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setOpen((o) => !o)}>
+          {open ? "手順を閉じる" : "手順を見る"}
+        </button>
+      </div>
+      {open && (isService ? (
+        <ol>
+          <Step done={v.deliverableOwnership === "contractor"} title="成果物の帰属先を「受注者（利用許諾型）」にする"
+                acts={<>{v.deliverableOwnership !== "contractor" && <button type="button" className="btn btn-sm" onClick={() => set("deliverableOwnership", "contractor")}>受注者にする</button>}{to("deliverableOwnership")}</>} />
+          <Step done={amount > 0} title="金額を仮計算額（の配分）にする"
+                hint="仮計算額＝見込みの本体価格 ×（初版部数 − 非加算）× 料率。原稿とイラストの 2 行なら配分する。0 円にはしない（買いたたき・一方的決定の外観）"
+                acts={to(v.pricingModel === "unit_rate" ? "unitAmount" : "flatAmount")} />
+          <Step done={v.rewardLabel === IN_LIEU_REWARD_LABEL} title={`報酬名を「${IN_LIEU_REWARD_LABEL}」にする`}
+                hint="発注書の金額欄に「初版利用許諾料（仮計算。確定は特約第3項）」と出る"
+                acts={<>{v.rewardLabel !== IN_LIEU_REWARD_LABEL && <button type="button" className="btn btn-sm" onClick={() => set("rewardLabel", IN_LIEU_REWARD_LABEL)}>入れる</button>}{to("rewardLabel")}</>} />
+          <Step done={Boolean(v.deliveryDue)} title="納期を入れる" hint="受領から 60 日以内の支払期日の起点になる" acts={to("deliveryDue")} />
+          <Step done={String(v.spec ?? "").includes("算定の基礎")} title="仕様の末尾に「算定の基礎（見込み）」の 1 行を書く"
+                hint="例：算定の基礎（見込み）：本体価格 1,000円（税抜）× 初版 3,000部 × 10%　（発注書の明細に出る。確定時の比較の起点）"
+                acts={to("spec")} />
+          <Step done={false} title="保存したら「予定」に 1 回立てる：締め＝納期、支払日＝受領から 60 日以内、金額＝この行の額"
+                hint="発注書の支払期日と明細の支払日はこの予定から出る" />
+          <Step done={(siblings ?? []).some((c) => c.kind === "license")} title="利用許諾条件（紙・電子）を直す"
+                hint="同じ相手先・作品の利用許諾条件。無ければ「条件の登録」で 種類＝許諾料・向き IN・作品を選んで紙と電子を作る"
+                acts={list("license", "利用許諾条件が見つかりません")} />
+          <Step done={false} title="最後に、決定済みの発注書から訂正版を起こす" hint="新しいひな形で描画され、特約が既定で入る（元の特約欄に文があればそちらが残るので、空にすると自動文に戻る）" />
+        </ol>
+      ) : (
+        <ol>
+          <Step done={v.licenseFeeBasis === "in_lieu"} title="許諾料の扱いを「初版の利用許諾料を委託報酬として支払済み」にする"
+                acts={<>{v.licenseFeeBasis !== "in_lieu" && <button type="button" className="btn btn-sm" onClick={() => set("licenseFeeBasis", "in_lieu")}>入れる</button>}{to("licenseFeeBasis")}</>} />
+          <Step done={num(v.ratePct) > 0} title="料率を「2 版目以降・電子」の率にする（紙 10%・電子 15% など）" hint="初版の料率は次の欄。ここは計算書が使う率" acts={to("ratePct")} />
+          <Step done={fe.price > 0 && fe.copies > 0 && fe.ratePct > 0 && num(v.confirmWithinDays) > 0}
+                title="初版の算定の基礎を入れる：本体価格・初版部数・初版の料率・確定の期限（紙の 1 本だけ）"
+                hint={basisLine ? `${basisLine} ＝ 仮計算額 ¥${provisional.toLocaleString("ja-JP")}（委託料の行の合計と同じ額にする）` : "電子の条件には入れない（紙の条件が持つ）。許諾料の扱いを「初版…支払済み」にすると欄が出る"}
+                acts={v.licenseFeeBasis === "in_lieu" ? to("firstEditionPrice") : undefined} />
+          <Step done={String(v.royaltyExemptLaterPct ?? "").trim() !== ""} title="非加算：初版は 0（既定）、2 版目以降は発行部数の 1% など"
+                hint="初版の非加算を入れるかは法務の確認待ち。入れると算定方法に「− ○部」と明記される"
+                acts={v.licenseFeeBasis === "in_lieu" ? to("royaltyExemptLaterPct") : undefined} />
+          <Step done={!num(v.agAmount) && !num(v.mgAmount)} title="MG・AG は空にする"
+                hint="初版分は委託料の行で払うので、保証や前払いは持たない（持つと計算書で相殺・下限になってしまう）"
+                acts={<>{(num(v.agAmount) || num(v.mgAmount)) ? <button type="button" className="btn btn-sm" onClick={() => { set("agAmount", ""); set("mgAmount", ""); }}>空にする</button> : null}{to("agAmount")}</>} />
+          <Step done={v.creditFromWork === "1" || String(v.creditNotice ?? "").trim() !== ""} title="クレジット表記（作品から引用、または文言）" acts={to("creditNotice")} />
+          <Step done={false} title="契約は出版基本契約に載せる" hint="付け替えは条件の画面の「契約」の欄で（この編集画面にはない）。業務委託の基本契約とは別に、出版基本契約の個別契約として扱う" />
+          <Step done={(siblings ?? []).some((c) => c.kind === "service")} title="対応する委託料の行（原稿・イラスト）を直す"
+                hint="同じ相手先・作品の委託料。帰属先＝受注者、金額＝仮計算額の配分、報酬名＝初版利用許諾料、納期、予定 1 回"
+                acts={list("service", "委託料の行が見つかりません")} />
+          <Step done={false} title="最後に、決定済みの発注書から訂正版を起こす" hint="新しいひな形で描画され、特約が既定で入る" />
+        </ol>
+      ))}
     </div>
   );
 }

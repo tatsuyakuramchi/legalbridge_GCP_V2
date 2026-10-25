@@ -25,6 +25,8 @@ export interface WorkInput {
 export interface WorkPartInput {
   name: string;
   partType?: string;
+  /** 役割（コア／サブ。A-078）。空なら種別から導く。 */
+  partRole?: "core" | "sub" | null;
   royaltyBearing?: boolean;
   remarks?: string | null;
   /** 指定しなければ末尾に採番する。 */
@@ -47,6 +49,7 @@ export interface WorkPatch {
 export interface WorkPartPatch {
   name?: string;
   partType?: string;
+  partRole?: "core" | "sub" | null;
   royaltyBearing?: boolean;
   remarks?: string | null;
   partNo?: number;
@@ -58,6 +61,7 @@ const WORK_COLUMNS: Record<keyof WorkPatch, string> = {
   copyrightNotice: "copyright_notice", thirdPartyRights: "third_party_rights"
 };
 const PART_COLUMNS: Record<keyof WorkPartPatch, string> = {
+  partRole: "part_role",
   name: "name", partType: "part_type", royaltyBearing: "royalty_bearing",
   remarks: "remarks", partNo: "part_no"
 };
@@ -459,10 +463,10 @@ export class WorkWriteService {
         }
 
         const inserted = await client.query(
-          `INSERT INTO work_parts (work_id, part_no, name, part_type, royalty_bearing, remarks)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          `INSERT INTO work_parts (work_id, part_no, name, part_type, royalty_bearing, remarks, part_role)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
           [workId, partNo, name, input.partType ?? "unspecified",
-           input.royaltyBearing !== false, input.remarks ?? null]);
+           input.royaltyBearing !== false, input.remarks ?? null, input.partRole ?? null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
 
         await recordAudit(client, {

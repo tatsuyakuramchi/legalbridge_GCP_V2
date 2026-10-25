@@ -400,6 +400,7 @@ export function ConditionsWorkspace(
             <>
               {editing && (
                 <ConditionEdit detail={detail}
+                  onOpenCondition={(id) => { setEditing(false); setResult(null); setSelected(id); }}
                   onCancel={() => setEditing(false)}
                   onDone={async (r) => {
                     setEditing(false);

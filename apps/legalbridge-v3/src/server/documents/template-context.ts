@@ -26,7 +26,8 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
-import { inLieuShortNote, inLieuSpecialTerms } from "../conditions/royalty-in-lieu.js";
+import { SUBLICENSE_LABEL, companionOfTemplate, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
+import { PART_ROLE_LABEL, type PartRole } from "../core/part-role.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
 import { formatDateEn } from "./rendering.js";
@@ -1087,9 +1088,16 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
          t.agAmount ? `AG ${moneyOf(t.agAmount, currency, lang)}` : ""].filter(Boolean).join(en ? " / " : "／") || "—"
       : "—";
     // 初版は明細の初版利用許諾料で支払済み（A-077）。紙の行（初版の算定の基礎を持つ 1 本）にだけ注記を出す。
-    const note = basis === "in_lieu" && !en && (t.firstEditionCopies || t.usageType === "pub_print")
+    const baseNote = basis === "in_lieu" && !en && (t.firstEditionCopies || t.usageType === "pub_print")
       ? inLieuShortNote(t.royaltyExemptFirstCopies ?? null, t.royaltyExemptLaterPct ?? null)
       : basis === "in_lieu" && !en && t.usageType === "pub_digital" ? "配信開始から適用" : "";
+    // 再許諾の可否（A-079）。決めてある条件だけ出す（空なら書かない）。
+    const subMode = sublicenseModeOf(t.sublicensable as boolean | null, t.sublicenseConsent as string | null);
+    const subText = subMode
+      ? (en ? `Sublicensing: ${subMode === "no" ? "not permitted" : subMode === "covered" ? "permitted (consent given)" : "permitted with prior consent"}`
+            : `再許諾：${SUBLICENSE_LABEL[subMode]}`)
+      : "";
+    const note = [baseNote, subText].filter(Boolean).join(en ? " / " : "／");
     const term = t.termStart || t.termEnd
       ? (en
         ? `${t.termStart ? compactDate(t.termStart) : ""} – ${t.termEnd ? compactDate(t.termEnd) : "(no end date)"}`
@@ -1100,11 +1108,15 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
     const scope = en
       ? `${regions.length ? regions.join(", ") : "Worldwide"} / ${languages.length ? languages.join(", ") : "All languages"}`
       : `${regions.length ? regions.join("・") : "全世界"} ／ ${languages.length ? languages.join("・") : "全言語"}`;
-    const usage = en
+    // 構成要素（パート。A-078）があれば「原稿（コアロジック）｜出版（紙）」。作品全体なら利用形態だけ。
+    const partPrefix = t.partName
+      ? (en ? `${t.partName} (${t.partRole === "core" ? "core" : "sub-component"}) | ` : `${t.partName}（${PART_ROLE_LABEL[(t.partRole as PartRole) ?? "sub"]}）｜`)
+      : "";
+    const usage = partPrefix + (en
       ? [USAGE_LABEL_EN[String(t.usageType)] ?? conditionUsageLabel(t.usageType) ?? String(t.name ?? ""),
          t.exclusivity === "exclusive" ? " (exclusive)" : ""].join("")
       : [conditionUsageLabel(t.usageType) || (t.name ?? ""),
-         t.exclusivity === "exclusive" ? "（独占）" : ""].join("");
+         t.exclusivity === "exclusive" ? "（独占）" : ""].join(""));
     // 載っている契約。出版・再許諾の利用許諾は出版基本契約の個別契約として扱う（業務委託の基本契約とは別）。
     const agreementRef = [String(t.agreementNo ?? "").trim(), String(t.agreementTitle ?? "").trim()].filter(Boolean).join(" ");
     const contract = agreementRef
@@ -1159,13 +1171,19 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
     provisionalAmount: deliverables.reduce((sum, d) => sum + d.amount, 0) || null,
     confirmWithinDays: head.confirmWithinDays ?? null,
     payOn: payOn ? String(payOn) : null,
+    // 2 版目以降の式。パートごとに条件があっても、同じ利用形態・同じ率は 1 つにまとめる。
     laterRates: terms.filter((t) => t.ratePct !== null && t.ratePct !== undefined)
-      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) })),
+      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) }))
+      .filter((r, i, all) => all.findIndex((x) => x.usageType === r.usageType && x.ratePct === r.ratePct) === i),
     laterExemptPct: head.royaltyExemptLaterPct ?? null,
     masterAgreement: head.agreementNo || head.agreementTitle
       ? { no: head.agreementNo ? String(head.agreementNo) : null, title: head.agreementTitle ? String(head.agreementTitle) : null }
       : null,
-    creditNotice: terms.map((t) => String(t.creditNotice ?? "").trim()).find(Boolean) ?? null
+    creditNotice: terms.map((t) => String(t.creditNotice ?? "").trim()).find(Boolean) ?? null,
+    // 再許諾の可否（A-079）。
+    sublicense: sublicenseModeOf(head.sublicensable as boolean | null, head.sublicenseConsent as string | null),
+    // 併せて締結する条件書（A-080）。どれかの許諾条件を載せた条件書があればそれ。
+    companionDocument: terms.map((t) => companionOfTemplate(t.companionTemplateKey)).find(Boolean) ?? null
   });
 }
 
