@@ -12,7 +12,9 @@ import { RightsScopePicker } from "./RightsScopePicker.js";
  */
 
 export type FieldType = "text" | "number" | "money" | "date" | "select" | "search"
-  | "textarea" | "checkbox" | "regions" | "languages";
+  | "textarea" | "checkbox" | "regions" | "languages"
+  /** 区切り（見出し）。欄ではない。label が見出し、hint が説明。visibleWhen で出し入れできる。 */
+  | "section";
 
 export interface Field {
   name: string;
@@ -88,7 +90,15 @@ export function CreateForm(props: CreateFormProps) {
       </div>
       <div className="panel-bd">
         <div className="form-grid">
-          {visible.map((f) => (
+          {visible.map((f) => f.type === "section" ? (
+            // 区切り。どこに何を入れるかが分かるよう、欄のまとまりごとに見出しと線を入れる。
+            <div key={f.name} className="form-section">
+              <b>{typeof f.label === "function" ? f.label(values) : f.label}</b>
+              {(typeof f.hint === "function" ? f.hint(values) : f.hint) && (
+                <small>{typeof f.hint === "function" ? f.hint(values) : f.hint}</small>
+              )}
+            </div>
+          ) : (
             <label key={f.name} className={f.type === "textarea" ? "field wide" : "field"}>
               <span>
                 {typeof f.label === "function" ? f.label(values) : f.label}

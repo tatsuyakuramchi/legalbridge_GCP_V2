@@ -387,6 +387,7 @@ export function ConditionEdit(
 
         {/* 並びは登録のフォームと同じ。 */}
         <div className="form-grid">
+          <div className="form-section"><b>① 何の条件か</b><small>条件名・種類・相手先・作品。向きは変えられません</small></div>
           {field("name", "条件名")}
           {fixed("向き", detail.direction === "in" ? "IN 取得（費用側）" : "OUT 許諾（収入側）",
             "向きは変えられません。逆向きなら新しい条件を作ってください")}
@@ -418,6 +419,7 @@ export function ConditionEdit(
                           placeholder="作品名で探す"
                           onChange={(id) => set("workId", id)} />
           </label>
+          <div className="form-section"><b>② 期間・納期</b><small>契約期間（開始・終了）と納期は別。終了日があると自動更新の欄が出ます</small></div>
           {field("termStart", "開始", { type: "date" })}
           {field("termEnd", "終了", { type: "date", hint: "空欄は期限なし" })}
           {/* 納期は契約期間の終了日とは別。許諾の終了日は許諾がいつまで有効かで、
@@ -445,6 +447,7 @@ export function ConditionEdit(
             {field("renewStoppedOn", "更新を止めた日",
               { type: "date", hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" })}
           </>)}
+          <div className="form-section"><b>③ 金額の決め方</b><small>通貨・計算方式と、その方式に要る金額。金額は最小通貨単位（JPY は円）</small></div>
           <label className="field">
             <span>通貨</span>
             <select value={v.currency} onChange={(e) => set("currency", e.target.value)}>
@@ -501,6 +504,16 @@ export function ConditionEdit(
                 ? `消化済み ${money(detail.balance.agConsumed, detail.currency)}／残 ${money(detail.balance.agRemaining, detail.currency)}`
                 : "累積で充当する。消化しきるまで実額が出ない" })}
           </>)}
+          <label className="field">
+            <span>税区分</span>
+            <select value={v.taxCategory} onChange={(e) => set("taxCategory", e.target.value)}>
+              <option value="taxable">課税</option>
+              <option value="reduced">軽減</option>
+              <option value="exempt">非課税</option>
+              <option value="included">税込（海外・内税）</option>
+            </select>
+          </label>
+          <div className="form-section"><b>⑥ 利用許諾の条件</b><small>利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます</small></div>
           {detail.kind === "license" && (
             <label className="field">
               <span>利用形態</span>
@@ -602,51 +615,12 @@ export function ConditionEdit(
               </select>
             </label>
           )}
-          <label className="field">
-            <span>税区分</span>
-            <select value={v.taxCategory} onChange={(e) => set("taxCategory", e.target.value)}>
-              <option value="taxable">課税</option>
-              <option value="reduced">軽減</option>
-              <option value="exempt">非課税</option>
-              <option value="included">税込（海外・内税）</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>契約形式</span>
-            <input list="contract-forms" value={v.contractForm}
-                   placeholder="請負 / 委任 など"
-                   onChange={(e) => set("contractForm", e.target.value)} />
-            <datalist id="contract-forms">
-              {CONTRACT_FORMS.map((f) => <option key={f} value={f} />)}
-              {CONTRACT_FORMS_EN.map((f) => <option key={f} value={f} />)}
-            </datalist>
-            <small className="faint">
-              発注書・検収書の「契約種別」に出る。一覧に無い形は直接書ける（海外版は英語で）
-            </small>
-          </label>
-          {/* 準委任の時間精算（A-073）。委託料だけ。契約形式が準委任のときに出す（他の形式でも付けてあれば出す）。 */}
-          {(inPlace ? v.kind : detail.kind) === "service" && (isQuasiMandate(v.contractForm) || v.timeSettlement === "1") && (
-            <label className="field">
-              <span>精算の仕方（準委任）</span>
-              <select value={v.timeSettlement} onChange={(e) => set("timeSettlement", e.target.value)}>
-                <option value="">固定額・成果物で精算（検収書）</option>
-                <option value="1">時間精算：月間包括枠と実績時間で精算（役務提供完了通知書）</option>
-              </select>
-              <small className="faint">
-                {v.timeSettlement === "1"
-                  ? "枠までは定額、超過は超過単価 × 時間。決済文書は検収書ではなく役務提供完了通知書になる"
-                  : "成果物や固定額で精算するなら従来どおり検収書"}
-              </small>
-            </label>
-          )}
-          {(inPlace ? v.kind : detail.kind) === "service" && v.timeSettlement === "1" && (<>
-            {field("hoursIncluded", "月間包括枠（時間）", { type: "number", placeholder: "64",
-              hint: "この時間までは定額（上の定額の欄が月額）。コアタイム" })}
-            {field("overageUnitAmount", "超過単価（1 時間あたり・最小通貨単位）", { type: "number", placeholder: "3125",
-              hint: "枠を超えた時間 × 超過単価 を追加精算" })}
-            {field("shortfallUnitAmount", "控除単価（1 時間あたり・最小通貨単位）", { type: "number",
-              hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" })}
+          {detail.kind === "license" && (<>
+            {field("regions", "地域（許諾範囲）", { type: "regions", wide: true,
+              hint: "何も選ばなければ無制限（全世界）。媒体・チャネルは下の「権利の範囲」で" })}
+            {field("languages", "言語（許諾範囲）", { type: "languages", wide: true })}
           </>)}
+          <div className="form-section"><b>④ 支払</b><small>支払条件（文）と、何回払うかの決まり。予定明細はここから回ります</small></div>
           {detail.usageType === "pub_digital" && (
             <div className="field wide">
               <span>電子書籍の集計のしかた</span>
@@ -718,6 +692,7 @@ export function ConditionEdit(
             || v.usageType === "sublicense" || v.usageType === "oem") && field("reportDueDays", "報告期限（締めから何日）", {
             type: "number", placeholder: "30",
             hint: "売上報告・月次報告が締めから何日で来るはずか。過ぎると支払文書で督促の対象になる。空なら 30 日" })}
+          <div className="form-section"><b>⑤ 成果物・発注書に出るもの</b><small>仕様・契約形式・成果物の帰属先・報酬名。発注書・検収書の明細はここから出ます</small></div>
           {field("spec", "仕様・成果物", { type: "textarea",
             placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
             hint: "発注書・検収書の明細の「仕様・成果物」にそのまま出る" })}
@@ -734,13 +709,45 @@ export function ConditionEdit(
             <small className="faint">発注書の明細に出る</small>
           </label>
           {detail.kind === "service" && field("rewardLabel", "報酬名（上書き）", {
-            placeholder: "保証利用許諾料",
-            hint: "発注書・検収書の金額欄の小さな行に出る。制作対価を利用許諾料で払う発注なら「保証利用許諾料」。空なら計算方式と帰属先から導く（A-075）" })}
-          {detail.kind === "license" && (<>
-            {field("regions", "地域（許諾範囲）", { type: "regions", wide: true,
-              hint: "何も選ばなければ無制限（全世界）。媒体・チャネルは下の「権利の範囲」で" })}
-            {field("languages", "言語（許諾範囲）", { type: "languages", wide: true })}
+            placeholder: "初版利用許諾料",
+            hint: "発注書・検収書の金額欄の小さな行に出る。初版の利用許諾料を報酬として払う発注なら「初版利用許諾料」。空なら計算方式と帰属先から導く（A-077）" })}
+          <label className="field">
+            <span>契約形式</span>
+            <input list="contract-forms" value={v.contractForm}
+                   placeholder="請負 / 委任 など"
+                   onChange={(e) => set("contractForm", e.target.value)} />
+            <datalist id="contract-forms">
+              {CONTRACT_FORMS.map((f) => <option key={f} value={f} />)}
+              {CONTRACT_FORMS_EN.map((f) => <option key={f} value={f} />)}
+            </datalist>
+            <small className="faint">
+              発注書・検収書の「契約種別」に出る。一覧に無い形は直接書ける（海外版は英語で）
+            </small>
+          </label>
+          {/* 準委任の時間精算（A-073）。委託料だけ。契約形式が準委任のときに出す（他の形式でも付けてあれば出す）。 */}
+          {(inPlace ? v.kind : detail.kind) === "service" && (isQuasiMandate(v.contractForm) || v.timeSettlement === "1") && (
+            <label className="field">
+              <span>精算の仕方（準委任）</span>
+              <select value={v.timeSettlement} onChange={(e) => set("timeSettlement", e.target.value)}>
+                <option value="">固定額・成果物で精算（検収書）</option>
+                <option value="1">時間精算：月間包括枠と実績時間で精算（役務提供完了通知書）</option>
+              </select>
+              <small className="faint">
+                {v.timeSettlement === "1"
+                  ? "枠までは定額、超過は超過単価 × 時間。決済文書は検収書ではなく役務提供完了通知書になる"
+                  : "成果物や固定額で精算するなら従来どおり検収書"}
+              </small>
+            </label>
+          )}
+          {(inPlace ? v.kind : detail.kind) === "service" && v.timeSettlement === "1" && (<>
+            {field("hoursIncluded", "月間包括枠（時間）", { type: "number", placeholder: "64",
+              hint: "この時間までは定額（上の定額の欄が月額）。コアタイム" })}
+            {field("overageUnitAmount", "超過単価（1 時間あたり・最小通貨単位）", { type: "number", placeholder: "3125",
+              hint: "枠を超えた時間 × 超過単価 を追加精算" })}
+            {field("shortfallUnitAmount", "控除単価（1 時間あたり・最小通貨単位）", { type: "number",
+              hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" })}
           </>)}
+          <div className="form-section"><b>⑦ 備考</b><small>台帳の控え。発注書・検収書には出ません（明細に出すものは ⑤ の仕様へ）</small></div>
           {field("notes", "備考", { type: "textarea", wide: true })}
 
           <label className="field wide">
