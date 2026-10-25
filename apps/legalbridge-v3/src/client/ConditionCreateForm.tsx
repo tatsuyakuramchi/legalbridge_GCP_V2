@@ -160,6 +160,7 @@ export function ConditionCreateForm(
       initial={{ direction: "in", kind: "service", pricingModel: "fixed",
                  currency: "JPY", taxCategory: "taxable", ...preset }}
       fields={[
+        { name: "_s1", type: "section", label: "① 何の条件か", hint: "条件名・向き・種類・相手先・作品・契約。種類で下に出る欄が変わります" },
         // 作品に紐づく許諾（IN）は名前を打たせない。作品名｜取引モデル で付く（下の利用形態）。
         { name: "name", label: "条件名", required: true, placeholder: "◯◯の制作委託 / △△の配信許諾",
           visibleWhen: (v) => !(v.kind === "license" && v.direction === "in" && String(v.workId ?? "").trim() !== "") },
@@ -192,6 +193,7 @@ export function ConditionCreateForm(
             : candidates.length === 0 ? (noAgreement ? "契約なしで登録します。工程と契約チェックに「契約なし」と出ます"
                                                      : "この相手には締結済みの契約がありません")
             : "計算書の契約名・契約番号はここから出る" },
+        { name: "_s2", type: "section", label: "② 期間・納期", hint: "契約期間（開始・終了）と納期は別。終了日を入れると自動更新の欄が出ます" },
         { name: "termStart", label: "開始", type: "date" },
         { name: "termEnd", label: "終了", type: "date" },
         // 納期は契約期間の終了日とは別。業務委託では同じ日になることが多いが、
@@ -209,6 +211,7 @@ export function ConditionCreateForm(
         { name: "renewStoppedOn", label: "更新を止めた日", type: "date",
           visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
           hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" },
+        { name: "_s3", type: "section", label: "③ 金額の決め方", hint: "通貨・計算方式と、その方式に要る金額。金額は最小通貨単位（JPY は円）" },
         { name: "currency", label: "通貨", type: "select", required: true,
           options: [{ value: "JPY", label: "JPY 円" }, { value: "USD", label: "USD" }, { value: "EUR", label: "EUR" }] },
 
@@ -234,19 +237,21 @@ export function ConditionCreateForm(
           visibleWhen: (v) => v.pricingModel === "unit_rate",
           hint: (v) => minorUnitHint(v.currency) },
 
+        // 編集画面と同じ欄（契約形式・個数・報酬名・準委任の時間精算）。作成と編集で入れられるものを揃える。
+        { name: "quantity", label: "個数", type: "number", placeholder: "1",
+          visibleWhen: (v) => v.pricingModel === "unit_rate",
+          hint: "単価×個数が定額の既定値になる。小数も入る（0.5 人月など）" },
         { name: "mgAmount", label: "MG 最低保証", type: "money",
           visibleWhen: (v) => v.direction === "out",
           hint: (v) => `毎期独立の下限。消化しないので残高を持たない。${minorUnitHint(v.currency)}` },
         { name: "agAmount", label: "AG 前払保証", type: "money",
           visibleWhen: (v) => v.direction === "out",
           hint: (v) => `累積で充当する。消化しきるまで実額が出ない。${minorUnitHint(v.currency)}` },
-        { name: "exclusivity", label: "独占性", type: "select",
-          visibleWhen: (v) => v.kind === "license",
-          options: [{ value: "exclusive", label: "独占" }, { value: "non_exclusive", label: "非独占" }] },
         { name: "taxCategory", label: "税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
                     { value: "exempt", label: "非課税" },
                     { value: "included", label: "税込（海外・内税）" }] },
+        { name: "_s4", type: "section", label: "④ 支払", hint: "支払条件（文）と、何回払うかの決まり。予定明細はここから回ります" },
         { name: "paymentTerms", label: "支払条件", placeholder: "検収後30日 など",
           suggestions: [...PAYMENT_TERMS_PRESETS_JA, ...PAYMENT_TERMS_PRESETS_EN],
           hint: "予定明細の支払期日はここから出す。海外の相手なら英語の定型文（Net 30 など）を選ぶ" },
@@ -265,6 +270,7 @@ export function ConditionCreateForm(
           placeholder: String(SETTLEMENT_GRACE_DAYS_DEFAULT),
           visibleWhen: (v) => v.settlementMode === "open" || v.settlementMode === "term_bound",
           hint: `終了日の後いつまで回を立ててよいか。空なら ${SETTLEMENT_GRACE_DAYS_DEFAULT} 日` },
+        { name: "_s5", type: "section", label: "⑤ 成果物・発注書に出るもの", hint: "仕様・契約形式・成果物の帰属先・報酬名。発注書・検収書の明細はここから出ます" },
         // 発注書・検収書の明細はここから出る。備考を仕様代わりにしない。
         { name: "spec", label: "仕様・成果物", type: "textarea",
           placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
@@ -276,10 +282,6 @@ export function ConditionCreateForm(
         { name: "deliverableOwnership", label: "成果物の帰属先", type: "select",
           options: [{ value: "orderer", label: "発注者（譲渡型）" }, { value: "contractor", label: "受注者（利用許諾型）" }],
           hint: "発注書の明細に出る。業績連動のとき 受注者=利用許諾料／発注者=インセンティブ報酬 として表記される" },
-        // 編集画面と同じ欄（契約形式・個数・報酬名・準委任の時間精算）。作成と編集で入れられるものを揃える。
-        { name: "quantity", label: "個数", type: "number", placeholder: "1",
-          visibleWhen: (v) => v.pricingModel === "unit_rate",
-          hint: "単価×個数が定額の既定値になる。小数も入る（0.5 人月など）" },
         { name: "contractForm", label: "契約形式", type: "select",
           visibleWhen: (v) => v.kind === "service",
           options: [{ value: "", label: "（未定）" },
@@ -302,9 +304,8 @@ export function ConditionCreateForm(
         { name: "shortfallUnitAmount", label: "控除単価（最小通貨単位／時間）", type: "money", placeholder: "空なら減額しない",
           visibleWhen: (v) => v.kind === "service" && Boolean(v.timeSettlement),
           hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" },
-        { name: "regions", label: "地域（許諾範囲）", type: "regions",
-          visibleWhen: (v) => v.kind === "license",
-          hint: "何も選ばなければ、その次元は無制限（全世界）として扱われます" },
+        { name: "_s6", type: "section", label: "⑥ 利用許諾の条件", hint: "利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます",
+          visibleWhen: (v) => v.kind === "license" },
         // 利用形態（A-027）。条件書の行・計算書の製品名はこれで決まる。
         // 作品1点ぶんをまとめて作るなら「許諾セット」「出版セット」のほうが早い。
         { name: "usageType", label: "利用形態（取引モデル）", type: "select",
@@ -342,15 +343,6 @@ export function ConditionCreateForm(
                     { value: "free", label: "無償" },
                     { value: "in_lieu", label: "初版の利用許諾料を委託報酬として支払済み（2 版目以降がこの料率）" }],
           hint: "発注書の利用許諾条件の「料率・額」に出る。含む／無償なら料率は空でよい。「初版…支払済み」は初版分を委託料の行で払い、計算書の対象は 2 版目以降（A-077）" },
-        // クレジット表記（A-076）。編集画面と同じ欄。
-        { name: "creditFromWork", label: "クレジット表記", type: "select",
-          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
-          options: [{ value: "1", label: "作品のクレジット表記を引用（文書を作る日時点の表記）" }, { value: "", label: "この条件の文言を使う" }],
-          hint: "発注書の利用許諾条件の下と特約に出る" },
-        { name: "creditNotice", label: "クレジット表記の文言", type: "textarea",
-          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
-          placeholder: "© 2026 著作者名／イラスト：◯◯",
-          hint: (v) => v.creditFromWork ? "引用するときは、作品に表記が無いときの控えとして使う" : "そのまま文書に出る" },
         // 初版の算定の基礎（A-077）。編集画面と同じ欄。
         { name: "royaltyExemptFirstCopies", label: "初版の非加算部数（献本・見本等）", type: "number", placeholder: "0",
           visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
@@ -374,8 +366,24 @@ export function ConditionCreateForm(
         { name: "confirmWithinDays", label: "確定の期限（受領後 ○ 日）", type: "number", placeholder: "45",
           visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.licenseFeeBasis === "in_lieu",
           hint: "本体価格・初版部数を書面で通知し乙の確認を得る期限。60 日以内" },
+        // クレジット表記（A-076）。編集画面と同じ欄。
+        { name: "creditFromWork", label: "クレジット表記", type: "select",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
+          options: [{ value: "1", label: "作品のクレジット表記を引用（文書を作る日時点の表記）" }, { value: "", label: "この条件の文言を使う" }],
+          hint: "発注書の利用許諾条件の下と特約に出る" },
+        { name: "creditNotice", label: "クレジット表記の文言", type: "textarea",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
+          placeholder: "© 2026 著作者名／イラスト：◯◯",
+          hint: (v) => v.creditFromWork ? "引用するときは、作品に表記が無いときの控えとして使う" : "そのまま文書に出る" },
+        { name: "exclusivity", label: "独占性", type: "select",
+          visibleWhen: (v) => v.kind === "license",
+          options: [{ value: "exclusive", label: "独占" }, { value: "non_exclusive", label: "非独占" }] },
+        { name: "regions", label: "地域（許諾範囲）", type: "regions",
+          visibleWhen: (v) => v.kind === "license",
+          hint: "何も選ばなければ、その次元は無制限（全世界）として扱われます" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
           visibleWhen: (v) => v.kind === "license" },
+        { name: "_s7", type: "section", label: "⑦ 備考", hint: "台帳の控え。発注書・検収書には出ません（明細に出すものは ⑤ の仕様へ）" },
         { name: "notes", label: "備考", type: "textarea" }
       ]}
       toPayload={(v) => {
