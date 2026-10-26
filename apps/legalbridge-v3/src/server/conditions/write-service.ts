@@ -215,7 +215,9 @@ export interface ServiceLicenseInput {
   termEnd?: string | null;
   scopes?: ConditionScope[];
   /** in_lieu：2 版目以降・電子の料率（紙 10%・電子 15% など）。利用形態ごとに許諾条件が 1 本立つ。 */
-  rates?: Array<{ usageType: ConditionUsageType; ratePct: number }> | null;
+  rates?: Array<{ usageType: ConditionUsageType; ratePct: number; exclusivity?: "exclusive" | "non_exclusive" | null }> | null;
+  /** 独占／非独占（A-098）。作る利用許諾条件すべての既定。in_lieu の料率の行で利用形態ごとに上書きできる。 */
+  exclusivity?: "exclusive" | "non_exclusive" | null;
   /**
    * in_lieu：初版の算定の基礎（見込み）。本体価格（円）・初版部数・料率（%）・非加算部数（既定 0）。
    * 仮計算額 ＝ 本体価格 ×（部数 − 非加算）× 率 が、受注者帰属の委託料の行の合計と同じでなければならない
@@ -1011,7 +1013,8 @@ export class ConditionWriteService {
               sublicenseConsent: license.sublicense === "covered" ? "covered" : license.sublicense === "consent" ? "required" : null,
               currency: input.currency ?? "JPY",
               termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
-              exclusivity: "non_exclusive",
+              // 独占／非独占（A-098）。料率の行の指定 → 共通の設定 → 既定は非独占。
+              exclusivity: rate.exclusivity ?? license.exclusivity ?? "non_exclusive",
               scopes: license.scopes?.length ? license.scopes : undefined,
               notes: `業務委託（${title}）の成果物の利用許諾。初版の利用許諾料（仮計算 金${provisional.toLocaleString("ja-JP")}円）は委託料として支払い、受領後${license.confirmWithinDays ?? 45}日以内に確定。支払期日 ${license.payOn}。計算書の対象は 2 版目以降`
             };
@@ -1032,7 +1035,7 @@ export class ConditionWriteService {
           ratePpm: ratePct != null ? Math.round(ratePct * 10000) : null,
           flatAmount: flat, currency: input.currency ?? "JPY",
           termStart: license.termStart ?? input.termStart ?? null, termEnd: license.termEnd ?? null,
-          exclusivity: "non_exclusive",
+          exclusivity: license.exclusivity ?? "non_exclusive",
           scopes: license.scopes?.length ? license.scopes : undefined,
           notes: `業務委託（${title}）の成果物の利用許諾。許諾料の扱い：${
             basis === "separate" ? "別途" : basis === "included" ? "委託報酬に含む" : "無償"}`

@@ -2314,8 +2314,10 @@ export function createRoutes(database: Transactable) {
       // 制作対価を利用許諾料で払う発注（A-075）。要る値の組み合わせはサービス側で確かめる。
       rates: z.array(z.object({
         usageType: z.enum(CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),
-        ratePct: z.coerce.number().min(0).max(100)
+        ratePct: z.coerce.number().min(0).max(100),
+        exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
       })).max(10).nullable().optional(),
+      exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
       // 初版の算定の基礎（見込み。A-077）。仮計算額が行の合計と合うかはサービス側で確かめる。
       firstEdition: z.object({
         price: z.coerce.number().int().min(0), copies: z.coerce.number().int().min(0),
