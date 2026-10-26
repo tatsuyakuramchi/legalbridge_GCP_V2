@@ -303,7 +303,7 @@ export class WorkbenchPlanService {
       : [];
     if (mains.length) {
       const existing = ctx.round ? roundMain : byKeys(mains.map((m) => m.key));
-      const label = p === "service" ? "発注書" : p === "pub_in" ? "出版許諾契約書" : isLicenseTerms(p) ? "条件書" : mains[0].label;
+      const label = p === "service" ? "発注書" : isLicenseTerms(p) ? "条件書" : mains[0].label;
       out.push({
         id: "main", role: "main", templateKey: mains[0].key, options: mains, label,
         why: ctx.round
@@ -433,7 +433,7 @@ export class WorkbenchPlanService {
   }
 }
 
-const isLicenseTerms = (p: WorkbenchPattern) => p === "game_in" || p === "game_out" || p === "pub_out";
+const isLicenseTerms = (p: WorkbenchPattern) => p === "game_in" || p === "game_out" || p === "pub_in" || p === "pub_out";
 
 function uniqWorks(conditions: ConditionSummary[]): Array<{ id: number; title: string }> {
   const seen = new Map<number, string>();
