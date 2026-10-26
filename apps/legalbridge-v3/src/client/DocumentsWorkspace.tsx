@@ -1747,6 +1747,7 @@ export function DocumentsWorkspace(
           {!isLicenseTerms && (spec?.lines ?? []).map((l) => (
             <LineItemsEditor key={l.name} name={l.name} seed={l.rows}
               rows={lines[l.name] ?? null} intl={templateKey === "intl_purchase_order"}
+              covers={isPurchaseOrder && feeCovers.length > 0 ? { selected: effectiveCovers, toggle: toggleCover } : null}
               onChange={(rows) => setLines((prev) => {
                 const next = { ...prev };
                 if (rows === null) delete next[l.name]; else next[l.name] = rows;
