@@ -670,9 +670,9 @@ export function ConditionEdit(
               <select value={v.priceBasis} onChange={(e) => set("priceBasis", e.target.value)}>
                 <option value="">本体価格（定価）</option>
                 <option value="supply">卸価格（再許諾先への供給価格）</option>
-                <option value="receipts">発注者の受領額</option>
+                <option value="receipts">発注者の受領額（再許諾料の入金 × 料率）</option>
               </select>
-              <small className="faint">再許諾先（KADOKAWA 等）へ卸す形は卸価格。相手の名前は「対象の許諾先」から式に出る。2 版目以降の式にも使う（A-091）</small>
+              <small className="faint">再許諾先（KADOKAWA 等）へ卸す形は卸価格。再許諾料の入金に料率を掛けるだけなら受領額。相手の名前は「対象の許諾先」から式に出る。2 版目以降の式にも使う（A-091）</small>
             </label>
             {field("firstEditionPrice", v.priceBasis === "supply" ? "初版の卸価格（税抜・最小通貨単位）" : "初版の本体価格（税抜・最小通貨単位）", { type: "number",
               placeholder: "1000", hint: "発注時は見込み、確定したら確定値に直す。特約第2項と明細の算定の基礎に出る（A-077）" })}
@@ -878,8 +878,10 @@ function InLieuServiceBlock(
     field: (name: string, label: string, extra?: { type?: string; hint?: string; wide?: boolean; placeholder?: string }) => ReactElement }
 ) {
   const num = (x: string) => Number(String(x ?? "").replace(/[^0-9.-]/g, "")) || 0;
-  const fe = { price: num(v.firstEditionPrice), copies: Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
-               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)),
+  const receipts = v.priceBasis === "receipts";
+  // 受領額基準（再許諾料の入金 × 料率）は部数を持たない（部数 1・非加算 0）。A-092
+  const fe = { price: num(v.firstEditionPrice), copies: receipts ? 1 : Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
+               exemptCopies: receipts ? 0 : Math.floor(num(v.royaltyExemptFirstCopies)),
                priceBasis: (v.priceBasis === "supply" || v.priceBasis === "receipts" ? v.priceBasis : null) as "supply" | "receipts" | null };
   const ok = fe.price > 0 && fe.copies > 0 && fe.ratePct > 0 && fe.exemptCopies >= 0 && fe.exemptCopies < fe.copies;
   const provisional = ok ? firstEditionFee(fe) : 0;
@@ -918,14 +920,14 @@ function InLieuServiceBlock(
           <select value={v.priceBasis} onChange={(e) => set("priceBasis", e.target.value)}>
             <option value="">本体価格（定価）</option>
             <option value="supply">卸価格（再許諾先への供給価格）</option>
-            <option value="receipts">発注者の受領額</option>
+            <option value="receipts">発注者の受領額（再許諾料の入金 × 料率）</option>
           </select>
-          <small className="faint">KADOKAWA 等へ卸す形は卸価格。相手の名前は紙の利用許諾条件の「対象の許諾先」から式に出る（A-091）</small>
+          <small className="faint">KADOKAWA 等へ卸す形は卸価格。再許諾料の入金に料率を掛けるだけなら受領額（部数は使わない）。相手の名前は紙の利用許諾条件の「対象の許諾先」から式に出る（A-091）</small>
         </label>
-        {field("firstEditionPrice", v.priceBasis === "supply" ? "見込み卸価格（税抜・円）" : v.priceBasis === "receipts" ? "見込み受領額（円）" : "見込み本体価格（税抜・円）", { type: "number", placeholder: "1000" })}
-        {field("firstEditionCopies", "初版発行部数", { type: "number", placeholder: "3000" })}
+        {field("firstEditionPrice", v.priceBasis === "supply" ? "見込み卸価格（税抜・円）" : receipts ? "見込みの再許諾料の受領額（税抜・円）" : "見込み本体価格（税抜・円）", { type: "number", placeholder: receipts ? "10000000" : "1000" })}
+        {!receipts && field("firstEditionCopies", "初版発行部数", { type: "number", placeholder: "3000" })}
         {field("firstEditionRatePct", "初版の料率（%）", { type: "number", placeholder: "10" })}
-        {field("royaltyExemptFirstCopies", "初版の非加算部数", { type: "number", placeholder: "0", hint: "既定 0。入れると算定方法に「− ○部」と明記" })}
+        {!receipts && field("royaltyExemptFirstCopies", "初版の非加算部数", { type: "number", placeholder: "0", hint: "既定 0。入れると算定方法に「− ○部」と明記" })}
         {field("confirmWithinDays", "確定の期限（受領後 ○ 日）", { type: "number", placeholder: "45", hint: "60 日以内" })}
         <div className="field">
           <span>仮計算額</span>
@@ -978,8 +980,10 @@ function InLieuGuide(
   const num = (s: string) => Number(String(s ?? "").replace(/[,，]/g, "")) || 0;
   // 金額は画面に出ている計算方式で読む。料率（売上連動）のままなら定額の欄が無いので 0。
   const amount = pm === "unit_rate" ? num(v.unitAmount) * (num(v.quantity) || 1) : pm === "revenue_rate" ? 0 : num(v.flatAmount);
-  const fe = { price: num(v.firstEditionPrice), copies: Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
-               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)),
+  const receipts = v.priceBasis === "receipts";
+  // 受領額基準（再許諾料の入金 × 料率）は部数を持たない（部数 1・非加算 0）。A-092
+  const fe = { price: num(v.firstEditionPrice), copies: receipts ? 1 : Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
+               exemptCopies: receipts ? 0 : Math.floor(num(v.royaltyExemptFirstCopies)),
                priceBasis: (v.priceBasis === "supply" || v.priceBasis === "receipts" ? v.priceBasis : null) as "supply" | "receipts" | null };
   const provisional = firstEditionFee(fe);
   const schemeDone = v.rewardLabel === IN_LIEU_REWARD_LABEL && pm === "fixed";

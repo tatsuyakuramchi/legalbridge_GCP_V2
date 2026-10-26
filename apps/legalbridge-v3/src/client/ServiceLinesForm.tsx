@@ -235,9 +235,12 @@ export function ServiceLinesForm(
   // 表面・明細・特約で同じ額が出るので、受注者帰属の行の合計を仮計算額に合わせる（0 円の行にはしない）。
   const inLieu = hasContractor && licMode === "in_lieu";
   const rowsTotal = useMemo(() => contractorLines.reduce((a, l) => a + amountOf(l), 0), [contractorLines]);
-  const firstEdition = { price: num(fePrice), copies: Math.floor(num(feCopies)), ratePct: num(feRate),
-                         exemptCopies: feExempt.trim() === "" ? 0 : Math.floor(num(feExempt)),
-                         priceBasis: fePriceBasis || null };
+  // 受領額基準（再許諾料の入金 × 料率）は部数を持たない。部数 1・非加算 0 として扱う。A-092
+  const firstEdition = fePriceBasis === "receipts"
+    ? { price: num(fePrice), copies: 1, ratePct: num(feRate), exemptCopies: 0, priceBasis: "receipts" as const }
+    : { price: num(fePrice), copies: Math.floor(num(feCopies)), ratePct: num(feRate),
+        exemptCopies: feExempt.trim() === "" ? 0 : Math.floor(num(feExempt)),
+        priceBasis: fePriceBasis || null };
   const provisional = firstEditionFee(firstEdition);
   const feOk = firstEdition.price > 0 && firstEdition.copies > 0 && firstEdition.ratePct > 0 && firstEdition.ratePct <= 100
     && (firstEdition.exemptCopies ?? 0) >= 0 && (firstEdition.exemptCopies ?? 0) < firstEdition.copies;
@@ -651,18 +654,18 @@ export function ServiceLinesForm(
                     <select value={fePriceBasis} onChange={(e) => setFePriceBasis(e.target.value as "" | "supply" | "receipts")}>
                       <option value="">本体価格（定価）</option>
                       <option value="supply">卸価格（再許諾先への供給価格）</option>
-                      <option value="receipts">発注者の受領額</option>
+                      <option value="receipts">発注者の受領額（再許諾料の入金 × 料率）</option>
                     </select>
-                    <small className="faint">KADOKAWA 等へ卸す形は卸価格（ゲームの自社製造・他社販売と同じ構造）。2 版目以降の式にも使う</small></label>
-                  <label className="field"><span>{fePriceBasis === "supply" ? "見込み卸価格（税抜・円）" : fePriceBasis === "receipts" ? "見込み受領額（円）" : "見込み本体価格（税抜・円）"}</span>
-                    <input inputMode="numeric" value={fePrice} placeholder="1000" onChange={(e) => setFePrice(e.target.value)} /></label>
-                  <label className="field"><span>見込み初版部数</span>
-                    <input inputMode="numeric" value={feCopies} placeholder="3000" onChange={(e) => setFeCopies(e.target.value)} /></label>
+                    <small className="faint">KADOKAWA 等へ卸す形は卸価格（ゲームの自社製造・他社販売と同じ構造）。再許諾料の入金に料率を掛けるだけなら受領額（部数は使わない）。2 版目以降の式にも使う</small></label>
+                  <label className="field"><span>{fePriceBasis === "supply" ? "見込み卸価格（税抜・円）" : fePriceBasis === "receipts" ? "見込みの再許諾料の受領額（税抜・円）" : "見込み本体価格（税抜・円）"}</span>
+                    <input inputMode="numeric" value={fePrice} placeholder={fePriceBasis === "receipts" ? "10000000" : "1000"} onChange={(e) => setFePrice(e.target.value)} /></label>
+                  {fePriceBasis !== "receipts" && <label className="field"><span>見込み初版部数</span>
+                    <input inputMode="numeric" value={feCopies} placeholder="3000" onChange={(e) => setFeCopies(e.target.value)} /></label>}
                   <label className="field"><span>初版の料率（%）</span>
                     <input inputMode="decimal" value={feRate} placeholder="10" onChange={(e) => setFeRate(e.target.value)} /></label>
-                  <label className="field"><span>初版の非加算部数（献本・見本等）</span>
+                  {fePriceBasis !== "receipts" && <label className="field"><span>初版の非加算部数（献本・見本等）</span>
                     <input inputMode="numeric" value={feExempt} placeholder="0" onChange={(e) => setFeExempt(e.target.value)} />
-                    <small className="faint">既定 0（全部数）。入れると算定方法に「− ○部」が明記される。方針が決まるまで 0 のまま</small></label>
+                    <small className="faint">既定 0（全部数）。入れると算定方法に「− ○部」が明記される。方針が決まるまで 0 のまま</small></label>}
                 </div>
                 <div className="row" style={{ gap: 18, flexWrap: "wrap", alignItems: "center" }}>
                   <span>仮計算額 <b>¥{yen(provisional)}</b>{feOk && <span className="faint">　{firstEditionBasisText(firstEdition).replace("算定の基礎（見込み）：", "＝ ")}</span>}</span>

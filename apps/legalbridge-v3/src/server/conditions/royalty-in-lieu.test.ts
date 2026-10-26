@@ -120,3 +120,17 @@ test("A-091：価格の基準。卸価格（再許諾先への供給価格）な
   assert.match(text, /3\. 発注者は、成果物を受領した日から45日以内に、卸価格および初版発行部数を受注者に書面/);
   assert.match(text, /紙版：卸価格（KADOKAWA への供給価格・税抜） × 発行部数 × 8％/);
 });
+
+test("A-092：受領額基準（再許諾料の入金 × 料率）は部数を掛けない。式・算定の基礎・特約もそう書く", async () => {
+  const { firstEditionFee, firstEditionFormulaText, firstEditionBasisText, inLieuSpecialTerms } = await import("./royalty-in-lieu.js");
+  const fe = { price: 10_000_000, copies: 1, ratePct: 8, exemptCopies: 0, priceBasis: "receipts" as const, partyName: "KADOKAWA" };
+  assert.equal(firstEditionFee(fe), 800_000);
+  assert.equal(firstEditionFee({ ...fe, copies: 3000 }), 800_000, "部数があっても掛けない");
+  assert.equal(firstEditionFormulaText(fe), "発注者がKADOKAWAから受領する再許諾料（税抜）× 8％");
+  assert.equal(firstEditionBasisText(fe), "算定の基礎（見込み）：受領する再許諾料 10,000,000円（税抜）× 8%");
+  const text = inLieuSpecialTerms({ deliverables: [{ name: "原稿", amount: 800_000 }], firstEdition: fe,
+                                    laterRates: [{ usageType: "pub_print", ratePct: 8, priceBasis: "receipts" }] });
+  assert.match(text, /2\. 初版利用許諾料の算定方法は、発注者がKADOKAWAから受領する再許諾料（税抜）× 8％ とする。本発注書記載の金額（金800,000円。以下「仮計算額」）は、受領する再許諾料10,000,000円の見込みによる仮計算である。/);
+  assert.match(text, /3\. 発注者は、成果物を受領した日から45日以内に、受領する再許諾料の額を受注者に書面/);
+  assert.match(text, /紙版：発注者の受領額 × 8％/);
+});
