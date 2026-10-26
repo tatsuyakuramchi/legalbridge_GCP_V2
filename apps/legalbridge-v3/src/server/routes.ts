@@ -1052,12 +1052,17 @@ export function createRoutes(database: Transactable) {
   router.get("/conditions/fee-covers", asyncRoute(async (req, res) => {
     const ids = String(req.query.ids ?? "").split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
     if (!ids.length) { res.json({ licenses: [] }); return; }
+    // 発注書に載る利用許諾条件は、選んだ委託料の行と同じ相手先・作品のもの（文書の文脈と同じ引き方）。
+    // 利用許諾条件そのものを選んでいなくても出るように、選んだ条件の 相手先 × 作品 で引く。
     const r = await database.query(
-      `SELECT c.id, c.condition_no, c.name, c.usage_type,
+      `WITH picked AS (SELECT id, counterparty_id, work_id FROM conditions WHERE id = ANY($1::bigint[]))
+       SELECT c.id, c.condition_no, c.name, c.usage_type,
               COALESCE((SELECT array_agg(f.service_condition_id ORDER BY f.service_condition_id)
                           FROM condition_fee_covers f WHERE f.license_condition_id = c.id), '{}') AS covers
          FROM conditions c
-        WHERE c.id = ANY($1::bigint[]) AND c.kind = 'license' AND c.license_fee_basis = 'in_lieu'
+        WHERE c.kind = 'license' AND c.license_fee_basis = 'in_lieu' AND c.status IN ('active', 'draft', 'scheduled')
+          AND (c.id IN (SELECT id FROM picked)
+               OR EXISTS (SELECT 1 FROM picked p WHERE p.counterparty_id = c.counterparty_id AND p.work_id = c.work_id))
         ORDER BY c.id`, [ids]);
     res.json({ licenses: r.rows.map((row: any) => ({
       id: Number(row.id), conditionNo: row.condition_no ?? null, name: String(row.name ?? ""), usageType: row.usage_type ?? null,
