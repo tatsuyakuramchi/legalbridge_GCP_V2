@@ -20,8 +20,12 @@ export const isOutPattern = (p: WorkbenchPattern) => p === "game_out" || p === "
 export const MAIN_DOCS: Record<WorkbenchPattern, Array<{ key: string; label: string }>> = {
   game_in: [{ key: "individual_license_terms_v4", label: "個別利用許諾条件書V4" },
             { key: "individual_license_terms_v3", label: "個別利用許諾条件書V3" }],
-  pub_in: [{ key: "pub_master_individual", label: "出版許諾契約書（個人）" },
-           { key: "pub_master_corporate", label: "出版許諾契約書（法人）" }],
+  // 出版 IN：出版基本契約の個別契約として「出版等利用許諾条件書（作品追加の合意）」を作るのが基本（A-080・A-097）。
+  // 出版許諾契約書（個人・法人）は、基本契約を兼ねる 1 通で済ませるときの代わり。
+  pub_in: [{ key: "pub_license_terms_v3", label: "出版等利用許諾条件書（作品追加の合意・一覧形式）" },
+           { key: "pub_license_terms_v3_annex", label: "出版等利用許諾条件書（別紙形式。作品が多いとき）" },
+           { key: "pub_master_individual", label: "出版許諾契約書（個人。基本契約を兼ねる 1 通）" },
+           { key: "pub_master_corporate", label: "出版許諾契約書（法人。基本契約を兼ねる 1 通）" }],
   game_out: [{ key: "pub_license_terms_v3", label: "利用許諾条件書（一覧形式）" },
              { key: "pub_license_terms_v3_annex", label: "利用許諾条件書（別紙形式。作品が多いとき）" }],
   pub_out: [{ key: "pub_license_terms_v3", label: "出版等利用許諾条件書（一覧形式）" },
