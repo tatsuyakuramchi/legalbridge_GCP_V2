@@ -111,6 +111,7 @@ export function ConditionEdit(
     firstEditionCopies: detail.firstEditionCopies === null || detail.firstEditionCopies === undefined ? "" : String(detail.firstEditionCopies),
     firstEditionRatePct: detail.firstEditionRatePpm === null || detail.firstEditionRatePpm === undefined ? "" : String(detail.firstEditionRatePpm / 10000),
     confirmWithinDays: detail.confirmWithinDays === null || detail.confirmWithinDays === undefined ? "" : String(detail.confirmWithinDays),
+    priceBasis: detail.priceBasis ?? "",
     taxCategory: detail.taxCategory,
     paymentTerms: detail.paymentTerms ?? "",
     settlementMode: detail.settlementMode ?? "",
@@ -214,6 +215,7 @@ export function ConditionEdit(
       ["firstEditionPrice", patchInt(v.firstEditionPrice, detail.firstEditionPrice ?? null)],
       ["firstEditionCopies", patchInt(v.firstEditionCopies, detail.firstEditionCopies ?? null)],
       ["confirmWithinDays", patchInt(v.confirmWithinDays, detail.confirmWithinDays ?? null)],
+      ["priceBasis", patchText(v.priceBasis, detail.priceBasis ?? null)],
       ["reportDueDays", patchInt(v.reportDueDays, detail.reportDueDays ?? null)]
     ];
     for (const [key, value] of pairs) if (value !== undefined) patch[key] = value;
@@ -663,7 +665,16 @@ export function ConditionEdit(
               placeholder: "0", hint: "初版利用許諾料の算定方法に「− ○部」として明記される。空・0 なら全部数（A-077）" })}
             {field("royaltyExemptLaterPct", "非加算：2 版目以降（発行部数の %）", { type: "number",
               placeholder: "1", hint: "献本等。空なら非加算なし" })}
-            {field("firstEditionPrice", "初版の本体価格（税抜・最小通貨単位）", { type: "number",
+            <label className="field" id="f-priceBasis">
+              <span>価格の基準</span>
+              <select value={v.priceBasis} onChange={(e) => set("priceBasis", e.target.value)}>
+                <option value="">本体価格（定価）</option>
+                <option value="supply">卸価格（再許諾先への供給価格）</option>
+                <option value="receipts">発注者の受領額</option>
+              </select>
+              <small className="faint">再許諾先（KADOKAWA 等）へ卸す形は卸価格。相手の名前は「対象の許諾先」から式に出る。2 版目以降の式にも使う（A-091）</small>
+            </label>
+            {field("firstEditionPrice", v.priceBasis === "supply" ? "初版の卸価格（税抜・最小通貨単位）" : "初版の本体価格（税抜・最小通貨単位）", { type: "number",
               placeholder: "1000", hint: "発注時は見込み、確定したら確定値に直す。特約第2項と明細の算定の基礎に出る（A-077）" })}
             {field("firstEditionCopies", "初版発行部数", { type: "number",
               placeholder: "3000", hint: "発注時は見込み、確定したら確定値に直す" })}
@@ -868,7 +879,8 @@ function InLieuServiceBlock(
 ) {
   const num = (x: string) => Number(String(x ?? "").replace(/[^0-9.-]/g, "")) || 0;
   const fe = { price: num(v.firstEditionPrice), copies: Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
-               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)) };
+               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)),
+               priceBasis: (v.priceBasis === "supply" || v.priceBasis === "receipts" ? v.priceBasis : null) as "supply" | "receipts" | null };
   const ok = fe.price > 0 && fe.copies > 0 && fe.ratePct > 0 && fe.exemptCopies >= 0 && fe.exemptCopies < fe.copies;
   const provisional = ok ? firstEditionFee(fe) : 0;
   const basis = ok ? firstEditionBasisText(fe, "見込み") : null;
@@ -901,7 +913,16 @@ function InLieuServiceBlock(
       <b>初版の算定の基礎（見込み）</b>
       <span className="faint">　仮計算額 ＝ 本体価格 ×（初版部数 − 非加算部数）× 料率。入れると行の金額と仕様の算定の基礎に入る</span>
       <div className="form-grid" style={{ marginTop: 6 }}>
-        {field("firstEditionPrice", "見込み本体価格（税抜・円）", { type: "number", placeholder: "1000" })}
+        <label className="field" id="f-priceBasis">
+          <span>価格の基準</span>
+          <select value={v.priceBasis} onChange={(e) => set("priceBasis", e.target.value)}>
+            <option value="">本体価格（定価）</option>
+            <option value="supply">卸価格（再許諾先への供給価格）</option>
+            <option value="receipts">発注者の受領額</option>
+          </select>
+          <small className="faint">KADOKAWA 等へ卸す形は卸価格。相手の名前は紙の利用許諾条件の「対象の許諾先」から式に出る（A-091）</small>
+        </label>
+        {field("firstEditionPrice", v.priceBasis === "supply" ? "見込み卸価格（税抜・円）" : v.priceBasis === "receipts" ? "見込み受領額（円）" : "見込み本体価格（税抜・円）", { type: "number", placeholder: "1000" })}
         {field("firstEditionCopies", "初版発行部数", { type: "number", placeholder: "3000" })}
         {field("firstEditionRatePct", "初版の料率（%）", { type: "number", placeholder: "10" })}
         {field("royaltyExemptFirstCopies", "初版の非加算部数", { type: "number", placeholder: "0", hint: "既定 0。入れると算定方法に「− ○部」と明記" })}
@@ -958,7 +979,8 @@ function InLieuGuide(
   // 金額は画面に出ている計算方式で読む。料率（売上連動）のままなら定額の欄が無いので 0。
   const amount = pm === "unit_rate" ? num(v.unitAmount) * (num(v.quantity) || 1) : pm === "revenue_rate" ? 0 : num(v.flatAmount);
   const fe = { price: num(v.firstEditionPrice), copies: Math.floor(num(v.firstEditionCopies)), ratePct: num(v.firstEditionRatePct),
-               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)) };
+               exemptCopies: Math.floor(num(v.royaltyExemptFirstCopies)),
+               priceBasis: (v.priceBasis === "supply" || v.priceBasis === "receipts" ? v.priceBasis : null) as "supply" | "receipts" | null };
   const provisional = firstEditionFee(fe);
   const schemeDone = v.rewardLabel === IN_LIEU_REWARD_LABEL && pm === "fixed";
   const basisLine = fe.price > 0 && fe.copies > 0 && fe.ratePct > 0 ? firstEditionBasisText(fe) : null;

@@ -116,6 +116,8 @@ export interface ConditionDetail extends ConditionSummary {
   firstEditionCopies: number | null;
   firstEditionRatePpm: number | null;
   confirmWithinDays: number | null;
+  /** 利用許諾料の価格の基準（A-091）。list=本体価格 / supply=卸価格（再許諾先への供給価格）/ receipts=受領額。空なら従来どおり。 */
+  priceBasis: "list" | "supply" | "receipts" | null;
   /**
    * 自動更新（A-039）。許諾期間（termStart / termEnd）を条件ごとに更新する。
    * 更新した回数は持たない。終了日・単位・基準日から数える（renewal.ts）。

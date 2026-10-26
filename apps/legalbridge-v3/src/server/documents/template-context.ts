@@ -26,7 +26,7 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
-import { SUBLICENSE_LABEL, companionOfTemplate, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
+import { priceBasisOf, priceBasisText, SUBLICENSE_LABEL, companionOfTemplate, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
 import { PART_ROLE_LABEL, type PartRole } from "../core/part-role.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
@@ -1078,7 +1078,12 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
     else if (basis === "free") fee = en ? "Royalty-free" : "無償";
     else if (basis === "in_lieu" && t.ratePct !== null && t.ratePct !== undefined) {
       // 初版の利用許諾料は委託報酬として支払済み（A-077）。この料率は 2 版目以降・電子のもの。
-      fee = en ? `${t.ratePct} % (from the 2nd printing)` : `${t.ratePct} %（2版目以降）`;
+      // 価格の基準（A-091）。卸価格なら「卸価格（KADOKAWA への供給価格）基準」と添える。
+      const basisTag = priceBasisOf(t.priceBasis) === "supply"
+        ? (en ? `, on the supply price${String(t.targetPartyName ?? "").trim() ? ` to ${String(t.targetPartyName).trim()}` : ""}`
+              : `・${priceBasisText("supply", t.targetPartyName).replace("・税抜", "")}基準`)
+        : "";
+      fee = en ? `${t.ratePct} % (from the 2nd printing${basisTag})` : `${t.ratePct} %（2版目以降${basisTag}）`;
     } else if (t.ratePct !== null && t.ratePct !== undefined && String(t.pricingModel) === "revenue_rate") {
       fee = `${t.ratePct} %`;
     } else if (String(t.pricingModel) === "unit_rate" && t.unitAmount !== null && t.unitAmount !== undefined) {
@@ -1185,19 +1190,27 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
   const amountOf = (c: Ctx) => Number(c.flatAmount
     ?? (c.unitAmount === null || c.unitAmount === undefined ? 0 : Number(c.unitAmount) * Number(c.quantity ?? 1))) || 0;
   const deliverables = deliverableRows.map((c) => ({ name: String(c.name ?? ""), amount: amountOf(c) }));
+  // 算定の基礎は、対象の委託料の行が持っていればそちら（編集画面で直すのはこの行）。無ければ紙の利用許諾条件。A-091
+  const basisRow = deliverableRows.find((c) => c.firstEditionCopies && c.firstEditionPrice !== null && c.firstEditionPrice !== undefined
+                                               && c.firstEditionRatePct !== null && c.firstEditionRatePct !== undefined) ?? null;
+  const src = basisRow ?? head;
+  const priceBasis = priceBasisOf(src.priceBasis) ?? priceBasisOf(head.priceBasis);
+  const partyName = String(head.targetPartyName ?? src.targetPartyName ?? "").trim() || null;
   // 支払期日は対象の行の予定明細（1 回・支払日）から。
   const payOn = ((context.schedules ?? []) as Ctx[])
     .find((s) => deliverableRows.some((c) => Number(c.id) === Number(s.conditionId)) && s.payOn)?.payOn ?? null;
   return inLieuSpecialTerms({
     deliverables,
-    firstEdition: { price: Number(head.firstEditionPrice), copies: Number(head.firstEditionCopies),
-                    ratePct: Number(head.firstEditionRatePct), exemptCopies: head.royaltyExemptFirstCopies ?? null },
+    firstEdition: { price: Number(src.firstEditionPrice), copies: Number(src.firstEditionCopies),
+                    ratePct: Number(src.firstEditionRatePct), exemptCopies: src.royaltyExemptFirstCopies ?? null,
+                    priceBasis, partyName },
     provisionalAmount: deliverables.reduce((sum, d) => sum + d.amount, 0) || null,
     confirmWithinDays: head.confirmWithinDays ?? null,
     payOn: payOn ? String(payOn) : null,
     // 2 版目以降の式。パートごとに条件があっても、同じ利用形態・同じ率は 1 つにまとめる。
     laterRates: terms.filter((t) => t.ratePct !== null && t.ratePct !== undefined)
-      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct) }))
+      .map((t) => ({ usageType: String(t.usageType ?? ""), ratePct: Number(t.ratePct),
+                     priceBasis: priceBasisOf(t.priceBasis), partyName: String(t.targetPartyName ?? "").trim() || null }))
       .filter((r, i, all) => all.findIndex((x) => x.usageType === r.usageType && x.ratePct === r.ratePct) === i),
     laterExemptPct: head.royaltyExemptLaterPct ?? null,
     masterAgreement: head.agreementNo || head.agreementTitle

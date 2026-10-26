@@ -20,10 +20,31 @@ import { conditionUsageLabel } from "../core/condition-usage.js";
 /** 委託料の行の報酬名。発注書は「初版利用許諾料（仮計算。確定は特約第3項）」、検収書は確定額として出る。 */
 export const IN_LIEU_REWARD_LABEL = "初版利用許諾料";
 
+/**
+ * 利用許諾料の価格の基準（A-091）。
+ * list=本体価格（定価）/ supply=卸価格（再許諾先への供給価格。KADOKAWA へ卸す形）/ receipts=発注者の受領額（電子など）。
+ */
+export type PriceBasis = "list" | "supply" | "receipts";
+export const PRICE_BASIS_LABEL: Record<PriceBasis, string> =
+  { list: "本体価格（定価）", supply: "卸価格（再許諾先への供給価格）", receipts: "発注者の受領額" };
+export function priceBasisOf(value: unknown): PriceBasis | null {
+  return value === "list" || value === "supply" || value === "receipts" ? value : null;
+}
+/** 式に出す価格の言い方。「本体価格（税抜）」「卸価格（KADOKAWA への供給価格・税抜）」「発注者の受領額」。 */
+export function priceBasisText(basis: PriceBasis | null | undefined, partyName?: string | null): string {
+  if (basis === "supply") return `卸価格（${String(partyName ?? "").trim() ? `${String(partyName).trim()} への` : "再許諾先への"}供給価格・税抜）`;
+  if (basis === "receipts") return "発注者の受領額";
+  return "本体価格（税抜）";
+}
+
 /** 初版の算定の基礎。発注時は見込み、確定後は確定値。 */
 export interface FirstEditionBasis {
-  /** 本体価格（税抜・円）。 */
+  /** 本体価格（税抜・円）。価格の基準（priceBasis）が卸価格なら卸価格。 */
   price: number;
+  /** 価格の基準（A-091）。空なら本体価格。 */
+  priceBasis?: PriceBasis | null;
+  /** 卸価格の相手（再許諾先）の名前。式に「KADOKAWA への供給価格」と出す。 */
+  partyName?: string | null;
   /** 初版発行部数。 */
   copies: number;
   /** 料率（%）。 */
@@ -40,11 +61,12 @@ export function firstEditionFee(basis: FirstEditionBasis): number {
 }
 
 /** 算定方法の文（「本体価格（税抜）×（初版発行部数 − 献本・見本等の非加算部数100部）× 10％」）。 */
-export function firstEditionFormulaText(basis: Pick<FirstEditionBasis, "ratePct" | "exemptCopies">): string {
+export function firstEditionFormulaText(basis: Pick<FirstEditionBasis, "ratePct" | "exemptCopies" | "priceBasis" | "partyName">): string {
   const exempt = Math.floor(basis.exemptCopies ?? 0);
+  const price = priceBasisText(basis.priceBasis, basis.partyName);
   return exempt > 0
-    ? `本体価格（税抜）×（初版発行部数 − 献本・見本等の非加算部数${exempt.toLocaleString("ja-JP")}部）× ${pct(basis.ratePct)}％`
-    : `本体価格（税抜）× 初版発行部数 × ${pct(basis.ratePct)}％`;
+    ? `${price}×（初版発行部数 − 献本・見本等の非加算部数${exempt.toLocaleString("ja-JP")}部）× ${pct(basis.ratePct)}％`
+    : `${price}× 初版発行部数 × ${pct(basis.ratePct)}％`;
 }
 
 /** 算定の基礎の短い言い方（明細の仕様・検収の内訳に出す）。「本体価格 1,000円 ×（初版 3,000部 − 献本等 100部）× 10%」 */
@@ -53,7 +75,11 @@ export function firstEditionBasisText(basis: FirstEditionBasis, label: "見込�
   const copies = exempt > 0
     ? `（初版 ${basis.copies.toLocaleString("ja-JP")}部 − 献本等 ${exempt.toLocaleString("ja-JP")}部）`
     : `初版 ${basis.copies.toLocaleString("ja-JP")}部`;
-  return `算定の基礎（${label}）：本体価格 ${basis.price.toLocaleString("ja-JP")}円（税抜）× ${copies} × ${pct(basis.ratePct)}%`;
+  const price = basis.priceBasis === "supply"
+    ? `卸価格 ${basis.price.toLocaleString("ja-JP")}円（${String(basis.partyName ?? "").trim() ? `${String(basis.partyName).trim()} への` : "再許諾先への"}供給価格・税抜）`
+    : basis.priceBasis === "receipts" ? `受領額 ${basis.price.toLocaleString("ja-JP")}円`
+    : `本体価格 ${basis.price.toLocaleString("ja-JP")}円（税抜）`;
+  return `算定の基礎（${label}）：${price}× ${copies} × ${pct(basis.ratePct)}%`;
 }
 
 /** 2 版目以降の非加算（発行部数の %）の文。空か 0 なら空文字。 */
@@ -72,13 +98,18 @@ const pct = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.to
 const yen = (n: number) => Math.round(n).toLocaleString("ja-JP");
 
 /** 2 版目以降・電子の算定式。 */
-export function royaltyFormulaText(usageType: unknown, ratePct: number, laterExemptPct?: number | null): string {
+export function royaltyFormulaText(usageType: unknown, ratePct: number, laterExemptPct?: number | null,
+                                   priceBasis?: PriceBasis | null, partyName?: string | null): string {
   const rate = `${pct(ratePct)}％`;
   const exempt = laterExemptText(laterExemptPct);
   switch (String(usageType ?? "")) {
-    case "pub_print":   return exempt ? `紙版：本体価格 ×（発行部数 − ${exempt}）× ${rate}` : `紙版：本体価格 × 発行部数 × ${rate}`;
-    case "pub_digital": return `電子版：発注者の受領額 × ${rate}`;
-    default:            return `${conditionUsageLabel(usageType) || "利用許諾"}：発注者の受領額 × ${rate}`;
+    case "pub_print": {
+      // 価格の基準（A-091）。空なら本体価格。卸価格なら「卸価格（KADOKAWA への供給価格・税抜）」。
+      const price = priceBasis ? priceBasisText(priceBasis, partyName).replace(/^本体価格（税抜）$/, "本体価格") : "本体価格";
+      return exempt ? `紙版：${price} ×（発行部数 − ${exempt}）× ${rate}` : `紙版：${price} × 発行部数 × ${rate}`;
+    }
+    case "pub_digital": return `電子版：${priceBasis && priceBasis !== "receipts" ? priceBasisText(priceBasis, partyName) : "発注者の受領額"} × ${rate}`;
+    default:            return `${conditionUsageLabel(usageType) || "利用許諾"}：${priceBasis && priceBasis !== "receipts" ? priceBasisText(priceBasis, partyName) : "発注者の受領額"} × ${rate}`;
   }
 }
 
@@ -93,8 +124,8 @@ export interface InLieuTermsInput {
   confirmWithinDays?: number | null;
   /** 支払期日。空なら「本発注書記載の支払期日」。 */
   payOn?: string | null;
-  /** 2 版目以降・電子の料率（利用形態ごと）。 */
-  laterRates: Array<{ usageType: string; ratePct: number }>;
+  /** 2 版目以降・電子の料率（利用形態ごと）。価格の基準（A-091）があれば式に出す。 */
+  laterRates: Array<{ usageType: string; ratePct: number; priceBasis?: PriceBasis | null; partyName?: string | null }>;
   /** 2 版目以降の非加算（発行部数の %）。空なら非加算なし。 */
   laterExemptPct?: number | null;
   /** 細目を定める書面の名前。空なら「個別出版条件書」。 */
@@ -129,7 +160,8 @@ function periodText(p: { start?: string | null; end?: string | null } | null | u
  */
 export function inLieuPaidNote(basis: Partial<FirstEditionBasis> | null | undefined): string {
   const fe = basis && basis.price && basis.copies && basis.ratePct
-    ? { price: Number(basis.price), copies: Number(basis.copies), ratePct: Number(basis.ratePct), exemptCopies: basis.exemptCopies ?? null }
+    ? { price: Number(basis.price), copies: Number(basis.copies), ratePct: Number(basis.ratePct), exemptCopies: basis.exemptCopies ?? null,
+        priceBasis: basis.priceBasis ?? null, partyName: basis.partyName ?? null }
     : null;
   const calc = fe ? `（算定：${firstEditionBasisText(fe, "見込み").replace(/^算定の基礎（見込み）：/, "")}）` : "";
   return `初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み${calc}。本条件書の料率は第2版以降の出版および電子版に適用する。`;
@@ -190,7 +222,7 @@ export function inLieuSpecialTerms(input: InLieuTermsInput): string {
   const days = input.confirmWithinDays ?? 45;
   const due = input.payOn ? `${jaDate(input.payOn)}` : "本発注書記載の支払期日";
   const master = input.masterAgreement ? masterAgreementText(input.masterAgreement) : null;
-  const laterFormulas = input.laterRates.map((r) => royaltyFormulaText(r.usageType, r.ratePct, input.laterExemptPct)).join("、");
+  const laterFormulas = input.laterRates.map((r) => royaltyFormulaText(r.usageType, r.ratePct, input.laterExemptPct, r.priceBasis, r.partyName)).join("、");
   const laterClause = master
     ? `第2版以降の出版および電子版の配信に係る利用許諾料は、発注者と受注者の間の${master}に基づく個別契約として締結する${detailDoc}の定めによる${laterFormulas ? `（${laterFormulas}）` : ""}。本特約に定める利用許諾の条件は同契約の個別契約として取り扱い、本制作の委託（成果物の制作・納入・検収）については業務委託基本契約約款による。`
     : `第2版以降の出版および電子版の配信に係る利用許諾料は、発注者と受注者の間の${detailDoc}の定めによる${laterFormulas ? `（${laterFormulas}）` : ""}。発注者と受注者の間に出版基本契約があるときは、本特約に定める利用許諾の条件と${detailDoc}をその個別契約として取り扱う。本制作の委託（成果物の制作・納入・検収）については業務委託基本契約約款による。`;
@@ -211,8 +243,8 @@ export function inLieuSpecialTerms(input: InLieuTermsInput): string {
   const credit = String(input.creditNotice ?? "").trim();
   const clauses: string[][] = [
     [`本業務のうち${subject}（以下「本制作」）の対価（制作報酬）は、受注者が著作権を有する成果物の初版の出版に係る利用許諾料の算定方法により算定した額（以下「初版利用許諾料」）とし、当該報酬には成果物の初版の出版に係る利用許諾の対価を含む。発注者は、これと別に制作報酬または初版の利用許諾料を支払わない。本制作の業務期間は${periodText(input.servicePeriod) ?? "本発注書記載の期間（納期まで）"}とし、成果物の利用許諾の期間は${periodText(input.licensePeriod) ?? "本発注書の利用許諾条件に定める期間"}とする。本制作の対価については、本特約が業務委託基本契約約款に優先する。`],
-    [`初版利用許諾料の算定方法は、${firstEditionFormulaText(fe)} とする。本発注書記載の金額（金${yen(provisional)}円。以下「仮計算額」）は、本体価格${fe.price.toLocaleString("ja-JP")}円・初版${fe.copies.toLocaleString("ja-JP")}部の見込みによる仮計算である${breakdown}。`],
-    [`発注者は、成果物を受領した日から${days}日以内に、本体価格および初版発行部数を受注者に書面（電磁的方法を含む）で通知し、受注者の確認を得て初版利用許諾料の額を確定する。確定額が仮計算額を下回るときは、仮計算額をもって確定額とする。`],
+    [`初版利用許諾料の算定方法は、${firstEditionFormulaText(fe)} とする。本発注書記載の金額（金${yen(provisional)}円。以下「仮計算額」）は、${fe.priceBasis === "supply" ? "卸価格" : fe.priceBasis === "receipts" ? "受領額" : "本体価格"}${fe.price.toLocaleString("ja-JP")}円・初版${fe.copies.toLocaleString("ja-JP")}部の見込みによる仮計算である${breakdown}。`],
+    [`発注者は、成果物を受領した日から${days}日以内に、${fe.priceBasis === "supply" ? "卸価格" : fe.priceBasis === "receipts" ? "受領額" : "本体価格"}および初版発行部数を受注者に書面（電磁的方法を含む）で通知し、受注者の確認を得て初版利用許諾料の額を確定する。確定額が仮計算額を下回るときは、仮計算額をもって確定額とする。`],
     [`発注者は、成果物を受領した日から60日以内である${due}までに、確定額を支払う。同日までに確定しないときは、同日までに仮計算額を支払い、確定後の差額を確定の日から30日以内に追加して支払う。初版利用許諾料は、初版の発行の有無および時期にかかわらず支払うものとし、受注者は返還を要しない。`],
     [laterClause + sublicenseClause + companionClause],
     ...(credit ? [[`発注者は、成果物を利用するに際し、次のクレジット表記を行う。表記の変更は発注者と受注者の協議の上で定める。\n　${credit}`]] : []),

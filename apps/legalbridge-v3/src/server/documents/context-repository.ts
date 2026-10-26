@@ -624,7 +624,8 @@ export class DocumentContextRepository {
               c.notes, c.spec, c.deliverable_ownership, c.reward_label,
               c.order_no, c.usage_type,
               c.license_fee_basis, c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm,
-              c.royalty_exempt_first_copies, c.royalty_exempt_later_pct, c.confirm_within_days,
+              c.royalty_exempt_first_copies, c.royalty_exempt_later_pct, c.confirm_within_days, c.price_basis,
+              (SELECT tp.name FROM parties tp WHERE tp.id = c.target_party_id) AS target_party_name,
               -- 条件が載っている単体契約の番号（取り込んだ発注書を契約として登録したもの）。
               -- 検収書の行の発注番号が、発注書の文書も控えも無いときにこれを使う。
               (SELECT a.agreement_no FROM agreements a
@@ -708,6 +709,9 @@ export class DocumentContextRepository {
         royaltyExemptFirstCopies: int(row.royalty_exempt_first_copies),
         royaltyExemptLaterPct: num(row.royalty_exempt_later_pct),
         confirmWithinDays: int(row.confirm_within_days),
+        /** 価格の基準（A-091）と、卸価格の相手（対象の許諾先）の名前。 */
+        priceBasis: str(row.price_basis),
+        targetPartyName: str(row.target_party_name),
         sublicensable: row.sublicensable,
         /** 計算書の出し方（periodic=締めごと / event=製造ごと）。条件書の文に入る。 */
         statementTiming: str(row.statement_timing),
@@ -900,6 +904,7 @@ export class DocumentContextRepository {
               c.pricing_model, c.rate_ppm, c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount,
               c.currency, c.term_start, c.term_end, c.exclusivity, c.license_fee_basis,
               c.royalty_exempt_first_copies, c.royalty_exempt_later_pct,
+              c.price_basis, (SELECT tp.name FROM parties tp WHERE tp.id = c.target_party_id) AS target_party_name,
               w.title AS work_title,
               (SELECT array_agg(s.label ORDER BY s.sort_order, s.label)
                  FROM condition_scopes s WHERE s.condition_id = c.id AND s.scope_type = 'region')   AS regions,
@@ -990,6 +995,9 @@ export class DocumentContextRepository {
             ? ([str(row.work_copyright_notice), str(row.work_third_party_rights)].filter(Boolean).join("／") || str(row.credit_notice))
             : str(row.credit_notice),
           creditFromWork: row.credit_from_work === true,
+          /** 価格の基準（A-091）と卸価格の相手（対象の許諾先）。 */
+          priceBasis: str(row.price_basis),
+          targetPartyName: str(row.target_party_name),
           /** 初版の算定の基礎（A-077）。本体価格は通貨の単位に戻す。料率は %。 */
           firstEditionPrice: toMajor(int(row.first_edition_price), currency),
           firstEditionCopies: int(row.first_edition_copies),

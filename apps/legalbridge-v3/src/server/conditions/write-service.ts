@@ -15,7 +15,7 @@ import { conditionUsageLabel, isSublicensingUsage, pubMediaOfUsage, usageOfPubMe
 import { validateShareInput } from "../royalty/shares.js";
 import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } from "./settlement-mode.js";
 import { normalizeTimeSettlement } from "./time-settlement.js";
-import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee, withinSixtyDays, type SublicenseMode } from "./royalty-in-lieu.js";
+import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee, withinSixtyDays, type PriceBasis, type SublicenseMode } from "./royalty-in-lieu.js";
 import { partRoleOf, type PartRole } from "../core/part-role.js";
 import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
 
@@ -221,7 +221,9 @@ export interface ServiceLicenseInput {
    * 仮計算額 ＝ 本体価格 ×（部数 − 非加算）× 率 が、受注者帰属の委託料の行の合計と同じでなければならない
    * （表面・明細・特約で同じ額が出るように）。
    */
-  firstEdition?: { price: number; copies: number; ratePct: number; exemptCopies?: number | null } | null;
+  firstEdition?: { price: number; copies: number; ratePct: number; exemptCopies?: number | null;
+                   /** 価格の基準（A-091）。卸価格なら式が「卸価格（再許諾先への供給価格）」になる。 */
+                   priceBasis?: PriceBasis | null } | null;
   /** in_lieu：受領から何日以内に本体価格・部数を確定するか（1〜60）。空なら 45。 */
   confirmWithinDays?: number | null;
   /** in_lieu：支払期日。受領（納期）から 60 日以内。各行の予定明細の支払日になる。 */
@@ -402,6 +404,8 @@ export interface ConditionInput {
   firstEditionCopies?: number | null;
   firstEditionRatePpm?: number | null;
   confirmWithinDays?: number | null;
+  /** 利用許諾料の価格の基準（A-091）。 */
+  priceBasis?: PriceBasis | null;
   /** 外部で出した発注書の番号。V3 で出した発注書があればそちらを優先する。 */
   orderNo?: string | null;
   conditionNo?: string | null;
@@ -465,6 +469,7 @@ export interface EconomicsPatch {
   firstEditionCopies?: number | null;
   firstEditionRatePpm?: number | null;
   confirmWithinDays?: number | null;
+  priceBasis?: PriceBasis | null;
   orderNo?: string | null;
   usageType?: ConditionUsageType | null;
   /** 直接編集のときだけ変えられる。種類は案件で使える範囲、計算方式は金額の欄と一緒に。 */
@@ -497,6 +502,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   creditNotice: "credit_notice", creditFromWork: "credit_from_work",
   firstEditionPrice: "first_edition_price", firstEditionCopies: "first_edition_copies",
   firstEditionRatePpm: "first_edition_rate_ppm", confirmWithinDays: "confirm_within_days",
+  priceBasis: "price_basis",
   usageType: "usage_type",
   targetPartyId: "target_party_id",
   settlementMode: "settlement_mode", settlementCount: "settlement_count",
@@ -936,6 +942,12 @@ export class ConditionWriteService {
         if (ownershipOf(row) !== "contractor") continue;
         const spec = String(inputs[index].spec ?? "").trim();
         inputs[index].spec = spec.includes(basisLine) ? spec : [spec, basisLine].filter(Boolean).join("\n");
+        // 委託料の行にも算定の基礎を持たせる（編集画面で直すのはこちら。価格の基準も同じ）。A-091
+        inputs[index].firstEditionPrice = Math.round(fe.price); inputs[index].firstEditionCopies = Math.floor(fe.copies);
+        inputs[index].firstEditionRatePpm = Math.round(fe.ratePct * 10000);
+        inputs[index].royaltyExemptFirstCopies = fe.exemptCopies ? Math.floor(fe.exemptCopies) : null;
+        inputs[index].confirmWithinDays = license.confirmWithinDays ?? 45;
+        inputs[index].priceBasis = fe.priceBasis ?? null;
       }
     }
     // 利用許諾条件は 作品 × 構成要素（パート）で立てる（A-078）。原稿がコア、イラスト等がサブ。
@@ -992,6 +1004,7 @@ export class ConditionWriteService {
                 royaltyExemptFirstCopies: fe.exemptCopies ? Math.floor(fe.exemptCopies) : null,
                 confirmWithinDays: license.confirmWithinDays ?? 45
               } : {}),
+              priceBasis: fe?.priceBasis ?? null,
               royaltyExemptLaterPct: license.exemptLaterPct ?? null,
               creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
               sublicensable: license.sublicense ? license.sublicense !== "no" : null,
@@ -1182,11 +1195,11 @@ export class ConditionWriteService {
                                    time_settlement, hours_included, overage_unit_amount, shortfall_unit_amount,
                                    reward_label, royalty_exempt_first_copies, royalty_exempt_later_pct,
                                    credit_notice, credit_from_work,
-                                   first_edition_price, first_edition_copies, first_edition_rate_ppm, confirm_within_days)
+                                   first_edition_price, first_edition_copies, first_edition_rate_ppm, confirm_within_days, price_basis)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    $16, $17, $18, $19, $20, $21, $22, $23, $24, 'active', $25, $26, $27, $28,
                    $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42,
-                   $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55)
+                   $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56)
            RETURNING id, condition_no`,
           [no, input.agreementId ?? null, input.direction, input.kind, name, input.counterpartyId,
            input.workId ?? null, input.workPartId ?? null,
@@ -1209,7 +1222,7 @@ export class ConditionWriteService {
            input.royaltyExemptFirstCopies ?? null, input.royaltyExemptLaterPct ?? null,
            String(input.creditNotice ?? "").trim() || null, input.creditFromWork === true,
            input.firstEditionPrice ?? null, input.firstEditionCopies ?? null,
-           input.firstEditionRatePpm ?? null, input.confirmWithinDays ?? null]);
+           input.firstEditionRatePpm ?? null, input.confirmWithinDays ?? null, input.priceBasis ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
 

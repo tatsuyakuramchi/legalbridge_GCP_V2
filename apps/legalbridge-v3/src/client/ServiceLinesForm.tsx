@@ -143,6 +143,8 @@ export function ServiceLinesForm(
   const [feRate, setFeRate] = useState("10");
   /** 初版の非加算部数（献本・見本等）。既定 0＝全部数。方針が決まるまで 0 のまま。 */
   const [feExempt, setFeExempt] = useState("0");
+  /** 価格の基準（A-091）。"" は本体価格、supply は卸価格（再許諾先への供給価格）、receipts は受領額。 */
+  const [fePriceBasis, setFePriceBasis] = useState<"" | "supply" | "receipts">("");
   const [confirmDays, setConfirmDays] = useState("45");
   /**
    * 利用許諾条件を載せる契約（出版基本契約）。業務委託の基本契約とは別に選ぶ：成果物を出版・
@@ -234,7 +236,8 @@ export function ServiceLinesForm(
   const inLieu = hasContractor && licMode === "in_lieu";
   const rowsTotal = useMemo(() => contractorLines.reduce((a, l) => a + amountOf(l), 0), [contractorLines]);
   const firstEdition = { price: num(fePrice), copies: Math.floor(num(feCopies)), ratePct: num(feRate),
-                         exemptCopies: feExempt.trim() === "" ? 0 : Math.floor(num(feExempt)) };
+                         exemptCopies: feExempt.trim() === "" ? 0 : Math.floor(num(feExempt)),
+                         priceBasis: fePriceBasis || null };
   const provisional = firstEditionFee(firstEdition);
   const feOk = firstEdition.price > 0 && firstEdition.copies > 0 && firstEdition.ratePct > 0 && firstEdition.ratePct <= 100
     && (firstEdition.exemptCopies ?? 0) >= 0 && (firstEdition.exemptCopies ?? 0) < firstEdition.copies;
@@ -412,7 +415,7 @@ export function ServiceLinesForm(
           ...(licMode === "in_lieu" ? {
             rates: inLieuRates.map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct) })),
             firstEdition: { price: Math.round(firstEdition.price), copies: firstEdition.copies, ratePct: firstEdition.ratePct,
-                            exemptCopies: firstEdition.exemptCopies || null },
+                            exemptCopies: firstEdition.exemptCopies || null, priceBasis: fePriceBasis || null },
             confirmWithinDays: num(confirmDays), payOn: text(inLieuPayOn) ?? null,
             exemptLaterPct: exemptLater.trim() === "" ? null : num(exemptLater)
           } : {})
@@ -644,7 +647,14 @@ export function ServiceLinesForm(
                   発注書には特約（下の文）が既定で入ります（文書の欄で直せます）。
                 </span>
                 <div className="form-grid">
-                  <label className="field"><span>見込み本体価格（税抜・円）</span>
+                  <label className="field"><span>価格の基準</span>
+                    <select value={fePriceBasis} onChange={(e) => setFePriceBasis(e.target.value as "" | "supply" | "receipts")}>
+                      <option value="">本体価格（定価）</option>
+                      <option value="supply">卸価格（再許諾先への供給価格）</option>
+                      <option value="receipts">発注者の受領額</option>
+                    </select>
+                    <small className="faint">KADOKAWA 等へ卸す形は卸価格（ゲームの自社製造・他社販売と同じ構造）。2 版目以降の式にも使う</small></label>
+                  <label className="field"><span>{fePriceBasis === "supply" ? "見込み卸価格（税抜・円）" : fePriceBasis === "receipts" ? "見込み受領額（円）" : "見込み本体価格（税抜・円）"}</span>
                     <input inputMode="numeric" value={fePrice} placeholder="1000" onChange={(e) => setFePrice(e.target.value)} /></label>
                   <label className="field"><span>見込み初版部数</span>
                     <input inputMode="numeric" value={feCopies} placeholder="3000" onChange={(e) => setFeCopies(e.target.value)} /></label>

@@ -2653,6 +2653,23 @@ COMMENT ON COLUMN v3.conditions.first_edition_rate_ppm IS '初版の料率（百
 COMMENT ON COLUMN v3.conditions.confirm_within_days    IS '受領から何日以内に本体価格・初版部数を確定するか（60 以内）。A-077';
 
 -- ---------------------------------------------------------------------
+-- A-091 利用許諾料の価格の基準（conditions/royalty-in-lieu.ts）
+--   再許諾先（KADOKAWA 等）へ卸す形では、基準が定価ではなく卸価格（再許諾先への供給価格）になる。
+--   list=本体価格 / supply=卸価格 / receipts=発注者の受領額。空なら紙は本体価格、電子は受領額。
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS price_basis text;
+DO $a091$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_price_basis_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_price_basis_chk
+      CHECK (price_basis IS NULL OR price_basis IN ('list', 'supply', 'receipts'));
+  END IF;
+END $a091$;
+COMMENT ON COLUMN v3.conditions.price_basis IS
+  '利用許諾料の価格の基準（list=本体価格 / supply=卸価格＝再許諾先への供給価格 / receipts=発注者の受領額）。空なら紙は本体価格、電子は受領額。A-091';
+
+-- ---------------------------------------------------------------------
 -- A-078 作品の構成要素の役割：コアロジック／サブコンポーネント（core/part-role.ts）
 --   ゲームでは原作のゲームデザインがコア、追加のイラスト等がサブ。出版では原稿がコア、イラスト・
 --   装丁等がサブ。役割を種別（part_type）から読むだけでは出版の素材に読める種別が無いので、
@@ -3108,6 +3125,9 @@ SELECT count(*) AS 列 FROM information_schema.columns
 \echo '--- 作品の構成要素の役割（A-078。列 1・CHECK 1 で 2 であること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='work_parts' AND column_name='part_role')
      + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.work_parts'::regclass AND conname='work_parts_part_role_chk') AS 列とCHECK;
+\echo '--- 利用許諾料の価格の基準（A-091。列 1・CHECK 1 で 2 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions' AND column_name='price_basis')
+     + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_price_basis_chk') AS 列とCHECK;
 \echo '--- 初版の利用許諾料を委託報酬として払う発注（A-077。列 4・CHECK 1 で 5 であること） ---'
 SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions'
          AND column_name IN ('first_edition_price', 'first_edition_copies', 'first_edition_rate_ppm', 'confirm_within_days'))
