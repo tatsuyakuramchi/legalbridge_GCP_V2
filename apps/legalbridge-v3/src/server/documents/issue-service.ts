@@ -507,6 +507,8 @@ export class DocumentIssueService {
                  FROM unnest($2::bigint[]) WITH ORDINALITY AS x(id, ord)
                ON CONFLICT (document_id, condition_id) DO NOTHING`,
               [documentId, termIds]);
+            // 案件にも繋ぐ（選んだ条件と同じ扱い）。繋がないと案件の工程（grid）に利用許諾条件が出ない。
+            if (row.matter_id) await this.matters.attachWithin(client, Number(row.matter_id), termIds, actor);
           }
         }
 
