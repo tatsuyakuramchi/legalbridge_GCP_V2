@@ -356,6 +356,15 @@ export function LineItemsEditor(
       </div>
       <div className="panel-bd stack" style={{ gap: 10 }}>
         <div className="faint">{section.hint}</div>
+        {/* 手入力で固定された明細は、条件を直しても紙に反映されない。訂正版や開き直した下書きで
+            「条件を直したのに金額が変わらない」と迷うので、ここで言って戻す口を出す（A-087）。 */}
+        {edited && seed.length > 0 && (
+          <div className="note warn">
+            この明細は手入力で固定されています。条件明細を直しても、この文書には反映されません。
+            条件から組み直すなら「自動に戻す」を押してください（手で直した行は消えます）。
+            <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => onChange(null)}>自動に戻す</button>
+          </div>
+        )}
         {current.length === 0 && <div className="faint">行がありません</div>}
         {current.map((row, i) => (
           <div key={i} className="line-card">

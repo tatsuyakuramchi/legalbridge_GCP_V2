@@ -444,3 +444,16 @@ test("計算書・支払の期日は許諾者が個人なら翌月20日、法人
   assert.match(agreed.report, /締め日の翌月20日までに/);
   assert.equal(agreed.payment, "被許諾者は、同日までに許諾料を許諾者の指定する口座に振り込んで支払う。");
 });
+
+test("A-089：初版分を発注書の報酬で払った構成要素があれば、特記事項の種に作品ごとの 1 文が立つ", async () => {
+  const { inLieuSpecialExtras } = await import("./license-terms.js");
+  const rows = inLieuSpecialExtras({ conditions: [
+    { id: 1, name: "A｜コア", licenseFeeBasis: "in_lieu", work: { title: "作品A" }, firstEditionPrice: 1000, firstEditionCopies: 3000, firstEditionRatePct: 10, royaltyExemptFirstCopies: null },
+    { id: 2, name: "A｜サブ", licenseFeeBasis: "in_lieu", work: { title: "作品A" } },
+    { id: 3, name: "B", licenseFeeBasis: "separate", work: { title: "作品B" } }
+  ] });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.seId, "1");
+  assert.match(String(rows[0]!.seText), /^作品A：初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み（算定：本体価格 1,000円（税抜）× 初版 3,000部 × 10%）。/);
+  assert.deepEqual(inLieuSpecialExtras({ conditions: [] }), []);
+});

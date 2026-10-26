@@ -121,6 +121,10 @@ export function ServiceLinesForm(
   const [tax, setTax] = useState("taxable");
   const [currency, setCurrency] = useState("JPY");
   const [termStart, setTermStart] = useState("");
+  /** 業務期間の終了（空なら各行の納期）。初版の利用許諾料で払う発注は特約が業務期間と許諾期間を分けて書く（A-089）。 */
+  const [termEnd, setTermEnd] = useState("");
+  /** 利用許諾の開始（空なら開始日）。 */
+  const [licTermStart, setLicTermStart] = useState("");
   const [lines, setLines] = useState<Line[]>(seed?.lines?.length ? seed.lines.map((l) => ({ ...blank(), ...l })) : [blank()]);
   const [paste, setPaste] = useState("");
   const [showPaste, setShowPaste] = useState(false);
@@ -263,6 +267,8 @@ export function ServiceLinesForm(
     update(soloKey, { quantity: "1", unitPrice: String(provisional) });
   }, [soloKey, feOk, provisional, soloAmount]);
   const termsPreview = inLieu ? inLieuSpecialTerms({
+    servicePeriod: { start: termStart || null, end: termEnd || contractorLines.map((l) => l.deliveryDue).filter(Boolean).sort().at(-1) || null },
+    licensePeriod: { start: licTermStart || termStart || null, end: licTermEnd || null },
     deliverables: contractorLines.map((l) => ({ name: l.name || title, amount: amountOf(l) })),
     firstEdition, provisionalAmount: rowsTotal || provisional,
     confirmWithinDays: confirmDaysOk ? num(confirmDays) : null,
@@ -357,7 +363,7 @@ export function ServiceLinesForm(
       const posted = await api.post<ServiceLinesCreated>("/conditions/service-set", {
         title: title.trim(), counterpartyId: int(partyId), agreementId: int(agreementId) ?? null,
         matterId: int(preset?.matterId ?? "") ?? null, workId: int(workId) ?? null,
-        termStart: text(termStart) ?? null, termEnd: null,
+        termStart: text(termStart) ?? null, termEnd: text(termEnd) ?? null,
         currency, taxCategory: tax, paymentTerms: text(paymentTerms) ?? null,
         contractForm: text(contractForm) ?? null, deliverableOwnership: ownership || null,
         // 準委任の時間精算（A-073）。束の既定。準委任の委託料の行に付く（サーバが委託料の行だけに付ける）。
@@ -400,7 +406,7 @@ export function ServiceLinesForm(
           sublicense,
           ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
           flatAmount: licMode === "separate" && !licRate.trim() && licFlat.trim() ? Math.round(num(licFlat)) : null,
-          termStart: text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
+          termStart: text(licTermStart) ?? text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
           scopes: scopes.length ? scopes : undefined,
           // 初版の利用許諾料を報酬として払う（A-077）。仮計算額と行の合計はサーバが突き合わせる。
           ...(licMode === "in_lieu" ? {
@@ -487,6 +493,7 @@ export function ServiceLinesForm(
               </select>
             </span></label>
           <label className="field"><span>開始日</span><input type="date" value={termStart} onChange={(e) => setTermStart(e.target.value)} /></label>
+          <label className="field"><span>業務終了（空なら各行の納期）</span><input type="date" value={termEnd} onChange={(e) => setTermEnd(e.target.value)} /></label>
         </div>
 
         <div className="row" style={{ gap: 8 }}>
@@ -752,6 +759,7 @@ export function ServiceLinesForm(
                   <label className="field"><span>料率（%）</span><input value={licRate} placeholder="8" onChange={(e) => setLicRate(e.target.value)} /></label>
                   <label className="field"><span>または 定額（税抜）</span><input value={licFlat} placeholder="料率が空のとき" onChange={(e) => setLicFlat(e.target.value)} /></label>
                 </>)}
+                <label className="field"><span>許諾開始（空なら開始日）</span><input type="date" value={licTermStart} onChange={(e) => setLicTermStart(e.target.value)} /></label>
                 <label className="field"><span>許諾終了（空なら期間の定めなし）</span><input type="date" value={licTermEnd} onChange={(e) => setLicTermEnd(e.target.value)} /></label>
                 <div className="field"><span>地域（許諾範囲）</span><RightsScopePicker kind="region" value={licRegions} onChange={setLicRegions} /></div>
                 <div className="field"><span>言語（許諾範囲）</span><RightsScopePicker kind="language" value={licLanguages} onChange={setLicLanguages} /></div>

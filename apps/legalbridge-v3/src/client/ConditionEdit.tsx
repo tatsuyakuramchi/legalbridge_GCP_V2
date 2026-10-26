@@ -141,7 +141,11 @@ export function ConditionEdit(
    * （払った額の根拠が書き換わる）。種類と計算方式もこのときだけ変えられる。
    */
   const [inPlace, setInPlace] = useState(false);
-  const hasPayment = ["payment_planned", "partly_paid", "paid"].includes(detail.settlement?.state ?? "");
+  /**
+   * 実際に払った条件だけ直接編集を止める（A-088）。「支払を立てた（予定あり）」は金額が動いていないので直せる。
+   * 以前は予定があるだけで止めていて、料率から定額への変更が黙って落ちていた（計算方式は直接編集でしか送られない）。
+   */
+  const hasPayment = ["partly_paid", "paid"].includes(detail.settlement?.state ?? "");
   /** 関数更新にする。1 つのハンドラで 2 回呼んでも先の値が消えない（チップで計算方式と報酬名を同時に入れる）。 */
   const set = (k: string, value: string) => setV((prev) => ({ ...prev, [k]: value }));
   /** 電子書籍の集計のしかた（年 1 回・年 2 回・年 4 回）。支払条件の文と決済の型をまとめて入れる。 */
@@ -379,7 +383,7 @@ export function ConditionEdit(
             <b>直接編集</b>（改訂にせず、その場で書き換える。種類と計算方式も変えられる）
             <small className="faint" style={{ display: "block" }}>
               {hasPayment
-                ? "支払が立っている条件は直接編集できません。支払を取り消すか、改訂で直してください"
+                ? "支払済み（一部でも）の条件は直接編集できません。支払を取り消すか、改訂で直してください"
                 : "台帳の整理用。決定済みの文書は焼き付いた値のまま残るので、金額を変えると「金額の取り残し」に出ます"}
             </small>
           </span>
