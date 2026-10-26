@@ -17,6 +17,7 @@
  * 逆流させていた）。V3 は条件明細が先にあるので、逆をやる。
  */
 
+import { inLieuPaidNote } from "../conditions/royalty-in-lieu.js";
 import type { TemplateVariable } from "./binding.js";
 import { dealIdOfUsage } from "../core/condition-usage.js";
 
@@ -455,8 +456,27 @@ export function licenseTermsSeeds(context: Data): Record<string, Data[]> {
     v3_conds: dealSeeds(context),
     v3_lcs: materialSeeds(context),
     v3_sublicensees: [],
-    v3_special_extras: []
+    v3_special_extras: inLieuSpecialExtras(context)
   };
+}
+
+/**
+ * 特記事項の種（A-089）：初版分を発注書の報酬（初版利用許諾料）で払った構成要素があれば、
+ * 「初版分は支払済み。本条件書の料率は第2版以降・電子に適用」の 1 文を作品ごとに置く。
+ * 人が行を直していればそちらが勝つ（種は未編集のときだけ本文になる）。
+ */
+export function inLieuSpecialExtras(context: Data): Data[] {
+  const paid = list(context.conditions).filter((c) => String(c.licenseFeeBasis ?? "") === "in_lieu");
+  const byWork = new Map<string, Data>();
+  for (const c of paid) {
+    const key = String(c.work?.title ?? c.name ?? "");
+    if (!byWork.has(key)) byWork.set(key, c);
+  }
+  return [...byWork.entries()].map(([title, c], i) => ({
+    seId: String(i + 1),
+    seText: `${title ? `${title}：` : ""}${inLieuPaidNote({ price: c.firstEditionPrice, copies: c.firstEditionCopies,
+                                                           ratePct: c.firstEditionRatePct, exemptCopies: c.royaltyExemptFirstCopies })}`
+  }));
 }
 
 // ---------------------------------------------------------------------------

@@ -40,7 +40,8 @@ test("特約の文：算定方法・仮計算額・確定の手続き・60 日�
     sublicense: "consent", companionDocument: "pub_terms"
   });
   assert.match(text, /^特約（初版の利用許諾料を報酬として支払う旨の特則）/);
-  assert.match(text, /1\. 本業務のうち原稿およびイラストの制作（以下「本制作」）の対価は、乙が著作権を有する成果物の初版の出版に係る利用許諾料/);
+  assert.match(text, /1\. 本業務のうち原稿およびイラストの制作（以下「本制作」）の対価（制作報酬）は、乙が著作権を有する成果物の初版の出版に係る利用許諾料の算定方法により算定した額（以下「初版利用許諾料」）とし、当該報酬には成果物の初版の出版に係る利用許諾の対価を含む。/);
+  assert.match(text, /本制作の業務期間は本発注書記載の期間（納期まで）とし、成果物の利用許諾の期間は本発注書の利用許諾条件に定める期間とする/);
   assert.match(text, /2\. 初版利用許諾料の算定方法は、本体価格（税抜）×（初版発行部数 − 献本・見本等の非加算部数100部）× 10％ とする。本発注書記載の金額（金290,000円。以下「仮計算額」）は、本体価格1,000円・初版3,000部の見込みによる仮計算である（内訳：原稿 金240,000円、イラスト 金50,000円）。/);
   assert.match(text, /3\. 甲は、成果物を受領した日から45日以内に、本体価格および初版発行部数を乙に書面（電磁的方法を含む）で通知し、乙の確認を得て初版利用許諾料の額を確定する。確定額が仮計算額を下回るときは、仮計算額をもって確定額とする。/);
   assert.match(text, /4\. 甲は、成果物を受領した日から60日以内である2027年1月25日までに、確定額を支払う。同日までに確定しないときは、同日までに仮計算額を支払い、確定後の差額を確定の日から30日以内に追加して支払う。/);
@@ -75,4 +76,24 @@ test("60 日以内の判定：当日・60 日目は可、61 日目と受領前�
   assert.equal(withinSixtyDays("2026-11-30", "2026-11-29"), false, "受領の前");
   assert.equal(withinSixtyDays(null, "2026-12-25"), null);
   assert.equal(withinSixtyDays("2026-11-30", ""), null);
+});
+
+test("A-089：条件書の備考の 1 文。算定の基礎があれば括弧で添え、無ければ文だけ", async () => {
+  const { inLieuPaidNote } = await import("./royalty-in-lieu.js");
+  assert.equal(inLieuPaidNote({ price: 2500, copies: 4000, ratePct: 8, exemptCopies: 100 }),
+    "初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み（算定：本体価格 2,500円（税抜）× （初版 4,000部 − 献本等 100部） × 8%）。本条件書の料率は第2版以降の出版および電子版に適用する。");
+  assert.match(inLieuPaidNote(null), /^初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み。/);
+});
+
+test("A-089：特約第1項は、制作報酬を利用許諾料の算定方法で算定し、その報酬に利用許諾の対価を含む構造。業務期間と許諾期間を日付で書く", async () => {
+  const { inLieuSpecialTerms } = await import("./royalty-in-lieu.js");
+  const text = inLieuSpecialTerms({
+    deliverables: [{ name: "原稿", amount: 780000 }],
+    firstEdition: { price: 2500, copies: 4000, ratePct: 8, exemptCopies: 100 },
+    laterRates: [{ usageType: "pub_print", ratePct: 8 }],
+    servicePeriod: { start: "2026-05-15", end: "2026-10-31" },
+    licensePeriod: { start: "2026-05-15", end: null }
+  });
+  assert.match(text, /当該報酬には成果物の初版の出版に係る利用許諾の対価を含む。甲は、これと別に制作報酬または初版の利用許諾料を支払わない。/);
+  assert.match(text, /本制作の業務期間は2026年5月15日から2026年10月31日までとし、成果物の利用許諾の期間は2026年5月15日から（終期の定めなし）とする。/);
 });

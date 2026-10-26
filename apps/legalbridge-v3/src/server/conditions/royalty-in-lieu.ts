@@ -110,6 +110,29 @@ export interface InLieuTermsInput {
    * license_terms=個別利用許諾条件書（ゲーム）。あれば「本特約の利用許諾の条件はその条件書に当たる」と書く。
    */
   companionDocument?: CompanionDocument | null;
+  /** 本制作の業務期間（開始〜納期）。発注書の明細から。空なら「本発注書記載の期間」。 */
+  servicePeriod?: { start?: string | null; end?: string | null } | null;
+  /** 成果物の利用許諾の期間（紙の利用許諾条件の期間）。空なら「本発注書の利用許諾条件に定める期間」。 */
+  licensePeriod?: { start?: string | null; end?: string | null } | null;
+}
+
+/** 期間の文。両端が空なら null。片方だけなら「〜」で示す。 */
+function periodText(p: { start?: string | null; end?: string | null } | null | undefined): string | null {
+  if (!p || (!p.start && !p.end)) return null;
+  if (p.start && p.end) return `${jaDate(p.start)}から${jaDate(p.end)}まで`;
+  return p.start ? `${jaDate(p.start)}から（終期の定めなし）` : `${jaDate(p.end!)}まで`;
+}
+
+/**
+ * 条件書（出版等利用許諾条件書・個別利用許諾条件書）の備考に写す 1 文（A-089）。
+ * 初版分は発注書の報酬として支払済みで、条件書の対象は第2版以降・電子だと分かるようにする。
+ */
+export function inLieuPaidNote(basis: Partial<FirstEditionBasis> | null | undefined): string {
+  const fe = basis && basis.price && basis.copies && basis.ratePct
+    ? { price: Number(basis.price), copies: Number(basis.copies), ratePct: Number(basis.ratePct), exemptCopies: basis.exemptCopies ?? null }
+    : null;
+  const calc = fe ? `（算定：${firstEditionBasisText(fe, "見込み").replace(/^算定の基礎（見込み）：/, "")}）` : "";
+  return `初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み${calc}。本条件書の料率は第2版以降の出版および電子版に適用する。`;
 }
 
 /** 発注書と併せて出す条件書。ひな形は既存のもの。 */
@@ -187,7 +210,7 @@ export function inLieuSpecialTerms(input: InLieuTermsInput): string {
     : "";
   const credit = String(input.creditNotice ?? "").trim();
   const clauses: string[][] = [
-    [`本業務のうち${subject}（以下「本制作」）の対価は、乙が著作権を有する成果物の初版の出版に係る利用許諾料（以下「初版利用許諾料」）とし、別途の制作報酬は支払わない。本制作の対価については、本特約が業務委託基本契約約款に優先する。`],
+    [`本業務のうち${subject}（以下「本制作」）の対価（制作報酬）は、乙が著作権を有する成果物の初版の出版に係る利用許諾料の算定方法により算定した額（以下「初版利用許諾料」）とし、当該報酬には成果物の初版の出版に係る利用許諾の対価を含む。甲は、これと別に制作報酬または初版の利用許諾料を支払わない。本制作の業務期間は${periodText(input.servicePeriod) ?? "本発注書記載の期間（納期まで）"}とし、成果物の利用許諾の期間は${periodText(input.licensePeriod) ?? "本発注書の利用許諾条件に定める期間"}とする。本制作の対価については、本特約が業務委託基本契約約款に優先する。`],
     [`初版利用許諾料の算定方法は、${firstEditionFormulaText(fe)} とする。本発注書記載の金額（金${yen(provisional)}円。以下「仮計算額」）は、本体価格${fe.price.toLocaleString("ja-JP")}円・初版${fe.copies.toLocaleString("ja-JP")}部の見込みによる仮計算である${breakdown}。`],
     [`甲は、成果物を受領した日から${days}日以内に、本体価格および初版発行部数を乙に書面（電磁的方法を含む）で通知し、乙の確認を得て初版利用許諾料の額を確定する。確定額が仮計算額を下回るときは、仮計算額をもって確定額とする。`],
     [`甲は、成果物を受領した日から60日以内である${due}までに、確定額を支払う。同日までに確定しないときは、同日までに仮計算額を支払い、確定後の差額を確定の日から30日以内に追加して支払う。初版利用許諾料は、初版の発行の有無および時期にかかわらず支払うものとし、乙は返還を要しない。`],

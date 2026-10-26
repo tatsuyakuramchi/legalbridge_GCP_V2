@@ -623,6 +623,8 @@ export class DocumentContextRepository {
               c.auto_renew, c.renew_months, c.renew_stopped_on,
               c.notes, c.spec, c.deliverable_ownership, c.reward_label,
               c.order_no, c.usage_type,
+              c.license_fee_basis, c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm,
+              c.royalty_exempt_first_copies, c.royalty_exempt_later_pct, c.confirm_within_days,
               -- 条件が載っている単体契約の番号（取り込んだ発注書を契約として登録したもの）。
               -- 検収書の行の発注番号が、発注書の文書も控えも無いときにこれを使う。
               (SELECT a.agreement_no FROM agreements a
@@ -697,6 +699,15 @@ export class DocumentContextRepository {
         /** 書類に印字する言い方。列は enum なので、そのまま出すと英語が出る。 */
         exclusivityLabel: row.exclusivity === "exclusive" ? "独占"
           : row.exclusivity === "non_exclusive" ? "非独占" : null,
+        /** 許諾料の扱い（A-075/A-077）。条件書の備考が「初版分は支払済み」と書くのに使う。 */
+        licenseFeeBasis: str(row.license_fee_basis) ?? "separate",
+        firstEditionPrice: toMajor(int(row.first_edition_price), currency),
+        firstEditionCopies: int(row.first_edition_copies),
+        firstEditionRatePct: row.first_edition_rate_ppm === null || row.first_edition_rate_ppm === undefined
+          ? null : Number(row.first_edition_rate_ppm) / 10000,
+        royaltyExemptFirstCopies: int(row.royalty_exempt_first_copies),
+        royaltyExemptLaterPct: num(row.royalty_exempt_later_pct),
+        confirmWithinDays: int(row.confirm_within_days),
         sublicensable: row.sublicensable,
         /** 計算書の出し方（periodic=締めごと / event=製造ごと）。条件書の文に入る。 */
         statementTiming: str(row.statement_timing),

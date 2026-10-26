@@ -1207,7 +1207,13 @@ export function inLieuSpecialTermsFor(context: Ctx): string {
     // 再許諾の可否（A-079）。
     sublicense: sublicenseModeOf(head.sublicensable as boolean | null, head.sublicenseConsent as string | null),
     // 併せて締結する条件書（A-080）。どれかの許諾条件を載せた条件書があればそれ。
-    companionDocument: terms.map((t) => companionOfTemplate(t.companionTemplateKey)).find(Boolean) ?? null
+    companionDocument: terms.map((t) => companionOfTemplate(t.companionTemplateKey)).find(Boolean) ?? null,
+    // 業務期間（対象の行の開始〜納期）と利用許諾の期間（紙の利用許諾条件の期間）。A-089
+    servicePeriod: {
+      start: deliverableRows.map((c) => String(c.termStart ?? "")).filter(Boolean).sort()[0] ?? null,
+      end: deliverableRows.map((c) => String(c.deliveryDue ?? c.termEnd ?? "")).filter(Boolean).sort().at(-1) ?? null
+    },
+    licensePeriod: { start: head.termStart ? String(head.termStart) : null, end: head.termEnd ? String(head.termEnd) : null }
   });
 }
 

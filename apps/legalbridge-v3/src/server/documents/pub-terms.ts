@@ -18,6 +18,7 @@
  * 受ける許諾）で、振込先は取引先の口座。
  */
 
+import { inLieuPaidNote } from "../conditions/royalty-in-lieu.js";
 import type { TemplateVariable } from "./binding.js";
 import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
@@ -396,7 +397,11 @@ export function pubTitleSeeds(context: Data): Data[] {
     // なら空にして、紙に二重に出さない（規則名は台帳の都合で、出版物名ではない）。
     const name = text(head.name);
     const edition = name === title || name.startsWith(`${title}｜`) ? "" : name;
-    const notes = [...new Set(group.map((c) => text(c.notes)).filter(Boolean))].join("／");
+    // 初版分を発注書の報酬で払った作品（A-077/A-089）：条件の備考に書いていなくても、備考に 1 文を写す。
+    const paid = [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu");
+    const paidNote = paid ? inLieuPaidNote({ price: paid.firstEditionPrice, copies: paid.firstEditionCopies,
+                                             ratePct: paid.firstEditionRatePct, exemptCopies: paid.royaltyExemptFirstCopies }) : "";
+    const notes = [...new Set([paidNote, ...group.map((c) => text(c.notes))].filter(Boolean))].join("／");
     return {
       item_name: title,
       title,
