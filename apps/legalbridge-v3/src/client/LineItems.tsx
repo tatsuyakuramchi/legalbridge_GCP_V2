@@ -304,8 +304,13 @@ export const LINE_SECTIONS: Record<string, {
 const num = (v: unknown) => { const n = Number(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? n : null; };
 
 export function LineItemsEditor(
-  { name, seed, rows, intl, onChange }: {
+  { name, seed, rows, intl, onChange, covers }: {
     name: string;
+    /**
+     * 発注明細の行ごとの「初版利用許諾料の対象」（A-085）。発注書で「初版…支払済み」の利用許諾条件を
+     * 載せているときだけ渡す。条件から出た行（condition_id あり）にチェックを出す。
+     */
+    covers?: { selected: number[]; toggle: (conditionId: number, on: boolean) => void } | null;
     /** サーバが組んだ行。編集していないときはこれが本文になる。 */
     seed: Row[];
     /** 人が直した行。null なら未編集（種のまま）。 */
@@ -372,6 +377,14 @@ export function LineItemsEditor(
               <b>{i + 1}. {show(row.item_name ?? row.title ?? row.expense_name ?? row.fee_name) || "（名前なし）"}</b>
               {section.subtitle && section.subtitle(row) && (
                 <span className="faint" style={{ marginLeft: 8 }}>{section.subtitle(row)}</span>
+              )}
+              {name === "items" && covers && Number(row.condition_id) > 0 && (
+                <label className="row" style={{ gap: 4, marginLeft: 12 }}
+                       title="初版の利用許諾料がこの行の対価を兼ねる（利用許諾条件の表の「対象」・仮計算の注記・特約の対象に出る）">
+                  <input type="checkbox" checked={covers.selected.includes(Number(row.condition_id))}
+                         onChange={(e) => covers.toggle(Number(row.condition_id), e.target.checked)} />
+                  <span className="faint">初版利用許諾料の対象</span>
+                </label>
               )}
               <button type="button" className="linky" style={{ marginLeft: "auto" }}
                       onClick={() => onChange(current.filter((_, j) => j !== i))}>この行を外す</button>
