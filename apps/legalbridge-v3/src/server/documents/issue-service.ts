@@ -495,6 +495,21 @@ export class DocumentIssueService {
         const frozen = { ...resolveAllLegacyVariables(context), ...suggested,
                          ...computed, ...binding.values };
 
+        // 発注書の利用許諾条件の表に載った条件（同じ相手先・作品の受注者帰属の利用許諾）は、選んでいなくても
+        // この発注書に繋ぐ（A-096）。工程の「同じ発注書」や条件書との対応（companion）が繋がりで決まるため。
+        if (template.templateKey === "purchase_order" || template.templateKey === "intl_purchase_order") {
+          const termIds = ((context as { licenseTerms?: Array<{ id?: unknown }> }).licenseTerms ?? [])
+            .map((t) => Number(t.id)).filter((n) => Number.isInteger(n) && n > 0 && !conditionIds.includes(n));
+          if (termIds.length) {
+            await client.query(
+              `INSERT INTO document_conditions (document_id, condition_id, line_no)
+               SELECT $1, x.id, (SELECT COALESCE(max(line_no), 0) FROM document_conditions WHERE document_id = $1) + x.ord
+                 FROM unnest($2::bigint[]) WITH ORDINALITY AS x(id, ord)
+               ON CONFLICT (document_id, condition_id) DO NOTHING`,
+              [documentId, termIds]);
+          }
+        }
+
         const updated = await client.query(
           `UPDATE documents
               SET document_no = $2, status = 'issued', rendered_values = $3::jsonb,
