@@ -1094,15 +1094,15 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
 
   const s = suggestionsFor("purchase_order", context) as Record<string, string>;
   assert.match(s.SPECIAL_TERMS, /原稿およびイラストの制作/);
-  assert.match(s.SPECIAL_TERMS, /乙の事前の書面による同意を得て行い/);
+  assert.match(s.SPECIAL_TERMS, /受注者の事前の書面による同意を得て行い/);
   assert.match(s.SPECIAL_TERMS, /併せて締結する出版等利用許諾条件書/);
-  assert.match(s.SPECIAL_TERMS, /6\. 甲は、成果物を利用するに際し、次のクレジット表記を行う。[^\n]*\n　© 2026 山田太郎／イラスト：山田太郎/);
+  assert.match(s.SPECIAL_TERMS, /6\. 発注者は、成果物を利用するに際し、次のクレジット表記を行う。[^\n]*\n　© 2026 山田太郎／イラスト：山田太郎/);
   assert.match(s.SPECIAL_TERMS, /出版基本契約（AGR-2026-0088 出版基本契約）に基づく個別契約として締結する個別出版条件書/);
   assert.match(s.SPECIAL_TERMS, /同契約の個別契約として取り扱い/);
   assert.match(s.SPECIAL_TERMS, /算定方法は、本体価格（税抜）× 初版発行部数 × 10％ とする。本発注書記載の金額（金300,000円。以下「仮計算額」）は、本体価格1,000円・初版3,000部の見込みによる仮計算である（内訳：原稿 金250,000円、イラスト 金50,000円）。/);
   assert.match(s.SPECIAL_TERMS, /受領した日から45日以内に/);
   assert.match(s.SPECIAL_TERMS, /60日以内である2026年12月25日までに、確定額を支払う/);
-  assert.match(s.SPECIAL_TERMS, /紙版：本体価格 ×（発行部数 − 発行部数の1％にあたる献本等の非加算部数）× 10％、電子版：甲の受領額 × 15％/);
+  assert.match(s.SPECIAL_TERMS, /紙版：本体価格 ×（発行部数 − 発行部数の1％にあたる献本等の非加算部数）× 10％、電子版：発注者の受領額 × 15％/);
   // 人が欄に書いていればそちら。in_lieu が無ければ特約は立てない。
   assert.equal((suggestionsFor("purchase_order", context, { SPECIAL_TERMS: "自前" }) as Record<string, unknown>).SPECIAL_TERMS, undefined);
   assert.equal("SPECIAL_TERMS" in suggestionsFor("purchase_order", { conditions, licenseTerms: [] }), false);
