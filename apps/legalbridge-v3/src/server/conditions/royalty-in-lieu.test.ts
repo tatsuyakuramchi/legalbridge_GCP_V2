@@ -97,3 +97,40 @@ test("A-089：特約第1項は、制作報酬を利用許諾料の算定方法�
   assert.match(text, /当該報酬には成果物の初版の出版に係る利用許諾の対価を含む。発注者は、これと別に制作報酬または初版の利用許諾料を支払わない。/);
   assert.match(text, /本制作の業務期間は2026年5月15日から2026年10月31日までとし、成果物の利用許諾の期間は2026年5月15日から（終期の定めなし）とする。/);
 });
+
+test("A-091：価格の基準。卸価格（再許諾先への供給価格）なら式と算定の基礎と 2 版目以降の式がそう書かれる", async () => {
+  const { priceBasisText, firstEditionFormulaText, firstEditionBasisText, royaltyFormulaText, inLieuSpecialTerms } = await import("./royalty-in-lieu.js");
+  assert.equal(priceBasisText(null), "本体価格（税抜）");
+  assert.equal(priceBasisText("supply", "KADOKAWA"), "卸価格（KADOKAWA への供給価格・税抜）");
+  assert.equal(priceBasisText("supply"), "卸価格（再許諾先への供給価格・税抜）");
+  assert.equal(priceBasisText("receipts"), "発注者の受領額");
+  assert.equal(firstEditionFormulaText({ ratePct: 8, exemptCopies: 100, priceBasis: "supply", partyName: "KADOKAWA" }),
+    "卸価格（KADOKAWA への供給価格・税抜）×（初版発行部数 − 献本・見本等の非加算部数100部）× 8％");
+  assert.equal(firstEditionBasisText({ price: 4000, copies: 3000, ratePct: 8, exemptCopies: 100, priceBasis: "supply", partyName: "KADOKAWA" }),
+    "算定の基礎（見込み）：卸価格 4,000円（KADOKAWA への供給価格・税抜）× （初版 3,000部 − 献本等 100部） × 8%");
+  assert.equal(royaltyFormulaText("pub_print", 8, 1, "supply", "KADOKAWA"),
+    "紙版：卸価格（KADOKAWA への供給価格・税抜） ×（発行部数 − 発行部数の1％にあたる献本等の非加算部数）× 8％");
+  assert.equal(royaltyFormulaText("pub_print", 8, null), "紙版：本体価格 × 発行部数 × 8％", "空なら従来どおり");
+  const text = inLieuSpecialTerms({
+    deliverables: [{ name: "原稿", amount: 928000 }],
+    firstEdition: { price: 4000, copies: 3000, ratePct: 8, exemptCopies: 100, priceBasis: "supply", partyName: "KADOKAWA" },
+    laterRates: [{ usageType: "pub_print", ratePct: 8, priceBasis: "supply", partyName: "KADOKAWA" }]
+  });
+  assert.match(text, /2\. 初版利用許諾料の算定方法は、卸価格（KADOKAWA への供給価格・税抜）×（初版発行部数 − 献本・見本等の非加算部数100部）× 8％ とする。本発注書記載の金額（金928,000円。以下「仮計算額」）は、卸価格4,000円・初版3,000部の見込みによる仮計算である。/);
+  assert.match(text, /3\. 発注者は、成果物を受領した日から45日以内に、卸価格および初版発行部数を受注者に書面/);
+  assert.match(text, /紙版：卸価格（KADOKAWA への供給価格・税抜） × 発行部数 × 8％/);
+});
+
+test("A-092：受領額基準（再許諾料の入金 × 料率）は部数を掛けない。式・算定の基礎・特約もそう書く", async () => {
+  const { firstEditionFee, firstEditionFormulaText, firstEditionBasisText, inLieuSpecialTerms } = await import("./royalty-in-lieu.js");
+  const fe = { price: 10_000_000, copies: 1, ratePct: 8, exemptCopies: 0, priceBasis: "receipts" as const, partyName: "KADOKAWA" };
+  assert.equal(firstEditionFee(fe), 800_000);
+  assert.equal(firstEditionFee({ ...fe, copies: 3000 }), 800_000, "部数があっても掛けない");
+  assert.equal(firstEditionFormulaText(fe), "発注者がKADOKAWAから受領する再許諾料（税抜）× 8％");
+  assert.equal(firstEditionBasisText(fe), "算定の基礎（見込み）：受領する再許諾料 10,000,000円（税抜）× 8%");
+  const text = inLieuSpecialTerms({ deliverables: [{ name: "原稿", amount: 800_000 }], firstEdition: fe,
+                                    laterRates: [{ usageType: "pub_print", ratePct: 8, priceBasis: "receipts" }] });
+  assert.match(text, /2\. 初版利用許諾料の算定方法は、発注者がKADOKAWAから受領する再許諾料（税抜）× 8％ とする。本発注書記載の金額（金800,000円。以下「仮計算額」）は、受領する再許諾料10,000,000円の見込みによる仮計算である。/);
+  assert.match(text, /3\. 発注者は、成果物を受領した日から45日以内に、受領する再許諾料の額を受注者に書面/);
+  assert.match(text, /紙版：発注者の受領額 × 8％/);
+});
