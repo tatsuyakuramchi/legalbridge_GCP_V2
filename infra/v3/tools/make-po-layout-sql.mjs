@@ -14,10 +14,12 @@ const TARGETS = [
     // r4（180）：初版の利用許諾料を報酬として払う発注（A-077）。確定額に仮計算の注記、明細の報酬名に
     // 「（仮計算。確定は特約第3項）」、利用許諾条件の表に対象の明細・非加算・個別契約・クレジット表記。
     // 147（r2）・176（r3）の SQL はそのまま残し、180 が置き換える。
-    no: "180", key: "purchase_order", label: "発注書",
+    // r5（184）：初版の利用許諾料で払う行の支払方法と注記を「制作報酬（初版の利用許諾料の算定方法による）」に
+    // （特約第1項の構造に合わせる。A-093）。180（r4）はそのまま残し、184 が置き換える。
+    no: "184", key: "purchase_order", label: "発注書",
     body: "templates/purchase_order_v3_body.html", css: "templates/purchase_order_v3_css.txt",
-    mark: 'data-layout="po-v3-2026-10r4"', family: 'data-layout="po-v3',
-    out: "180_po_layout_v3_r4.sql",
+    mark: 'data-layout="po-v3-2026-10r5"', family: 'data-layout="po-v3',
+    out: "184_po_layout_v3_r5.sql",
     // 約款は本文に書いてある（{{> terms_spot_2026}}）。
     termsPlaceholder: null,
     title: "発注書のひな形：1 ページ目を固定し、明細は 2 ページ目から（署名式・利用許諾条件つき）",
@@ -42,10 +44,11 @@ const TARGETS = [
   {
     // r4（181）：License Terms に対象の明細（Covers）・個別契約・Credit line、確定額の行に報酬名。
     // 148（r2）・177（r3）の SQL はそのまま残し、181 が置き換える。
-    no: "181", key: "intl_purchase_order", label: "海外版の発注書",
+    // r5（185）：provisional の行の Payment と注記を production fee に（A-093）。181（r4）はそのまま残す。
+    no: "185", key: "intl_purchase_order", label: "海外版の発注書",
     body: "templates/intl_purchase_order_v3_body.html", css: "templates/intl_purchase_order_v3_css.txt",
-    mark: 'data-layout="ipo-v3-2026-10r4"', family: 'data-layout="ipo-v3',
-    out: "181_intl_po_layout_v3_r4.sql",
+    mark: 'data-layout="ipo-v3-2026-10r5"', family: 'data-layout="ipo-v3',
+    out: "185_intl_po_layout_v3_r5.sql",
     // 約款の partial 名は現行版の本文から拾って差す（海外版の約款名はここでは決めない）。
     termsPlaceholder: "__TERMS_BLOCK__",
     termsFallback: "terms_spot_intl_2026",

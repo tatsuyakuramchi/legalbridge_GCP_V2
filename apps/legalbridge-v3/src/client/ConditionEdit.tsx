@@ -1023,7 +1023,7 @@ function InLieuGuide(
                 hint={schemeDone ? `計算方式 定額、報酬名「${IN_LIEU_REWARD_LABEL}」`
                   : hasPayment && pm !== "fixed"
                   ? `計算方式が「${pm === "revenue_rate" ? "料率" : pm}」で、支払が立っているので変えられない。この条件は残し、『業務委託（発注）』で新しく作る`
-                  : `計算方式が定額になり（直接編集に切り替わる）、報酬名が「${IN_LIEU_REWARD_LABEL}」になる。発注書の金額欄に「初版利用許諾料（仮計算。確定は特約第3項）」と出る`}
+                  : `計算方式が定額になり（直接編集に切り替わる）、報酬名が「${IN_LIEU_REWARD_LABEL}」になる。発注書の金額欄に「制作報酬（初版の利用許諾料の算定方法による仮計算額。確定は特約第3項）」と出る`}
                 acts={<>{!schemeDone && v.deliverableOwnership === "contractor" && !(hasPayment && pm !== "fixed")
                   && <button type="button" className="btn btn-sm" onClick={chooseInLieu}>選ぶ</button>}{to("payScheme")}</>} />
           <Step done={Boolean(basisLine) && num(v.confirmWithinDays) >= 1 && num(v.confirmWithinDays) <= 60}
