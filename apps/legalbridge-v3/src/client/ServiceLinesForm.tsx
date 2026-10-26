@@ -135,8 +135,10 @@ export function ServiceLinesForm(
   const [licUsage, setLicUsage] = useState("in_house");
   // 初版の利用許諾料を報酬として払う（A-077）。見込みの本体価格・初版部数・料率（・非加算）で仮計算した額が
   // 受注者帰属の行の金額。納品後 60 日以内に確定して検収書で払う。2 版目以降・電子の料率は利用形態ごと。
-  const [inLieuRates, setInLieuRates] = useState<Array<{ key: number; usageType: string; ratePct: string }>>(
-    [{ key: keySeq++, usageType: "pub_print", ratePct: "10" }, { key: keySeq++, usageType: "pub_digital", ratePct: "15" }]);
+  const [inLieuRates, setInLieuRates] = useState<Array<{ key: number; usageType: string; ratePct: string; exclusivity: "" | "exclusive" | "non_exclusive" }>>(
+    [{ key: keySeq++, usageType: "pub_print", ratePct: "10", exclusivity: "" }, { key: keySeq++, usageType: "pub_digital", ratePct: "15", exclusivity: "" }]);
+  /** 独占／非独占（A-098）。作る利用許諾条件すべての既定。料率の行で利用形態ごとに上書きできる。 */
+  const [licExclusivity, setLicExclusivity] = useState<"" | "exclusive" | "non_exclusive">("");
   const [inLieuPayOn, setInLieuPayOn] = useState("");
   const [fePrice, setFePrice] = useState("");
   const [feCopies, setFeCopies] = useState("");
@@ -408,6 +410,8 @@ export function ServiceLinesForm(
           ...(licAgreementId === "" ? {} : { agreementId: licAgreementId === "none" ? null : int(licAgreementId) ?? null }),
           // クレジット表記（A-076）。引用なら文書が作品の今の表記を差す（文言は控え）。
           creditFromWork, creditNotice: text(creditNotice) ?? null,
+          // 独占／非独占（A-098）。
+          exclusivity: licExclusivity || null,
           // 再許諾の可否（A-079）。
           sublicense,
           ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
@@ -416,7 +420,7 @@ export function ServiceLinesForm(
           scopes: scopes.length ? scopes : undefined,
           // 初版の利用許諾料を報酬として払う（A-077）。仮計算額と行の合計はサーバが突き合わせる。
           ...(licMode === "in_lieu" ? {
-            rates: inLieuRates.map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct) })),
+            rates: inLieuRates.map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct), exclusivity: r.exclusivity || null })),
             firstEdition: { price: Math.round(firstEdition.price), copies: firstEdition.copies, ratePct: firstEdition.ratePct,
                             exemptCopies: firstEdition.exemptCopies || null, priceBasis: fePriceBasis || null },
             confirmWithinDays: num(confirmDays), payOn: text(inLieuPayOn) ?? null,
@@ -691,11 +695,18 @@ export function ServiceLinesForm(
                       <input style={{ width: 80, textAlign: "right" }} inputMode="decimal" value={r.ratePct} aria-label={`${i + 1} 番目の料率`}
                              onChange={(e) => setInLieuRates((p) => p.map((x) => (x.key === r.key ? { ...x, ratePct: e.target.value } : x)))} />
                       <span>%</span>
+                      <select value={r.exclusivity} aria-label={`${i + 1} 番目の独占性`}
+                              onChange={(e) => setInLieuRates((p) => p.map((x) => (x.key === r.key ? { ...x, exclusivity: e.target.value as "" | "exclusive" | "non_exclusive" } : x)))}>
+                        <option value="">独占性：共通の設定</option>
+                        <option value="exclusive">独占</option>
+                        <option value="non_exclusive">非独占</option>
+                      </select>
                       <span className="faint">{r.usageType === "pub_print" ? "本体価格 × 発行部数 × 料率" : r.usageType === "pub_digital" ? "当社の受領額 × 料率" : "当社の受領額 × 料率"}</span>
                       {inLieuRates.length > 1 && <button className="linky" onClick={() => setInLieuRates((p) => p.filter((x) => x.key !== r.key))} aria-label="料率の行を外す">✕</button>}
                     </div>
                   ))}
-                  <div><button className="btn btn-sm" onClick={() => setInLieuRates((p) => [...p, { key: keySeq++, usageType: "in_house", ratePct: "" }])}>利用形態を足す</button></div>
+                  <div><button className="btn btn-sm" onClick={() => setInLieuRates((p) => [...p, { key: keySeq++, usageType: "in_house", ratePct: "", exclusivity: "" }])}>利用形態を足す</button></div>
+                  <small className="faint">紙と電子の両方を出すなら両方の行を残す（利用形態ごとに利用許諾条件が 1 本立ち、発注書の表に 1 行ずつ出る）。電子を出さないなら電子の行を ✕ で外す</small>
                 </div>
                 <div className="form-grid">
                   <label className="field"><span>確定の期限（受領後 ○ 日）</span>
@@ -707,6 +718,13 @@ export function ServiceLinesForm(
                   <label className="field"><span>非加算：2 版目以降（発行部数の %）</span>
                     <input inputMode="decimal" value={exemptLater} placeholder="1" onChange={(e) => setExemptLater(e.target.value)} />
                     <small className="faint">献本等。空なら非加算なし。初版の非加算とは別の欄</small></label>
+                  <label className="field"><span>独占／非独占（利用許諾条件の既定）</span>
+                    <select value={licExclusivity} onChange={(e) => setLicExclusivity(e.target.value as "" | "exclusive" | "non_exclusive")}>
+                      <option value="">未設定（発注書の表に「独占性 未設定」と出る）</option>
+                      <option value="exclusive">独占</option>
+                      <option value="non_exclusive">非独占</option>
+                    </select>
+                    <small className="faint">発注書の利用許諾条件の表と条件書の独占区分に出る。紙と電子で違うなら上の料率の行で上書き</small></label>
                   <label className="field"><span>再許諾（第三者への翻訳出版等）</span>
                     <select value={sublicense} onChange={(e) => setSublicense(e.target.value as "no" | "consent" | "covered")}>
                       <option value="consent">可（都度合意）：乙の事前の書面同意を得て行う（既定）</option>

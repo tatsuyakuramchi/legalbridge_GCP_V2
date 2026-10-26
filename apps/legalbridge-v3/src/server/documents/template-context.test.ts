@@ -790,7 +790,7 @@ test("発注書：利用許諾条件の行は利用形態の定義順に並ぶ",
     ] }),
     { items: [{ item_name: "x", amount_ex_tax: 1, deliverable_ownership: "受注者" }] });
   assert.deepEqual((c.license_terms as Array<{ usage: string }>).map((r) => r.usage),
-    ["自社製造・自社販売", "再許諾", "出版（紙）"]);
+    ["自社製造・自社販売（独占性 未設定）", "再許諾（独占性 未設定）", "出版（紙）（独占性 未設定）"]);
 });
 
 // ---- 海外版の発注書（英語の値） ----------------------------------------------
@@ -821,7 +821,7 @@ test("海外版：利用許諾条件の行は英語（含む＝included、無償
     ] }),
     { items: [{ item_name: "x", amount_ex_tax: 1, deliverable_ownership: "受注者" }] });
   const rows = c.license_terms as Array<Record<string, string>>;
-  assert.equal(rows[0].usage, "In-house manufacture & sale");
+  assert.equal(rows[0].usage, "In-house manufacture & sale (exclusivity not set)");
   assert.equal(rows[0].fee, "USD 1,234.50");
   assert.equal(rows[0].term, "2026/10/01 – (no end date)");
   assert.equal(rows[0].scope, "Worldwide / All languages");
@@ -1081,7 +1081,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.equal(c.provisional_note, "仮計算額。確定の方法は特約のとおり（確定額が下回っても本額を支払います）。");
   const rows = c.license_terms as Array<Record<string, string>>;
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].usage, "原稿（コアロジック）｜出版（紙）", "パートがあれば利用形態の前に添える");
+  assert.equal(rows[0].usage, "原稿（コアロジック）｜出版（紙）（非独占）", "パートがあれば利用形態の前に添える");
   assert.equal(rows[0].fee, "10 %（2版目以降）");
   assert.equal(rows[0].guarantee, "—", "AG・MG は持たない");
   assert.equal(rows[0].covers, "対象：No.1 原稿、No.2 イラスト");

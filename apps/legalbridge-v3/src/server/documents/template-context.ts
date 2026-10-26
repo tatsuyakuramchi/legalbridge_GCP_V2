@@ -1122,11 +1122,13 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
     const partPrefix = t.partName
       ? (en ? `${t.partName} (${t.partRole === "core" ? "core" : "sub-component"}) | ` : `${t.partName}（${PART_ROLE_LABEL[(t.partRole as PartRole) ?? "sub"]}）｜`)
       : "";
+    // 独占／非独占は常に出す（A-098）。空なら「独占性 未設定」と出して、条件で決めてもらう。
+    const exclusivityText = en
+      ? (t.exclusivity === "exclusive" ? " (exclusive)" : t.exclusivity === "non_exclusive" ? " (non-exclusive)" : " (exclusivity not set)")
+      : (t.exclusivity === "exclusive" ? "（独占）" : t.exclusivity === "non_exclusive" ? "（非独占）" : "（独占性 未設定）");
     const usage = partPrefix + (en
-      ? [USAGE_LABEL_EN[String(t.usageType)] ?? conditionUsageLabel(t.usageType) ?? String(t.name ?? ""),
-         t.exclusivity === "exclusive" ? " (exclusive)" : ""].join("")
-      : [conditionUsageLabel(t.usageType) || (t.name ?? ""),
-         t.exclusivity === "exclusive" ? "（独占）" : ""].join(""));
+      ? [USAGE_LABEL_EN[String(t.usageType)] ?? conditionUsageLabel(t.usageType) ?? String(t.name ?? ""), exclusivityText].join("")
+      : [conditionUsageLabel(t.usageType) || (t.name ?? ""), exclusivityText].join(""));
     // 載っている契約。出版・再許諾の利用許諾は出版基本契約の個別契約として扱う（業務委託の基本契約とは別）。
     const agreementRef = [String(t.agreementNo ?? "").trim(), String(t.agreementTitle ?? "").trim()].filter(Boolean).join(" ");
     const contract = agreementRef
