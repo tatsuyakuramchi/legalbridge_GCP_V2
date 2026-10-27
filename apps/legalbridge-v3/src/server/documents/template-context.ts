@@ -1099,7 +1099,8 @@ export function licenseTermRows(context: Ctx, lang: "ja" | "en" = "ja", items: R
       : "—";
     // 初版は明細の初版利用許諾料で支払済み（A-077）。紙の行（初版の算定の基礎を持つ 1 本）にだけ注記を出す。
     const baseNote = basis === "in_lieu" && !en && (t.firstEditionCopies || t.usageType === "pub_print")
-      ? inLieuShortNote(t.royaltyExemptFirstCopies ?? null, t.royaltyExemptLaterPct ?? null)
+      ? inLieuShortNote(t.royaltyExemptFirstCopies ?? null, t.royaltyExemptLaterPct ?? null,
+                        ((t.coverNames ?? []) as unknown[]).length === 1 ? String((t.coverNames as unknown[])[0]) : null)
       : basis === "in_lieu" && !en && t.usageType === "pub_digital" ? "配信開始から適用" : "";
     // 再許諾の可否（A-079）。決めてある条件だけ出す（空なら書かない）。
     const subMode = sublicenseModeOf(t.sublicensable as boolean | null, t.sublicenseConsent as string | null);
