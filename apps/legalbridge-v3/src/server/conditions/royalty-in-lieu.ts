@@ -26,7 +26,7 @@ export const IN_LIEU_REWARD_LABEL = "初版利用許諾料";
  */
 export type PriceBasis = "list" | "supply" | "receipts";
 export const PRICE_BASIS_LABEL: Record<PriceBasis, string> =
-  { list: "本体価格（定価）", supply: "卸価格（再許諾先への供給価格）", receipts: "発注者の受領額（再許諾料の入金 × 料率）" };
+  { list: "定価（本体価格）", supply: "卸価格（再許諾先への供給価格。運用では使わない）", receipts: "受領した再許諾料 × 料率" };
 export function priceBasisOf(value: unknown): PriceBasis | null {
   return value === "list" || value === "supply" || value === "receipts" ? value : null;
 }

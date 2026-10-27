@@ -656,11 +656,11 @@ export function ServiceLinesForm(
                 <div className="form-grid">
                   <label className="field"><span>価格の基準</span>
                     <select value={fePriceBasis} onChange={(e) => setFePriceBasis(e.target.value as "" | "supply" | "receipts")}>
-                      <option value="">本体価格（定価）</option>
-                      <option value="supply">卸価格（再許諾先への供給価格）</option>
-                      <option value="receipts">発注者の受領額（再許諾料の入金 × 料率）</option>
+                      <option value="">定価（本体価格）× 部数 × 料率</option>
+                      {fePriceBasis === "supply" && <option value="supply">卸価格（再許諾先への供給価格）※ 使わない</option>}
+                      <option value="receipts">受領した再許諾料 × 料率（部数は使わない）</option>
                     </select>
-                    <small className="faint">KADOKAWA 等へ卸す形は卸価格（ゲームの自社製造・他社販売と同じ構造）。再許諾料の入金に料率を掛けるだけなら受領額（部数は使わない）。2 版目以降の式にも使う</small></label>
+                    <small className="faint">自社出版（アークライト名・新紀元社名）も他社出版（KADOKAWA 等）も定価が基準。受領した再許諾料から分配するときだけ受領額。2 版目以降の式にも使う（A-101）</small></label>
                   <label className="field"><span>{fePriceBasis === "supply" ? "見込み卸価格（税抜・円）" : fePriceBasis === "receipts" ? "見込みの再許諾料の受領額（税抜・円）" : "見込み本体価格（税抜・円）"}</span>
                     <input inputMode="numeric" value={fePrice} placeholder={fePriceBasis === "receipts" ? "10000000" : "1000"} onChange={(e) => setFePrice(e.target.value)} /></label>
                   {fePriceBasis !== "receipts" && <label className="field"><span>見込み初版部数</span>
