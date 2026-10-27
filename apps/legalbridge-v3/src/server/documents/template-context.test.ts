@@ -1151,3 +1151,17 @@ test("A-100：検収書の減額ガード。初版の利用許諾料で払う行
   ] }), []);
   assert.deepEqual(templateWarnings("purchase_order", context, manual), [], "発注書では見ない");
 });
+
+
+test("A-102：件名は文書に載っている作品だけに絞る（案件が複数作品でも、発注書は自分の作品だけ）", async () => {
+  const { narrowTitleToWorks } = await import("./legacy-variables.js");
+  const title = "『クトゥルフ・リザレクション』と『カルト・オブ・クトゥルフ』のスタジオ・アーカムへの発注書";
+  assert.equal(narrowTitleToWorks(title, [{ work: { title: "新クトゥルフ神話TRPG カルト・オブ・クトゥルフ" } }]),
+    "『カルト・オブ・クトゥルフ』のスタジオ・アーカムへの発注書");
+  assert.equal(narrowTitleToWorks(title, [{ work: { title: "クトゥルフ・マニアックス クトゥルフ・リザレクション" } }, { work: null }]),
+    "『クトゥルフ・リザレクション』のスタジオ・アーカムへの発注書");
+  assert.equal(narrowTitleToWorks(title, [{ work: { title: "クトゥルフ・リザレクション" } }, { work: { title: "カルト・オブ・クトゥルフ" } }]), title, "全部載っていればそのまま");
+  assert.equal(narrowTitleToWorks(title, []), title, "作品が読めなければそのまま");
+  assert.equal(narrowTitleToWorks(title, [{ work: { title: "別の作品" } }]), title, "どれも一致しなければそのまま");
+  assert.equal(narrowTitleToWorks("単純な件名", [{ work: { title: "A" } }]), "単純な件名");
+});

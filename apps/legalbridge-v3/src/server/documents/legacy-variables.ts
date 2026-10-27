@@ -21,6 +21,31 @@ import { BUSINESS_LINE_LABEL, type BusinessLine } from "../matters/title.js";
 type Ctx = Record<string, any>;
 
 /** 担当者の代わりに出す事業名（事業区分）。分からなければ null。 */
+
+/**
+ * 件名を、文書に載っている作品だけに絞る（A-102）。
+ *
+ * 案件の件名は「『A』と『B』の◯◯への発注書」のように案件の作品をすべて並べる。作品 A だけの
+ * 発注書にその件名が出ると、載っていない B が件名に入る。件名に『 』で書かれた作品のうち、
+ * 文書の条件に無い作品を落とす。『 』が無い件名、作品が読めない文書、全部載っている文書はそのまま。
+ */
+export function narrowTitleToWorks(
+  title: string | null | undefined,
+  conditions: Array<{ work?: { title?: string | null } | null }> | undefined
+): string | null | undefined {
+  if (!title) return title;
+  const present = new Set((conditions ?? []).map((c) => String(c?.work?.title ?? "").trim()).filter(Boolean));
+  if (!present.size) return title;
+  const quoted = [...title.matchAll(/『([^』]+)』/g)].map((m) => m[1]!);
+  if (quoted.length < 2) return title;
+  const keep = quoted.filter((q) => [...present].some((p) => p === q || p.includes(q) || q.includes(p)));
+  if (!keep.length || keep.length === quoted.length) return title;
+  // 先頭の作品の列（『A』と『B』と『C』）を、残す作品だけで組み直す。
+  const head = title.indexOf("『");
+  const last = title.lastIndexOf("』") + 1;
+  return title.slice(0, head) + keep.map((q) => `『${q}』`).join("と") + title.slice(last);
+}
+
 export function businessUnitOf(c: Ctx): string | null {
   const line = String(c.matter?.businessLine ?? "") as BusinessLine;
   if (BUSINESS_LINE_LABEL[line]) return BUSINESS_LINE_LABEL[line];
@@ -358,7 +383,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   // ---- 件名・案件 ----
   { names: ["PROJECT_TITLE", "CONTRACT_TITLE", "基本契約名", "件名", "title",
             "contractTitle", "projectTitle", "deliverable", "成果物"],
-    get: (c) => c.matter?.title ?? c.condition?.name },
+    get: (c) => narrowTitleToWorks(c.matter?.title, c.conditions as Array<{ work?: { title?: string | null } | null }> | undefined)
+      ?? c.condition?.name },
   // 計算書の件名「◯◯ 利用許諾料のご報告」の◯◯は原作名。イン条件が当社作品に
   // ぶら下がっていても、系譜の親の原作名を出す（無ければ作品名）。
   // 作品をまたいで 1 枚にまとめた計算書（作家でまとめる）は、載っている作品の原作名を
