@@ -2065,7 +2065,8 @@ export function carryOverInputs(manual: Record<string, unknown>): {
   values: Record<string, string>; arrays: Record<string, Row[]>;
   ownerStaffId: number | null; parentPoNo: string; termsNo: string; refNoMode: "ours" | "theirs" | "both";
 } {
-  const computed = new Set(["statementMode", "rs_bundle_lines", "rs_bundle_tax", "rs_stage_notes",
+  // items（発注明細）は引き継がない（A-104）。引き継ぐと手入力の明細として固定され、条件を直しても金額が変わらない。
+  const computed = new Set(["statementMode", "rs_bundle_lines", "rs_bundle_tax", "rs_stage_notes", "items",
                             "_supersedesExtra", "_eventIds", "_ownerStaffId", "_parentPoNo", "_inLieuCovers", "_termsNo", "_refNoMode", "_showRevision"]);
   const values: Record<string, string> = {};
   const arrays: Record<string, Row[]> = {};
