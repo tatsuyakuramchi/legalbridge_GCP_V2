@@ -818,12 +818,15 @@ export class DocumentIssueService {
             "それを直して発行してください");
         }
 
+        // 訂正版は条件を直した結果を載せるためのものなので、元の版の明細（items）は写さない（A-104）。
+        // 写すと手入力の明細として固定され、条件を直しても金額が変わらなかった。欄の手入力・経費・手数料は写す。
+        const { items: _droppedItems, ...carriedInputs } = (row.manual_inputs ?? {}) as Record<string, unknown>;
         const created = await client.query(
           `INSERT INTO documents (template_version_id, matter_id, agreement_id, status,
                                   manual_inputs, supersedes_id, supersede_reason)
            VALUES ($1, $2, $3, 'draft', $4::jsonb, $5, $6) RETURNING id`,
           [row.template_version_id, row.matter_id, row.agreement_id,
-           JSON.stringify(row.manual_inputs ?? {}), documentId, note]);
+           JSON.stringify(carriedInputs), documentId, note]);
         const newId = Number((created.rows[0] as { id: number }).id);
         // 元の版の依頼（デイリータスク）も引き継ぐ。作業の進み具合と担当者が元と同じように入る。
         await client.query(
