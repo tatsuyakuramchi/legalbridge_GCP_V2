@@ -1078,7 +1078,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.equal(items[0].reward_label, "初版利用許諾料", "条件の報酬名の上書きが行に出る");
   assert.equal(items[0].provisional, true, "対象の行は仮計算の印");
   assert.equal(items[0].payment_date, "2026-12-25");
-  assert.equal(c.provisional_note, "仮計算額。確定の方法は特約のとおり（確定額が下回っても本額を支払います）。");
+  assert.equal(c.provisional_note, "「仮計算額」と記した行は見込みの額です。納品後に特約のとおり確定し、見込みの額より少なくなることはありません（減額しません）。");
   const rows = c.license_terms as Array<Record<string, string>>;
   assert.equal(rows.length, 2);
   assert.equal(rows[0].usage, "原稿（コアロジック）｜出版（紙）（非独占）", "パートがあれば利用形態の前に添える");
@@ -1101,7 +1101,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.match(s.SPECIAL_TERMS, /同契約の個別契約として取り扱い/);
   assert.match(s.SPECIAL_TERMS, /算定方法は、本体価格（税抜）× 初版発行部数 × 10％ とする。本発注書記載の金額（金300,000円。以下「仮計算額」）は、本体価格1,000円・初版3,000部の見込みによる仮計算である（内訳：原稿 金250,000円、イラスト 金50,000円）。/);
   assert.match(s.SPECIAL_TERMS, /受領した日から45日以内に/);
-  assert.match(s.SPECIAL_TERMS, /60日以内である2026年12月25日までに、確定額を支払う/);
+  assert.match(s.SPECIAL_TERMS, /60日以内である2026年12月25日までに、前項の支払額を支払う/);
   assert.match(s.SPECIAL_TERMS, /紙版：本体価格 ×（発行部数 − 発行部数の1％にあたる献本等の非加算部数）× 10％、電子版：発注者の受領額 × 15％/);
   // 人が欄に書いていればそちら。in_lieu が無ければ特約は立てない。
   assert.equal((suggestionsFor("purchase_order", context, { SPECIAL_TERMS: "自前" }) as Record<string, unknown>).SPECIAL_TERMS, undefined);
