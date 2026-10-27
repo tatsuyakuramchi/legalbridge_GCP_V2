@@ -1301,8 +1301,8 @@ function orderBlock(templateKey: string, context0: Ctx, manual: Record<string, u
     .flatMap((t) => ((t.covers ?? []) as unknown[]).map(Number)));
   for (const r of items) if (provisionalIds.has(Number(r.condition_id))) r.provisional = true;
   const provisionalNote = items.some((r) => r.provisional)
-    ? (intl ? "Provisional amount; to be finalized as set out in the Special Terms (the finalized amount shall not be less than this amount)."
-            : "仮計算額。確定の方法は特約のとおり（確定額が下回っても本額を支払います）。")
+    ? (intl ? "Rows marked “provisional” are estimated amounts. They are finalized after delivery per the Special Terms, and the estimated amount is the minimum: it will not be reduced. "
+            : "「仮計算額」と記した行は見込みの額です。納品後に特約のとおり確定し、見込みの額より少なくなることはありません（減額しません）。")
     : "";
   const paymentTermsSummary = distinctJoin(((context.conditions ?? []) as Ctx[])
     .filter((c) => !isSettlementKind(c.kind)).map((c) => c.paymentTerms));
