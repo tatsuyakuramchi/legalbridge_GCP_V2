@@ -97,9 +97,14 @@ export function laterExemptText(pctValue: number | null | undefined): string {
   return pctValue ? `発行部数の${pct(pctValue)}％にあたる献本等の非加算部数` : "";
 }
 
-/** 発注書の利用許諾条件の表に出す短い注記。「初版は明細の初版利用許諾料で支払済み（非加算 100部）／2版以降は発行部数の1%を非加算」 */
-export function inLieuShortNote(firstExempt: number | null | undefined, laterPct: number | null | undefined): string {
-  const first = `初版は明細の初版利用許諾料で支払済み${firstExempt ? `（非加算 ${Math.floor(firstExempt).toLocaleString("ja-JP")}部）` : ""}`;
+/**
+ * 発注書の利用許諾条件の表に出す短い注記。「初版は明細の原稿制作報酬で支払済み（非加算 100部）／2版以降は発行部数の1%を非加算」。
+ * 対象の明細が 1 行ならその名前（原稿制作報酬）、複数なら「制作報酬」（対象の行は別に列挙される）。A-103
+ */
+export function inLieuShortNote(firstExempt: number | null | undefined, laterPct: number | null | undefined,
+                                coverName?: string | null): string {
+  const reward = String(coverName ?? "").trim() ? `${String(coverName).trim()}報酬` : "制作報酬";
+  const first = `初版は明細の${reward}で支払済み${firstExempt ? `（非加算 ${Math.floor(firstExempt).toLocaleString("ja-JP")}部）` : ""}`;
   const later = laterPct ? `2版以降は発行部数の${pct(laterPct)}%を非加算` : "";
   return [first, later].filter(Boolean).join("／");
 }

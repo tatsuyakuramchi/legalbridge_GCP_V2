@@ -1085,7 +1085,7 @@ test("発注書：保証利用許諾料に代える（A-075）。利用許諾条
   assert.equal(rows[0].fee, "10 %（2版目以降）");
   assert.equal(rows[0].guarantee, "—", "AG・MG は持たない");
   assert.equal(rows[0].covers, "対象：No.1 原稿、No.2 イラスト");
-  assert.equal(rows[0].note, "初版は明細の初版利用許諾料で支払済み／2版以降は発行部数の1%を非加算／再許諾：可（都度合意）");
+  assert.equal(rows[0].note, "初版は明細の制作報酬で支払済み／2版以降は発行部数の1%を非加算／再許諾：可（都度合意）", "対象が 2 行なので「制作報酬」");
   assert.equal(rows[0].contract, "AGR-2026-0088 出版基本契約 の個別契約");
   assert.equal(rows[0].credit, "© 2026 山田太郎／イラスト：山田太郎");
   assert.equal(rows[1].guarantee, "—"); assert.equal(rows[1].note, "配信開始から適用");
