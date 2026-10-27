@@ -143,7 +143,7 @@ export function ServiceLinesForm(
   const [fePrice, setFePrice] = useState("");
   const [feCopies, setFeCopies] = useState("");
   const [feRate, setFeRate] = useState("10");
-  /** 初版の非加算部数（献本・見本等）。既定 0＝全部数。方針が決まるまで 0 のまま。 */
+  /** 初版の非加算部数（献本・見本等）。既定 0＝全部数。利用許諾料の算定方法の一部（製造代金とは別の整理）。 */
   const [feExempt, setFeExempt] = useState("0");
   /** 価格の基準（A-091）。"" は本体価格、supply は卸価格（再許諾先への供給価格）、receipts は受領額。 */
   const [fePriceBasis, setFePriceBasis] = useState<"" | "supply" | "receipts">("");
@@ -669,7 +669,7 @@ export function ServiceLinesForm(
                     <input inputMode="decimal" value={feRate} placeholder="10" onChange={(e) => setFeRate(e.target.value)} /></label>
                   {fePriceBasis !== "receipts" && <label className="field"><span>初版の非加算部数（献本・見本等）</span>
                     <input inputMode="numeric" value={feExempt} placeholder="0" onChange={(e) => setFeExempt(e.target.value)} />
-                    <small className="faint">既定 0（全部数）。入れると算定方法に「− ○部」が明記される。方針が決まるまで 0 のまま</small></label>}
+                    <small className="faint">既定 0（全部数）。入れると算定方法に「− ○部」が明記される（利用許諾料の算定方法の一部。製造委託の製造代金とは別の整理）</small></label>}
                 </div>
                 <div className="row" style={{ gap: 18, flexWrap: "wrap", alignItems: "center" }}>
                   <span>仮計算額 <b>¥{yen(provisional)}</b>{feOk && <span className="faint">　{firstEditionBasisText(firstEdition).replace("算定の基礎（見込み）：", "＝ ")}</span>}</span>

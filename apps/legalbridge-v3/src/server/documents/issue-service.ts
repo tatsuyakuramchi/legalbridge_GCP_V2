@@ -9,7 +9,7 @@ import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
-import {
+import { inLieuInspectionViolations,
   buildTemplateContext, INTL_INSPECTION_KEY, isStatementTemplate, seedLines, suggestionsFor, templateWarnings
 } from "./template-context.js";
 
@@ -185,7 +185,7 @@ export class DocumentIssueService {
         warnings: [
           ...documentWarnings(template.htmlSource, values, template.variables.map((v) => v.name)),
           // ひな形ごとの警告（出版の条件書：一覧に載せられない条件明細）。
-          ...templateWarnings(template.templateKey, context)
+          ...templateWarnings(template.templateKey, context, manual)
         ],
         lines: Object.entries(seedLines(template.templateKey, context))
           .map(([name, rows]) => ({ name, rows }))
@@ -481,6 +481,14 @@ export class DocumentIssueService {
         const first = bindVariables(template.variables, context, manual,
           { templateKey: template.templateKey });
         const suggested = suggestionsFor(template.templateKey, context, withCoversKey(first.values, manual));
+        // 検収書の減額ガード（A-100）：初版の利用許諾料で払う行は仮計算額が下限。下回る行があれば決定しない。
+        const violations = inLieuInspectionViolations(context, manual);
+        if (violations.length) {
+          throw new DomainError("VALIDATION",
+            `初版の利用許諾料で払う行は、発注書の仮計算額を下回る検収金額にできません（特約第3項。減額しない）：`
+            + violations.map((v) => `${v.name} 検収 ¥${v.inspected.toLocaleString("ja-JP")} ＜ 仮計算額 ¥${v.ordered.toLocaleString("ja-JP")}`).join("、")
+            + `。金額を直すか、発注書の訂正版を先に起こしてください`);
+        }
         const computed = buildTemplateContext(template.templateKey, context, manual,
           { ...suggested, ...first.values });
         const binding = bindVariables(template.variables, context, manual,

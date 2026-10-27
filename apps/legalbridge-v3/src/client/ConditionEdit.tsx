@@ -1056,7 +1056,7 @@ function InLieuGuide(
                 hint={basisLine ? `${basisLine} ＝ 仮計算額 ¥${provisional.toLocaleString("ja-JP")}（委託料の行の合計と同じ額にする）` : "電子の条件には入れない（紙の条件が持つ）。許諾料の扱いを「初版…支払済み」にすると欄が出る"}
                 acts={v.licenseFeeBasis === "in_lieu" ? to("firstEditionPrice") : undefined} />
           <Step done={String(v.royaltyExemptLaterPct ?? "").trim() !== ""} title="非加算：初版は 0（既定）、2 版目以降は発行部数の 1% など"
-                hint="初版の非加算を入れるかは法務の確認待ち。入れると算定方法に「− ○部」と明記される"
+                hint="非加算（献本・見本等）は利用許諾料の算定方法の一部（製造委託の製造代金とは別の整理。A-100）。入れると算定方法に「− ○部」と明記される"
                 acts={v.licenseFeeBasis === "in_lieu" ? to("royaltyExemptLaterPct") : undefined} />
           <Step done={!num(v.agAmount) && !num(v.mgAmount)} title="MG・AG は空にする"
                 hint="初版分は委託料の行で払うので、保証や前払いは持たない（持つと計算書で相殺・下限になってしまう）"

@@ -26,7 +26,7 @@ import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-c
 import { baseDocumentNumber } from "./numbering.js";
 import { calcMethodFor, ownershipLabelOf, rewardLabelFor } from "../core/reward.js";
 import { contractFormEn, contractFormFor } from "../conditions/contract-form.js";
-import { priceBasisOf, priceBasisText, SUBLICENSE_LABEL, companionOfTemplate, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
+import { IN_LIEU_REWARD_LABEL, priceBasisOf, priceBasisText, SUBLICENSE_LABEL, companionOfTemplate, inLieuShortNote, inLieuSpecialTerms, sublicenseModeOf } from "../conditions/royalty-in-lieu.js";
 import { PART_ROLE_LABEL, type PartRole } from "../core/part-role.js";
 import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { CONDITION_USAGE_TYPES, conditionUsageLabel } from "../core/condition-usage.js";
@@ -1414,10 +1414,46 @@ export function suggestionsFor(
  * 落とさず名指しする。差し込みの空欄（documentWarnings）とは別の種類なので、
  * ここで足す。発行は止めない。
  */
-export function templateWarnings(templateKey: string, context: Ctx): Warning[] {
+export function templateWarnings(templateKey: string, context: Ctx, manual: Record<string, unknown> = {}): Warning[] {
   if (isPubTermsTemplate(templateKey)) return pubTermsWarnings(context, templateKey);
   if (templateKey === "intl_purchase_order") return intlCompanyWarnings(context);
+  if (INSPECTION_KEYS.has(templateKey)) {
+    return inLieuInspectionViolations(context, manual).map((v) => ({
+      kind: "other" as const,
+      message: `${v.name}：検収金額 ¥${v.inspected.toLocaleString("ja-JP")} が発注書の仮計算額 ¥${v.ordered.toLocaleString("ja-JP")} を下回っています。初版の利用許諾料で払う行は仮計算額が下限（特約第3項。減額しない）。金額を直すか、発注書の訂正版を先に起こしてください`
+    }));
+  }
   return [];
+}
+
+/**
+ * 検収書の減額ガード（A-100）。初版の利用許諾料で払う行（報酬名が初版利用許諾料、または in_lieu の
+ * 利用許諾条件の対象の行）は、発注書の仮計算額が下限（特約第3項）。検収金額がそれを下回る行を返す。
+ * 発注額は検収の行の ordered（予定の額）、無ければ条件の定額。どちらも無ければ確かめない。
+ */
+export function inLieuInspectionViolations(context: Ctx, manual: Record<string, unknown> = {}):
+  Array<{ conditionId: number; name: string; ordered: number; inspected: number }> {
+  const conditions = ((context.conditions ?? []) as Ctx[]);
+  const covered = new Set(((context.licenseTerms ?? []) as Ctx[])
+    .filter((t) => String(t.licenseFeeBasis) === "in_lieu")
+    .flatMap((t) => ((t.covers ?? []) as unknown[]).map(Number)));
+  const inLieu = (c: Ctx) => String(c.rewardLabel ?? "").trim() === IN_LIEU_REWARD_LABEL || covered.has(Number(c.id));
+  const saved = rows(manual.delivery_line_items);
+  const lines = saved.length ? saved : deliveryLinesFrom(context);
+  const out: Array<{ conditionId: number; name: string; ordered: number; inspected: number }> = [];
+  for (const l of lines) {
+    if (String(l.inspection_status ?? "now") !== "now") continue;
+    const id = Number(l.condition_id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const c = conditions.find((x) => Number(x.id) === id);
+    if (!c || !inLieu(c)) continue;
+    const ordered = num(l.ordered_amount_ex_tax, Number.NaN);
+    const floor = Number.isFinite(ordered) ? ordered : num(c.flatAmount, Number.NaN);
+    const inspected = num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount, Number.NaN);
+    if (!Number.isFinite(floor) || !Number.isFinite(inspected)) continue;
+    if (inspected < floor) out.push({ conditionId: id, name: String(l.item_name ?? c.name ?? ""), ordered: floor, inspected });
+  }
+  return out;
 }
 
 /**

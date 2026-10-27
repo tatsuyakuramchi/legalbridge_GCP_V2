@@ -1124,3 +1124,30 @@ test("A-085：手入力 _inLieuCovers で、初版…支払済みの利用許諾
   assert.deepEqual(out.licenseTerms[1].covers, [], "別途の条件は触らない");
   assert.deepEqual(withManualCovers(context, { _inLieuCovers: [] }).licenseTerms[0].covers, [], "空の配列は対象なし");
 });
+
+test("A-100：検収書の減額ガード。初版の利用許諾料で払う行は、検収金額が発注書の仮計算額を下回ると違反", async () => {
+  const { inLieuInspectionViolations, templateWarnings } = await import("./template-context.js");
+  const context = {
+    conditions: [
+      { id: 11, kind: "service", name: "原稿制作", flatAmount: 568000, rewardLabel: "初版利用許諾料", deliverableOwnership: "contractor", pricingModel: "fixed" },
+      { id: 12, kind: "service", name: "カバーイラスト", flatAmount: 100000, deliverableOwnership: "contractor", pricingModel: "fixed" }
+    ],
+    licenseTerms: [{ id: 21, licenseFeeBasis: "in_lieu", covers: [11] }],
+    events: []
+  };
+  const manual = { delivery_line_items: [
+    { condition_id: 11, item_name: "原稿制作", ordered_amount_ex_tax: 568000, inspected_amount_ex_tax: 500000 },
+    { condition_id: 12, item_name: "カバーイラスト", ordered_amount_ex_tax: 100000, inspected_amount_ex_tax: 90000 }
+  ] };
+  const v = inLieuInspectionViolations(context, manual);
+  assert.deepEqual(v, [{ conditionId: 11, name: "原稿制作", ordered: 568000, inspected: 500000 }], "対象でない行（カバー）は見ない");
+  assert.equal(templateWarnings("inspection_certificate", context, manual).length, 1);
+  assert.match(templateWarnings("inspection_certificate", context, manual)[0]!.message, /仮計算額 ¥568,000 を下回っています/);
+  // 同額・上回る・検収しない行は違反でない。
+  assert.deepEqual(inLieuInspectionViolations(context, { delivery_line_items: [
+    { condition_id: 11, ordered_amount_ex_tax: 568000, inspected_amount_ex_tax: 568000 },
+    { condition_id: 11, ordered_amount_ex_tax: 568000, inspected_amount_ex_tax: 600000 },
+    { condition_id: 11, ordered_amount_ex_tax: 568000, inspected_amount_ex_tax: 1, inspection_status: "skip" }
+  ] }), []);
+  assert.deepEqual(templateWarnings("purchase_order", context, manual), [], "発注書では見ない");
+});
