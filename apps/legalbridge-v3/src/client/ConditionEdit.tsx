@@ -668,11 +668,11 @@ export function ConditionEdit(
             <label className="field" id="f-priceBasis">
               <span>価格の基準</span>
               <select value={v.priceBasis} onChange={(e) => set("priceBasis", e.target.value)}>
-                <option value="">本体価格（定価）</option>
-                <option value="supply">卸価格（再許諾先への供給価格）</option>
-                <option value="receipts">発注者の受領額（再許諾料の入金 × 料率）</option>
+                <option value="">定価（本体価格）× 部数 × 料率</option>
+                {v.priceBasis === "supply" && <option value="supply">卸価格（再許諾先への供給価格）※ 使わない</option>}
+                <option value="receipts">受領した再許諾料 × 料率（部数は使わない）</option>
               </select>
-              <small className="faint">再許諾先（KADOKAWA 等）へ卸す形は卸価格。再許諾料の入金に料率を掛けるだけなら受領額。相手の名前は「対象の許諾先」から式に出る。2 版目以降の式にも使う（A-091）</small>
+              <small className="faint">自社出版（アークライト名・新紀元社名）も他社出版（KADOKAWA 等）も定価が基準。受領した再許諾料から分配するときだけ受領額。再許諾先の名前は「対象の許諾先」から式に出る（A-101）</small>
             </label>
             {field("firstEditionPrice", v.priceBasis === "supply" ? "初版の卸価格（税抜・最小通貨単位）" : "初版の本体価格（税抜・最小通貨単位）", { type: "number",
               placeholder: "1000", hint: "発注時は見込み、確定したら確定値に直す。特約第2項と明細の算定の基礎に出る（A-077）" })}
@@ -918,11 +918,11 @@ function InLieuServiceBlock(
         <label className="field" id="f-priceBasis">
           <span>価格の基準</span>
           <select value={v.priceBasis} onChange={(e) => set("priceBasis", e.target.value)}>
-            <option value="">本体価格（定価）</option>
-            <option value="supply">卸価格（再許諾先への供給価格）</option>
-            <option value="receipts">発注者の受領額（再許諾料の入金 × 料率）</option>
+            <option value="">定価（本体価格）× 部数 × 料率</option>
+            {v.priceBasis === "supply" && <option value="supply">卸価格（再許諾先への供給価格）※ 使わない</option>}
+            <option value="receipts">受領した再許諾料 × 料率（部数は使わない）</option>
           </select>
-          <small className="faint">KADOKAWA 等へ卸す形は卸価格。再許諾料の入金に料率を掛けるだけなら受領額（部数は使わない）。相手の名前は紙の利用許諾条件の「対象の許諾先」から式に出る（A-091）</small>
+          <small className="faint">自社出版（アークライト名・新紀元社名）も他社出版（KADOKAWA 等）も定価が基準。受領した再許諾料から分配するときだけ受領額。再許諾先の名前は紙の利用許諾条件の「対象の許諾先」から式に出る（A-101）</small>
         </label>
         {field("firstEditionPrice", v.priceBasis === "supply" ? "見込み卸価格（税抜・円）" : receipts ? "見込みの再許諾料の受領額（税抜・円）" : "見込み本体価格（税抜・円）", { type: "number", placeholder: receipts ? "10000000" : "1000" })}
         {!receipts && field("firstEditionCopies", "初版発行部数", { type: "number", placeholder: "3000" })}
