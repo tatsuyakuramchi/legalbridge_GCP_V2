@@ -416,3 +416,13 @@ test("A-109：一覧の行を直していても、備考の「初版分は支払
   assert.match(String(row.note), /^初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み（算定：本体価格 4,500円（税抜）× （初版 2,500部 − 献本等 100部） × 8%）/);
   assert.match(String(row.note), /／手書きの備考$/);
 });
+
+
+test("A-111：第５条の枠の分岐：載っている媒体だけ true", () => {
+  const printOnly = { ...context, conditions: context.conditions.filter((c: any) => c.usageType !== "pub_digital")
+    .map((c: any) => ({ ...c, usageType: "pub_print" })) };
+  const p1 = pubTermsPatch(printOnly, {});
+  assert.equal(p1.hasPrintMedia, true); assert.equal(p1.hasDigitalMedia, false);
+  const both = pubTermsPatch(context, {});
+  assert.equal(both.hasDigitalMedia, true);
+});

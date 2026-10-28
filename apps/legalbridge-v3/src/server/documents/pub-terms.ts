@@ -729,6 +729,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     translationConsentMixed: transTitles.some((t) => t.translationConsentRequired)
       && transTitles.some((t) => !t.translationConsentRequired),
     hasTranslation: translationShare != null || transTitles.length > 0,
+    // 第５条の支払の行の枠。載っていない媒体は本文（188 以降のひな形）が行ごと「—」にする（A-111）。
+    hasPrintMedia, hasDigitalMedia,
     // 翻訳の立て付け（A-034）。条文と一覧の見出しがこれで入れ替わる。
     translationDerivative,
     translationLabel,
