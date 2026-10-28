@@ -1460,6 +1460,7 @@ export class ConditionWriteService {
             `UPDATE conditions SET ${sets}, updated_at = now() WHERE id = $1 RETURNING id`,
             [id, ...entries.map((e) => e.value)]
           );
+          await this.syncFirstEditionToCovers(client, id);
           await recordAudit(client, {
             actor, action: "condition.update", targetType: "condition", targetId: id,
             detail: { patch, mode: "in_place" }
@@ -1827,6 +1828,32 @@ export class ConditionWriteService {
     }
   }
 
+  /**
+   * 委託料の行（初版の利用許諾料で払う行）の算定の基礎を、その行を対象にしている in_lieu の
+   * 利用許諾条件へ写す（A-108）。編集画面で直すのは委託料の行だが、条件書の備考・発注書の表・
+   * 特約の起点は利用許諾条件も読む。片方だけ変わって食い違わないよう、保存のたびに揃える。
+   * 委託料の行が算定の基礎を持っていなければ何もしない。
+   */
+  private async syncFirstEditionToCovers(client: Queryable, serviceId: number): Promise<void> {
+    await client.query(
+      `UPDATE conditions AS l
+          SET first_edition_price = s.first_edition_price, first_edition_copies = s.first_edition_copies,
+              first_edition_rate_ppm = s.first_edition_rate_ppm, royalty_exempt_first_copies = s.royalty_exempt_first_copies,
+              confirm_within_days = COALESCE(s.confirm_within_days, l.confirm_within_days),
+              price_basis = s.price_basis, updated_at = now()
+         FROM conditions AS s
+         JOIN condition_fee_covers f ON f.service_condition_id = s.id
+        WHERE s.id = $1 AND s.kind = 'service'
+          AND s.first_edition_price IS NOT NULL AND s.first_edition_copies IS NOT NULL AND s.first_edition_rate_ppm IS NOT NULL
+          AND l.id = f.license_condition_id AND l.license_fee_basis = 'in_lieu'
+          AND (l.first_edition_price IS DISTINCT FROM s.first_edition_price
+               OR l.first_edition_copies IS DISTINCT FROM s.first_edition_copies
+               OR l.first_edition_rate_ppm IS DISTINCT FROM s.first_edition_rate_ppm
+               OR l.royalty_exempt_first_copies IS DISTINCT FROM s.royalty_exempt_first_copies
+               OR l.price_basis IS DISTINCT FROM s.price_basis)`,
+      [serviceId]);
+  }
+
   private async updateInPlace(
     client: Queryable, id: number, entries: Array<{ column: string; value: unknown }>,
     actor: string, extra: Record<string, unknown> = {}
@@ -1836,6 +1863,7 @@ export class ConditionWriteService {
     const updated = await client.query(
       `UPDATE conditions SET ${sets}, updated_at = now() WHERE id = $1 RETURNING id`,
       [id, ...all.map((e) => e.value)]);
+    await this.syncFirstEditionToCovers(client, id);
     await recordAudit(client, {
       actor, action: "condition.update", targetType: "condition", targetId: id,
       detail: { patch: Object.fromEntries(all.map((e) => [e.column, e.value])), mode: "in_place" }
