@@ -6,6 +6,7 @@ import { useReadOnly } from "./read-only.js";
 import { SendMany } from "./SendMany.js";
 import type { EntityKind } from "./Relations.js";
 import type { DocumentSummary } from "../server/documents/repository.js";
+import type { AgreementRow } from "../server/agreements/service.js";
 import type { MapAgreement, PartyMap } from "../server/agreements/party-map.js";
 
 const KIND_LABEL: Record<string, string> = {
@@ -32,7 +33,10 @@ export function DocumentRegister(
   const readOnly = useReadOnly();
   const [keyword, setKeyword] = useState("");
   const search = useDebounced(keyword);
-  const [allParties, setAllParties] = useState(false);
+  /** 番号・件名で探すときは全取引先から探す。この取引先だけに絞ることもできる。 */
+  const [onlyParty, setOnlyParty] = useState(false);
+  /** 番号・件名に当たる登録済みの契約。契約の番号は文書が無くても使われている（「契約を登録」で発番済み）。 */
+  const [agreementHits, setAgreementHits] = useState<AgreementRow[] | null>(null);
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [parentOf, setParentOf] = useState<Record<number, string>>({});
@@ -45,15 +49,25 @@ export function DocumentRegister(
   useEffect(() => {
     const qs = new URLSearchParams();
     if (search.trim()) qs.set("q", search.trim());
-    // 名前で探すときは全取引先からも探せる（別の取引先で取り込んだ紙が見つかる）。
-    if (!allParties || !search.trim()) qs.set("partyId", String(map.party.id));
+    // 番号・件名で探すときは全取引先から（別の取引先で取り込んだ紙・登録した契約が見つかる）。
+    if (onlyParty || !search.trim()) qs.set("partyId", String(map.party.id));
     let live = true;
     api.get<{ documents: DocumentSummary[] }>(`/documents?${qs}`)
       .then((r) => { if (live) setDocs(r.documents.filter((d) => d.status !== "void" && d.status !== "superseded" && !d.inbound)); })
       .catch((e: ApiError) => { if (live) { setDocs([]); onError(e.message); } });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, allParties, map.party.id, version, reload]);
+  }, [search, onlyParty, map.party.id, version, reload]);
+  useEffect(() => {
+    if (!search.trim()) { setAgreementHits(null); return; }
+    let live = true;
+    const qs = new URLSearchParams({ q: search.trim() });
+    if (onlyParty) qs.set("partyId", String(map.party.id));
+    api.get<{ agreements: AgreementRow[] }>(`/agreements?${qs}`)
+      .then((r) => { if (live) setAgreementHits(r.agreements.slice(0, 30)); })
+      .catch(() => { if (live) setAgreementHits([]); });
+    return () => { live = false; };
+  }, [search, onlyParty, map.party.id, version, reload]);
   useEffect(() => {
     api.get<{ channels: typeof channels }>("/integrations").then((r) => setChannels(r.channels)).catch(() => setChannels([]));
     api.get<{ user?: { role: string } }>("/me").then((r) => setIsAdmin(r.user?.role === "admin" || r.user === undefined)).catch(() => undefined);
@@ -62,6 +76,19 @@ export function DocumentRegister(
   const agreements: MapAgreement[] = [...map.roots.flatMap((r) => [r as MapAgreement, ...r.children]), ...map.loose, ...map.documents];
   const masters = map.roots.filter((r) => r.kind === "master" && !r.terminatedOn);
   const sameParty = (d: DocumentSummary) => !d.counterparty || d.counterparty === map.party.name;
+  const inMap = new Set(agreements.map((a) => a.id));
+  const [moving, setMoving] = useState<number | null>(null);
+  /** 別の取引先で登録された契約を、この取引先に付け替える（番号はそのまま）。 */
+  async function moveHere(a: AgreementRow) {
+    if (!window.confirm(`${a.agreementNo ?? `#${a.id}`} ${a.title} は相手先が「${a.counterparty.name}」で登録されています。相手先を ${map.party.name} に付け替えますか？（番号はそのまま。下の個別契約・覚書は親と一緒には動きません）`)) return;
+    setMoving(a.id);
+    try {
+      await api.patch(`/agreement-map/agreements/${a.id}`, { counterpartyId: map.party.id });
+      setReload((v) => v + 1);
+      onChanged(`${a.agreementNo ?? `#${a.id}`} の相手先を ${map.party.name} に付け替えました。上の図に入ります`);
+    } catch (e) { onError((e as ApiError).message); }
+    finally { setMoving(null); }
+  }
 
   async function register(d: DocumentSummary, as: "master" | "supplement" | "standalone") {
     const parentId = as === "supplement" && sameParty(d) ? Number(parentOf[d.id] ?? masters[0]?.id ?? 0) || null : null;
@@ -96,10 +123,43 @@ export function DocumentRegister(
             <ListSearch value={keyword} onChange={setKeyword} placeholder="文書番号・件名で探す（例：ARC-SVC-2026-0001）" label="文書を探す" />
           </div>
           <label className="faint" style={{ display: "flex", gap: 4, alignItems: "center" }}>
-            <input type="checkbox" checked={allParties} onChange={(e) => setAllParties(e.target.checked)} />
-            全取引先から探す
+            <input type="checkbox" checked={onlyParty} onChange={(e) => setOnlyParty(e.target.checked)} />
+            この取引先だけで探す
           </label>
         </div>
+        {search.trim() !== "" && <span className="faint">番号・件名で探すときは、全取引先の文書と、登録済みの契約からも探します</span>}
+        {agreementHits && agreementHits.length > 0 && (
+          <div className="stack" style={{ gap: 4 }}>
+            <b>登録済みの契約（番号・件名に当たるもの）</b>
+            <span className="faint">契約の番号は、文書が無くても「契約を登録」で発番した時点で使われています。同じ番号では登録し直せないので、ここから開くか、この取引先に付け替えてください</span>
+            <div className="tablewrap">
+              <table>
+                <thead><tr><th>契約番号</th><th>件名</th><th>種類</th><th>状態</th><th>相手先</th><th>文書</th><th></th></tr></thead>
+                <tbody>
+                  {agreementHits.map((a) => {
+                    const here = inMap.has(a.id);
+                    return (
+                      <tr key={a.id}>
+                        <td className="code">{onOpen ? <button className="linky" onClick={() => onOpen("agreement", a.id)}>{a.agreementNo ?? `#${a.id}`}</button> : a.agreementNo ?? `#${a.id}`}</td>
+                        <td>{a.title}</td>
+                        <td>{KIND_LABEL[a.kind] ?? a.kind}</td>
+                        <td>{a.status}</td>
+                        <td>{here ? <span className="tag ok">この取引先</span> : <span className="tag warn">{a.counterparty.name}</span>}</td>
+                        <td>{a.documentCount ? `${a.documentCount} 件` : <span className="tag warn">文書なし</span>}</td>
+                        <td>
+                          {here
+                            ? <span className="faint">上の図にあります（「文書」で紙を取り込めます）</span>
+                            : <button className="btn btn-sm primary" disabled={readOnly || moving === a.id}
+                                      onClick={() => void moveHere(a)}>{map.party.name} に付け替える</button>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         <div className="tablewrap" style={{ maxHeight: 420, overflowY: "auto" }}>
           <table>
             <thead><tr><th></th><th>文書番号</th><th>種別・件名</th><th>日付</th><th>契約</th><th>契約として登録</th></tr></thead>
@@ -165,7 +225,9 @@ export function DocumentRegister(
                 );
               })}
               {docs !== null && !list.length && (
-                <tr><td colSpan={6} className="faint">{search.trim() ? "当たる文書がありません" : "この取引先の文書はありません。番号で探すか、全取引先から探してください"}</td></tr>
+                <tr><td colSpan={6} className="faint">{search.trim()
+                    ? (agreementHits?.length ? "当たる文書はありません（番号は上の登録済みの契約で使われています）" : "当たる文書・契約がありません")
+                    : "この取引先の文書はありません。番号・件名で探してください"}</td></tr>
               )}
             </tbody>
           </table>

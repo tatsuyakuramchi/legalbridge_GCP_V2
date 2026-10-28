@@ -146,9 +146,9 @@ test("基本契約：外部番号を渡せば採番せずその番号で作る�
 
   const dup = new AgreementService(new FakeDatabase((text) => {
     if (text.includes("SELECT id, name FROM parties WHERE id = $1")) return [{ id: 120, name: "DucQrews" }];
-    if (text.includes("SELECT id FROM agreements WHERE lower(btrim(agreement_no))")) return [{ id: 3 }];
+    if (text.includes("WHERE lower(btrim(a.agreement_no))")) return [{ id: 3, title: "業務委託基本契約書", party: "別の取引先" }];
     return undefined;
   }));
   await assert.rejects(dup.create({ counterpartyId: 120, direction: "in", kind: "master", domain: "license",
-                                    title: "x", agreementNo: "ATT-2026-00069" }, "t"), /もう使われています/);
+                                    title: "x", agreementNo: "ATT-2026-00069" }, "t"), /もう使われています（#3「業務委託基本契約書」相手先：別の取引先）/);
 });
