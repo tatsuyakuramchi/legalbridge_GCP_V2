@@ -583,6 +583,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   };
   const conditions = list(context.conditions);
   const payment = pubPaymentFromConditions(conditions);
+  // 載っている媒体。無い媒体の支払の行は「—」にする（A-107）。
+  const hasPrintMedia = conditions.some((c) => mediaOfCondition(c) === "print");
+  const hasDigitalMedia = conditions.some((c) => mediaOfCondition(c) === "digital");
   const byId = new Map(conditions.map((c) => [Number(c.id), c]));
   const seeds = pubTitleSeeds(context);
   const rows = list(manual[PUB_TITLES_FIELD]).length ? list(manual[PUB_TITLES_FIELD]) : seeds;
@@ -721,10 +724,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     translationSellOff: pick("翻訳物の在庫販売期間") || "6か月",
     translationShare: translationShare == null ? "" : percentText(translationShare),
     // 支払の表は条件明細の支払条件から写す（読めた語が欄の手入力に勝つ）。読めなければ欄、欄も空なら既定。
-    payPrint: payment.payPrint ?? (pick("紙の支払時期") || "翌月末日"),
-    digitalPeriod: payment.digitalPeriod ?? (pick("電子の集計期間") || "7月1日〜翌年6月30日"),
-    payDigital: payment.payDigital ?? (pick("電子の支払時期") || "10月末日"),
-    payTranslation: payment.payTranslation ?? (pick("翻訳版の支払時期") || "翌々月末日"),
+    payPrint: payment.payPrint ?? (pick("紙の支払時期") || (hasPrintMedia ? "翌月末日" : "—")),
+    // 電子の条件が 1 本も無ければ「—」（配信が無いのに集計期間と支払時期が出ていた。A-107）。欄に書いてあればそれ。
+    digitalPeriod: payment.digitalPeriod ?? (pick("電子の集計期間") || (hasDigitalMedia ? "7月1日〜翌年6月30日" : "—")),
+    payDigital: payment.payDigital ?? (pick("電子の支払時期") || (hasDigitalMedia ? "10月末日" : "—")),
+    payTranslation: payment.payTranslation ?? (pick("翻訳版の支払時期") || (translationShare != null || transTitles.length > 0 ? "翌々月末日" : "—")),
     // 同じ値を欄の名前でも返す。画面の欄が「計算（条件明細から）」になり、手入力で上書きされない。
     ...(payment.payPrint ? { "紙の支払時期": payment.payPrint } : {}),
     ...(payment.digitalPeriod ? { "電子の集計期間": payment.digitalPeriod } : {}),
