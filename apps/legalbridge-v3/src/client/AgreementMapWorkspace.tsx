@@ -928,10 +928,14 @@ function RemapForm(
  * 検索して紐づける：① 基本契約を決める → ② 発注書を決める → ③ 条件を決める。
  *
  * 取引の形は（1）基本契約の下の発注書が条件明細を持つ。それぞれ番号・件名で探して決める。
- *   ① 基本契約 … この取引先の基本契約から（「基本契約なし＝発注書の約款」も選べる）
+ *   ① 基本契約 … この取引先の基本契約のほか、番号・件名で全部の基本契約から探せる
+ *                 （「基本契約なし＝発注書の約款」も選べる）。契約に繋がっていない基本契約書
+ *                 （文書番号だけで浮いているもの）は、選ぶと基本契約として立ててから使う。
+ *                 別の取引先で登録された基本契約は、相手先をこの取引先に直してから使う。
  *   ② 発注書   … 番号・件名で全部の文書から探す（別の取引先の発注書は相手先名を出して知らせる）
- *                 紙・PDF を取り込んでもよい
- *   ③ 条件     … この取引先の条件明細から番号・名前・作品で探して選ぶ（複数）
+ *                 紙・PDF を取り込んでもよい。選ぶと、いまの基本契約と条件明細を ①③ に読み込む
+ *   ③ 条件     … この取引先の条件明細から番号・名前・作品で探して選ぶ（複数）。
+ *                 チェックを外した条件はこの発注書から外し、別の発注書が持つ条件は付け替える
  * 決定すると、発注書を条件に紐づけ、その発注書の条件を①の基本契約にそろえる。
  */
 interface DocHit { id: number; documentNo: string | null; status: string; templateKey: string | null; templateLabel: string | null;
@@ -939,6 +943,10 @@ interface DocHit { id: number; documentNo: string | null; status: string; templa
   conditions: Array<{ id: number; conditionNo: string | null }> }
 interface CondHit { id: number; conditionNo: string | null; name: string; status: string; direction: string;
   work: { title: string } | null; agreement: { agreementNo: string | null; title: string } | null }
+interface MasterHit { id: number; agreementNo: string | null; title: string; kind: AgreementKind; status: string;
+  executedOn: string | null; terminatedOn: string | null; direction: "in" | "out"; counterparty: { id: number; name: string } }
+/** ① の選択肢。m＝この取引先の基本契約、x＝別の取引先の基本契約（相手先を直して使う）、d＝基本契約書の文書（立てて使う）。 */
+type MasterPick = { key: string; kind: "m" | "x" | "d"; id: number; label: string; party?: string };
 
 function OrderLinkPanel(
   { map, documentId, conditionIds, onDone, onCancel, onError }: {
@@ -946,27 +954,45 @@ function OrderLinkPanel(
     onDone: (msg: string) => void; onCancel: () => void; onError: (msg: string) => void;
   }
 ) {
+  const readOnly = useReadOnly();
   const orders = map.orders ?? [];
   const masters = map.roots.filter((r) => r.kind === "master");
   const primary = masters.find((m) => m.primary) ?? masters[0] ?? null;
+  const masterTag = (no: string | null, id: number, title: string) => `${no ?? `#${id}`} ${title}`;
+  const localPicks: MasterPick[] = [
+    ...masters.map((m) => ({ key: `m:${m.id}`, kind: "m" as const, id: m.id,
+      label: `${masterTag(m.agreementNo, m.id, m.title)}${m.executedOn ? `（${m.executedOn}）` : "（締結日なし）"}${m.terminatedOn ? "・解除済み" : ""}` })),
+    ...map.unlinked.filter((u) => u.role === "master").map((u) => ({ key: `d:${u.id}`, kind: "d" as const, id: u.id,
+      label: `${u.documentNo ?? `#${u.id}`} ${u.label}${u.title ? `（${u.title}）` : ""}` }))
+  ];
+  /** 発注書のいまの基本契約（"" は基本契約なし）。 */
+  const orderMasterKey = (id: number | null) => {
+    const o = id ? orders.find((x) => x.id === id) : undefined;
+    return o ? (o.masterId ? `m:${o.masterId}` : "") : null;
+  };
   // ① 基本契約。"" は基本契約なし。
   const [masterQ, setMasterQ] = useState("");
-  const [masterId, setMasterId] = useState<string>(primary ? String(primary.id) : "");
+  const masterSearch = useDebounced(masterQ);
+  const [masterHits, setMasterHits] = useState<MasterPick[] | null>(null);
+  const [extraPicks, setExtraPicks] = useState<MasterPick[]>([]);
+  const [masterKey, setMasterKey] = useState<string>(() => orderMasterKey(documentId) ?? (primary ? `m:${primary.id}` : ""));
   // ② 発注書
   const [docQ, setDocQ] = useState("");
   const docSearch = useDebounced(docQ);
   const [docHits, setDocHits] = useState<DocHit[] | null>(null);
-  const [doc, setDoc] = useState<{ id: number; label: string } | null>(() => {
+  /** 選んだ発注書と、いま載っている条件明細・基本契約（付け替えの元）。 */
+  const [doc, setDoc] = useState<{ id: number; label: string; conds: number[]; masterKey: string | null } | null>(() => {
     if (!documentId) return null;
     const o = orders.find((x) => x.id === documentId);
     const u = map.unlinked.find((x) => x.id === documentId);
-    return { id: documentId, label: `${o?.documentNo ?? u?.documentNo ?? `#${documentId}`} ${o?.title ?? u?.title ?? ""}` };
+    return { id: documentId, label: `${o?.documentNo ?? u?.documentNo ?? `#${documentId}`} ${o?.title ?? u?.title ?? ""}`,
+             conds: o?.conditions.map((c) => c.id) ?? [], masterKey: orderMasterKey(documentId) };
   });
   const [importing, setImporting] = useState(false);
   // ③ 条件
   const [condQ, setCondQ] = useState("");
   const [conds, setConds] = useState<CondHit[]>([]);
-  const [picked, setPicked] = useState<Set<number>>(new Set(conditionIds));
+  const [picked, setPicked] = useState<Set<number>>(() => new Set([...conditionIds, ...(doc?.conds ?? [])]));
   const [busy, setBusy] = useState(false);
   // 開いたら見える所まで寄せる（見出しの釦から開くと、欄は図の下に出る）。
   const box = useRef<HTMLDivElement>(null);
@@ -986,38 +1012,108 @@ function OrderLinkPanel(
       .catch(() => { if (live) setDocHits([]); });
     return () => { live = false; };
   }, [docSearch]);
+  // ① 番号・件名で全部の基本契約から探す。この取引先のもの（統合元を含む）は上の候補に出ているので除く。
+  useEffect(() => {
+    if (!masterSearch.trim()) { setMasterHits(null); return; }
+    let live = true;
+    const mine = new Set(masters.map((m) => m.id));
+    api.get<{ agreements: MasterHit[] }>(`/agreements?q=${encodeURIComponent(masterSearch.trim())}`)
+      .then((r) => { if (live) setMasterHits(r.agreements.filter((a) => a.kind === "master" && !mine.has(a.id)).slice(0, 30)
+        .map((a) => ({ key: `x:${a.id}`, kind: "x" as const, id: a.id, party: a.counterparty.name,
+          label: `${masterTag(a.agreementNo, a.id, a.title)}${a.executedOn ? `（${a.executedOn}）` : "（締結日なし）"}${a.terminatedOn ? "・解除済み" : ""}` }))); })
+      .catch(() => { if (live) setMasterHits([]); });
+    return () => { live = false; };
+  }, [masterSearch]);
 
   // 条件がいまどこに載っているか（発注書・契約）。
   const holderOf = (c: CondHit) => {
     const o = orders.find((x) => x.conditions.some((y) => y.id === c.id));
     return o ? `発注書 ${o.documentNo ?? `#${o.id}`}` : c.agreement ? `${c.agreement.agreementNo ?? c.agreement.title}` : "持ち主なし";
   };
+  /** 条件を持っている別の発注書（付け替えの元）。 */
+  const otherOrderOf = (id: number) => orders.find((x) => x.id !== doc?.id && x.conditions.some((y) => y.id === id)) ?? null;
   const looseIds = new Set(map.looseConditions.map((c) => c.id));
+  const original = new Set(doc?.conds ?? []);
   const condShown = conds
     .filter((c) => !condQ.trim() || `${c.conditionNo ?? ""} ${c.name} ${c.work?.title ?? ""}`.toLowerCase().includes(condQ.trim().toLowerCase())
-      || picked.has(c.id))
-    .sort((a, b) => Number(picked.has(b.id)) - Number(picked.has(a.id)) || Number(looseIds.has(b.id)) - Number(looseIds.has(a.id)))
+      || picked.has(c.id) || original.has(c.id))
+    .sort((a, b) => Number(picked.has(b.id) || original.has(b.id)) - Number(picked.has(a.id) || original.has(a.id))
+      || Number(looseIds.has(b.id)) - Number(looseIds.has(a.id)))
     .slice(0, 60);
   const ids = [...picked];
+  /** 選び直しで外した、この発注書の条件。 */
+  const removeIds = [...original].filter((id) => !picked.has(id));
+  const moving = ids.filter((id) => otherOrderOf(id));
   const toggle = (id: number) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const mastersShown = masters.filter((m) => !masterQ.trim() || `${m.agreementNo ?? ""} ${m.title}`.includes(masterQ.trim()));
-  const masterLabel = masterId ? (() => { const m = masters.find((x) => String(x.id) === masterId); return `${m?.agreementNo ?? ""} ${m?.title ?? ""}`; })() : "基本契約なし（発注書の約款）";
-  const docList: Array<{ id: number; no: string | null; title: string | null; tag: string; party: string | null; note: string }> = docHits
+  const q = masterQ.trim().toLowerCase();
+  const localShown = localPicks.filter((m) => !q || m.label.toLowerCase().includes(q) || m.key === masterKey);
+  const allPicks = [...localPicks, ...extraPicks, ...(masterHits ?? [])];
+  const chosenMaster = masterKey ? allPicks.find((m) => m.key === masterKey) ?? null : null;
+  const masterLabel = masterKey ? chosenMaster?.label ?? masterKey : "基本契約なし（発注書の約款）";
+  const pickMaster = (m: MasterPick | null) => {
+    if (m && m.kind === "x" && !extraPicks.some((e) => e.key === m.key)) setExtraPicks((e) => [...e, m]);
+    setMasterKey(m ? m.key : "");
+  };
+  const masterChanged = doc?.masterKey !== undefined && doc.masterKey !== null && doc.masterKey !== masterKey;
+  const labelOfKey = (k: string | null) => k === null ? null : k === "" ? "基本契約なし" : allPicks.find((m) => m.key === k)?.label ?? k;
+
+  const choose = (d: { id: number; label: string; conds: number[] }) => {
+    // 前に選んだ発注書から読み込んだ条件は戻し、新しい発注書のいまの条件を読み込む。
+    setPicked((p) => {
+      const n = new Set([...p].filter((id) => !original.has(id) || conditionIds.includes(id)));
+      d.conds.forEach((id) => n.add(id));
+      return n;
+    });
+    const mk = orderMasterKey(d.id);
+    if (mk !== null) setMasterKey(mk);
+    setDoc({ ...d, masterKey: mk });
+  };
+  const docList: Array<{ id: number; no: string | null; title: string | null; tag: string; party: string | null; note: string; conds: number[] }> = docHits
     ? docHits.map((d) => ({ id: d.id, no: d.documentNo, title: d.title, tag: d.imported ? "取込" : "発注書", party: d.counterparty,
-        note: d.conditions.length ? `紐づき：${d.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし" }))
+        note: d.conditions.length ? `紐づき：${d.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし",
+        conds: d.conditions.map((c) => c.id) }))
     : [...orders.map((o) => ({ id: o.id, no: o.documentNo, title: o.title, tag: o.imported ? "取込" : "発注書", party: map.party.name,
-          note: o.conditions.length ? `紐づき：${o.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし" })),
+          note: (o.conditions.length ? `紐づき：${o.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}` : "条件なし")
+            + `・${o.masterId ? `基本契約 ${masters.find((m) => m.id === o.masterId)?.agreementNo ?? `#${o.masterId}`}` : "基本契約なし"}`,
+          conds: o.conditions.map((c) => c.id) })),
        ...map.unlinked.filter((u) => !u.role).map((u) => ({ id: u.id, no: u.documentNo, title: u.title ?? u.label, tag: "文書", party: map.party.name,
-          note: "契約に繋がっていない文書（発注書として扱う）" }))];
+          note: "契約に繋がっていない文書（発注書として扱う）", conds: [] }))];
+
+  /** ① で選んだものを、紐づけに使える基本契約の id にする（文書から立てる・相手先を直す）。 */
+  async function resolveMaster(): Promise<{ id: number | null; note: string }> {
+    if (!chosenMaster) return { id: null, note: "" };
+    if (chosenMaster.kind === "m") return { id: chosenMaster.id, note: "" };
+    if (chosenMaster.kind === "d") {
+      const r = await api.post<{ agreementId: number; agreementNo: string; kind: string }>(
+        `/agreement-map/documents/${chosenMaster.id}/agreement`, { as: "master" });
+      return { id: r.agreementId, note: `${r.agreementNo} を基本契約として立てました（締結日は「編集」で入れてください）。` };
+    }
+    await api.patch(`/agreement-map/agreements/${chosenMaster.id}`, { counterpartyId: map.party.id });
+    return { id: chosenMaster.id, note: `${chosenMaster.label.split(" ")[0]} の相手先を ${map.party.name} に直しました。` };
+  }
 
   async function link(target: number | null = doc?.id ?? null) {
-    if (!target || !ids.length) return;
+    if (!target || (!ids.length && !removeIds.length)) return;
+    if (chosenMaster?.kind === "x" && !window.confirm(
+      `${chosenMaster.label} は相手先が「${chosenMaster.party}」で登録されています。相手先を ${map.party.name} に直して、この発注書の基本契約にします。よろしいですか？`)) return;
+    if (moving.length && !window.confirm(
+      `${moving.length} 本の条件明細は別の発注書（${[...new Set(moving.map((id) => otherOrderOf(id)?.documentNo ?? ""))].join("・")}）に紐づいています。そちらから外して付け替えます。よろしいですか？`)) return;
     setBusy(true);
     try {
-      const r = await api.post<{ linked: number; masterNo: string | null; documentNo: string | null }>(
-        "/agreement-map/orders/link", { documentId: target, conditionIds: ids, masterId: masterId ? Number(masterId) : null });
-      onDone(`${r.documentNo ?? "発注書"} を条件明細 ${r.linked} 本に紐づけました`
-        + (r.masterNo ? `（基本契約 ${r.masterNo} の下の発注書）` : "（基本契約なし＝発注書の約款）"));
+      if (!ids.length) {
+        // 条件を全部外すだけ（基本契約は条件に付くので触らない）。
+        for (const id of removeIds) await api.del(`/links/condition/${id}/documents/${target}`);
+        onDone(`${doc?.label.split(" ")[0] ?? "発注書"} から条件明細 ${removeIds.length} 本を外しました`);
+        return;
+      }
+      const m = await resolveMaster();
+      const r = await api.post<{ linked: number; masterNo: string | null; documentNo: string | null; removed: number; detachedFrom: string[] }>(
+        "/agreement-map/orders/link", { documentId: target, conditionIds: ids, masterId: m.id,
+          removeConditionIds: removeIds, detachOtherOrders: moving.length > 0 });
+      onDone(`${m.note}${r.documentNo ?? "発注書"} を条件明細 ${r.linked} 本に紐づけました`
+        + (r.masterNo ? `（基本契約 ${r.masterNo} の下の発注書）` : "（基本契約なし＝発注書の約款）")
+        + (r.removed ? `。${r.removed} 本を外しました` : "")
+        + (r.detachedFrom.length ? `。${r.detachedFrom.join("・")} から付け替えました` : ""));
     } catch (e) { onError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -1033,22 +1129,55 @@ function OrderLinkPanel(
     <div ref={box} className="panel">
       <div className="panel-hd">
         <h2>検索して紐づける</h2>
-        <span className="faint">① 基本契約 → ② 発注書 → ③ 条件明細 の順に、番号・件名で探して決めます。発注書が条件明細を持ち、基本契約の下に入ります</span>
+        <span className="faint">① 基本契約 → ② 発注書 → ③ 条件明細 の順に、番号・件名で探して決めます。発注書が条件明細を持ち、基本契約の下に入ります。紐づいているものは外して付け替えられます</span>
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onCancel}>閉じる</button>
       </div>
       <div className="panel-bd stack" style={{ gap: 14 }}>
         <div className="stack" style={{ gap: 6 }}>
-          {step("①", "基本契約", masterLabel.trim())}
-          {masters.length > 3 && <input value={masterQ} placeholder="基本契約の番号・件名で探す" onChange={(e) => setMasterQ(e.target.value)} />}
+          <div className="row" style={{ gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+            {step("①", "基本契約", masterLabel.trim())}
+            {doc && doc.masterKey !== null && (
+              masterChanged
+                ? <span className="tag warn">付け替え：{labelOfKey(doc.masterKey)} → {masterKey ? "選んだ基本契約" : "基本契約なし"}</span>
+                : <span className="faint">この発注書のいまの基本契約</span>
+            )}
+          </div>
+          <input value={masterQ} placeholder="基本契約の番号・件名で探す（全部の基本契約から。例：ARC-SVC-2026-0001）" onChange={(e) => setMasterQ(e.target.value)} />
           <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-            {mastersShown.map((m) => (
-              <button key={m.id} type="button" className="chip" aria-pressed={masterId === String(m.id)} onClick={() => setMasterId(String(m.id))}>
-                {m.agreementNo ?? `#${m.id}`} {m.title}{m.executedOn ? `（${m.executedOn}）` : "（締結日なし）"}
+            {localShown.map((m) => (
+              <button key={m.key} type="button" className="chip" aria-pressed={masterKey === m.key} onClick={() => pickMaster(m)}
+                      title={m.kind === "d" ? "契約に繋がっていない基本契約書です。決定すると基本契約として立ててから使います" : undefined}>
+                {m.kind === "d" && <span className="tag warn" style={{ marginRight: 4 }}>文書だけ</span>}{m.label}
               </button>
             ))}
-            <button type="button" className="chip" aria-pressed={masterId === ""} onClick={() => setMasterId("")}>基本契約なし（発注書の約款）</button>
+            {extraPicks.filter((m) => !masterHits?.some((h) => h.key === m.key)).map((m) => (
+              <button key={m.key} type="button" className="chip" aria-pressed={masterKey === m.key} onClick={() => pickMaster(m)}>
+                <span className="tag warn" style={{ marginRight: 4 }}>相手先：{m.party}</span>{m.label}
+              </button>
+            ))}
+            <button type="button" className="chip" aria-pressed={masterKey === ""} onClick={() => pickMaster(null)}>
+              基本契約なし（発注書の約款）{doc?.masterKey && masterKey !== "" ? "＝基本契約から外す" : ""}
+            </button>
           </div>
-          {!masters.length && <span className="faint">この取引先に基本契約がありません。結んでいるなら、先に「契約を登録」で立ててください</span>}
+          {masterHits && (
+            <div className="picker" style={{ maxHeight: 180, overflowY: "auto" }}>
+              {masterHits.map((m) => (
+                <label key={m.key} className="row" style={{ gap: 6, padding: "2px 0", cursor: "pointer" }}>
+                  <input type="radio" name="master" checked={masterKey === m.key} onChange={() => pickMaster(m)} />
+                  <span className="tag ghost">基本契約</span><span>{m.label}</span>
+                  <span className="tag warn">相手先：{m.party}</span>
+                </label>
+              ))}
+              {!masterHits.length && <span className="faint">ほかの取引先にも当たる基本契約がありません</span>}
+            </div>
+          )}
+          {chosenMaster?.kind === "x" && (
+            <span className="faint">別の取引先（{chosenMaster.party}）で登録された基本契約です。決定すると相手先を {map.party.name} に直してから使います</span>
+          )}
+          {chosenMaster?.kind === "d" && (
+            <span className="faint">文書番号だけで契約に繋がっていない基本契約書です。決定すると、この文書から基本契約（番号は文書のまま）を立ててから使います</span>
+          )}
+          {!localPicks.length && !masterHits && <span className="faint">この取引先に基本契約がありません。番号・件名で探すか、結んでいるなら先に「契約を登録」で立ててください</span>}
         </div>
 
         <div className="stack" style={{ gap: 6 }}>
@@ -1066,7 +1195,8 @@ function OrderLinkPanel(
             <div className="picker" style={{ maxHeight: 220, overflowY: "auto" }}>
               {docList.map((d) => (
                 <label key={d.id} className="row" style={{ gap: 6, padding: "2px 0", cursor: "pointer" }}>
-                  <input type="radio" name="po" checked={doc?.id === d.id} onChange={() => setDoc({ id: d.id, label: `${d.no ?? `#${d.id}`} ${d.title ?? ""}` })} />
+                  <input type="radio" name="po" checked={doc?.id === d.id}
+                         onChange={() => choose({ id: d.id, label: `${d.no ?? `#${d.id}`} ${d.title ?? ""}`, conds: d.conds })} />
                   <span className="tag ghost">{d.tag}</span><span className="code">{d.no ?? `#${d.id}`}</span><span>{d.title ?? ""}</span>
                   {d.party && d.party !== map.party.name && <span className="tag warn">相手先：{d.party}</span>}
                   <span className="faint">{d.note}</span>
@@ -1075,30 +1205,39 @@ function OrderLinkPanel(
               {!docList.length && <span className="faint">{docHits ? "当たる発注書がありません" : "この取引先の発注書はまだありません。番号で探すか、紙・PDF を取り込んでください"}</span>}
             </div>
           )}
+          {doc && doc.conds.length > 0 && (
+            <span className="faint">この発注書にいま紐づいている条件明細 {doc.conds.length} 本を ③ にチェックして読み込みました。外すものはチェックを外してください</span>
+          )}
         </div>
 
         <div className="stack" style={{ gap: 6 }}>
           {step("③", "条件明細", ids.length ? `${ids.length} 本` : null)}
           <input value={condQ} placeholder="条件番号・条件名・作品で探す" onChange={(e) => setCondQ(e.target.value)} />
           <div className="picker" style={{ maxHeight: 260, overflowY: "auto" }}>
-            {condShown.map((c) => (
-              <label key={c.id} className="row" style={{ gap: 6, padding: "2px 0" }}>
-                <input type="checkbox" checked={picked.has(c.id)} onChange={() => toggle(c.id)} />
-                <span className="code">{c.conditionNo ?? `#${c.id}`}</span><span>{c.name}</span>
-                <span className="faint">{c.work?.title ?? ""}</span>
-                <span className={`tag ${looseIds.has(c.id) ? "warn" : "ghost"}`}>{holderOf(c)}</span>
-              </label>
-            ))}
+            {condShown.map((c) => {
+              const other = picked.has(c.id) ? otherOrderOf(c.id) : null;
+              return (
+                <label key={c.id} className="row" style={{ gap: 6, padding: "2px 0" }}>
+                  <input type="checkbox" checked={picked.has(c.id)} onChange={() => toggle(c.id)} />
+                  <span className="code">{c.conditionNo ?? `#${c.id}`}</span><span>{c.name}</span>
+                  <span className="faint">{c.work?.title ?? ""}</span>
+                  <span className={`tag ${looseIds.has(c.id) ? "warn" : "ghost"}`}>{holderOf(c)}</span>
+                  {original.has(c.id) && !picked.has(c.id) && <span className="tag warn">この発注書から外す</span>}
+                  {other && <span className="tag warn">{other.documentNo ?? `#${other.id}`} から付け替える</span>}
+                </label>
+              );
+            })}
             {!condShown.length && <span className="faint">当たる条件明細がありません</span>}
           </div>
         </div>
 
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          <button className="btn primary" disabled={busy || !doc || !ids.length} onClick={() => void link()}>
-            {busy ? "紐づけています…" : "決定して紐づける"}
+          <button className="btn primary" disabled={readOnly || busy || !doc || (!ids.length && !removeIds.length)} onClick={() => void link()}>
+            {busy ? "紐づけています…" : ids.length ? "決定して紐づける" : "外す"}
           </button>
           <span className="faint">
             {masterLabel.trim()} ／ {doc ? doc.label : "発注書 未決定"} ／ 条件明細 {ids.length} 本
+            {removeIds.length > 0 && `（外す ${removeIds.length} 本）`}{moving.length > 0 && `（付け替え ${moving.length} 本）`}
           </span>
         </div>
       </div>

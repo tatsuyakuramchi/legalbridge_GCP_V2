@@ -551,10 +551,15 @@ export function createRoutes(database: Transactable) {
         documentId: z.coerce.number().int().positive(),
         conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
         // 基本契約を選んだとき（null は「基本契約なし＝発注書の約款」）。省けば自動で決める。
-        masterId: z.coerce.number().int().positive().nullable().optional()
+        masterId: z.coerce.number().int().positive().nullable().optional(),
+        // 付け替え：この発注書から外す条件と、選んだ条件を別の発注書から外すか。
+        removeConditionIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
+        detachOtherOrders: z.boolean().optional()
       }).parse(req.body ?? {});
-      res.json(await agreementMap.linkOrder(input.documentId, input.conditionIds, actor(res),
-        "masterId" in (req.body ?? {}) ? { masterId: input.masterId ?? null } : {}));
+      res.json(await agreementMap.linkOrder(input.documentId, input.conditionIds, actor(res), {
+        ...("masterId" in (req.body ?? {}) ? { masterId: input.masterId ?? null } : {}),
+        removeConditionIds: input.removeConditionIds, detachOtherOrders: input.detachOtherOrders
+      }));
     }));
   // 契約として登録された発注書を文書に寄せる（発注書は文書として持つ）。
   router.post("/agreement-map/agreements/:id/to-order-document", requireRole("admin", "legal"), requireWritable,
