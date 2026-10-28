@@ -227,6 +227,11 @@ const jaDate = (iso: string) => {
  *   7. 受領前の取消・変更は協議の上で相当額。
  *   8. 協議の上で合意した旨の確認。
  */
+/** 自動で組んだ特約の 1 行目。訂正版で写すかどうか（自動文なら写さず組み直す）の判定にも使う。 */
+export const IN_LIEU_TERMS_HEADING = "特約（初版の利用許諾料を報酬として支払う旨の特則）";
+/** 自動で組んだ特約の文か（人が書き換えた文は先頭が変わる）。 */
+export const isAutoInLieuTerms = (text: unknown): boolean => String(text ?? "").trimStart().startsWith(IN_LIEU_TERMS_HEADING);
+
 export function inLieuSpecialTerms(input: InLieuTermsInput): string {
   const names = input.deliverables.map((d) => d.name.trim()).filter(Boolean);
   const subject = names.length > 1 ? `${names.join("および")}の制作` : `${names[0] ?? "成果物"}の制作`;
@@ -269,7 +274,7 @@ export function inLieuSpecialTerms(input: InLieuTermsInput): string {
     ["発注者および受注者は、本特約の対価の定め方が、受注者による著作権の留保と利用許諾料の収受を前提として、協議の上で合意されたものであることを確認する。"]
   ];
   return [
-    "特約（初版の利用許諾料を報酬として支払う旨の特則）",
+    IN_LIEU_TERMS_HEADING,
     ...clauses.flatMap((lines, i) => ["", `${i + 1}. ${lines[0]}`, ...lines.slice(1)])
   ].join("\n");
 }

@@ -1,4 +1,5 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
+import { isAutoInLieuTerms } from "../conditions/royalty-in-lieu.js";
 import { ensureAgreementForTerms } from "../agreements/auto.js";
 import { inContractRef } from "../royalty/in-contract.js";
 import { DomainError, translate } from "../core/errors.js";
@@ -821,6 +822,8 @@ export class DocumentIssueService {
         // 訂正版は条件を直した結果を載せるためのものなので、元の版の明細（items）は写さない（A-104）。
         // 写すと手入力の明細として固定され、条件を直しても金額が変わらなかった。欄の手入力・経費・手数料は写す。
         const { items: _droppedItems, ...carriedInputs } = (row.manual_inputs ?? {}) as Record<string, unknown>;
+        // 自動で組んだ特約も写さない（写すと条件を直しても特約が変わらない）。人が書いた特約はそのまま。A-105
+        if (isAutoInLieuTerms(carriedInputs.SPECIAL_TERMS)) delete carriedInputs.SPECIAL_TERMS;
         const created = await client.query(
           `INSERT INTO documents (template_version_id, matter_id, agreement_id, status,
                                   manual_inputs, supersedes_id, supersede_reason)

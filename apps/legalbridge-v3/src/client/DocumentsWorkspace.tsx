@@ -2072,6 +2072,8 @@ export function carryOverInputs(manual: Record<string, unknown>): {
   const arrays: Record<string, Row[]> = {};
   for (const [k, v] of Object.entries(manual)) {
     if (computed.has(k)) continue;
+    // 自動で組んだ特約は引き継がない（条件から組み直す）。人が書いた特約は引き継ぐ。A-105
+    if (k === "SPECIAL_TERMS" && String(v ?? "").trimStart().startsWith("特約（初版の利用許諾料を報酬として支払う旨の特則）")) continue;
     if (Array.isArray(v)) arrays[k] = v as Row[];
     else if (v !== null && v !== undefined && typeof v !== "object") values[k] = String(v);
   }
