@@ -223,7 +223,7 @@ function StepStructure({ map, partyId, partyName, shape, onShape, structure, bus
           {roots.map((r) => (
             <div key={r.id} className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <span className="code">{r.agreementNo ?? `#${r.id}`}</span><b>{r.title}</b>
-              <span className="faint">{st(r.status)}{r.executedOn ? `・締結 ${r.executedOn}` : ""}・条件 {r.conditionCount}・文書 {r.documentCount}{r.primary ? "・既定" : ""}</span>
+              <span className="faint">{st(r.status)}{r.executedOn ? `・締結 ${r.executedOn}` : ""}・条件 {r.conditionCount}・文書 {r.documentCount}{r.primary ? "・最新" : ""}</span>
               <button className={`btn btn-sm${structure?.agreementId === r.id ? " primary" : ""}`} onClick={() => onPick({ kind: shape, agreementId: r.id })}>
                 {structure?.agreementId === r.id ? "選択中 → 文書へ" : "これにする"}
               </button>

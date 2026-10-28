@@ -1086,7 +1086,7 @@ function InLieuGuide(
                 hint="初版分は委託料の行で払うので、保証や前払いは持たない（持つと計算書で相殺・下限になってしまう）"
                 acts={<>{(num(v.agAmount) || num(v.mgAmount)) ? <button type="button" className="btn btn-sm" onClick={() => { set("agAmount", ""); set("mgAmount", ""); }}>空にする</button> : null}{to("agAmount")}</>} />
           <Step done={v.creditFromWork === "1" || String(v.creditNotice ?? "").trim() !== ""} title="クレジット表記（作品から引用、または文言）" acts={to("creditNotice")} />
-          <Step done={false} title="契約は出版基本契約に載せる" hint="付け替えは条件の画面の「契約」の欄で（この編集画面にはない）。業務委託の基本契約とは別に、出版基本契約の個別契約として扱う" />
+          <Step done={false} title="出版基本契約の下の個別契約として載せる" hint="付け替えは条件の画面の「契約」の欄で（この編集画面にはない）。業務委託の基本契約とは別に、出版基本契約の個別契約として扱う" />
           <Step done={(siblings ?? []).some((c) => c.kind === "service")} title="対応する委託料の行（原稿・イラスト）を直す"
                 hint="同じ相手先・作品の委託料。帰属先＝受注者、金額＝仮計算額の配分、報酬名＝初版利用許諾料、納期、予定 1 回"
                 acts={list("service", "委託料の行が見つかりません")} />

@@ -473,7 +473,8 @@ export function ServiceLinesForm(
             <select value={agreementId} onChange={(e) => setAgreementId(e.target.value)}>
               <option value="">（なし＝発注書単独。基本契約なしの条項が入る）</option>
               {agreementOptions.map((a) => <option key={a.id} value={a.id}>{[a.agreementNo, a.title].filter(Boolean).join(" ")}</option>)}
-            </select></label>
+            </select>
+            <small className="faint">発注書は、選んだ基本契約の下の個別契約になる（条件明細は発注書が持つ）</small></label>
           <label className="field"><span>作品（任意。受注者帰属の行があれば必要）</span>
             <SearchSelect value={workId} search={searchWorks} emptyLabel="（なし）" placeholder="作品名・コードで探す"
                           valueLabel={workLabel}

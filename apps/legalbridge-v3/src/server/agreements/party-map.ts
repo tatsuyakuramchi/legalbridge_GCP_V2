@@ -189,9 +189,10 @@ const isLive = (a: MapAgreement) => a.status === "executed" && !a.terminatedOn;
 /**
  * 取引先ひとつぶんの契約を木にする。DB を読まない（テストできるように）。
  *
- * primary は「その domain × direction で他の画面が拾うべき1本」。締結済み・未解除の
- * 基本契約のうち、締結日の新しいもの。単体契約は既定にしない（その作品・その取引
- * だけの契約で、取引先全体の準拠契約ではない）。単体契約しか無ければ既定なし。
+ * 取引先は種別（業務委託／ライセンス）× 方向ごとに基本契約を何本も持つのがふつう。
+ * primary は、その中で締結日の新しい 1 本。基本契約をまだ選んでいない画面の初期値に
+ * 使うだけで、「正しい 1 本」ではない（並んでいてもずれではない）。単体契約は初期値に
+ * しない（その作品・その取引だけの契約で、取引先全体の準拠契約ではない）。
  */
 export function buildPartyMap(party: { id: number; name: string }, rows: MapAgreement[]): PartyMap {
   const issues: MapIssue[] = [];
@@ -241,26 +242,18 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
     else loose.push(a);
   }
 
-  // domain × direction ごとに、他の画面が拾うべき1本と、並んでいる生きた基本契約。
+  // domain × direction ごとに、締結日の新しい基本契約を初期値（primary）にする。
+  // 同じ種別・方向に基本契約が何本もあるのはふつうの形で、ずれにはしない。
   const groups = new Map<string, MapNode[]>();
   for (const r of roots) {
     const key = `${r.domain ?? "-"}:${r.direction}`;
     groups.set(key, [...(groups.get(key) ?? []), r]);
   }
   for (const list of groups.values()) {
-    const live = list.filter(isLive);
-    const masters = live.filter((r) => r.kind === "master");
+    const masters = list.filter(isLive).filter((r) => r.kind === "master");
     const pick = [...masters].sort((x, y) =>
       String(y.executedOn ?? "").localeCompare(String(x.executedOn ?? "")) || y.id - x.id)[0];
     if (pick) pick.primary = true;
-    if (masters.length > 1 && pick) {
-      const label = `${pick.domain ? DOMAIN_LABEL[pick.domain] : "種別未設定"}・${DIRECTION_LABEL[pick.direction]}`;
-      for (const m of masters) {
-        if (m.id === pick.id) continue;
-        issues.push({ code: "duplicate_master", agreementId: m.id,
-          message: `${label} の生きた基本契約が ${masters.length} 本あります。画面により ${tag(m)} と ${tag(pick)} のどちらが出るかが変わります（古い方を解除するか、種別・方向を直してください）` });
-      }
-    }
   }
 
   // 発注書が契約（単体契約・文書だけ）として登録されている。発注書は文書として持つ
@@ -281,9 +274,9 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
     if (r.kind !== "standalone" || r.conditionCount === 0) continue;
     const masters = roots.filter((m) => m.kind === "master" && m.direction === r.direction && !m.terminatedOn);
     if (!masters.length) continue;
-    const m = masters.find((x) => x.primary) ?? masters[0];
+    const which = masters.length === 1 ? `${tag(masters[0])}（基本契約）` : `基本契約が ${masters.length} 本`;
     issues.push({ code: "standalone_with_master", agreementId: r.id,
-      message: `${tag(r)} は単体契約ですが、${tag(m)}（基本契約）があります。基本契約の下の個別契約にするなら「個別契約にする」` });
+      message: `${tag(r)} は単体契約ですが、${which}があります。基本契約の下の個別契約にするなら「個別契約にする」` });
   }
 
   roots.sort((x, y) =>
@@ -606,7 +599,7 @@ export class PartyAgreementMapService {
         const root = map.roots.find((x) => x.agreementNo === no);
         if (root) {
           map.issues.push({ code: "master_holds_conditions", agreementId: root.id,
-            message: `${no}（基本契約）に、発注書・条件書に載っていない条件明細が ${n} 本あります。基本契約は条件を持たず、発注書が持ちます。下の「持ち主の決まっていない条件明細」で発注書に紐づけてください` });
+            message: `${no}（基本契約）に直接、条件明細が ${n} 本あります。条件明細を持つのは個別契約（条件書・発注書）か単体契約で、基本契約は個別契約を持ちます。下の「持ち主の決まっていない条件明細」で発注書に紐づけるか、個別契約・単体契約に載せてください` });
         }
       }
       // 発注書。載っている条件がそろって同じ基本契約なら、その基本契約の下に並べる。
@@ -1052,7 +1045,7 @@ export class PartyAgreementMapService {
     } catch (error) { throw translate(error); }
   }
 
-  async orderAgreementToDocument(id: number, actor: string): Promise<{
+  async orderAgreementToDocument(id: number, actor: string, options: { masterId?: number | null } = {}): Promise<{
     documentId: number; documentNo: string; created: boolean; conditionsLinked: number; masterNo: string | null;
   }> {
     try {
@@ -1118,15 +1111,25 @@ export class PartyAgreementMapService {
              ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, cid, lineNo]);
         }
 
-        // 3. 条件明細の契約。同じ相手・同じ向きの生きた基本契約があればそこへ、無ければ契約なし。
+        // 3. 条件明細の契約。人が基本契約を選んでいればそれ（null は基本契約なし）。選んでいなければ、
+        //    同じ相手・同じ向きの生きた基本契約が 1 本ならそれ、何本もあれば人に選んでもらう、無ければ契約なし。
         const mr = await client.query(
           `SELECT a.id, a.agreement_no FROM agreements a
              JOIN v_party_resolved r ON r.party_id = a.counterparty_id
             WHERE r.resolved_id = $1 AND COALESCE(a.kind, 'master') = 'master' AND a.direction = $2
               AND a.terminated_on IS NULL AND a.id <> $3
-            ORDER BY (a.status = 'executed') DESC, a.executed_on DESC NULLS LAST, a.id DESC LIMIT 1`,
+            ORDER BY (a.status = 'executed') DESC, a.executed_on DESC NULLS LAST, a.id DESC`,
           [Number(a.resolved_id), a.direction, id]);
-        const master = mr.rows[0] as any | undefined;
+        const candidates = mr.rows as any[];
+        let master: any | undefined;
+        if (options.masterId !== undefined) {
+          master = options.masterId === null ? undefined : candidates.find((m) => Number(m.id) === options.masterId);
+          if (options.masterId !== null && !master) throw new DomainError("VALIDATION", "同じ取引先・同じ向きの基本契約を選んでください");
+        } else if (candidates.length > 1) {
+          throw new DomainError("VALIDATION", `この取引先には ${a.direction === "out" ? "OUT" : "IN"} の基本契約が ${candidates.length} 本あります。どの基本契約の下の発注書にするか選んでください`);
+        } else {
+          master = candidates[0];
+        }
         await client.query("UPDATE conditions SET agreement_id = $2 WHERE agreement_id = $1",
           [id, master ? Number(master.id) : null]);
         // 文書は契約から外す（発注書は契約に繋がない文書）。

@@ -564,7 +564,10 @@ export function createRoutes(database: Transactable) {
   // 契約として登録された発注書を文書に寄せる（発注書は文書として持つ）。
   router.post("/agreement-map/agreements/:id/to-order-document", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      res.json(await agreementMap.orderAgreementToDocument(Number(req.params.id), actor(res)));
+      // 基本契約が何本もあるときは人が選ぶ（null は基本契約なし）。省けば 1 本なら自動、何本もあれば断る。
+      const body = z.object({ masterId: z.coerce.number().int().positive().nullable().optional() }).parse(req.body ?? {});
+      res.json(await agreementMap.orderAgreementToDocument(Number(req.params.id), actor(res),
+        "masterId" in (req.body ?? {}) ? { masterId: body.masterId ?? null } : {}));
     }));
   // 基本契約なしの発注書を、基本契約の下に入れる（発注書の条件明細を基本契約に載せる）。
   router.post("/agreement-map/orders/:id/master", requireRole("admin", "legal"), requireWritable,

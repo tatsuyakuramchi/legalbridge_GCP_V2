@@ -26,8 +26,8 @@ import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapOrder, MapPart
  *   取引先 → 基本契約・単体契約 → 補助文書・解除合意
  * の図にし、図にならないもの（ずれ）をその場で付け替える。
  *
- * 「既定」の印は、他の画面がその取引先の基本契約として拾うべき1本
- * （種別 × 方向ごとに、締結済み・未解除の基本契約のうち新しいもの）。
+ * 契約の形：取引先は種別（業務委託／ライセンス）× 方向ごとに基本契約を何本も持つ。
+ * 条件明細を持つのは個別契約（条件書・発注書）か単体契約で、基本契約は個別契約を持つ。
  */
 
 const KIND_LABEL: Record<AgreementKind, string> = {
@@ -116,7 +116,7 @@ export function AgreementMapWorkspace(
       {/* 一括修正：書き出して表計算で直し、取り込んで戻す。当て方は画面の編集と同じ。 */}
       <CsvBar title="CSV で一括修正" style={{ marginBottom: 12 }}
         exports={[
-          { value: "all", label: "全取引先の契約（ずれ・既定の参考列つき）",
+          { value: "all", label: "全取引先の契約（ずれ・最新の参考列つき）",
             href: "/api/v3/agreement-map/export.csv" },
           { value: "party", label: map ? `${map.party.name} の契約だけ` : "選んだ取引先の契約だけ",
             href: partyId ? `/api/v3/agreement-map/export.csv?partyId=${partyId}` : undefined,
@@ -200,7 +200,7 @@ function PartyMapView(
     setUnderBusy(o.id);
     try {
       const r = await api.post<{ conditionsLinked: number; agreementNo: string | null }>(`/agreement-map/orders/${o.id}/master`, { agreementId });
-      onChanged(`${o.documentNo ?? `#${o.id}`} を ${r.agreementNo ?? "基本契約"} の下に入れました（条件明細 ${r.conditionsLinked} 本を基本契約に載せました）`);
+      onChanged(`${o.documentNo ?? `#${o.id}`} を ${r.agreementNo ?? "基本契約"} の下の発注書にしました（条件明細 ${r.conditionsLinked} 本）`);
     } catch (e) { onError((e as ApiError).message); }
     finally { setUnderBusy(null); }
   }
@@ -226,8 +226,9 @@ function PartyMapView(
   const [leveling, setLeveling] = useState<number | null>(null);
   const issuesOf = (id: number) => map.issues.filter((i) => i.agreementId === id);
 
-  const node = (a: MapAgreement, extra?: { primary?: boolean }) => (
-    <AgreementNode key={a.id} a={a} issues={issuesOf(a.id)} primary={extra?.primary}
+  const node = (a: MapAgreement, extra?: { childCount?: number }) => (
+    <AgreementNode key={a.id} a={a} issues={issuesOf(a.id)}
+      childCount={extra?.childCount ?? 0} orderCount={orders.filter((o) => o.masterId === a.id).length}
       editing={editing === a.id} onEdit={() => setEditing(editing === a.id ? null : a.id)}
       leveling={leveling === a.id} onLevel={() => setLeveling(leveling === a.id ? null : a.id)}
       onOpen={onOpen} roots={map.roots}
@@ -263,21 +264,21 @@ function PartyMapView(
           <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }}
                   onClick={() => setPoLink({ documentId: null, conditionIds: [] })}>検索して紐づける（基本契約 → 発注書 → 条件）</button>
           <span className="faint" style={{ marginLeft: "auto" }}>
-            既定＝他の画面がこの取引先の基本契約として拾う1本（種別 × 方向ごと。基本契約だけで、単体契約は既定にしません）
+            基本契約は種別 × 方向ごとに何本あってもかまいません。基本契約の下に個別契約（条件書・発注書）が並び、条件明細はそこに載ります
           </span>
         </div>
         <div className="panel-bd">
           <p className="faint" style={{ margin: "0 0 10px" }}>
-            取引の形は2つです。<b>（1）基本契約＋個別の取引</b>：基本契約は条件明細を持たず、その下の発注書（業務委託）・個別契約の条件書（ライセンス）が条件明細を持ちます。
+            取引の形は2つです。<b>（1）基本契約＋個別契約</b>：基本契約は個別契約を持ちます。条件明細は基本契約ではなく、その下の個別契約（業務委託なら発注書、ライセンスなら条件書）が持ちます。
             <b>（2）単体契約</b>：その取引だけで完結する契約で、条件明細を直接持ちます。
-            持ち主の決まっていない条件明細は下に並ぶので、発注書に紐づけるか、単体契約・個別契約に載せてください。
+            どちらにも載っていない条件明細は下に並ぶので、発注書に紐づけるか、個別契約・単体契約に載せてください。
           </p>
           <div className="amap">
             <div className="amap-party">{map.party.name}</div>
             <div className="amap-roots">
               {map.roots.map((r: MapNode) => (
-                <div key={r.id} className={`amap-root${r.primary ? " primary" : ""}`}>
-                  {node(r, { primary: r.primary })}
+                <div key={r.id} className="amap-root">
+                  {node(r, { childCount: r.children.length })}
                   {(r.children.length > 0 || orders.some((o) => o.masterId === r.id)) && (
                     <div className="amap-children">
                       {r.children.map((c) => node(c))}
@@ -312,7 +313,7 @@ function PartyMapView(
         <div className="panel">
           <div className="panel-hd">
             <h2>基本契約なしの発注書</h2>
-            <span className="faint">発注書の約款で取引しているもの。基本契約を結んだら、その下に入ります（条件を紐づけ直すと基本契約に載ります）</span>
+            <span className="faint">発注書の約款で取引しているもの。基本契約を結んだら、その下の個別契約として入れます</span>
           </div>
           <div className="panel-bd amap-children" style={{ marginLeft: 0 }}>
             {orders.filter((o) => o.masterId === null).map((o) => (
@@ -326,7 +327,7 @@ function PartyMapView(
                       {masters.map((m) => <option key={m.id} value={m.id}>{m.agreementNo ?? `#${m.id}`} {m.title}</option>)}
                     </select>
                     <button className="btn btn-sm primary" disabled={underBusy === o.id}
-                            title="この発注書に載っている条件明細を基本契約に載せます（別の契約に載っている条件は動かしません）"
+                            title="この発注書を基本契約の下の個別契約にします（別の契約に載っている条件明細は動かしません）"
                             onClick={() => void putUnder(o)}>入れる</button>
                   </div>
                 )}
@@ -391,15 +392,19 @@ function UnlinkedDocuments(
   const [busy, setBusy] = useState<number | null>(null);
   // 基本契約書 → 条件書 の順に立てる。基本契約がまだ無く、基本契約書が残っているうちは
   // 条件書を立てない（先に立てると単体契約になり、あとで個別契約にし直す手間が出る）。
-  const hasMaster = map.roots.some((r) => r.kind === "master");
+  const liveMasters = map.roots.filter((r) => r.kind === "master" && !r.terminatedOn);
+  const hasMaster = liveMasters.length > 0;
   const masterDocLeft = docs.some((d) => d.role === "master");
+  /** 条件書を個別契約にするときの親の基本契約（基本契約が何本もあるとき選ぶ）。 */
+  const [parentOf, setParentOf] = useState<Record<number, string>>({});
   async function create(doc: UnlinkedDocument, as: "master" | "standalone" | null = null) {
     setBusy(doc.id);
     try {
+      const parentId = !as && hasMaster ? Number(parentOf[doc.id] ?? liveMasters[0].id) : null;
       const r = await api.post<{ agreementNo: string; kind: string; parentNo: string | null; conditionsLinked: number }>(
-        `/agreement-map/documents/${doc.id}/agreement`, as ? { as } : {});
+        `/agreement-map/documents/${doc.id}/agreement`, as ? { as } : parentId ? { as: "supplement", parentId } : {});
       const what = r.kind === "master" ? "基本契約" : r.kind === "supplement" ? `${r.parentNo ?? "基本契約"} の下の個別契約` : "単体契約";
-      onChanged(`${doc.documentNo ?? `#${doc.id}`} から${what}を立てました（番号 ${r.agreementNo}${r.conditionsLinked ? `・条件明細 ${r.conditionsLinked} 本を${r.kind === "supplement" ? "基本契約に" : ""}載せました` : ""}）。締結日は「編集」で入れてください`);
+      onChanged(`${doc.documentNo ?? `#${doc.id}`} から${what}を立てました（番号 ${r.agreementNo}${r.conditionsLinked ? `・条件明細 ${r.conditionsLinked} 本を載せました` : ""}）。締結日は「編集」で入れてください`);
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(null); }
   }
@@ -426,7 +431,7 @@ function UnlinkedDocuments(
           <div className="note">
             基本契約書・業務委託契約書・条件書は「この文書から立てる」で契約にできます（番号・件名は文書のまま）。
             業務委託契約書は、継続取引の土台なら「基本契約として立てる」、その取引だけで完結するなら「単体契約として立てる」を選びます。<b>基本契約書 → 条件書</b> の順に押すと、
-            条件書は基本契約の下の個別契約になり、条件書に載っている条件明細も基本契約に載ります。基本契約が無ければ条件書は単体契約になります。
+            条件書は基本契約の下の個別契約になり、載っている条件明細はその個別契約のものになります。基本契約が無ければ条件書は単体契約になります。
           </div>
         </div>
       )}
@@ -458,11 +463,21 @@ function UnlinkedDocuments(
                   {d.role === "terms" && (
                     !hasMaster && masterDocLeft
                       ? <span className="faint">先に基本契約書を立ててください</span>
-                      : <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || busy === d.id}
-                                title={d.conditionCount ? `載っている条件明細 ${d.conditionCount} 本も一緒に載せます` : undefined}
-                                onClick={() => void create(d)}>
-                          {hasMaster ? "個別契約として立てる" : "単体契約として立てる"}
-                        </button>
+                      : (
+                        <div className="row" style={{ gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                          <button className="btn btn-sm primary" style={{ whiteSpace: "nowrap" }} disabled={readOnly || busy === d.id}
+                                  title={d.conditionCount ? `載っている条件明細 ${d.conditionCount} 本も一緒に載せます` : undefined}
+                                  onClick={() => void create(d)}>
+                            {hasMaster ? "個別契約として立てる" : "単体契約として立てる"}
+                          </button>
+                          {liveMasters.length > 1 && (
+                            <select value={parentOf[d.id] ?? String(liveMasters[0].id)} disabled={readOnly} style={{ maxWidth: 240 }}
+                                    aria-label="親の基本契約" onChange={(e) => setParentOf((p) => ({ ...p, [d.id]: e.target.value }))}>
+                              {liveMasters.map((m) => <option key={m.id} value={m.id}>{m.agreementNo ?? `#${m.id}`} {m.title}</option>)}
+                            </select>
+                          )}
+                        </div>
+                      )
                   )}
                   {!d.role && (
                     <button className="btn btn-sm" style={{ whiteSpace: "nowrap" }} disabled={readOnly}
@@ -564,7 +579,7 @@ function LooseConditions(
                   {onOpen ? <button className="linky" onClick={() => onOpen("condition", c.id)}>{c.conditionNo ?? `#${c.id}`}</button>
                           : c.conditionNo ?? `#${c.id}`}
                 </td>
-                <td>{c.name}{c.masterNo && <span className="tag warn" style={{ marginLeft: 6 }} title="基本契約は条件を持ちません。発注書に紐づけてください">基本契約 {c.masterNo} に直接</span>}</td>
+                <td>{c.name}{c.masterNo && <span className="tag warn" style={{ marginLeft: 6 }} title="条件明細を持つのは個別契約（条件書・発注書）か単体契約です。発注書に紐づけるか、個別契約・単体契約に載せてください">基本契約 {c.masterNo} に直接</span>}</td>
                 <td className="faint">{c.workTitle ?? "—"}</td>
                 <td><span className={`tag ${c.direction}`}>{c.direction === "in" ? "IN" : "OUT"}</span></td>
                 <td><StatusTag kind="condition" value={c.status} /></td>
@@ -577,7 +592,7 @@ function LooseConditions(
         <span>選んだ {chosen.length} 本を</span>
         <button className="btn btn-sm primary" disabled={readOnly || !chosen.length || directions.length > 1}
                 onClick={() => onLinkOrder(chosen.map((c) => c.id))}>（1）発注書を紐づける</button>
-        <span className="faint">または（2）単体契約・個別契約に載せる：</span>
+        <span className="faint">または（2）個別契約・単体契約に載せる：</span>
         {directions.length > 1
           ? <span className="tag warn">IN と OUT が混ざっています。向きごとに分けて載せてください</span>
           : targets.length
@@ -599,8 +614,10 @@ function LooseConditions(
 }
 
 function AgreementNode(
-  { a, issues, primary, editing, onEdit, leveling, onLevel, onOpen, roots, onSaved, onDocsChanged, onError }: {
-    a: MapAgreement; issues: MapIssue[]; primary?: boolean; editing: boolean; onEdit: () => void;
+  { a, issues, childCount, orderCount, editing, onEdit, leveling, onLevel, onOpen, roots, onSaved, onDocsChanged, onError }: {
+    a: MapAgreement; issues: MapIssue[]; editing: boolean; onEdit: () => void;
+    /** 基本契約の下の個別契約・発注書の数（基本契約は条件明細ではなく個別契約を持つ）。 */
+    childCount: number; orderCount: number;
     /** 個別契約にする（単体契約）／単体契約に戻す（個別契約）の欄。 */
     leveling: boolean; onLevel: () => void;
     onOpen?: (kind: EntityKind, id: number) => void; roots: MapNode[];
@@ -619,14 +636,20 @@ function AgreementNode(
   const levelOpen = leveling;
   const isOrder = canBeOrder(a);
   const [toDocBusy, setToDocBusy] = useState(false);
+  /** 発注書（文書）に寄せるとき、どの基本契約の下に入れるか。同じ向きの基本契約が何本もあれば選ぶ。 */
+  const toDocMasters = roots.filter((r) => r.kind === "master" && r.id !== a.id && r.direction === a.direction && !r.terminatedOn);
+  const [toDocMaster, setToDocMaster] = useState<string>("");
+  const toDocChoice = toDocMasters.length > 1 ? (toDocMaster || String(toDocMasters[0].id)) : null;
   async function toOrderDocument() {
-    if (!window.confirm(`${a.agreementNo ?? `#${a.id}`} は発注書です。契約から外して発注書（文書）にし、載っている条件明細 ${a.conditionCount} 本に紐づけます。よろしいですか？`)) return;
+    const under = toDocChoice ? (toDocChoice === "none" ? "基本契約なし（発注書の約款）" : `${toDocMasters.find((m) => String(m.id) === toDocChoice)?.agreementNo ?? ""} の下`) : null;
+    if (!window.confirm(`${a.agreementNo ?? `#${a.id}`} は発注書です。契約から外して発注書（文書）にし、載っている条件明細 ${a.conditionCount} 本に紐づけます${under ? `（${under}）` : ""}。よろしいですか？`)) return;
     setToDocBusy(true);
     try {
       const r = await api.post<{ documentNo: string; created: boolean; conditionsLinked: number; masterNo: string | null }>(
-        `/agreement-map/agreements/${a.id}/to-order-document`, {});
+        `/agreement-map/agreements/${a.id}/to-order-document`,
+        toDocChoice ? { masterId: toDocChoice === "none" ? null : Number(toDocChoice) } : {});
       onSaved(`${a.agreementNo ?? `#${a.id}`} を発注書（文書 ${r.documentNo}${r.created ? "・新しく登録" : ""}）にし、条件明細 ${r.conditionsLinked} 本に紐づけました。`
-        + (r.masterNo ? `条件明細は基本契約 ${r.masterNo} に載せました` : "基本契約が無いので、条件明細は発注書の約款で取引する扱い（契約なし）です"));
+        + (r.masterNo ? `基本契約 ${r.masterNo} の下の発注書です` : "基本契約が無いので、発注書の約款で取引する扱い（契約なし）です"));
     } catch (e) { onError((e as ApiError).message); }
     finally { setToDocBusy(false); }
   }
@@ -644,7 +667,6 @@ function AgreementNode(
           a.domain ? <span className="tag ghost">{DOMAIN_LABEL[a.domain]}</span>
                    : <span className="tag warn">種別なし</span>
         )}
-        {primary && <span className="tag accent">既定</span>}
         <button className="linky code" onClick={() => onOpen?.("agreement", a.id)}>{a.agreementNo ?? `#${a.id}`}</button>
         <span>{a.title}</span>
         <StatusTag kind="agreement" value={a.status} />
@@ -659,18 +681,26 @@ function AgreementNode(
         {a.counterparty.merged && <span className="faint" title="統合前の取引先を指しています（参照は付け替えない決まり）">統合元：{a.counterparty.name}</span>}
         <span className="faint">
           {a.kind === "master"
-            ? `発注書・個別契約が条件を持つ${a.conditionCount ? `（条件 ${a.conditionCount}）` : ""}・文書 ${a.documentCount}`
+            ? `個別契約 ${childCount}・発注書 ${orderCount}・文書 ${a.documentCount}`
             : `条件 ${a.conditionCount}・文書 ${a.documentCount}`}
         </span>
-        {a.kind !== "document" && (
+        {/* 条件明細を持つのは個別契約・単体契約。基本契約には「条件」を出さない（基本契約は個別契約を持つ）。 */}
+        {a.kind !== "document" && a.kind !== "master" && (
           <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setCondsOpen((v) => !v)}>
             {condsOpen ? "条件を閉じる" : "条件"}
           </button>
         )}
-        <button className="btn btn-sm" style={a.kind === "document" ? { marginLeft: "auto" } : undefined}
+        <button className="btn btn-sm" style={a.kind === "document" || a.kind === "master" ? { marginLeft: "auto" } : undefined}
                 onClick={() => setDocsOpen((v) => !v)}>
           {docsOpen ? "文書を閉じる" : "文書"}
         </button>
+        {isOrder && toDocMasters.length > 1 && (
+          <select value={toDocChoice ?? ""} aria-label="どの基本契約の下の発注書にするか" style={{ maxWidth: 220 }}
+                  onChange={(e) => setToDocMaster(e.target.value)}>
+            {toDocMasters.map((m) => <option key={m.id} value={m.id}>{m.agreementNo ?? `#${m.id}`} の下</option>)}
+            <option value="none">基本契約なし（発注書の約款）</option>
+          </select>
+        )}
         {isOrder && (
           <button className="btn btn-sm primary" disabled={readOnly || toDocBusy} onClick={() => void toOrderDocument()}
                   title="発注書は文書として持ちます。契約から外し、発注書の文書として条件明細に紐づけます">
@@ -728,7 +758,7 @@ function AgreementNode(
 }
 
 /**
- * 単体契約を、基本契約の下の個別契約にする。条件明細は基本契約の明細に移る。
+ * 単体契約を、基本契約の下の個別契約にする。条件明細はこの個別契約のものとして基本契約の下に入る。
  * 親にできるのは同じ取引先・同じ向きの、解除されていない基本契約。
  */
 function DemoteForm(
@@ -755,7 +785,7 @@ function DemoteForm(
       const [k, v] = chosen.split(":");
       const r = await api.post<{ conditionsMoved: number; masterNo: string | null; masterCreated: boolean }>(
         `/agreement-map/agreements/${a.id}/demote`, k === "d" ? { masterDocumentId: Number(v) } : { masterId: Number(v) });
-      onSaved(`${a.agreementNo ?? `#${a.id}`} を ${r.masterNo ?? "基本契約"} の下の個別契約にしました（条件明細 ${r.conditionsMoved} 本を基本契約へ）`
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を ${r.masterNo ?? "基本契約"} の下の個別契約にしました（条件明細 ${r.conditionsMoved} 本）`
         + (r.masterCreated ? `。${r.masterNo} は文書から基本契約として登録しました。締結日は「編集」で入れてください` : ""));
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -778,7 +808,7 @@ function DemoteForm(
             <optgroup label="登録済みの基本契約">
               {masters.map((m) => (
                 <option key={m.id} value={`m:${m.id}`}>
-                  {m.agreementNo ?? `#${m.id}`} {m.title}（{m.domain ? DOMAIN_LABEL[m.domain] : "種別なし"}{m.executedOn ? `・締結 ${m.executedOn}` : "・未締結"}{m.primary ? "・既定" : ""}）
+                  {m.agreementNo ?? `#${m.id}`} {m.title}（{m.domain ? DOMAIN_LABEL[m.domain] : "種別なし"}{m.executedOn ? `・締結 ${m.executedOn}` : "・未締結"}）
                 </option>
               ))}
             </optgroup>
@@ -796,11 +826,11 @@ function DemoteForm(
       </label>
       {chosen.startsWith("d:") && (
         <span className="faint">
-          選んだ文書を基本契約（番号は文書の番号のまま）として登録し、文書はその基本契約に付け替えます。締結日は登録後に「編集」で入れてください（入れると締結済み・既定になります）。
+          選んだ文書を基本契約（番号は文書の番号のまま）として登録し、文書はその基本契約に付け替えます。締結日は登録後に「編集」で入れてください（入れると締結済みになります）。
         </span>
       )}
       <span className="faint">
-        この契約は選んだ基本契約の下の個別契約になり、載っている条件明細 {a.conditionCount} 本は基本契約の明細に移ります。
+        この契約は選んだ基本契約の下の個別契約になり、載っている条件明細 {a.conditionCount} 本はその個別契約のものとして基本契約の下に入ります。
         これから作る発注書・検収書・計算書は、この基本契約に拠って出ます。番号（{a.agreementNo ?? `#${a.id}`}）と文書はそのまま。「単体契約に戻す」で戻せます。
       </span>
       <div className="row">
@@ -833,7 +863,7 @@ function PromoteForm(
       <b>（1）基本契約＋個別契約 → （2）単体契約</b>
       <span className="faint">
         {parent ? `${parent.agreementNo ?? `#${parent.id}`} の下から外し、` : ""}その取引だけで完結する単体契約にします。
-        基本契約に載っている条件明細のうち、この契約の文書（条件書）に載っているものを、この契約に戻します。覚書のように条件明細を持たないものは、戻さないでください。
+        この個別契約の文書（条件書）に載っている条件明細は、そのまま単体契約の条件明細になります。覚書のように条件明細を持たないものは、戻さないでください。
       </span>
       <div className="row">
         <button className="btn btn-sm" disabled={busy} onClick={() => void save()}>{busy ? "戻しています…" : "単体契約に戻す"}</button>
@@ -980,7 +1010,8 @@ function OrderLinkPanel(
   const masterSearch = useDebounced(masterQ);
   const [masterHits, setMasterHits] = useState<MasterPick[] | null>(null);
   const [extraPicks, setExtraPicks] = useState<MasterPick[]>([]);
-  const [masterKey, setMasterKey] = useState<string>(() => orderMasterKey(documentId) ?? (primary ? `m:${primary.id}` : ""));
+  // 基本契約が 1 本ならそれを初期値に。何本もあれば人が選ぶ（黙って 1 本に決めない）。
+  const [masterKey, setMasterKey] = useState<string>(() => orderMasterKey(documentId) ?? (masters.length === 1 && primary ? `m:${primary.id}` : ""));
   // ② 発注書
   const [docQ, setDocQ] = useState("");
   const docSearch = useDebounced(docQ);
