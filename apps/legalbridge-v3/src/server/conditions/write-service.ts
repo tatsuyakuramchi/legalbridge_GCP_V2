@@ -218,6 +218,8 @@ export interface ServiceLicenseInput {
   rates?: Array<{ usageType: ConditionUsageType; ratePct: number; exclusivity?: "exclusive" | "non_exclusive" | null }> | null;
   /** 独占／非独占（A-098）。作る利用許諾条件すべての既定。in_lieu の料率の行で利用形態ごとに上書きできる。 */
   exclusivity?: "exclusive" | "non_exclusive" | null;
+  /** 利用許諾料の支払条件（A-106）。in_lieu なら 2 版目以降の分（初版は発注書の制作報酬に含む）。 */
+  paymentTerms?: string | null;
   /**
    * in_lieu：初版の算定の基礎（見込み）。本体価格（円）・初版部数・料率（%）・非加算部数（既定 0）。
    * 仮計算額 ＝ 本体価格 ×（部数 − 非加算）× 率 が、受注者帰属の委託料の行の合計と同じでなければならない
@@ -1009,6 +1011,7 @@ export class ConditionWriteService {
               priceBasis: fe?.priceBasis ?? null,
               royaltyExemptLaterPct: license.exemptLaterPct ?? null,
               creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
+              paymentTerms: String(license.paymentTerms ?? "").trim() || null,
               sublicensable: license.sublicense ? license.sublicense !== "no" : null,
               sublicenseConsent: license.sublicense === "covered" ? "covered" : license.sublicense === "consent" ? "required" : null,
               currency: input.currency ?? "JPY",
@@ -1029,6 +1032,7 @@ export class ConditionWriteService {
           workPartId: target.partId,
           usageType, licenseFeeBasis: basis,
           creditNotice: license.creditNotice ?? null, creditFromWork: license.creditFromWork ?? false,
+          paymentTerms: String(license.paymentTerms ?? "").trim() || null,
           sublicensable: license.sublicense ? license.sublicense !== "no" : null,
           sublicenseConsent: license.sublicense === "covered" ? "covered" : license.sublicense === "consent" ? "required" : null,
           pricingModel: ratePct != null ? "revenue_rate" : flat != null ? "fixed" : "none",

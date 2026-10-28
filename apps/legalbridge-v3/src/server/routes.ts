@@ -2318,6 +2318,8 @@ export function createRoutes(database: Transactable) {
         exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
       })).max(10).nullable().optional(),
       exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
+      // 利用許諾料の支払条件（A-106）。in_lieu なら 2 版目以降の分。
+      paymentTerms: z.string().trim().max(300).nullable().optional(),
       // 初版の算定の基礎（見込み。A-077）。仮計算額が行の合計と合うかはサービス側で確かめる。
       firstEdition: z.object({
         price: z.coerce.number().int().min(0), copies: z.coerce.number().int().min(0),
