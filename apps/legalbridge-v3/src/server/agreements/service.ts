@@ -223,8 +223,14 @@ export class AgreementService {
         }
         const external = String(input.agreementNo ?? "").trim();
         if (external) {
-          const dup = await client.query("SELECT id FROM agreements WHERE lower(btrim(agreement_no)) = lower($1)", [external]);
-          if (dup.rows[0]) throw new DomainError("CONFLICT", `契約番号 ${external} はもう使われています（#${(dup.rows[0] as { id: number }).id}）`);
+          const dup = await client.query(
+            `SELECT a.id, a.title, p.name AS party FROM agreements a LEFT JOIN parties p ON p.id = a.counterparty_id
+              WHERE lower(btrim(a.agreement_no)) = lower($1)`, [external]);
+          const hit = dup.rows[0] as { id: number; title: string | null; party: string | null } | undefined;
+          if (hit) {
+            throw new DomainError("CONFLICT", `契約番号 ${external} はもう使われています（#${hit.id}「${hit.title ?? ""}」相手先：${hit.party ?? "なし"}）。`
+              + "取引先⇔基本契約の「文書を探して契約に登録・送る」で番号を探すと、開くか、この取引先に付け替えられます");
+          }
         }
         const agreementNo = external || await this.numberFor(client, input.kind, input.domain ?? (parent?.domain ?? null), parent);
         const status = input.status ?? (input.executedOn ? "executed" : "negotiating");
