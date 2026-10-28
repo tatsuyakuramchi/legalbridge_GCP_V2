@@ -399,3 +399,20 @@ test("A-107：電子の条件が無ければ、電子の集計期間と支払時
   const typed = pubTermsPatch(ctx, { "電子の支払時期": "10月末日" });
   assert.equal(typed.payDigital, "10月末日", "欄に書いてあればそれ");
 });
+
+
+test("A-109：一覧の行を直していても、備考の「初版分は支払済み（算定：…）」は条件の今の値で引き直す。人が書いた備考は残る", () => {
+  const conds = [
+    { ...context.conditions[0], id: 5, conditionNo: "CL-X1", usageType: "pub_print", licenseFeeBasis: "in_lieu",
+      firstEditionPrice: 4500, firstEditionCopies: 2500, firstEditionRatePct: 8, royaltyExemptFirstCopies: 100 }
+  ];
+  const ctx = { ...context, conditions: conds };
+  const seeds = pubTitleSeeds(ctx) as Array<Record<string, unknown>>;
+  assert.equal(seeds.length, 1);
+  // 人が行を直した（古い自動文＋手書きの備考）。
+  const edited = [{ ...seeds[0]!, note: "初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み（算定：本体価格 4,000円（税抜）× （初版 3,000部 − 献本等 1,000部） × 7.1%）。本条件書の料率は第2版以降の出版および電子版に適用する。／手書きの備考" }];
+  const patch = pubTermsPatch(ctx, { [PUB_TITLES_FIELD]: edited });
+  const row = (patch.titles as Array<Record<string, unknown>>)[0]!;
+  assert.match(String(row.note), /^初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み（算定：本体価格 4,500円（税抜）× （初版 2,500部 − 献本等 100部） × 8%）/);
+  assert.match(String(row.note), /／手書きの備考$/);
+});

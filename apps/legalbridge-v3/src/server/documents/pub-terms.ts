@@ -627,13 +627,24 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     // 共同著作の取り分。条件から出た行は条件の取り分（受取人宛てならその人の取り分も）。
     const coAuthors = fromLedger ? (print || digital ? mediaSharesText(print, digital) : sharesText(termHead)) : text(row.co_authors);
     const payeeShare = fromLedger ? payeeShareText(context.payee, print, digital) : "";
+    // 備考のうち「初版分は支払済み（算定：…）」の自動の 1 文は、行を直していても条件から引き直す（A-109）。
+    // 人が備考に書いた残りはそのまま。料率・独占区分と同じく、台帳の写しは台帳が正。
+    const note = (() => {
+      const typed = text(row.note).split("／").map((s) => s.trim()).filter(Boolean)
+        .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は"));
+      const paidCond = fromLedger ? [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu") : null;
+      const fresh = paidCond ? inLieuPaidNote({ price: paidCond.firstEditionPrice, copies: paidCond.firstEditionCopies,
+                                               ratePct: paidCond.firstEditionRatePct, exemptCopies: paidCond.royaltyExemptFirstCopies,
+                                               priceBasis: paidCond.priceBasis, partyName: paidCond.targetPartyName }) : "";
+      return [fresh, ...typed].filter(Boolean).join("／");
+    })();
     return {
       no: index + 1,
       title: text(row.title) || text(row.item_name),
       edition: text(row.edition),
       copyright: text(row.copyright),
       thirdParty: text(row.third_party) || "なし",
-      note: text(row.note),
+      note,
       coAuthors, payeeShare, hasShares: Boolean(coAuthors),
       printRate: fromLedger ? payeeRateText(context.payee, print) : (text(row.print_rate) || "—"),
       printExclusivity: fromLedger ? (print ? exclusivityText(print) || "—" : "—")
