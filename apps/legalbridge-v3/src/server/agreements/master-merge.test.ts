@@ -57,3 +57,45 @@ test("出し直し：訂正版を元の決定日で決定する。決定済み�
   assert.deepEqual(calls, ["reissue:50:true", "issue:900:2026-10-08"]);
   assert.equal(r.results[0]!.newDocumentNo, "ARC-PUBT-2026-1019-R3");
 });
+
+test("差し替え：文書から基本契約を立て（番号は訂正版の枝番を外す）、寄せる側の下を移して解除扱いにする", async () => {
+  const d = new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF a") && t.includes("a.counterparty_id, r.resolved_id")) return [
+      { id: 1, agreement_no: "ARC-LIC-2026-1013", kind: "master", domain: "license", direction: "in", counterparty_id: 7, resolved_id: 5 }];
+    if (t.includes("FOR UPDATE OF d")) return [{ id: 40, document_no: "ARC-PUB-2026-1010-R3", status: "issued", agreement_id: 1,
+      manual_title: null, title: "出版等利用許諾基本契約書", counterparty_id: 7, resolved_id: 5 }];
+    if (t.includes("INSERT INTO agreements")) return [{ id: 2 }];
+    if (t.includes("ANY($1::bigint[])")) return [
+      { id: 1, agreement_no: "ARC-LIC-2026-1013", title: "基本A", kind: "master", status: "negotiating", direction: "in", resolved_id: 5 },
+      { id: 2, agreement_no: "ARC-PUB-2026-1010", title: "出版等利用許諾基本契約書", kind: "master", status: "negotiating", direction: "in", resolved_id: 5 }];
+    if (t.includes("AS supplements")) return [{ supplements: 1, conditions: 1, documents: 2, matters: 0 }];
+    return undefined;
+  });
+  const r = await new MasterMergeService(d).replace(1, { documentId: 40 }, "me");
+  assert.equal(r.created, true);
+  const ins = d.find("INSERT INTO agreements")!.params;
+  assert.deepEqual(ins, ["ARC-PUB-2026-1010", "出版等利用許諾基本契約書", 7, "in", "license"]);
+  assert.deepEqual(d.find("UPDATE documents SET agreement_id = $2 WHERE id = $1")!.params, [40, 2]);
+  assert.deepEqual(d.find("UPDATE agreements SET parent_id = $2")!.params, [1, 2]);
+  assert.deepEqual(d.find("SET status = 'terminated'")!.params, [1, "ARC-PUB-2026-1010"]);
+});
+
+test("差し替え：いまある単体契約を選べば基本契約にしてから寄せる。相手先が違えば断る", async () => {
+  const d = (into: Record<string, unknown>) => new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF a") && t.includes("a.counterparty_id, r.resolved_id")) return [
+      { id: 1, agreement_no: "ARC-LIC-2026-1013", kind: "master", domain: "license", direction: "in", counterparty_id: 7, resolved_id: 5 }];
+    if (t.includes("FOR UPDATE OF a")) return [{ id: 3, kind: "standalone", domain: null, status: "executed", resolved_id: 5, ...into }];
+    if (t.includes("count(*)::int AS n")) return [{ n: 0 }];
+    if (t.includes("ANY($1::bigint[])")) return [
+      { id: 1, agreement_no: "ARC-LIC-2026-1013", title: "A", kind: "master", status: "negotiating", direction: "in", resolved_id: 5 },
+      { id: 3, agreement_no: "ARC-LIC-2026-0003", title: "B", kind: "master", status: "executed", direction: "in", resolved_id: 5 }];
+    if (t.includes("AS supplements")) return [{ supplements: 0, conditions: 0, documents: 0, matters: 0 }];
+    return undefined;
+  });
+  const ok = d({});
+  const r = await new MasterMergeService(ok).replace(1, { intoId: 3 }, "me");
+  assert.equal(r.created, false);
+  assert.deepEqual(ok.find("SET kind = 'master', parent_id = NULL")!.params, [3, "license", "in"]);
+  await assert.rejects(new MasterMergeService(d({ resolved_id: 9 })).replace(1, { intoId: 3 }, "me"), /相手先の違う/);
+  await assert.rejects(new MasterMergeService(d({})).replace(1, { intoId: 1 }, "me"), /同じ基本契約/);
+});

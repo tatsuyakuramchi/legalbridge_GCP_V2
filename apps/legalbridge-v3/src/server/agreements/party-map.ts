@@ -1195,9 +1195,11 @@ export class PartyAgreementMapService {
         // 文書を探して「基本契約／個別契約／単体契約」を押したとき（as）は、種類の分からない取り込み文書でも立てる。
         if (!role && !options.as) throw new DomainError("VALIDATION", "基本契約書・条件書でない文書からは契約を立てられません（既にある契約に繋いでください）");
         if (!d.counterparty_id) throw new DomainError("VALIDATION", "この文書は相手先が決まっていません");
-        const no = String(d.document_no);
-        const clash = await client.query("SELECT id FROM agreements WHERE agreement_no = $1", [no]);
-        if (clash.rows[0]) throw new DomainError("CONFLICT", `番号 ${no} の契約が既にあります。その契約に繋いでください`);
+        // 番号は文書番号から訂正版の枝番（-R3 など）を外したもの。それが使われていれば文書番号のまま。
+        const taken = async (x: string) => Boolean((await client.query("SELECT id FROM agreements WHERE agreement_no = $1", [x])).rows[0]);
+        const base = String(d.document_no).replace(/-R\d+$/i, "");
+        const no = !(await taken(base)) ? base : String(d.document_no);
+        if (no !== base && await taken(no)) throw new DomainError("CONFLICT", `番号 ${no} の契約が既にあります。その契約に繋いでください`);
 
         // 向き：文書に載っている条件 → 相手の契約に載っていない条件 → IN。
         const dirOf = async (sql: string, params: unknown[]) => {

@@ -596,6 +596,21 @@ export function createRoutes(database: Transactable) {
       const input = z.object({ fromId: z.coerce.number().int().positive(), intoId: z.coerce.number().int().positive() }).parse(req.body ?? {});
       res.json(await masterMerge.merge(input.fromId, input.intoId, actor(res)));
     }));
+  // 基本契約を差し替える：いまある契約（基本契約でなければ基本契約にする）か文書（基本契約を立てる）へ、1 回で寄せる。
+  router.get("/agreement-map/agreements/:id/replace-master/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await masterMerge.replacePreview(Number(req.params.id)));
+  }));
+  router.post("/agreement-map/agreements/:id/replace-master", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const b = z.object({
+        intoId: z.coerce.number().int().positive().optional(),
+        documentId: z.coerce.number().int().positive().optional(),
+        agreementNo: z.string().trim().max(60).nullable().optional(),
+        title: z.string().trim().max(200).nullable().optional()
+      }).refine((x) => Boolean(x.intoId) !== Boolean(x.documentId), "差し替え先の契約か文書を1つ選んでください").parse(req.body ?? {});
+      res.json(await masterMerge.replace(Number(req.params.id),
+        b.intoId ? { intoId: b.intoId } : { documentId: b.documentId!, agreementNo: b.agreementNo ?? null, title: b.title ?? null }, actor(res)));
+    }));
   router.post("/agreement-map/merge-masters/reissue", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({ documentIds: z.array(z.coerce.number().int().positive()).min(1).max(200) }).parse(req.body ?? {});

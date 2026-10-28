@@ -632,9 +632,9 @@ function AgreementNode(
   }
   const canDemote = a.kind === "standalone";
   const canPromote = a.kind === "supplement" && Boolean(a.parentId);
-  /** 二重に作った基本契約を別の基本契約に寄せる欄。 */
+  /** 基本契約を別の契約・文書に差し替える欄（二重に作った基本契約を寄せるときも）。 */
   const [merging, setMerging] = useState(false);
-  const canMerge = a.kind === "master" && a.status !== "terminated" && roots.some((r) => r.kind === "master" && r.id !== a.id && r.status !== "terminated");
+  const canMerge = a.kind === "master" && a.status !== "terminated";
   return (
     <div className={`amap-node${issues.length ? " bad" : ""}`}>
       <div className="amap-line">
@@ -684,8 +684,8 @@ function AgreementNode(
         )}
         {canMerge && (
           <button className="btn btn-sm" disabled={readOnly} onClick={() => setMerging((v) => !v)}
-                  title="二重に作った基本契約を 1 本に寄せる（個別契約・条件・文書・案件を付け替え、この契約は解除扱い）">
-            {merging ? "閉じる" : "別の基本契約に寄せる"}
+                  title="この基本契約を別の契約・文書に置き換える（下の個別契約・条件・文書・案件を移し、この契約は解除扱い）">
+            {merging ? "閉じる" : "基本契約を差し替える"}
           </button>
         )}
         <button className="btn btn-sm" disabled={readOnly} onClick={onEdit}>
@@ -694,7 +694,7 @@ function AgreementNode(
       </div>
       {issues.map((i, n) => <div key={n} className="amap-issue">⚠ {i.message}</div>)}
       {merging && (
-        <MasterMerge a={a} roots={roots} onOpen={onOpen} onError={onError} onCancel={() => setMerging(false)}
+        <MasterMerge a={a} onOpen={onOpen} onError={onError} onCancel={() => setMerging(false)}
                      onDone={(msg) => { setMerging(false); onSaved(msg); }} />
       )}
       {editing && <RemapForm a={a} roots={roots} onSaved={onSaved} onError={onError} />}
