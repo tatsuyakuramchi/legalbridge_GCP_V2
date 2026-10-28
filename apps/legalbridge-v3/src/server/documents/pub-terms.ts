@@ -102,8 +102,8 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
   { name: "許諾者住所", label: "許諾者（甲）住所", type: "textarea", group: "II. 許諾者（甲）",
     from: "condition.counterparty.address" },
   { name: "許諾者代表者名", label: "許諾者（甲）代表者名", group: "II. 許諾者（甲）",
-    dbField: "vendor.vendor_rep", noGuess: true,
-    helpText: "個人の許諾者なら空のままでよい" },
+    dbField: "vendor.vendor_rep_line", noGuess: true,
+    helpText: "取引先の代表者の肩書と氏名（代表取締役 ◯◯）。個人の許諾者なら空のままでよい" },
   { name: "許諾者登録番号", label: "許諾者（甲）登録番号（T番号）", group: "II. 許諾者（甲）",
     from: "condition.counterparty.invoiceNo", helpText: "適格請求書発行事業者でなければ空のまま" },
   // 通知先は 部署 ／ 氏名 ／ メール ／ 電話 の 1 行。画面は 4 つの欄で編集する（type: contact）。

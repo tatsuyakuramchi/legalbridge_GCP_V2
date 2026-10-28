@@ -614,6 +614,14 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       // 担当者の欄（phone / email / contact_*）は自動で入れない（上の対応表と同じ理由）。
       // 宣言（dbField）で指していても空のまま出し、候補から人が選ぶ。
       vendor_rep: representativeName(c) ?? signer.name ?? primary.name,
+      // 「代表取締役 武田 敏裕」の 1 行（A-110）。条件書の代表者名の欄はこちら。肩書は取引先に登録した
+      // 代表者のものなので、代表者の登録が無く署名者・主担当に落ちるときは付けない。
+      vendor_rep_line: (() => {
+        const own = String(party.representativeName ?? "").trim();
+        const title = String(party.representativeTitle ?? "").trim();
+        const name = representativeName(c) ?? signer.name ?? primary.name;
+        return name ? (own && title ? `${title} ${own}` : name) : undefined;
+      })(),
       // 通知先の 1 行（部署 ／ 氏名 ／ メール ／ 電話）。A-032 で主担当が取引先に
       // 付き、個人は本人に落ちるので、ここは自動で入れてよい。
       contact_line: contactLine([primary.department, primary.name, primary.email, primary.phone]),

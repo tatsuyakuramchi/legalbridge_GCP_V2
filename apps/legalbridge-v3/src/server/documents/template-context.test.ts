@@ -1165,3 +1165,16 @@ test("A-102：件名は文書に載っている作品だけに絞る（案件が
   assert.equal(narrowTitleToWorks(title, [{ work: { title: "別の作品" } }]), title, "どれも一致しなければそのまま");
   assert.equal(narrowTitleToWorks("単純な件名", [{ work: { title: "A" } }]), "単純な件名");
 });
+
+
+test("A-110：条件書の代表者名は肩書付きの 1 行（代表取締役 氏名）。肩書が無ければ氏名、代表者の登録が無ければ署名者・主担当", async () => {
+  const { resolveLegacyDbField } = await import("./legacy-variables.js");
+  const withTitle = { condition: { counterparty: { kind: "corporate", name: "株式会社A", representativeName: "武田 敏裕", representativeTitle: "代表取締役" } } };
+  assert.equal(resolveLegacyDbField("vendor.vendor_rep_line", withTitle), "代表取締役 武田 敏裕");
+  assert.equal(resolveLegacyDbField("vendor.vendor_rep", withTitle), "武田 敏裕", "従来の欄は氏名だけ");
+  const noTitle = { condition: { counterparty: { kind: "corporate", name: "株式会社A", representativeName: "武田 敏裕" } } };
+  assert.equal(resolveLegacyDbField("vendor.vendor_rep_line", noTitle), "武田 敏裕");
+  const fallback = { condition: { counterparty: { kind: "corporate", name: "株式会社A", representativeTitle: "代表取締役" } },
+    contacts: [{ role: "signer", name: "署名 太郎" }] };
+  assert.equal(resolveLegacyDbField("vendor.vendor_rep_line", fallback), "署名 太郎", "代表者の登録が無ければ肩書は付けない");
+});
