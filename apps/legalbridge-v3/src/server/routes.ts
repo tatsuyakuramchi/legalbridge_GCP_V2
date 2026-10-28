@@ -617,7 +617,9 @@ export function createRoutes(database: Transactable) {
         direction: z.enum(["in", "out"]).optional(),
         parentId: z.coerce.number().int().positive().nullable().optional(),
         counterpartyId: z.coerce.number().int().positive().optional(),
-        executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
+        executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        // 件名（文書から立てた契約の件名が文書の名前のまま違っているとき直す）。
+        title: z.string().trim().min(1).max(200).optional()
       }).parse(req.body ?? {});
       await agreementMap.remap(Number(req.params.id), input, actor(res));
       res.json({ ok: true });
@@ -3620,6 +3622,15 @@ export function createRoutes(database: Transactable) {
         matterId: b.matterId ?? null, agreementId: b.agreementId ?? null, requestId: b.requestId ?? null,
         counterpartyDocNo: b.counterpartyDocNo ?? null
       }, actor(res)));
+    }));
+  // 取り込んだ文書の名前・種別を直す（番号・ファイルはそのまま）。
+  router.put("/documents/:id/imported-meta", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const b = z.object({
+        title: z.string().trim().min(1).max(300).optional(),
+        documentKind: z.string().trim().max(120).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await documentImports.rename(Number(req.params.id), b, actor(res)));
     }));
   const attachQuerySchema = z.object({
     receivedOn: z.string().date().optional(),
