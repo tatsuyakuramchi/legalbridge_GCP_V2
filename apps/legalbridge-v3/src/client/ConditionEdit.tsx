@@ -457,9 +457,11 @@ export function ConditionEdit(
               <small className="faint">発注書の明細に出る。ここで③の「支払の形」の選択肢が変わる</small>
             </label>
           )}
-          <div className="form-section"><b>② 期間・納期</b><small>契約期間（開始・終了）と納期は別。終了日があると自動更新の欄が出ます</small></div>
-          {field("termStart", "開始", { type: "date" })}
-          {field("termEnd", "終了", { type: "date", hint: "空欄は期限なし" })}
+          {kindNow === "license"
+            ? <div className="form-section"><b>② 利用許諾期間</b><small>許諾の開始・終了。発注書の利用許諾条件の「期間」と条件書の許諾期間に出ます。終了日があると自動更新の欄が出ます</small></div>
+            : <div className="form-section"><b>② 期間・納期</b><small>契約期間（開始・終了）と納期は別。終了日があると自動更新の欄が出ます</small></div>}
+          {field("termStart", kindNow === "license" ? "許諾開始" : "開始", { type: "date" })}
+          {field("termEnd", kindNow === "license" ? "許諾終了" : "終了", { type: "date", hint: kindNow === "license" ? "空欄は期間の定めなし" : "空欄は期限なし" })}
           {/* 納期は契約期間の終了日とは別。許諾の終了日は許諾がいつまで有効かで、
               納期ではない。発注書の「納期」はこちらを先に見る。 */}
           {field("deliveryDue", "納期", { type: "date",
@@ -588,7 +590,21 @@ export function ConditionEdit(
             </select>
           </label>
           {kindNow === "license"
-            ? <div className="form-section"><b>⑥ 利用許諾の条件</b><small>利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます</small></div>
+            ? <>
+                <div className="form-section"><b>⑥ 利用許諾の条件</b><small>利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます</small></div>
+                {/* 利用許諾期間は ② にある。ここで探す人が多いので、いまの値と飛び先を出す（A-112）。 */}
+                <div className="field wide">
+                  <span>利用許諾期間</span>
+                  <span className="row" style={{ gap: 8, alignItems: "center" }}>
+                    <span>{v.termStart || "（開始 未設定）"} 〜 {v.termEnd || "（期間の定めなし）"}</span>
+                    <button type="button" className="linky"
+                            onClick={() => { const el = document.getElementById("f-termStart"); el?.scrollIntoView({ behavior: "smooth", block: "center" }); (el?.querySelector("input") as HTMLElement | null)?.focus(); }}>
+                      ② で直す
+                    </button>
+                  </span>
+                  <small className="faint">開始・終了・自動更新は ② 利用許諾期間の欄で入れる</small>
+                </div>
+              </>
             : v.deliverableOwnership === "contractor"
             ? <div className="form-section"><b>⑥ 利用許諾の条件 — この条件では持ちません</b><small>受注者帰属の成果物の利用許諾（許諾料の扱い・クレジット表記・再許諾・地域と言語）は、別の条件『利用許諾』で持ちます。作品 × 構成要素 × 利用形態で 1 本。上の手順ナビの「関連する条件」から開けます</small></div>
             : null}
