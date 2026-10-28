@@ -575,8 +575,13 @@ export function createRoutes(database: Transactable) {
   // 契約に繋がっていない基本契約書・条件書から契約を立てる（番号・件名は文書のまま）。
   router.post("/agreement-map/documents/:id/agreement", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const body = z.object({ as: z.enum(["master", "standalone"]).nullable().optional() }).parse(req.body ?? {});
-      res.status(201).json(await agreementMap.agreementFromDocument(Number(req.params.id), actor(res), { as: body.as ?? null }));
+      const body = z.object({
+        as: z.enum(["master", "standalone", "supplement"]).nullable().optional(),
+        // 個別契約の親（基本契約）。省けば同じ取引先・向きの基本契約から選ぶ。
+        parentId: z.coerce.number().int().positive().nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await agreementMap.agreementFromDocument(Number(req.params.id), actor(res),
+        { as: body.as ?? null, parentId: body.parentId ?? null }));
     }));
   // 基本契約の二重作成を 1 本に寄せる。試算 → 統合 → 下の決定済み文書を訂正版で出し直す。agreements/master-merge.ts
   const masterMerge = new MasterMergeService(database, {
