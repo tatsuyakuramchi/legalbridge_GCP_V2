@@ -111,7 +111,7 @@ export const LICENSE_TERMS_VARIABLES: TemplateVariable[] = [
   { name: "Licensor_住所", label: "Licensor 住所", type: "textarea", group: "II. Licensor",
     dbField: "vendor.address", noGuess: true },
   { name: "Licensor_代表者名", label: "Licensor 代表者名", group: "II. Licensor",
-    dbField: "vendor.vendor_rep", noGuess: true },
+    dbField: "vendor.vendor_rep_line", noGuess: true, helpText: "取引先の代表者の肩書と氏名（代表取締役 ◯◯）" },
   { name: "Licensor_担当者", label: "Licensor 担当者", group: "II. Licensor",
     dbField: "vendor.contact_name", noGuess: true },
   { name: "Licensor_電話", label: "Licensor 電話", group: "II. Licensor",
