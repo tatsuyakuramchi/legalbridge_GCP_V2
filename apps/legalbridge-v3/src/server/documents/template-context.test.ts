@@ -1207,3 +1207,17 @@ test("A-114：検収の行の期間は役務提供（準委任）だけ。請負
   const editing = lines.find((l) => l.condition_id === 2)!;
   assert.equal(editing.term_start, "2026-05-15"); assert.equal(editing.term_end, "2026-10-31");
 });
+
+
+test("A-115：行を直していても、請負の行に残った古い役務提供期間は外れて納品日で出る", () => {
+  const context = {
+    conditions: [{ id: 1, name: "原稿制作", contractForm: "請負", termStart: "2026-05-15", termEnd: "2031-05-14", counterparty: { kind: "corporate" }, flatAmount: 844190 }],
+    events: [{ conditionId: 1, occurredOn: "2026-10-31", amount: 844190 }]
+  };
+  const saved = [{ condition_id: 1, item_name: "原稿制作", term_start: "2026-05-15", term_end: "2031-05-14", delivery_date: "2026-10-31",
+                   inspected_amount_ex_tax: 844190, inspection_status: "now" }];
+  const block = buildTemplateContext("inspection_certificate", context, { delivery_line_items: saved });
+  const line = (block.delivery_line_items as Array<Record<string, unknown>>)[0]!;
+  assert.equal(line.term_start, null); assert.equal(line.term_end, null);
+  assert.equal(line.delivery_date, "2026-10-31");
+});

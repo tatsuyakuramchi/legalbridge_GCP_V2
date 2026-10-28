@@ -762,8 +762,14 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
       const idx = fresh.findIndex((f, i) => !used.has(i) && Number(f.condition_id) === Number(line.condition_id));
       if (idx < 0) continue;
       used.add(idx);
-      for (const k of ["term_start", "term_end", "delivery_date", "inspection_date"] as const) {
+      for (const k of ["delivery_date", "inspection_date"] as const) {
         if ((line[k] === null || line[k] === undefined || line[k] === "") && fresh[idx][k]) line[k] = fresh[idx][k];
+      }
+      // 役務提供期間は条件（契約形式・契約期間）と実績から引き直す（A-115）。行を直していても、請負の行に
+      // 古い期間が残ったままだと納品日が出ない。人が期間を手で入れた行（実績に無い値）はそのまま。
+      for (const k of ["term_start", "term_end"] as const) {
+        if (!fresh[idx][k] && line[k] && !line[`${k}_typed`]) line[k] = null;
+        else if (fresh[idx][k] && !line[k]) line[k] = fresh[idx][k];
       }
     }
   }
