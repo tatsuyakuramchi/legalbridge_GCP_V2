@@ -181,6 +181,44 @@ export class DocumentImportService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 取り込んだ文書の名前・種別を直す（ひな形の文書は本文から出るので直せない）。
+   * 番号とファイルはそのまま。種別を「発注書」にすると発注書として扱われる（契約には繋がない）。
+   */
+  async rename(documentId: number, input: { title?: string | null; documentKind?: string | null }, actor: string)
+    : Promise<{ title: string | null; documentKind: string | null }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const head = await client.query(
+          "SELECT id, document_no, template_version_id, manual_inputs FROM documents WHERE id = $1 FOR UPDATE", [documentId]);
+        const row = head.rows[0] as { id: number; document_no: string | null; template_version_id: number | null;
+          manual_inputs: Record<string, unknown> | null } | undefined;
+        if (!row) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (row.template_version_id !== null) {
+          throw new DomainError("VALIDATION", "ひな形で作った文書の名前は本文から出ます。取り込んだ文書だけ直せます");
+        }
+        const before = row.manual_inputs ?? {};
+        const patch: Record<string, unknown> = {};
+        if (input.title !== undefined) {
+          const t = String(input.title ?? "").trim();
+          if (!t) throw new DomainError("VALIDATION", "文書名を空にはできません");
+          patch.title = t;
+        }
+        if (input.documentKind !== undefined) patch.documentKind = String(input.documentKind ?? "").trim() || null;
+        if (Object.keys(patch).length) {
+          await client.query("UPDATE documents SET manual_inputs = COALESCE(manual_inputs, '{}'::jsonb) || $2::jsonb WHERE id = $1",
+            [documentId, JSON.stringify(patch)]);
+          await recordAudit(client, {
+            actor, action: "document.rename", targetType: "document", targetId: documentId,
+            detail: { documentNo: row.document_no, before: { title: before.title ?? null, documentKind: before.documentKind ?? null }, after: patch }
+          });
+        }
+        const next = { ...before, ...patch };
+        return { title: (next.title as string | undefined) ?? null, documentKind: (next.documentKind as string | undefined) ?? null };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   /** 先に取った番号の文書にファイルを付けて、発行済みにする。 */
   async attachFile(documentId: number, input: AttachInput, actor: string): Promise<ImportResult> {
     const drive = this.checkFile(input.file);

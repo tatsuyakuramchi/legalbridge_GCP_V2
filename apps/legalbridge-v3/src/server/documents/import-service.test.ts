@@ -179,3 +179,14 @@ test("取り込みも監査に残す", async () => {
   const audit = database.find("INSERT INTO audit_events")!;
   assert.equal(audit.params[1], "document.import");
 });
+
+test("取り込んだ文書の名前・種別を直す。ひな形の文書は断る", async () => {
+  const db = (row: Record<string, unknown>) => new FakeDatabase((t) => t.includes("FOR UPDATE") ? [{
+    id: 9, document_no: "ARC-SVC-2026-0015", template_version_id: null, manual_inputs: { title: "旧名" }, ...row }] : []);
+  const ok = db({});
+  assert.deepEqual(await new DocumentImportService(ok, new MemoryDriveStorage()).rename(9, { title: " 業務委託基本契約書 ", documentKind: "業務委託契約書" }, "k"),
+    { title: "業務委託基本契約書", documentKind: "業務委託契約書" });
+  assert.deepEqual(JSON.parse(String(ok.find("SET manual_inputs")!.params[1])), { title: "業務委託基本契約書", documentKind: "業務委託契約書" });
+  await assert.rejects(() => new DocumentImportService(db({ template_version_id: 3 }), new MemoryDriveStorage()).rename(9, { title: "x" }, "k"), /取り込んだ文書だけ/);
+  await assert.rejects(() => new DocumentImportService(db({}), new MemoryDriveStorage()).rename(9, { title: " " }, "k"), /空にはできません/);
+});

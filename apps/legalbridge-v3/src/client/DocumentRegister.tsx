@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { DocPeek } from "./DocPeek.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
@@ -6,7 +6,8 @@ import { useReadOnly } from "./read-only.js";
 import { SendMany } from "./SendMany.js";
 import type { EntityKind } from "./Relations.js";
 import type { DocumentSummary } from "../server/documents/repository.js";
-import type { AgreementRow } from "../server/agreements/service.js";
+import type { AgreementDomain, AgreementKind, AgreementRow } from "../server/agreements/service.js";
+import { IMPORT_KINDS } from "../server/documents/import-kinds.js";
 import type { MapAgreement, PartyMap } from "../server/agreements/party-map.js";
 
 const KIND_LABEL: Record<string, string> = {
@@ -78,6 +79,13 @@ export function DocumentRegister(
   const sameParty = (d: DocumentSummary) => !d.counterparty || d.counterparty === map.party.name;
   const inMap = new Set(agreements.map((a) => a.id));
   const [moving, setMoving] = useState<number | null>(null);
+  /** 「直す」欄を開いている行（d:文書id か a:契約id）。 */
+  const [fixing, setFixing] = useState<string | null>(null);
+  const agreementLite = (id: number | null): AgreementLite | null => {
+    if (!id) return null;
+    return agreements.find((x) => x.id === id) ?? agreementHits?.find((x) => x.id === id) ?? null;
+  };
+  const fixSaved = (msg: string) => { setFixing(null); setReload((v) => v + 1); onChanged(msg); };
   /** 別の取引先で登録された契約を、この取引先に付け替える（番号はそのまま）。 */
   async function moveHere(a: AgreementRow) {
     if (!window.confirm(`${a.agreementNo ?? `#${a.id}`} ${a.title} は相手先が「${a.counterparty.name}」で登録されています。相手先を ${map.party.name} に付け替えますか？（番号はそのまま。下の個別契約・覚書は親と一緒には動きません）`)) return;
@@ -139,7 +147,8 @@ export function DocumentRegister(
                   {agreementHits.map((a) => {
                     const here = inMap.has(a.id);
                     return (
-                      <tr key={a.id}>
+                      <Fragment key={a.id}>
+                      <tr>
                         <td className="code">{onOpen ? <button className="linky" onClick={() => onOpen("agreement", a.id)}>{a.agreementNo ?? `#${a.id}`}</button> : a.agreementNo ?? `#${a.id}`}</td>
                         <td>{a.title}</td>
                         <td>{KIND_LABEL[a.kind] ?? a.kind}</td>
@@ -147,12 +156,20 @@ export function DocumentRegister(
                         <td>{here ? <span className="tag ok">この取引先</span> : <span className="tag warn">{a.counterparty.name}</span>}</td>
                         <td>{a.documentCount ? `${a.documentCount} 件` : <span className="tag warn">文書なし</span>}</td>
                         <td>
-                          {here
-                            ? <span className="faint">上の図にあります（「文書」で紙を取り込めます）</span>
-                            : <button className="btn btn-sm primary" disabled={readOnly || moving === a.id}
-                                      onClick={() => void moveHere(a)}>{map.party.name} に付け替える</button>}
+                          <div className="row" style={{ gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                            {!here && <button className="btn btn-sm primary" disabled={readOnly || moving === a.id}
+                                              onClick={() => void moveHere(a)}>{map.party.name} に付け替える</button>}
+                            <button className="btn btn-sm" disabled={readOnly} title="種類（基本契約・個別契約・単体契約）・種別・件名を直す"
+                                    onClick={() => setFixing(fixing === `a:${a.id}` ? null : `a:${a.id}`)}>{fixing === `a:${a.id}` ? "閉じる" : "種類・件名を直す"}</button>
+                          </div>
                         </td>
                       </tr>
+                      {fixing === `a:${a.id}` && (
+                        <tr><td colSpan={7}>
+                          <FixForm agreement={a} document={null} masters={masters} onSaved={fixSaved} onError={onError} />
+                        </td></tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -168,7 +185,8 @@ export function DocumentRegister(
                 const a = d.agreementId ? agreements.find((x) => x.id === d.agreementId) : undefined;
                 const decided = d.status === "issued";
                 return (
-                  <tr key={d.id}>
+                  <Fragment key={d.id}>
+                  <tr>
                     <td>
                       <input type="checkbox" aria-label={`${d.documentNo ?? d.id} を送るものに選ぶ`} disabled={!decided}
                              title={decided ? "送るものに選ぶ" : "下書きは送れません（決定してから）"}
@@ -195,6 +213,13 @@ export function DocumentRegister(
                         : <span className="tag warn">未登録</span>}
                     </td>
                     <td>
+                      {(d.agreementId || d.imported) && (
+                        <button className="btn btn-sm" disabled={readOnly} style={{ marginRight: 4 }}
+                                title={d.agreementId ? "契約の種類（基本契約・個別契約・単体契約）・件名と、文書名を直す" : "文書名・文書の種類を直す"}
+                                onClick={() => setFixing(fixing === `d:${d.id}` ? null : `d:${d.id}`)}>
+                          {fixing === `d:${d.id}` ? "閉じる" : d.agreementId ? "種類・名前を直す" : "名前を直す"}
+                        </button>
+                      )}
                       {d.agreementId ? null
                         : !decided ? <span className="faint">下書き（決定してから）</span>
                         : isOrderDoc(d)
@@ -222,6 +247,13 @@ export function DocumentRegister(
                           )}
                     </td>
                   </tr>
+                  {fixing === `d:${d.id}` && (
+                    <tr><td colSpan={6}>
+                      <FixForm agreement={agreementLite(d.agreementId)} document={d.imported ? d : null} masters={masters}
+                               onSaved={fixSaved} onError={onError} />
+                    </td></tr>
+                  )}
+                  </Fragment>
                 );
               })}
               {docs !== null && !list.length && (
@@ -247,6 +279,110 @@ export function DocumentRegister(
             onDone={() => { setSending(null); setPicked(new Set()); setReload((v) => v + 1); }}
             onClose={() => setSending(null)} />
         )}
+      </div>
+    </div>
+  );
+}
+
+type AgreementLite = { id: number; agreementNo: string | null; title: string; kind: AgreementKind; domain: AgreementDomain | null; parentId: number | null };
+
+/**
+ * 契約の種類・種別・件名と、取り込んだ文書の名前・種類を直す。
+ * 「文書だけ」で登録された基本契約書を基本契約にする、文書の名前が違うのを直す、など。
+ * 番号はそのまま。契約は取引先⇔基本契約の「編集」と同じ付け替え（/agreement-map/agreements/:id）。
+ */
+function FixForm(
+  { agreement, document, masters, onSaved, onError }: {
+    agreement: AgreementLite | null; document: DocumentSummary | null;
+    masters: Array<{ id: number; agreementNo: string | null; title: string }>;
+    onSaved: (msg: string) => void; onError: (msg: string) => void;
+  }
+) {
+  const [docTitle, setDocTitle] = useState(document?.title ?? "");
+  const [docKind, setDocKind] = useState(document?.templateLabel ?? "");
+  const [title, setTitle] = useState(agreement?.title ?? "");
+  const [kind, setKind] = useState<AgreementKind>(agreement?.kind ?? "master");
+  const [domain, setDomain] = useState<string>(agreement?.domain ?? "service");
+  const parents = masters.filter((m) => m.id !== agreement?.id);
+  const [parentId, setParentId] = useState<string>(agreement?.parentId ? String(agreement.parentId) : parents[0] ? String(parents[0].id) : "");
+  const [busy, setBusy] = useState(false);
+  const isRoot = kind === "master" || kind === "standalone";
+  const needsParent = kind === "supplement" || kind === "termination";
+
+  async function save() {
+    setBusy(true);
+    const done: string[] = [];
+    try {
+      if (document && (docTitle.trim() !== (document.title ?? "") || docKind.trim() !== (document.templateLabel ?? ""))) {
+        await api.put(`/documents/${document.id}/imported-meta`, { title: docTitle.trim(), documentKind: docKind.trim() || null });
+        done.push(`文書 ${document.documentNo ?? `#${document.id}`} の名前`);
+      }
+      if (agreement) {
+        await api.patch(`/agreement-map/agreements/${agreement.id}`, {
+          kind, domain: isRoot || domain ? domain || null : null,
+          parentId: needsParent && parentId ? Number(parentId) : null,
+          title: title.trim()
+        });
+        done.push(`契約 ${agreement.agreementNo ?? `#${agreement.id}`}（${KIND_LABEL[kind] ?? kind}）`);
+      }
+      onSaved(`${done.join("・")} を直しました（番号はそのまま）`);
+    } catch (e) {
+      onError(`${done.length ? `${done.join("・")} は直しました。` : ""}${(e as ApiError).message}`);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="form-grid amap-form">
+      {document && (
+        <>
+          <label className="field"><span>文書名</span>
+            <input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="例：業務委託基本契約書" />
+          </label>
+          <label className="field"><span>文書の種類</span>
+            <input value={docKind} list="import-kinds" onChange={(e) => setDocKind(e.target.value)} placeholder="例：業務委託契約書" />
+            <datalist id="import-kinds">{IMPORT_KINDS.map((k) => <option key={k.kind} value={k.kind} />)}</datalist>
+            {docKind.trim() === "発注書" && <small className="faint">発注書にすると契約には繋がず、条件明細に紐づけて扱います</small>}
+          </label>
+        </>
+      )}
+      {agreement && (
+        <>
+          <label className="field"><span>契約の件名</span>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} />
+            {document && docTitle.trim() && docTitle.trim() !== title.trim() && (
+              <button type="button" className="linky" style={{ textAlign: "left" }} onClick={() => setTitle(docTitle.trim())}>文書名を件名にも使う</button>
+            )}
+          </label>
+          <label className="field"><span>契約の種類</span>
+            <select value={kind} onChange={(e) => setKind(e.target.value as AgreementKind)}>
+              <option value="master">基本契約</option>
+              <option value="supplement">個別契約・覚書（基本契約の下）</option>
+              <option value="standalone">単体契約</option>
+              <option value="document">文書だけ（NDA など）</option>
+            </select>
+          </label>
+          <label className="field"><span>種別{isRoot ? "（必須）" : ""}</span>
+            <select value={domain} onChange={(e) => setDomain(e.target.value)}>
+              {!isRoot && <option value="">未設定</option>}
+              <option value="service">業務委託</option>
+              <option value="license">ライセンス</option>
+            </select>
+          </label>
+          {needsParent && (
+            <label className="field"><span>親の基本契約</span>
+              {parents.length
+                ? <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
+                    {parents.map((m) => <option key={m.id} value={m.id}>{m.agreementNo ?? `#${m.id}`} {m.title}</option>)}
+                  </select>
+                : <small className="faint">この取引先に基本契約がありません。先に基本契約を立ててください</small>}
+            </label>
+          )}
+        </>
+      )}
+      <div className="row" style={{ gridColumn: "1 / -1", gap: 8 }}>
+        <button className="btn primary btn-sm" disabled={busy || (needsParent && !!agreement && !parentId) || (!!agreement && !title.trim()) || (!!document && !docTitle.trim())}
+                onClick={() => void save()}>{busy ? "保存しています…" : "保存する"}</button>
+        <span className="faint">番号・ファイルはそのまま。締結日は上の図の「編集」で入れます（入れると締結済み・既定になります）</span>
       </div>
     </div>
   );
