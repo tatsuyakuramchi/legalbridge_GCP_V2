@@ -873,10 +873,13 @@ export class PartyAgreementMapService {
    * 基本契約があればその基本契約に載せる（基本契約の下の発注書。文書には「基本契約あり」で
    * 出る）。無ければ契約なしのまま（発注書の約款で取引）。単体契約に載っている条件は動かさない。
    * 取り込んだ文書で種類が発注書でなければ、発注書にする（契約にも繋がない）。
+   *
+   * 付け替え：removeConditionIds はこの発注書から外す条件明細。detachOtherOrders を立てると、
+   * 選んだ条件明細を別の発注書から外してこの発注書に付け替える（1本の条件は1枚の発注書が持つ）。
    */
   async linkOrder(documentId: number, conditionIds: number[], actor: string,
-                  options: { masterId?: number | null } = {})
-    : Promise<{ linked: number; masterNo: string | null; documentNo: string | null }> {
+                  options: { masterId?: number | null; removeConditionIds?: number[]; detachOtherOrders?: boolean } = {})
+    : Promise<{ linked: number; masterNo: string | null; documentNo: string | null; removed: number; detachedFrom: string[] }> {
     const ids = [...new Set(conditionIds.map(Number))].filter((n) => n > 0);
     if (!ids.length) throw new DomainError("VALIDATION", "紐づける条件明細を選んでください");
     try {
@@ -926,6 +929,28 @@ export class PartyAgreementMapService {
             `INSERT INTO document_conditions (document_id, condition_id, line_no) VALUES ($1, $2, $3)
              ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, id, lineNo]);
         }
+        // この発注書から外す条件（選び直しで外したもの）。条件の契約はそのまま。
+        const remove = [...new Set((options.removeConditionIds ?? []).map(Number))].filter((n) => n > 0 && !ids.includes(n));
+        let removed = 0;
+        if (remove.length) {
+          const rr = await client.query(
+            "DELETE FROM document_conditions WHERE document_id = $1 AND condition_id = ANY($2::bigint[]) RETURNING condition_id",
+            [documentId, remove]);
+          removed = rr.rows.length;
+        }
+        // 選んだ条件を別の発注書から外す（付け替え）。検収書・計算書などの繋ぎは触らない。
+        let detachedFrom: string[] = [];
+        if (options.detachOtherOrders) {
+          const dr2 = await client.query(
+            `DELETE FROM document_conditions dc
+               USING documents d
+               LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+               LEFT JOIN document_templates t ON t.id = tv.template_id
+              WHERE d.id = dc.document_id AND dc.condition_id = ANY($1::bigint[]) AND dc.document_id <> $2
+                AND ${ORDER_DOCUMENT_SQL}
+              RETURNING d.id, d.document_no`, [ids, documentId]);
+          detachedFrom = [...new Set((dr2.rows as any[]).map((x) => str(x.document_no) ?? `#${x.id}`))];
+        }
         // 契約に載っていない条件は、同じ相手・向きの生きた基本契約へ。この発注書に前から
         // 載っている条件も含める（1枚の発注書が基本契約あり・なしに割れないように）。
         let masterNo: string | null = null;
@@ -953,9 +978,9 @@ export class PartyAgreementMapService {
             [movable, options.masterId]);
           await recordAudit(client, {
             actor, action: "document.link_order", targetType: "document", targetId: documentId,
-            detail: { conditionIds: ids, masterId: options.masterId, masterNo, chosen: true }
+            detail: { conditionIds: ids, masterId: options.masterId, masterNo, chosen: true, removed: remove, detachedFrom }
           });
-          return { linked: ids.length, masterNo, documentNo: str(d.document_no) };
+          return { linked: ids.length, masterNo, documentNo: str(d.document_no), removed, detachedFrom };
         }
         const free = (onDoc.rows as any[]).filter((r) => !r.agreement_id);
         for (const dir of [...new Set(free.map((r) => String(r.direction)))]) {
@@ -975,9 +1000,9 @@ export class PartyAgreementMapService {
         }
         await recordAudit(client, {
           actor, action: "document.link_order", targetType: "document", targetId: documentId,
-          detail: { conditionIds: ids, masterNo }
+          detail: { conditionIds: ids, masterNo, removed: remove, detachedFrom }
         });
-        return { linked: ids.length, masterNo, documentNo: str(d.document_no) };
+        return { linked: ids.length, masterNo, documentNo: str(d.document_no), removed, detachedFrom };
       });
     } catch (error) { throw translate(error); }
   }

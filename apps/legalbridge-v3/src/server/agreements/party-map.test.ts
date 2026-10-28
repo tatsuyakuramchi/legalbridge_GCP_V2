@@ -335,11 +335,34 @@ test("発注書を紐づける：取り込んだ文書は発注書にし、契�
   });
   const ok = db();
   assert.deepEqual(await new PartyAgreementMapService(ok).linkOrder(513, [769], "k"),
-    { linked: 1, masterNo: "ARC-SVC-2026-0001", documentNo: "ARC-SVC-2026-0013" });
+    { linked: 1, masterNo: "ARC-SVC-2026-0001", documentNo: "ARC-SVC-2026-0013", removed: 0, detachedFrom: [] });
   assert.match(ok.find("SET manual_inputs")!.text, /"documentKind":"発注書"/, "取り込んだ文書を発注書にする");
   assert.deepEqual(ok.find("UPDATE conditions SET agreement_id")!.params, [[769], 90]);
   await assert.rejects(() => new PartyAgreementMapService(db({ template_key: "inspection_certificate", template_version_id: 3 })).linkOrder(1, [769], "k"), /発注書でない/);
   await assert.rejects(() => new PartyAgreementMapService(db({}, [5, 6])).linkOrder(513, [769, 770], "k"), /相手先の違う/);
+});
+
+test("発注書を紐づける：付け替え。選び直しで外した条件はこの発注書から外し、選んだ条件は別の発注書から外す", async () => {
+  const d = new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF d")) return [{ id: 97, document_no: "ARC-PO-2026-0097", status: "issued",
+      template_version_id: null, template_key: null, kind: "発注書" }];
+    if (t.includes("JOIN v_party_resolved r ON r.party_id = c.counterparty_id")) return [{ id: 175, direction: "in", agreement_id: null, resolved_id: 5 }];
+    if (t.includes("RETURNING condition_id")) return [{ condition_id: 160 }];
+    if (t.includes("USING documents d")) return [{ id: 50, document_no: "ARC-PO-2026-0050" }];
+    return [];
+  });
+  const r = await new PartyAgreementMapService(d).linkOrder(97, [175], "k",
+    { masterId: null, removeConditionIds: [160, 175], detachOtherOrders: true });
+  assert.equal(r.removed, 1);
+  assert.deepEqual(r.detachedFrom, ["ARC-PO-2026-0050"]);
+  assert.deepEqual(d.find("RETURNING condition_id")!.params, [97, [160]], "選んだ条件は外さない");
+  const del = d.find("USING documents d")!;
+  assert.deepEqual(del.params, [[175], 97]);
+  assert.match(del.text, /purchase_order/, "発注書の繋ぎだけを外す");
+  const none = new FakeDatabase((t) => t.includes("FOR UPDATE OF d") ? [{ id: 97, document_no: "X", status: "issued", template_key: null, kind: "発注書" }]
+    : t.includes("JOIN v_party_resolved r ON r.party_id = c.counterparty_id") ? [{ id: 175, direction: "in", agreement_id: null, resolved_id: 5 }] : []);
+  await new PartyAgreementMapService(none).linkOrder(97, [175], "k");
+  assert.equal(none.find("USING documents d"), undefined, "既定では別の発注書は触らない");
 });
 
 test("発注書を紐づける：基本契約を選べば、その発注書の条件（契約なし・基本契約に載るもの）をそろえる。null は基本契約なし", async () => {
