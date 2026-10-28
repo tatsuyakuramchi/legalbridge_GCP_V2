@@ -6,6 +6,7 @@ import { taxRatePercentFor } from "./legacy-totals.js";
 import { DEFAULT_TAX_ROUNDING, taxWithRounding, type TaxRounding } from "../core/rounding.js";
 import { agreementDatedTitle, masterAgreementOf } from "./legacy-variables.js";
 import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName, eventScopeLabel } from "../royalty/product-name.js";
+import { rootAgreementJoin } from "../conditions/contracts.js";
 
 /** 条件の取り分（共著。A-068）。条件書の「共同著作」欄と、受取人宛ての条件書の取り分に出す。 */
 export interface ContextShare { partyId: number; name: string; partyCode: string | null; sharePpm: number }
@@ -949,7 +950,7 @@ export class DocumentContextRepository {
                          ORDER BY wc.effective_from DESC, wc.id DESC LIMIT 1), w.third_party_rights) AS work_third_party_rights
          FROM conditions c
          LEFT JOIN works w ON w.id = c.work_id
-         LEFT JOIN agreements la ON la.id = c.agreement_id
+         ${rootAgreementJoin("c", "la")}
          LEFT JOIN work_parts wp ON wp.id = c.work_part_id
         WHERE c.kind = 'license' AND c.direction = 'in'
           AND c.work_id = ANY($1::bigint[]) AND c.counterparty_id = ANY($2::bigint[])
@@ -1036,7 +1037,7 @@ export class DocumentContextRepository {
          LEFT JOIN parties p     ON p.id = c.counterparty_id
          LEFT JOIN works w       ON w.id = c.work_id
          LEFT JOIN work_parts wp ON wp.id = c.work_part_id
-         LEFT JOIN agreements a  ON a.id = c.agreement_id
+         ${rootAgreementJoin("c", "a")}
         WHERE c.work_id = ANY($1::bigint[])
           AND c.direction = 'in' AND c.status = 'active'
         ORDER BY wp.part_no NULLS LAST, c.id`, [workIds]);

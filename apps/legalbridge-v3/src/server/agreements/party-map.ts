@@ -5,6 +5,7 @@ import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.
 import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { agreementDatedTitle } from "../documents/legacy-variables.js";
 import type { AgreementCsvRow } from "./csv.js";
+import { rootAgreementJoin } from "../conditions/contracts.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -607,7 +608,8 @@ export class PartyAgreementMapService {
         `SELECT d.id, d.document_no, d.status, d.issued_at, COALESCE(d.manual_inputs->>'title', v.title) AS title,
                 (d.template_version_id IS NULL) AS imported,
                 COALESCE(json_agg(json_build_object('id', co.id, 'conditionNo', co.condition_no, 'name', co.name,
-                                                    'agreementId', co.agreement_id) ORDER BY dc.line_no)
+                                                    'agreementId', co.agreement_id,
+                                                    'rootId', cm.id) ORDER BY dc.line_no)
                          FILTER (WHERE co.id IS NOT NULL), '[]') AS conds
            FROM documents d
            JOIN v_document_display v ON v.document_id = d.id
@@ -615,6 +617,7 @@ export class PartyAgreementMapService {
            LEFT JOIN document_templates t ON t.id = tv.template_id
            LEFT JOIN document_conditions dc ON dc.document_id = d.id
            LEFT JOIN conditions co ON co.id = dc.condition_id
+           ${rootAgreementJoin("co", "cm")}
           WHERE d.status NOT IN ('void', 'superseded') AND ${ORDER_DOCUMENT_SQL}
             AND (v.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $1)
                  OR co.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $1))
@@ -623,7 +626,8 @@ export class PartyAgreementMapService {
       const masterIds = new Set(map.roots.filter((x) => x.kind === "master").map((x) => x.id));
       map.orders = (orders.rows as any[]).map((o) => {
         const conds = (Array.isArray(o.conds) ? o.conds : JSON.parse(String(o.conds ?? "[]"))) as Array<Record<string, any>>;
-        const agreements = [...new Set(conds.map((c) => c.agreementId ?? null))];
+        // 発注書の基本契約は、載っている条件の契約の根（個別契約ならその親）がそろって 1 本の基本契約のとき。
+        const agreements = [...new Set(conds.map((c) => c.rootId ?? c.agreementId ?? null))];
         const one = agreements.length === 1 ? agreements[0] : null;
         return {
           id: Number(o.id), documentNo: str(o.document_no), title: str(o.title), status: String(o.status),

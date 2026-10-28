@@ -530,10 +530,12 @@ export function pubTermsSuggestions(context: Data, _bound: Data = {}): Data {
   const language = scopeLabels(context, "language");
   if (region) out["許諾地域"] = region;
   if (language) out["許諾言語"] = language;
-  if (context.agreement && typeof context.agreement.autoRenewal === "boolean") {
-    out["自動更新"] = context.agreement.autoRenewal ? "する" : "しない";
+  // 自動更新・通知期限は基本契約の定め（無ければ条件の契約そのもの）。個別契約の行には無い。
+  const governing = contextMasterAgreement(context) ?? context.agreement;
+  if (governing && typeof governing.autoRenewal === "boolean") {
+    out["自動更新"] = governing.autoRenewal ? "する" : "しない";
   }
-  const months = number(context.agreement?.renewalNoticeMonths);
+  const months = number(governing?.renewalNoticeMonths);
   if (months) out["終了通知期限"] = `${months}か月`;
   const unit = renewUnitOf(conditions);
   if (unit) out["更新期間"] = unit;
@@ -542,7 +544,7 @@ export function pubTermsSuggestions(context: Data, _bound: Data = {}): Data {
 
 /** 契約（合意）の更新通知の月数。「3か月」。 */
 const noticeOf = (context: Data): string => {
-  const months = number(context.agreement?.renewalNoticeMonths);
+  const months = number((contextMasterAgreement(context) ?? context.agreement)?.renewalNoticeMonths);
   return months ? `${months}か月` : "";
 };
 
