@@ -10,6 +10,7 @@ import { DocumentImport } from "./DocumentImport.js";
 import { TidyFlow } from "./TidyFlow.js";
 import { DocMatter } from "./DocMatter.js";
 import { PartySend } from "./PartySend.js";
+import { DocumentRegister } from "./DocumentRegister.js";
 import { MasterMerge } from "./MasterMerge.js";
 import { Relations } from "./Relations.js";
 import type { EntityKind } from "./Relations.js";
@@ -299,6 +300,10 @@ function PartyMapView(
           </div>
         </div>
       </div>
+
+      {/* 文書を番号・件名で探し、基本契約・個別契約・単体契約として登録して、メール・クラウドサインで送る。 */}
+      <DocumentRegister map={map} version={sendVersion} onOpen={onOpen} onChanged={onChanged} onError={onError}
+        onAsOrder={(id) => setPoLink({ documentId: id, conditionIds: [] })} />
 
       {/* 契約の構造を見ながら送る。決定済みの文書を契約ごとに並べ、選んで 1 通で送る。 */}
       <PartySend map={map} version={sendVersion} onOpen={onOpen} />

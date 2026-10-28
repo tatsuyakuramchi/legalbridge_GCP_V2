@@ -1166,7 +1166,8 @@ export class PartyAgreementMapService {
    * （個別契約のときは基本契約の明細にする。条件書を決定したときと同じ形）。
    * 状態は「交渉中」で立てる。締結日は「編集」で入れる（入れると締結済み）。
    */
-  async agreementFromDocument(documentId: number, actor: string, options: { as?: "master" | "standalone" | null } = {}): Promise<{
+  async agreementFromDocument(documentId: number, actor: string,
+                              options: { as?: "master" | "standalone" | "supplement" | null; parentId?: number | null } = {}): Promise<{
     agreementId: number; agreementNo: string; kind: "master" | "supplement" | "standalone";
     parentNo: string | null; conditionsLinked: number;
   }> {
@@ -1191,7 +1192,8 @@ export class PartyAgreementMapService {
           throw new DomainError("VALIDATION", "決定済みの文書からだけ契約を立てられます");
         }
         const role = d.role as "master" | "terms" | null;
-        if (!role) throw new DomainError("VALIDATION", "基本契約書・条件書でない文書からは契約を立てられません（既にある契約に繋いでください）");
+        // 文書を探して「基本契約／個別契約／単体契約」を押したとき（as）は、種類の分からない取り込み文書でも立てる。
+        if (!role && !options.as) throw new DomainError("VALIDATION", "基本契約書・条件書でない文書からは契約を立てられません（既にある契約に繋いでください）");
         if (!d.counterparty_id) throw new DomainError("VALIDATION", "この文書は相手先が決まっていません");
         const no = String(d.document_no);
         const clash = await client.query("SELECT id FROM agreements WHERE agreement_no = $1", [no]);
@@ -1224,8 +1226,20 @@ export class PartyAgreementMapService {
         let parentNo: string | null = null;
         // 基本契約書の文書でも、その取引だけで完結する契約（単体契約）として立てられる。
         // 業務委託契約書は基本契約のことも単体の契約のこともあるので、立てる人が選ぶ。
-        if (role === "master" && options.as === "standalone") kind = "standalone";
-        if (role === "terms") {
+        if (options.as === "standalone") kind = "standalone";
+        let direction2 = direction;
+        if (options.as === "supplement" && options.parentId) {
+          // 親の基本契約を人が選んだとき。同じ取引先（名寄せ後）の、解除されていない基本契約に限る。
+          const pr = await client.query(
+            `SELECT a.id, a.agreement_no, a.direction, COALESCE(a.kind, 'master') AS kind, a.terminated_on, r.resolved_id
+               FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id WHERE a.id = $1`, [options.parentId]);
+          const p = pr.rows[0] as any;
+          if (!p || p.kind !== "master") throw new DomainError("VALIDATION", "親には基本契約を選んでください");
+          if (p.terminated_on) throw new DomainError("VALIDATION", "解除された基本契約の下には入れられません");
+          if (Number(p.resolved_id) !== Number(d.resolved_id)) throw new DomainError("VALIDATION", "文書と基本契約の相手先が違います");
+          kind = "supplement"; parentId = Number(p.id); parentNo = str(p.agreement_no);
+          direction2 = p.direction === "out" ? "out" : "in";
+        } else if (options.as === "supplement" || (role === "terms" && !options.as)) {
           // 同じ相手・同じ向きの、解除されていない基本契約。種別が同じ・締結済み・新しいものを先に。
           const mr = await client.query(
             `SELECT a.id, a.agreement_no FROM agreements a
@@ -1236,13 +1250,16 @@ export class PartyAgreementMapService {
               LIMIT 1`, [Number(d.resolved_id), direction, domain]);
           const m = mr.rows[0] as any;
           if (m) { kind = "supplement"; parentId = Number(m.id); parentNo = str(m.agreement_no); }
-          else kind = "standalone";
+          else if (options.as === "supplement") {
+            throw new DomainError("VALIDATION", "この取引先に、同じ向きの解除されていない基本契約がありません。先に基本契約を登録してください");
+          } else kind = "standalone";
         }
-        const title = role === "master" && kind === "master" ? label : `${label}${name && name !== label ? `（${name}）` : ""}`;
+        const title = role === "master" && kind === "master" ? label
+          : !role ? (name ?? label) : `${label}${name && name !== label ? `（${name}）` : ""}`;
         const ins = await client.query(
           `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id)
            VALUES ($1, $2, $3, $4, 'negotiating', $5, $6, $7) RETURNING id`,
-          [no, title, Number(d.counterparty_id), direction, kind, domain, parentId]);
+          [no, title, Number(d.counterparty_id), direction2, kind, domain, parentId]);
         const agreementId = Number((ins.rows[0] as { id: number }).id);
         await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1", [documentId, agreementId]);
         // 文書に載っていて契約に載っていない条件明細を載せる。個別契約なら基本契約の明細に。

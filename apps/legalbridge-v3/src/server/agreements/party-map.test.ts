@@ -314,6 +314,31 @@ test("文書から契約を立てる：基本契約書・条件書でない文�
   await assert.rejects(() => new PartyAgreementMapService(db({ role: "master", status: "draft" })).agreementFromDocument(1, "k"), /決定済み/);
 });
 
+test("文書から契約を立てる：検索結果のボタン（as）なら種類の分からない文書も立てる。個別契約は親の基本契約の下に", async () => {
+  const db = (row: Record<string, unknown>, parent: Record<string, unknown> | null = null) => new FakeDatabase((t) => {
+    if (t.includes("FOR UPDATE OF d")) return [{ id: 1, document_no: "IMP-2026-0001", status: "issued", agreement_id: null,
+      counterparty_id: 7, resolved_id: 7, label: "文書", title: "業務委託契約書", role: null, ...row }];
+    if (t.includes("WHERE a.id = $1")) return parent ? [parent] : [];
+    if (t.includes("INSERT INTO agreements")) return [{ id: 55 }];
+    return [];
+  });
+  const m = db({});
+  assert.deepEqual(await new PartyAgreementMapService(m).agreementFromDocument(1, "k", { as: "master" }),
+    { agreementId: 55, agreementNo: "IMP-2026-0001", kind: "master", parentNo: null, conditionsLinked: 0 });
+  assert.equal(m.find("INSERT INTO agreements")!.params[1], "業務委託契約書", "件名は文書の件名");
+  const st = db({});
+  assert.equal((await new PartyAgreementMapService(st).agreementFromDocument(1, "k", { as: "standalone" })).kind, "standalone");
+  const sup = db({}, { id: 90, agreement_no: "ARC-SVC-1", direction: "out", kind: "master", terminated_on: null, resolved_id: 7 });
+  const r = await new PartyAgreementMapService(sup).agreementFromDocument(1, "k", { as: "supplement", parentId: 90 });
+  assert.equal(r.kind, "supplement"); assert.equal(r.parentNo, "ARC-SVC-1");
+  const ins = sup.find("INSERT INTO agreements")!.params;
+  assert.equal(ins[3], "out", "向きは親の基本契約に合わせる"); assert.equal(ins[6], 90);
+  await assert.rejects(() => new PartyAgreementMapService(db({}, { id: 90, kind: "master", resolved_id: 8 }))
+    .agreementFromDocument(1, "k", { as: "supplement", parentId: 90 }), /相手先が違います/);
+  await assert.rejects(() => new PartyAgreementMapService(db({}))
+    .agreementFromDocument(1, "k", { as: "supplement" }), /基本契約がありません/);
+});
+
 test("発注書が契約（単体契約・文書だけ）として登録されていれば、文書に寄せるよう知らせる", async () => {
   const { isOrderAgreement } = await import("./party-map.js");
   assert.equal(isOrderAgreement({ kind: "standalone", agreementNo: "ARC-PO-2026-0079", title: "x" }), true);
