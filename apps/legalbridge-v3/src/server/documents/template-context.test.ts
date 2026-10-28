@@ -1178,3 +1178,13 @@ test("A-110：条件書の代表者名は肩書付きの 1 行（代表取締役
     contacts: [{ role: "signer", name: "署名 太郎" }] };
   assert.equal(resolveLegacyDbField("vendor.vendor_rep_line", fallback), "署名 太郎", "代表者の登録が無ければ肩書は付けない");
 });
+
+
+test("A-113：検収書の頭書きの支払日。予定の支払日が無い実績は、納品日からの既定（法人は翌月末）で出る", async () => {
+  const { resolveLegacyVariable } = await import("./legacy-variables.js");
+  const withSchedule = { condition: { counterparty: { kind: "corporate" } },
+    events: [{ occurredOn: "2026-10-31", schedule: { payOn: "2026-12-25" } }] };
+  assert.equal(resolveLegacyVariable("PAYMENT_DATE", withSchedule), "2026-12-25", "予定があればそれ（従来どおり）");
+  const noSchedule = { condition: { counterparty: { kind: "corporate" } }, events: [{ occurredOn: "2026-10-31" }] };
+  assert.equal(resolveLegacyVariable("PAYMENT_DATE", noSchedule), "2026-11-30", "予定が無ければ納品月の翌月末");
+});
