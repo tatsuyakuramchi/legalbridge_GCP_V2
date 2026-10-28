@@ -437,6 +437,42 @@ test("検収書：予定の回も支払条件も無くても、納品日から�
   assert.equal(r.dueOn, "2026-07-20", "個人：納品 2026-06-20 → 7/20（検収日 6/25 ではなく納品日）");
 });
 
+test("検収書：消費税は紙と同じ丸め方。選ばなければ切り上げ、検収書で選んだ丸め方があればそれ", async () => {
+  // 12,345 × 10% = 1,234.5。以前は実績ごとに切り捨てで、紙（切り上げ）と 1 円ずれていた。
+  const taxOf = async (over: Record<string, unknown>) => {
+    const db = inspectionDb({ amount: 12345, party_kind: "corporate", withholding: false, ...over });
+    await new PaymentService(db).createFromInspection(31, "kuramochi");
+    return db.find("INSERT INTO payments")!.params[5];
+  };
+  assert.equal(await taxOf({}), 1235, "既定は切り上げ（紙の既定と同じ）");
+  assert.equal(await taxOf({ tax_rounding: "切り捨て" }), 1234);
+  assert.equal(await taxOf({ tax_rounding: "四捨五入" }), 1235);
+});
+
+test("検収書：実績が複数でも、税率ごとの合計に掛けてから丸める（紙と同じ）", async () => {
+  // 1,005 円 ×2 回。行ごとに切り捨てると 100 + 100 = 200、合計に掛けると 2,010 × 10% = 201。
+  const db = new FakeDatabase((text) => {
+    const numbered = numbering(text);
+    if (numbered) return numbered;
+    if (text.includes("FROM condition_events e")) {
+      const row = { amount: 1005, occurred_on: "2026-06-20", inspected_on: "2026-06-25", deliverable: "x",
+                    condition_id: 5, direction: "in", tax_category: "taxable", currency: "JPY",
+                    counterparty_id: 2, payment_terms: null, party_kind: "corporate", withholding: false,
+                    schedule_pay_on: null, tax_rounding: "切り捨て" };
+      return [{ ...row, event_id: 700 }, { ...row, event_id: 701 }];
+    }
+    if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) return [];
+    if (text.includes("INSERT INTO payments")) return [{ id: 901, payment_no: "PAY-2026-00007" }];
+    if (text.includes("UPDATE payments")) return [{ id: 901, due_on: "2026-07-31", basis_received_on: "2026-06-25" }];
+    return undefined;
+  });
+  await new PaymentService(db).createFromInspection(31, "kuramochi");
+  const params = db.find("INSERT INTO payments")!.params;
+  assert.equal(params[4], 2010);
+  assert.equal(params[5], 201);
+  assert.match(db.find("FROM condition_events e")!.text, /manual_inputs->>'tax_rounding'/);
+});
+
 test("支払条件が日付そのものなら、その日を期日にする（V1・V2 から来た条件）", async () => {
   const { service } = svc({ occurredOn: "2026-06-20", paymentTerms: "2026-12-31" });
   const result = await service.createFromStatementDocument(26, "kuramochi");

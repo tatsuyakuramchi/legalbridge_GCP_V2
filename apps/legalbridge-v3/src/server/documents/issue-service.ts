@@ -23,6 +23,7 @@ import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix
 import { materializeSettlementRows } from "./settlement-conditions.js";
 import { applyRefNoMode, loadCounterpartyNos, refNoModeOf, type RefNoMode } from "./cite-no.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
+import { TAX_ROUNDING_INPUT, taxRoundingOf, type TaxRounding } from "../core/rounding.js";
 
 export interface DraftInput {
   templateKey: string;
@@ -1051,6 +1052,7 @@ export class DocumentIssueService {
       partyId: refs.partyId ?? null,
       eventIds: input.eventIds ?? [],
       royalty: input.royalty ?? null,
+      taxRounding: refs.taxRounding ?? null,
       issuedOn,
       documentNumber
     }, client);
@@ -1153,6 +1155,8 @@ export interface ChosenRefs {
   partyId?: number | null;
   /** 番号の出し方（manual_inputs._refNoMode）。当社番号／相手方番号／両方。A-072 */
   refNoMode?: RefNoMode | null;
+  /** 消費税の端数処理（manual_inputs.tax_rounding）。検収書・役務提供完了通知書で選ぶ。 */
+  taxRounding?: TaxRounding | null;
 }
 
 /** 文案の既定（特約）にも「対象」の選び直し（A-085）を渡す。束縛の結果には欄の値しか無い。 */
@@ -1164,5 +1168,6 @@ export function chosenRefs(manual: Record<string, unknown> | null | undefined): 
   const text = (v: unknown) => { const t = String(v ?? "").trim(); return t || null; };
   return { parentPoNo: text(manual?._parentPoNo), termsNo: text(manual?._termsNo),
            payeePartyId: int(manual?._payeePartyId), partyId: int(manual?._partyId),
-           refNoMode: manual?._refNoMode === undefined ? null : refNoModeOf(manual._refNoMode) };
+           refNoMode: manual?._refNoMode === undefined ? null : refNoModeOf(manual._refNoMode),
+           taxRounding: taxRoundingOf(manual?.[TAX_ROUNDING_INPUT]) };
 }

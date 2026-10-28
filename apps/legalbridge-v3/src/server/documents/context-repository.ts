@@ -3,6 +3,7 @@ import { dateStr, int, num, str } from "../core/db.js";
 import { partRoleOf } from "../core/part-role.js";
 import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
+import { DEFAULT_TAX_ROUNDING, taxWithRounding, type TaxRounding } from "../core/rounding.js";
 import { agreementDatedTitle, masterAgreementOf } from "./legacy-variables.js";
 import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName, eventScopeLabel } from "../royalty/product-name.js";
 
@@ -43,6 +44,8 @@ export interface DocumentContextInput {
   eventIds?: number[];
   /** 計算結果。利用許諾料計算書は、発行の時点でこれが要る。 */
   royalty?: Record<string, unknown> | null;
+  /** 消費税の端数処理（manual_inputs.tax_rounding。検収書で人が選ぶ）。無ければ切り上げ。 */
+  taxRounding?: TaxRounding | null;
 }
 
 const MINOR: Record<string, number> = { JPY: 1, KRW: 1, VND: 1 };
@@ -209,15 +212,16 @@ export class DocumentContextRepository {
           }))
         : conditions.map((c) => ({ minor: c.flatAmountMinor ?? 0, taxCategory: c.taxCategory }));
       const exTax = bases.reduce((sum, b) => sum + b.minor, 0);
-      // 端数は税区分ごとに切り上げる。区分をまたいで足してから切り上げると
-      // 1円ずれる（V1 の inspectionTaxBreakdown と同じ扱い）。
+      // 端数は税区分ごとに丸める（既定は切り上げ。書類で選んだ丸め方があればそれ）。
+      // 区分をまたいで足してから丸めると 1円ずれる（V1 の inspectionTaxBreakdown と同じ扱い）。
+      const rounding = input.taxRounding ?? DEFAULT_TAX_ROUNDING;
       const byCategory = new Map<string, number>();
       for (const b of bases) {
         byCategory.set(b.taxCategory, (byCategory.get(b.taxCategory) ?? 0) + b.minor);
       }
       let tax = 0;
       for (const [category, minor] of byCategory) {
-        tax += Math.ceil((minor * taxRatePercentFor(category)) / 100);
+        tax += taxWithRounding(minor, taxRatePercentFor(category), rounding);
       }
       const taxRate = bases.length
         ? Math.max(...bases.map((b) => taxRatePercentFor(b.taxCategory)))

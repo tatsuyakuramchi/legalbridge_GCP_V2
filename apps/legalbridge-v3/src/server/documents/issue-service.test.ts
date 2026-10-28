@@ -439,8 +439,10 @@ test("取り消しにも理由が要る", async () => {
 test("文書フォームで選んだ番号は manual_inputs の内部の名前から読む", async () => {
   const { chosenRefs } = await import("./issue-service.js");
   assert.deepEqual(chosenRefs({ _parentPoNo: " ARC-PO-2026-0099 ", _termsNo: "" }),
-                   { parentPoNo: "ARC-PO-2026-0099", termsNo: null, payeePartyId: null, partyId: null, refNoMode: null });
-  assert.deepEqual(chosenRefs(undefined), { parentPoNo: null, termsNo: null, payeePartyId: null, partyId: null, refNoMode: null });
+                   { parentPoNo: "ARC-PO-2026-0099", termsNo: null, payeePartyId: null, partyId: null, refNoMode: null,
+                     taxRounding: "ceil" });
+  assert.deepEqual(chosenRefs(undefined),
+                   { parentPoNo: null, termsNo: null, payeePartyId: null, partyId: null, refNoMode: null, taxRounding: "ceil" });
   // 番号の出し方（A-072）。知らない値は当社番号。
   assert.equal(chosenRefs({ _refNoMode: "both" }).refNoMode, "both");
   assert.equal(chosenRefs({ _refNoMode: "x" }).refNoMode, "ours");
@@ -448,6 +450,8 @@ test("文書フォームで選んだ番号は manual_inputs の内部の名前�
   assert.equal(chosenRefs({ _payeePartyId: "42" }).payeePartyId, 42);
   // まだ無い基本契約の試算の相手先。
   assert.equal(chosenRefs({ _partyId: 7 }).partyId, 7);
+  // 消費税の端数処理。画面の選択肢の文字のまま入る。空は切り上げ。
+  assert.equal(chosenRefs({ tax_rounding: "切り捨て" }).taxRounding, "floor");
 });
 
 test("下書きのあとに条件が改訂されていれば、決定の時点でいまの版に付け替えてから出す（旧版で止めない）", async () => {
