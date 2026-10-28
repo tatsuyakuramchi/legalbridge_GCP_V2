@@ -48,7 +48,9 @@ export function MasterMerge({ a, onOpen, onDone, onError, onCancel }: {
       .catch(() => setAgreements([]));
     api.get<{ documents: DocumentSummary[] }>(`/documents?partyId=${a.counterparty.id}&status=issued`)
       .then((r) => setDocs(r.documents.filter((d) => d.status === "issued" && !d.inbound && (d.agreementId === null || d.agreementId === a.id)
-        && d.templateKey !== "purchase_order" && d.templateKey !== "intl_purchase_order")))
+        && d.templateKey !== "purchase_order" && d.templateKey !== "intl_purchase_order"
+        // 発注書・検収書・計算書などの取引の書類は基本契約にならない。
+        && !/計算書|検収|発注|納品|請求|支払/.test(`${d.templateLabel ?? ""}`))))
       .catch(() => setDocs([]));
   }, [a.id, a.counterparty.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
