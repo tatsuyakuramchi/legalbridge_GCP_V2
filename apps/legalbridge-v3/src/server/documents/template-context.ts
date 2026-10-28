@@ -38,6 +38,7 @@ import { toInternationalPhone } from "../core/phone.js";
 import { isRoyaltyStatementKey, SERVICE_COMPLETION_KEY } from "./settlement-docs.js";
 import { hoursText, isTimeSettled, settleHours, timeSettlementLabel, type TimeSettlementTerms } from "../conditions/time-settlement.js";
 import { addBusinessDays } from "../core/business-days.js";
+import { TAX_ROUNDING_INPUT, taxRoundingOf, taxWithRounding, type TaxRounding } from "../core/rounding.js";
 
 type Ctx = Record<string, any>;
 
@@ -768,7 +769,9 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
     ? feeLinesFrom((context.conditions ?? []) as Ctx[]) : rows(manual.other_fees);
   const expenses = manual.expenses === undefined
     ? expenseLinesFrom((context.conditions ?? []) as Ctx[]) : rows(manual.expenses);
-  const source: Row = { delivery_line_items: lines, other_fees: otherFees, expenses, taxRate };
+  // 消費税の端数処理（書類ごとに人が選ぶ。既定は切り上げ）。発注書と 1 円ずれるときに合わせる。
+  const rounding = taxRoundingOf(manual[TAX_ROUNDING_INPUT]);
+  const source: Row = { delivery_line_items: lines, other_fees: otherFees, expenses, taxRate, taxRounding: rounding };
   const totals = computeInspectionTotals(source);
   const breakdown = inspectionTaxBreakdown(source);
 
@@ -840,7 +843,7 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
   });
 
   const taxableSubtotal = totals.deliveredExTax + totals.otherFeesExTax;
-  const combinedTax = Math.ceil((taxableSubtotal * taxRate) / 100);
+  const combinedTax = taxWithRounding(taxableSubtotal, taxRate, rounding);
   const taxableTotal = taxableSubtotal + combinedTax;
 
   // 明細が1行も無いときは、金額は手入力に任せる（単票フォールバック）。
@@ -867,7 +870,7 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
     // 条件にしてあるので、履歴が出るのに署名欄が無い／その逆は起きない。
     needsSignature: changeLogs.length > 0,
     useGroupedInspection: paid.length > 0,
-    paymentGroups: paid.length ? paymentGroups(paid, now, taxRate, context) : [],
+    paymentGroups: paid.length ? paymentGroups(paid, now, taxRate, context, rounding) : [],
     otherFeesTaxable: totals.otherFeesExTax > 0,
     hasSettlement: totals.hasSettlement,
     otherFeesTotalStr: yen(totals.otherFeesExTax),
@@ -931,11 +934,11 @@ function intlInspectionExtras(context: Ctx, block: Record<string, unknown>) {
 }
 
 /** 支払日ごとのまとまり。区切りごとに端数処理する（課税仕入れの時期が違う）。 */
-function paymentGroups(paid: Row[], now: Row[], taxRate: number, context: Ctx) {
+function paymentGroups(paid: Row[], now: Row[], taxRate: number, context: Ctx, rounding: TaxRounding) {
   const build = (date: string, isPaid: boolean, lines: Row[]) => {
     const subtotal = lines.reduce((sum, l) =>
       sum + num(l.inspected_amount_ex_tax ?? l.amount_ex_tax ?? l.amount), 0);
-    const tax = Math.ceil((subtotal * taxRate) / 100);
+    const tax = taxWithRounding(subtotal, taxRate, rounding);
     return {
       date, isPaid, taxRate,
       lines: lines.map((l) => ({

@@ -267,7 +267,8 @@ export function DocumentFields(
                                 }}>自動に戻す</button>
                       </div>
                     )}
-                    {editing && f.type !== "boolean" && (
+                    {/* 選択肢の欄（消費税の端数処理など）は選ぶだけ。候補の金額を並べない。 */}
+                    {editing && f.type !== "boolean" && !(f.type === "select" && f.options?.length) && (
                       <div className="row" style={{ flexWrap: "wrap", gap: 4, marginTop: 4 }}>
                         {!inline && fits.length > 0 && (
                           <button type="button" className="btn btn-sm"

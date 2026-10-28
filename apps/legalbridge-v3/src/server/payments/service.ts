@@ -22,6 +22,7 @@ import { consumptionTax, resolveWithholdingEnabled, withholdingFor, withholdingP
 
 export { withholdingPartyOf };
 import { taxRateFor } from "../royalty/economics.js";
+import { taxRoundingOf, taxWithRounding } from "../core/rounding.js";
 
 import { allocateNumber } from "../core/numbering.js";
 
@@ -553,11 +554,13 @@ export class PaymentService {
                   c.counterparty_id, c.payment_terms,
                   p.kind AS party_kind, p.withholding,
                   p.residency, p.treaty_rate_pct, p.treaty_docs_received_on,
-                  s.pay_on AS schedule_pay_on
+                  s.pay_on AS schedule_pay_on,
+                  d.manual_inputs->>'tax_rounding' AS tax_rounding
              FROM condition_events e
              JOIN conditions c ON c.id = e.condition_id
              LEFT JOIN parties p ON p.id = c.counterparty_id
              LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+             LEFT JOIN documents d ON d.id = e.document_id
             WHERE e.document_id = $1 AND e.status = 'active'
             ORDER BY e.id
               FOR UPDATE OF e`, [documentId]);
@@ -602,8 +605,11 @@ export class PaymentService {
 
         // 消費税は税区分ごとに掛けて足す。区分をまとめて10%にすると
         // 軽減や非課税が混じった検収書で合わなくなる。
+        // 端数は紙と同じに：税率ごとの合計に掛け、検収書で選んだ丸め方（既定は切り上げ）で
+        // 丸める。行ごとに切り捨てていたので、紙の消費税と支払・経理の消費税が 1 円ずれていた。
+        const rounding = taxRoundingOf(rows[0].tax_rounding);
         let net = 0;
-        let tax = 0;
+        const byRate = new Map<number, number>();
         for (const r of rows) {
           const amount = Number(r.amount ?? 0);
           net += amount;
@@ -612,8 +618,10 @@ export class PaymentService {
             ratePpm: null, unitAmount: null, flatAmount: null, mgAmount: null, agAmount: null,
             taxCategory: String(r.tax_category ?? "taxable") as "taxable" | "reduced" | "exempt" | "included"
           });
-          tax += consumptionTax(amount, rate);
+          byRate.set(rate, (byRate.get(rate) ?? 0) + amount);
         }
+        let tax = 0;
+        for (const [rate, amount] of byRate) tax += taxWithRounding(amount, rate, rounding);
         if (net <= 0) throw new DomainError("VALIDATION", "金額が 0 の実績からは支払を作れません");
 
         const withholdingEnabled = direction === "out" && resolveWithholdingEnabled({

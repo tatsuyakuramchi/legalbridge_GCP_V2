@@ -9,7 +9,7 @@
  * 同じ書類が V1 と V3 で違う金額になってはいけない。
  */
 
-import { roundAmount } from "../core/rounding.js";
+import { roundAmount, taxRoundingOf, taxWithRounding } from "../core/rounding.js";
 
 export type TaxCategory = "taxable" | "reduced" | "exempt" | "included";
 
@@ -91,7 +91,7 @@ export interface InspectionTotals {
 
 /**
  * 検収書の合計。式は V1 の computeInspectionTotals と同じ。
- *   税抜合計 → 消費税は切り上げ → 税込合計
+ *   税抜合計 → 消費税（既定は切り上げ。書類ごとに taxRounding で選べる） → 税込合計
  *   手数料は税抜＝検収額と合算して一括課税（二重課税しない）
  *   経費は税込のまま加算
  */
@@ -105,7 +105,8 @@ export function computeInspectionTotals(source: Row): InspectionTotals {
   const raw = source.taxRate ?? source.tax_rate;
   // 未入力だけ 10% へ戻す。明示された 0%（非課税・不課税）を 10% にしない。
   const taxRate = raw === "" || raw === null || raw === undefined ? 10 : Math.max(0, num(raw, 10));
-  const tax = Math.ceil((deliveredExTax * taxRate) / 100);
+  const rounding = taxRoundingOf(source.taxRounding);
+  const tax = taxWithRounding(deliveredExTax, taxRate, rounding);
 
   const otherFeesExTax = rows(source.other_fees)
     .reduce((sum, fee) => sum + num(pickRow(fee, "amount_ex_tax", "amount")), 0);
@@ -113,7 +114,7 @@ export function computeInspectionTotals(source: Row): InspectionTotals {
     .reduce((sum, e) => sum + num(pickRow(e, "amount_inc_tax", "amount")), 0);
 
   const taxableSubtotal = deliveredExTax + otherFeesExTax;
-  const combinedTax = Math.ceil((taxableSubtotal * taxRate) / 100);
+  const combinedTax = taxWithRounding(taxableSubtotal, taxRate, rounding);
   return {
     deliveredExTax, tax, totalIncTax: deliveredExTax + tax, taxRate, lineCount: lines.length,
     otherFeesExTax, expensesIncTax,
@@ -219,7 +220,8 @@ export function inspectionTaxBreakdown(source: Row): TaxBreakdown {
     else if (category === "reduced") reduced8 += amount;
     else exempt += amount;
   }
-  const tax = Math.ceil((taxable10 * totals.taxRate) / 100) + Math.ceil(reduced8 * 0.08);
+  const rounding = taxRoundingOf(source.taxRounding);
+  const tax = taxWithRounding(taxable10, totals.taxRate, rounding) + taxWithRounding(reduced8, 8, rounding);
   return {
     taxable10, reduced8, exempt, legacyIncTax, tax,
     totalIncTax: taxable10 + reduced8 + exempt + tax + legacyIncTax

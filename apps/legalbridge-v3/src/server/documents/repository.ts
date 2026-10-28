@@ -5,6 +5,7 @@ import { parseVariables, type TemplateVariable } from "./binding.js";
 import { LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
 import { PUB_TERMS_VARIABLES, isPubTermsTemplate } from "./pub-terms.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
+import { DEFAULT_TAX_ROUNDING, TAX_ROUNDING_INPUT, TAX_ROUNDING_LABEL } from "../core/rounding.js";
 
 export interface DocumentSummary {
   id: number;
@@ -204,11 +205,41 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
  * （データベースに宣言があればそちらが勝つ。あとから版で足せる）。
  */
 function variablesFor(templateKey: string, declared: TemplateVariable[]): TemplateVariable[] {
+  if (TAX_ROUNDING_TEMPLATES.has(templateKey)) return withTaxRounding(declared);
   if (declared.length) return declared;
   if (isLicenseTermsTemplate(templateKey)) return LICENSE_TERMS_VARIABLES;
   // 出版の条件書（V3）も項目はコードが持つ。ひな形の SQL は本文だけを運ぶ。
   if (isPubTermsTemplate(templateKey)) return PUB_TERMS_VARIABLES;
   return declared;
+}
+
+/**
+ * 消費税の端数処理を選ぶ欄を持つひな形。国内の検収書と役務提供完了通知書。
+ * 海外用の検収書は税を上乗せしない（税率 0）ので要らない。
+ */
+const TAX_ROUNDING_TEMPLATES = new Set(["inspection_certificate", "acceptance_certificate", "service_completion_notice"]);
+
+export const TAX_ROUNDING_VARIABLE: TemplateVariable = {
+  name: TAX_ROUNDING_INPUT,
+  label: "消費税の端数処理",
+  type: "select",
+  group: "II. 金額",
+  options: [TAX_ROUNDING_LABEL.ceil, TAX_ROUNDING_LABEL.floor, TAX_ROUNDING_LABEL.round],
+  default: TAX_ROUNDING_LABEL[DEFAULT_TAX_ROUNDING],
+  helpText: "発注書の消費税と 1 円ずれるときに合わせる。支払の消費税も同じ丸め方で計算する",
+  noGuess: true
+};
+
+/**
+ * 端数処理の欄を足す。field_schema は変えない（ひな形の版に手を入れない）ので、
+ * 欄はコードが持つ。データベースに同じ名前の宣言があればそちらが勝つ。
+ * 区分は「II. 金額」。III 以降の区分の前に置く（区分は最初に出た順に並ぶ）。
+ */
+function withTaxRounding(declared: TemplateVariable[]): TemplateVariable[] {
+  if (declared.some((v) => v.name === TAX_ROUNDING_VARIABLE.name)) return declared;
+  const at = declared.findIndex((v) => /^(III|IV|V|VI|VII|VIII|IX|X)\./.test(String(v.group ?? "")));
+  return at < 0 ? [...declared, TAX_ROUNDING_VARIABLE]
+    : [...declared.slice(0, at), TAX_ROUNDING_VARIABLE, ...declared.slice(at)];
 }
 
 export class DocumentRepository {
