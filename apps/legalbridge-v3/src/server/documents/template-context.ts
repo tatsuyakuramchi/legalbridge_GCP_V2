@@ -423,6 +423,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         if (fallback) itemName = fallback;
         split = wholeSpec(spec);
       }
+      // 成果物納品（請負・売買）の行は期間を持たせない。役務提供（準委任）と契約形式が読めない行は従来どおり期間を出す。
+      const serviceRow = deliveryKindFor(contractFormFor(event.contractForm, condition.contractForm)) !== "DELIVERABLE";
       const row: Row = {
         // 分納は回ごとに成果物が違う。実績に書いてあればそれを使う。
         item_name: itemName,
@@ -452,8 +454,10 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 予定 → 条件 の順に、書いてあるものを使う。
         payment_terms: contractFormFor(event.contractForm, condition.contractForm),
         // 役務提供期間。本文の「役務提供期間」がここを読む。実績に無ければ条件の契約期間（両端あるとき）。
-        term_start: event.serviceFrom ?? (condition.termStart && condition.termEnd ? condition.termStart : null),
-        term_end: event.serviceTo ?? (condition.termStart && condition.termEnd ? condition.termEnd : null),
+        // ただし成果物納品の行（請負など）は期間ではなく納品日を出す（A-114）。契約期間を持つ請負の行が
+        // 「2026/05/15〜2031/05/14」と期間で刷られ、納品日が読めなかった。
+        term_start: event.serviceFrom ?? (serviceRow && condition.termStart && condition.termEnd ? condition.termStart : null),
+        term_end: event.serviceTo ?? (serviceRow && condition.termStart && condition.termEnd ? condition.termEnd : null),
         delivery_date: event.occurredOn ?? null,
         inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
         payment_date: payOnFor(event, condition) ?? event.schedule?.dueOn ?? null,

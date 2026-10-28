@@ -1188,3 +1188,22 @@ test("A-113：検収書の頭書きの支払日。予定の支払日が無い実
   const noSchedule = { condition: { counterparty: { kind: "corporate" } }, events: [{ occurredOn: "2026-10-31" }] };
   assert.equal(resolveLegacyVariable("PAYMENT_DATE", noSchedule), "2026-11-30", "予定が無ければ納品月の翌月末");
 });
+
+
+test("A-114：検収の行の期間は役務提供（準委任）だけ。請負の行は契約期間があっても納品日を出す", () => {
+  const lines = deliveryLinesFrom({
+    conditions: [
+      { id: 1, name: "原稿制作", contractForm: "請負", termStart: "2026-05-15", termEnd: "2031-05-14", counterparty: { kind: "corporate" }, flatAmount: 844190 },
+      { id: 2, name: "編集費", contractForm: "準委任", termStart: "2026-05-15", termEnd: "2026-10-31", counterparty: { kind: "corporate" }, flatAmount: 550000 }
+    ],
+    events: [
+      { conditionId: 1, occurredOn: "2026-10-31", amount: 844190 },
+      { conditionId: 2, occurredOn: "2026-10-31", amount: 550000 }
+    ]
+  });
+  const manuscript = lines.find((l) => l.condition_id === 1)!;
+  assert.equal(manuscript.term_start, null); assert.equal(manuscript.term_end, null);
+  assert.equal(manuscript.delivery_date, "2026-10-31");
+  const editing = lines.find((l) => l.condition_id === 2)!;
+  assert.equal(editing.term_start, "2026-05-15"); assert.equal(editing.term_end, "2026-10-31");
+});
