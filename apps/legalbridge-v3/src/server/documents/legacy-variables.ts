@@ -16,6 +16,7 @@
 
 import { accountTypeLabel, bankInfoLine } from "./template-context.js";
 import { baseDocumentNumber } from "./numbering.js";
+import { payDateFromDelivery } from "../conditions/payment-terms.js";
 import { BUSINESS_LINE_LABEL, type BusinessLine } from "../matters/title.js";
 
 type Ctx = Record<string, any>;
@@ -426,8 +427,11 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
             "検収完了日", "検収日", "inspected_on", "完成日"],
     // 検収日は納品日と別の日になりうる。実績に入っていればそれを使う。
     get: (c) => latestDate(c, (e) => e.inspectedOn ?? e.occurredOn) },
+  // 予定（支払日）が無い実績は、納品日からの既定（翌月末。個人は所定日）で出す（A-113）。
+  // 予定を立てていない委託料の行の検収書で「お支払予定日」が空のまま出ていた。
   { names: ["PAYMENT_DATE", "paymentDueDate", "支払期日", "summaryPaymentDate"],
-    get: (c) => latestDate(c, (e) => e.schedule?.payOn, c.schedule?.payOn) },
+    get: (c) => latestDate(c, (e) => e.schedule?.payOn, c.schedule?.payOn)
+      ?? latestDate(c, (e) => payDateFromDelivery(e.occurredOn, c.condition?.counterparty?.kind)) },
   { names: ["PERIOD", "対象期間", "対象月"], get: (c) => c.event?.period },
 
   // ---- 計算書 ----
