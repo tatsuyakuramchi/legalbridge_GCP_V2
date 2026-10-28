@@ -14,6 +14,13 @@
 --   何度流しても同じ結果。
 -- =====================================================================
 
-ALTER TABLE agreements ADD COLUMN IF NOT EXISTS order_document_id bigint REFERENCES documents(id) ON DELETE SET NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS agreements_order_document_id_key ON agreements (order_document_id) WHERE order_document_id IS NOT NULL;
-COMMENT ON COLUMN agreements.order_document_id IS '発注書の個別契約のとき、その発注書（文書）。画面では発注書として見せ、契約の一覧には出さない';
+\set ON_ERROR_STOP on
+
+BEGIN;
+SET LOCAL search_path = v3, public;
+
+ALTER TABLE v3.agreements ADD COLUMN IF NOT EXISTS order_document_id bigint REFERENCES v3.documents(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS agreements_order_document_id_key ON v3.agreements (order_document_id) WHERE order_document_id IS NOT NULL;
+COMMENT ON COLUMN v3.agreements.order_document_id IS '発注書の個別契約のとき、その発注書（文書）。画面では発注書として見せ、契約の一覧には出さない';
+
+COMMIT;
