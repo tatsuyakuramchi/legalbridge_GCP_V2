@@ -40,3 +40,16 @@ test("補助文書に載っている条件は、その親を基本契約とみ�
   assert.equal(r.master?.id, 10);
   assert.equal(r.master?.no, "ARC-LIC-2026-0001");
 });
+
+test("rootOf：個別契約・解除合意は親、基本契約・単体契約は自分。移行の前後で同じ答え", async () => {
+  const { rootOf, rootAgreementJoin } = await import("./contracts.js");
+  const master = { id: 1, kind: "master" };
+  const sup = { id: 2, kind: "supplement" };
+  assert.equal(rootOf(master, null), master, "条件が基本契約を直接指す（移行前）");
+  assert.equal(rootOf(sup, master), master, "条件が個別契約を指す（移行後）");
+  assert.equal(rootOf({ id: 3, kind: "termination" }, master), master);
+  assert.equal(rootOf({ id: 4, kind: "standalone" }, null)?.id, 4, "単体契約は自分");
+  assert.equal(rootOf(sup, null), sup, "親の無い個別契約は自分（ずれとして図に出る）");
+  assert.equal(rootOf(null, null), null);
+  assert.match(rootAgreementJoin("c", "m"), /m_d\.id = c\.agreement_id[\s\S]*COALESCE\(m_d\.parent_id, m_d\.id\)/);
+});

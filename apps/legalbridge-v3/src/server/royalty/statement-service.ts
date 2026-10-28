@@ -17,6 +17,7 @@ import { floorRoyalty, roundRoyalty, taxOf } from "./rounding.js";
 /** 出版（紙・電子）の条件か。印税は実績ごとに切り捨てる（rounding.ts）。 */
 const isPublishingUsage = (usage: string | null | undefined) => usage === "pub_print" || usage === "pub_digital";
 import { allocateShares, loadDistribution, loadShares, pickShare, type ConditionShareRow } from "./shares.js";
+import { rootAgreementJoin } from "../conditions/contracts.js";
 
 export interface CalculationInput {
   conditionId: number;
@@ -218,7 +219,7 @@ export class RoyaltyStatementService {
                OR c.id = $2) AS same_series
          FROM condition_events e JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN conditions oc ON oc.id = e.out_condition_id
-         LEFT JOIN agreements oa ON oa.id = oc.agreement_id
+         ${rootAgreementJoin("oc", "oa")}
          LEFT JOIN parties op ON op.id = oc.counterparty_id
          LEFT JOIN works w ON w.id = c.work_id
          LEFT JOIN works ow ON ow.id = oc.work_id
@@ -825,7 +826,7 @@ export class RoyaltyStatementService {
               p.residency, p.treaty_rate_pct, p.treaty_docs_received_on
          FROM conditions c
          LEFT JOIN parties p ON p.id = c.counterparty_id
-         LEFT JOIN agreements a ON a.id = c.agreement_id
+         ${rootAgreementJoin("c", "a")}
         WHERE c.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
     if (!row) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);

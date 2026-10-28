@@ -40,6 +40,27 @@ export interface ConditionContracts {
   contractRef: string;
 }
 
+/**
+ * 契約の根（基本契約か単体契約）。個別契約・解除合意なら親、それ以外は自分。
+ * 条件が基本契約を直接指していても（段階2の移行前）、個別契約を指していても（移行後）同じ答えになる。
+ * 「この条件の基本契約」を出す所はこれ（か下の JOIN）を通す。c.agreement_id を直接読まない。
+ */
+export function rootOf<T extends { kind?: string | null }>(agreement: T | null, parent: T | null): T | null {
+  if (!agreement) return null;
+  const kind = agreement.kind ?? "master";
+  return (kind === "supplement" || kind === "termination") && parent ? parent : agreement;
+}
+
+/**
+ * rootOf の SQL。条件 <c> の根の契約を別名 <m> で引く（<m>_d は直接の契約）。
+ *   LEFT JOIN agreements m_d ON m_d.id = c.agreement_id
+ *   LEFT JOIN agreements m   ON m.id = 親（個別契約・解除合意）か自分
+ */
+export const rootAgreementJoin = (c: string, m: string) => `
+       LEFT JOIN agreements ${m}_d ON ${m}_d.id = ${c}.agreement_id
+       LEFT JOIN agreements ${m} ON ${m}.id = CASE WHEN COALESCE(${m}_d.kind, 'master') IN ('supplement', 'termination')
+                                                THEN COALESCE(${m}_d.parent_id, ${m}_d.id) ELSE ${m}_d.id END`;
+
 const agreementOf = (row: any): ContractAgreement | null => row?.id ? ({
   id: Number(row.id), no: str(row.agreement_no), title: String(row.title ?? ""),
   kind: String(row.kind ?? "master"), status: String(row.status ?? "")
@@ -93,7 +114,7 @@ export async function conditionContracts(q: Queryable, conditionId: number): Pro
   if (!c) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
   const agreement = agreementOf({ id: c.a_id, agreement_no: c.a_no, title: c.a_title, kind: c.a_kind, status: c.a_status });
   const parent = agreementOf({ id: c.p_id, agreement_no: c.p_no, title: c.p_title, kind: c.p_kind, status: c.p_status });
-  const master = agreement && (agreement.kind === "master" || agreement.kind === "standalone") ? agreement : parent ?? agreement;
+  const master = rootOf(agreement, parent);
   const terms = await termsDocumentsOf(q, conditionId);
   const used = terms.find((t) => t.used);
   return {

@@ -1,6 +1,7 @@
 import { type Queryable, dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { SETTLED_COLUMNS, readRows, toCsv } from "./settled-batch.js";
+import { rootAgreementJoin } from "../conditions/contracts.js";
 
 /**
  * 案件の現物を、遡及一括取込の CSV で書き出す。
@@ -88,7 +89,7 @@ export class SettledExportService {
            FROM conditions c
            LEFT JOIN parties p ON p.id = c.counterparty_id
            LEFT JOIN works   w ON w.id = c.work_id
-           LEFT JOIN agreements a ON a.id = c.agreement_id
+           ${rootAgreementJoin("c", "a")}
           WHERE c.status IN ('active', 'draft', 'scheduled')
             AND EXISTS (SELECT 1 FROM matter_links ml
                          WHERE ml.matter_id = $1 AND ml.target_type = 'condition'

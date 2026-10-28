@@ -6,6 +6,7 @@ import { forPartyKind, parsePaymentTerms, payOnFor } from "../conditions/payment
 import { basisOf, type UsageType } from "./usage-type.js";
 import { ppmToPct } from "./economics.js";
 import { roundRoyalty } from "./rounding.js";
+import { rootAgreementJoin } from "../conditions/contracts.js";
 
 /**
  * 許諾料の台帳（作品 › 利用許諾計算）。docs/royalty-ledger.md
@@ -468,7 +469,7 @@ export class RoyaltyLedgerService {
                 COALESCE(c.series_id, c.id) AS series
            FROM conditions c
            LEFT JOIN works w ON w.id = c.work_id
-           LEFT JOIN agreements a ON a.id = c.agreement_id
+           ${rootAgreementJoin("c", "a")}
            LEFT JOIN parties tp ON tp.id = c.target_party_id
           WHERE c.counterparty_id = $1 AND c.direction = 'in' AND c.kind = 'license'
             AND c.status IN ('active', 'scheduled') AND c.pricing_model IN ('revenue_rate', 'unit_rate')

@@ -159,8 +159,9 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   // parent_po_number（明細の行なら order_no）を使うこと。
   { names: ["CONTRACT_NO", "DOC_NO", "ORDER_NO", "documentNumber", "文書番号", "契約書番号", "発注番号"],
     get: (c) => c.document?.number },
+  // 締結日は準拠する契約（基本契約。無ければ条件の契約そのもの）のもの。個別契約の行の締結日ではない。
   { names: ["SIGN_DATE", "CONTRACT_DATE", "契約締結日"],
-    get: (c) => c.agreement?.executedOn ?? c.document?.issuedOn },
+    get: (c) => (master(c) ?? c.agreement)?.executedOn ?? c.document?.issuedOn },
   // 発行日・発注日はその書類を出した日。合意の締結日ではない。
   { names: ["documentDate", "発行日", "発注日", "order_date", "ORDER_DATE", "issue_date", "date"],
     get: (c) => c.document?.issuedOn, noSuffix: ["date", "issue_date", "order_date"] },

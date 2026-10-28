@@ -14,6 +14,7 @@ import { MatterCommunicationService } from "../matters/communication-service.js"
 import { DocumentIssueService } from "./issue-service.js";
 import { DocumentRepository, type DocumentSummary } from "./repository.js";
 import type { PdfRenderer } from "./pdf-renderer.js";
+import { rootAgreementJoin } from "../conditions/contracts.js";
 
 /**
  * 発注書の一括作成。
@@ -762,7 +763,7 @@ export class DocumentBatchService {
            JOIN conditions c ON c.id = dc.condition_id
            JOIN parties p ON p.id = c.counterparty_id
            LEFT JOIN works w ON w.id = c.work_id
-           LEFT JOIN agreements a ON a.id = c.agreement_id
+           ${rootAgreementJoin("c", "a")}
            JOIN document_template_versions v ON v.id = d.template_version_id
            JOIN document_templates t ON t.id = v.template_id
           WHERE t.template_key = ANY($1::text[])
