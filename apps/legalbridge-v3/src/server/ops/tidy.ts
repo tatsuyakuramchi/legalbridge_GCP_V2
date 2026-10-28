@@ -343,7 +343,7 @@ export function buildTidy(input: TidyInput): TidyTree {
 
   const dealNode = (root: MapNode): TidyNode => {
     const n = agreementNode(root, "deal", issues, map);
-    if (root.primary) n.detail = [n.detail, "既定"].filter(Boolean).join("・");
+    if (root.primary) n.detail = [n.detail, "最新"].filter(Boolean).join("・");
     for (const sc of input.successions.filter((x) => x.agreementId === root.id && x.state !== "reverted")) {
       n.detail = [n.detail, sc.state === "pending"
         ? `承継予定 → ${sc.to.name}（${sc.effectiveOn} から）`

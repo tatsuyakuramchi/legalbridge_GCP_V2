@@ -157,7 +157,7 @@ export function LicenseSetForm(
               || String(a.counterparty?.id ?? "") === preset.counterpartyId)
             .map((a) => ({ value: String(a.id), label: a.title,
                            hint: [a.agreementNo, a.counterparty?.name].filter(Boolean).join("／") })),
-          hint: "条件書の基本契約名・計算書の契約番号はここから出る" },
+          hint: "この束は、選んだ基本契約の下の個別契約（条件書）になる。条件書の基本契約名・計算書の契約番号はここから出る" },
         { name: "termStart", label: "許諾開始", type: "date" },
         { name: "termEnd", label: "許諾終了", type: "date", hint: "空なら期間の定めなし" },
         // 自動更新（A-039）。更新した回数は持たず、終了日・単位・今日から数える。

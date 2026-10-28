@@ -231,7 +231,7 @@ export function DocumentRegister(
                                       title="この文書を基本契約にします。以後の発注書・個別契約はこの下に入ります"
                                       onClick={() => void register(d, "master")}>基本契約</button>
                               <button className="btn btn-sm" disabled={readOnly || busy === d.id || (sameParty(d) && !masters.length)}
-                                      title={sameParty(d) && !masters.length ? "この取引先に基本契約がありません。先に基本契約を登録してください" : "基本契約の下の個別契約にします。載っている条件明細は基本契約に載ります"}
+                                      title={sameParty(d) && !masters.length ? "この取引先に基本契約がありません。先に基本契約を登録してください" : "基本契約の下の個別契約にします。載っている条件明細はその個別契約のものになります"}
                                       onClick={() => void register(d, "supplement")}>個別契約</button>
                               {sameParty(d) && masters.length > 1 && (
                                 <select value={parentOf[d.id] ?? String(masters[0].id)} disabled={readOnly} style={{ maxWidth: 220 }}
@@ -385,7 +385,7 @@ function FixForm(
       <div className="row" style={{ gridColumn: "1 / -1", gap: 8 }}>
         <button className="btn primary btn-sm" disabled={busy || (needsParent && !!agreement && !parentId) || (!!agreement && !title.trim()) || (!!document && !docTitle.trim())}
                 onClick={() => void save()}>{busy ? "保存しています…" : "保存する"}</button>
-        <span className="faint">番号・ファイルはそのまま。締結日は上の図の「編集」で入れます（入れると締結済み・既定になります）</span>
+        <span className="faint">番号・ファイルはそのまま。締結日は上の図の「編集」で入れます（入れると締結済みになります）</span>
       </div>
     </div>
   );

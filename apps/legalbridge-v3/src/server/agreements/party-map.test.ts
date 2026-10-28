@@ -49,7 +49,7 @@ test("種別の無い基本契約・親を持つ基本契約はずれ", () => {
   assert.deepEqual(codes, ["master_with_parent:2", "no_domain:1"]);
 });
 
-test("同じ種別・方向の生きた基本契約が2本あれば、新しい方を既定にして古い方をずれに出す", () => {
+test("同じ種別・方向に生きた基本契約が何本あってもずれにしない。新しい方を初期値（primary）にする", () => {
   const map = buildPartyMap(party, [
     a({ id: 1, executedOn: "2020-04-01" }),
     a({ id: 2, executedOn: "2024-04-01" }),
@@ -59,7 +59,7 @@ test("同じ種別・方向の生きた基本契約が2本あれば、新しい�
   ]);
   const primary = map.roots.filter((r) => r.primary).map((r) => r.id).sort();
   assert.deepEqual(primary, [2, 4]);
-  assert.deepEqual(map.issues.map((i) => `${i.code}:${i.agreementId}`), ["duplicate_master:1"]);
+  assert.deepEqual(map.issues, [], "基本契約が複数あるのはふつうの形");
 });
 
 test("既定は基本契約だけ。単体契約しか無ければ既定なし。未締結も既定にしない", () => {
