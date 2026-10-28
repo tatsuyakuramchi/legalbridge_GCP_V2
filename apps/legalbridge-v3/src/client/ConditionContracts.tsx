@@ -57,7 +57,7 @@ export function ConditionContracts({ conditionId, onOpen, onChanged }: {
     <div className="panel">
       <div className="panel-hd">
         <h2>契約の紐づけ</h2>
-        <span className="faint">基本契約と個別契約（条件書）。計算書の「契約番号」は両方の番号、発注書・条件書の基本契約欄は基本契約の番号</span>
+        <span className="faint">条件明細を持つのは個別契約（条件書・発注書）か単体契約で、基本契約はその親。計算書の「契約番号」は両方の番号、発注書・条件書の基本契約欄は基本契約の番号</span>
       </div>
       <div className="panel-bd stack" style={{ gap: 10 }}>
         {error && <div className="alert">{error}</div>}
@@ -72,7 +72,7 @@ export function ConditionContracts({ conditionId, onOpen, onChanged }: {
         <div className="stack" style={{ gap: 4 }}>
           <div className="row" style={{ gap: 8 }}>
             <b>基本契約</b>
-            <span className="faint">この条件が明細として載っている契約</span>
+            <span className="faint">この条件の個別契約の親（単体契約ならその契約）。条件が基本契約を直接指していれば「個別契約待ち」で、条件書・発注書を決定すると個別契約に移る</span>
             <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={busy} onClick={() => setPickMaster(!pickMaster)}>
               {pickMaster ? "やめる" : c.master ? "付け替える" : "選ぶ"}
             </button>
@@ -87,7 +87,7 @@ export function ConditionContracts({ conditionId, onOpen, onChanged }: {
             </div>
           ) : <span className="faint">どの基本契約にも載っていません。基本契約が無い単発の許諾なら空のままで構いません。</span>}
           {viaSupplement && (
-            <span className="faint">条件は補助文書 {c.agreement!.no ?? `#${c.agreement!.id}`}（{c.agreement!.title}）に載っています。基本契約はその親です。</span>
+            <span className="faint">条件は個別契約 {c.agreement!.no ?? `#${c.agreement!.id}`}（{c.agreement!.title}）のものです。基本契約はその親です。付け替えは個別契約の親を変えます（取引先⇔基本契約）。</span>
           )}
           {pickMaster && (
             <div className="picker">

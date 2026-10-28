@@ -40,6 +40,8 @@ export interface ConditionSummary {
   work: WorkRef | null;
   /** 載っている契約。条件は契約の明細であって、それ自体が契約書ではない。 */
   agreement: { id: number; agreementNo: string | null; title: string } | null;
+  /** 基本契約（agreement が個別契約のとき、その親）。基本契約・単体契約を直接指していれば null。 */
+  master?: { id: number; agreementNo: string | null; title: string } | null;
   currency: string;
   pricingModel: PricingModel;
   /** 百万分率。表示は ratePpm / 10000 で % になる。 */

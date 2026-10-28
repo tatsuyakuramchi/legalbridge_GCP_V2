@@ -5,7 +5,7 @@ import type { MapAgreement, MapNode, PartyMap } from "../agreements/party-map.js
 
 const agreement = (id: number, over: Partial<MapAgreement> = {}): MapAgreement => ({
   id, agreementNo: `ARC-${id}`, title: `契約${id}`, kind: "master", domain: "license", direction: "in",
-  status: "executed", parentId: null, executedOn: "2026-10-08", terminatedOn: null,
+  status: "executed", parentId: null, executedOn: "2026-10-08", terminatedOn: null, orderDocumentId: null,
   counterparty: { id: 1, name: "脇屋", merged: false }, parentResolvedPartyId: null, parentKind: null,
   conditionCount: 0, documentCount: 0, ...over
 });
@@ -52,7 +52,7 @@ test("型 1：基本契約の下に個別契約、その下に条件・実績・
 test("型 2：独立契約は条件を直接持つ。基本契約の無い発注書も 1 取引", () => {
   const map = emptyMap({
     roots: [root(200, { kind: "standalone" })],
-    orders: [{ id: 300, documentNo: "PO-1", title: "発注書", status: "issued", issuedOn: null, imported: false, masterId: null,
+    orders: [{ id: 300, documentNo: "PO-1", title: "発注書", status: "issued", issuedOn: null, imported: false, masterId: null, agreementId: null,
                conditions: [{ id: 7, conditionNo: "CL-7", name: "条件7" }] }]
   });
   const tree = buildTidy(input({ map, conditions: [cond(6, { agreementId: 200 }), cond(7, { holderDocumentId: 300, workId: 11 })] }));

@@ -5,7 +5,7 @@ import { DomainError } from "../core/errors.js";
 import { baseDocumentNumber } from "../documents/numbering.js";
 
 /**
- * 条件書を決定したとき、合意を自動で起こす（合意の生まれ方 ②）。
+ * 条件書を決定したとき、合意を自動で起こす（合意の生まれ方 ②）。発注書は order-agreement.ts。
  *
  * 個別利用許諾条件書・出版条件書は、条件明細が先にあって紙が後。
  * 相手と結ぶ契約そのものなので、決定した瞬間に合意の器を立てる。
@@ -151,12 +151,12 @@ export async function ensureAgreementForTerms(
     payeeId ? "UPDATE documents SET agreement_id = $2 WHERE id = $1"
             : "UPDATE documents SET agreement_id = $2 WHERE id = $1 AND agreement_id IS NULL",
     [input.documentId, agreementId]);
-  // 条件の合意は空のものだけ埋める。補助文書のときは親（基本契約）のままにする
-  // （条件は基本契約の明細であって、覚書の明細ではない）。受取人宛ては触らない。
-  const linked = kind === "standalone" && !payeeId
+  // 条件明細はこの器（個別契約・単体契約）のものにする。契約なしのものと、親の基本契約を
+  // 直接指しているもの（個別契約待ち）だけ。別の契約に載っているものは動かさない。受取人宛ては触らない。
+  const linked = !payeeId
     ? await client.query(
-        "UPDATE conditions SET agreement_id = $2 WHERE id = ANY($1::bigint[]) AND agreement_id IS NULL RETURNING id",
-        [input.conditionIds, agreementId])
+        "UPDATE conditions SET agreement_id = $2 WHERE id = ANY($1::bigint[]) AND (agreement_id IS NULL OR agreement_id = $3) RETURNING id",
+        [input.conditionIds, agreementId, parentId])
     : { rowCount: 0 };
 
   await recordAudit(client, {

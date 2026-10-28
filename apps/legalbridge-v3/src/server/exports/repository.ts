@@ -2,6 +2,7 @@ import type { Transactable } from "../core/db.js";
 import { dateStr } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { majorUnits, percent, toCsv, type Column } from "./csv.js";
+import { rootAgreementJoin } from "../conditions/contracts.js";
 
 /**
  * 一覧の全件出力。
@@ -42,7 +43,8 @@ export class ExportRepository {
         const r = await this.database.query(
           `SELECT c.condition_no, c.name, c.direction, c.kind, c.status,
                   p.name AS party, p.kind AS party_kind, w.title AS work, wp.name AS part,
-                  a.agreement_no, c.currency, c.pricing_model, c.rate_ppm,
+                  a.agreement_no, CASE WHEN m.id <> a.id THEN m.agreement_no END AS master_no,
+                  c.currency, c.pricing_model, c.rate_ppm,
                   c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
                   c.term_start, c.term_end, c.tax_category, c.payment_terms, c.cycle,
                   c.exclusivity, c.sublicensable, c.legacy_id
@@ -51,6 +53,7 @@ export class ExportRepository {
              LEFT JOIN works w ON w.id = c.work_id
              LEFT JOIN work_parts wp ON wp.id = c.work_part_id
              LEFT JOIN agreements a ON a.id = c.agreement_id
+             ${rootAgreementJoin("c", "m")}
             ORDER BY c.condition_no NULLS LAST, c.id`);
         return {
           rows: r.rows,
@@ -65,6 +68,7 @@ export class ExportRepository {
             { header: "作品", value: (x: any) => x.work },
             { header: "パート", value: (x: any) => x.part },
             { header: "合意番号", value: (x: any) => x.agreement_no },
+            { header: "基本契約番号", value: (x: any) => x.master_no },
             { header: "通貨", value: (x: any) => x.currency },
             { header: "計算方式", value: (x: any) => x.pricing_model },
             { header: "料率(%)", value: (x: any) => percent(x.rate_ppm) },

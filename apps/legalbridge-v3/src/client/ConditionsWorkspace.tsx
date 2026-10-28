@@ -369,7 +369,8 @@ export function ConditionsWorkspace(
                     <td className="faint md-list-extra">
                       {row.agreement
                         ? <><span className="code">{row.agreement.agreementNo ?? `#${row.agreement.id}`}</span>
-                            <div>{row.agreement.title}</div></>
+                            <div>{row.agreement.title}</div>
+                            {row.master && <div>基本契約 <span className="code">{row.master.agreementNo ?? `#${row.master.id}`}</span></div>}</>
                         : "契約に載っていません"}
                     </td>
                     {/* 単価×数量の条件は定額が空なので「—」しか出ていなかった。

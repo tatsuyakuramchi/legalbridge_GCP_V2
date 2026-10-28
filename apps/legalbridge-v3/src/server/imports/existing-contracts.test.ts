@@ -34,6 +34,8 @@ const db = (o: Options = {}) => new FakeDatabase((text, params) => {
   }
   if (text.includes("INSERT INTO documents")) return [{ id: 9026 }];
   if (text.includes("SELECT COALESCE(max(line_no), 0) AS n")) return [{ n: 0 }];
+  // 条件書の器（個別契約）。番号は条件書の番号（使われていない）。
+  if (text.includes("INSERT INTO agreements")) return [{ id: 7000 + Number(String(params[0]).slice(-2)) }];
   return undefined;
 });
 
@@ -93,8 +95,12 @@ test("登録：基本契約は外部番号のまま 1 回だけ作り、条件�
     [d.created[0].agreementNo, d.created[0].kind, d.created[0].domain, d.created[0].direction, d.created[0].status, d.created[0].executedOn],
     ["ATT-2026-00069", "master", "license", "in", "executed", "2026-09-24"]);
 
+  // 条件書ごとに器（個別契約）を立て、条件明細はその器のものに（基本契約は個別契約を持つ）。
+  const terms = fake.all("INSERT INTO agreements").map((q) => q.params);
+  assert.deepEqual(terms.map((p) => [p[0], p[3], p[4]]), [["ARC-PUBT-2026-0026", 700, "2026-09-24"], ["ARC-PUBT-2026-0012", 700, "2026-09-24"]],
+    "番号は条件書の番号、親は基本契約");
   const hang = fake.all("UPDATE conditions SET agreement_id");
-  assert.deepEqual(hang.map((q) => q.params), [[[111, 112], 700], [[121], 700]]);
+  assert.deepEqual(hang.map((q) => q.params), [[[111, 112], 7026, 700], [[121], 7012, 700]]);
 
   const insert = fake.find("INSERT INTO documents")!;
   assert.equal(insert.params[0], "ARC-PUBT-2026-0026", "外部番号のまま（採番しない）");
@@ -102,8 +108,9 @@ test("登録：基本契約は外部番号のまま 1 回だけ作り、条件�
   assert.equal(JSON.parse(String(insert.params[2])).documentKind, "利用許諾契約書", "条件書として扱う種別");
   assert.equal(insert.params[3], "2026-09-24");
 
-  const reuse = fake.find("UPDATE documents")!;
-  assert.deepEqual(reuse.params.slice(0, 2), [9012, 700], "番号だけの条件書を基本契約の下に置く");
+  const reuse = fake.find("UPDATE documents\n")!;
+  assert.deepEqual(reuse.params.slice(0, 2), [9012, 700], "番号だけの条件書を基本契約の下に置く（器が立つと器に付け替わる）");
+  assert.deepEqual(fake.all("UPDATE documents SET agreement_id = $2 WHERE id = $1").map((q) => q.params), [[9026, 7026], [9012, 7012]]);
 
   const links = fake.all("INSERT INTO document_conditions").map((q) => q.params.slice(0, 2));
   assert.deepEqual(links, [[9026, 111], [9026, 112], [9012, 121]]);

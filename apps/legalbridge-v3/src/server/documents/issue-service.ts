@@ -1,6 +1,7 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { isAutoInLieuTerms } from "../conditions/royalty-in-lieu.js";
 import { ensureAgreementForTerms } from "../agreements/auto.js";
+import { ensureAgreementForOrder } from "../agreements/order-agreement.js";
 import { inContractRef } from "../royalty/in-contract.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
@@ -562,11 +563,21 @@ export class DocumentIssueService {
           revision: Boolean(int(row.supersedes_id))
         }, actor);
 
+        // 発注書は基本契約の下の個別契約（基本契約が無ければ単体契約）。決定した瞬間に器を立て、
+        // 載せた条件明細はその器のものになる（基本契約は条件明細ではなく個別契約を持つ）。
+        const order = (template.templateKey === "purchase_order" || template.templateKey === "intl_purchase_order")
+          ? await ensureAgreementForOrder(client, {
+              documentId, documentNo, conditionIds,
+              title: str((row.manual_inputs as Record<string, unknown> | null)?.title) ?? `${template.label} ${documentNo}`
+            }, actor)
+          : null;
+
         await recordAudit(client, {
           actor, action: "document.issue", targetType: "document", targetId: documentId,
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
                     ...(printedNo !== documentNo ? { printedNo } : {}),
                     ...(auto ? { agreement: auto } : {}),
+                    ...(order ? { orderAgreement: order } : {}),
                     ...(versionId !== Number(row.template_version_id)
                       ? { templateVersionWas: Number(row.template_version_id), templateVersion: versionId } : {}),
                     ...(settled.created.length ? { createdConditions: settled.created } : {}),

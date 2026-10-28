@@ -156,8 +156,12 @@ export class ExistingContractsImportService {
         master = { id: earlier ?? 0, create: earlier === undefined || earlier < 0,
                    title: text(row, "基本契約名") || DEFAULT_MASTER_TITLE };
       }
-      // 条件が別の基本契約に載っていれば止める（黙って付け替えない）。
-      const other = conditions.filter((c) => c.agreementId !== null && master.id > 0 && c.agreementId !== master.id);
+      // 条件が別の基本契約に載っていれば止める（黙って付け替えない）。この基本契約の下の個別契約に
+      // 載っているもの（前の登録で立てた器）は構わない。
+      const under = master.id > 0 && conditions.some((c) => c.agreementId !== null && c.agreementId !== master.id)
+        ? new Set(((await client.query("SELECT id FROM agreements WHERE parent_id = $1", [master.id])).rows as Array<{ id: number }>).map((x) => Number(x.id)))
+        : new Set<number>();
+      const other = conditions.filter((c) => c.agreementId !== null && master.id > 0 && c.agreementId !== master.id && !under.has(c.agreementId));
       if (other.length) {
         throw new DomainError("VALIDATION",
           `条件 ${other.map((c) => c.conditionNo ?? `#${c.id}`).join("・")} は別の契約（#${other[0].agreementId}）に載っています。契約明細で外してから`);
@@ -209,11 +213,6 @@ export class ExistingContractsImportService {
       return await inTransaction(this.database, async (client) => {
         const masterId = plan.masterNo ? plan.master.id : null;
         const conditionIds = plan.conditions.map((c) => c.id);
-        if (masterId) {
-          await client.query(
-            "UPDATE conditions SET agreement_id = $2, updated_at = now() WHERE id = ANY($1::bigint[]) AND agreement_id IS DISTINCT FROM $2",
-            [conditionIds, masterId]);
-        }
 
         let documentId: number;
         if (plan.terms.create) {
@@ -259,9 +258,37 @@ export class ExistingContractsImportService {
               [documentId, id, lineNo]);
           }
         }
+        // 条件書は基本契約の下の個別契約。器を立て（番号＝条件書の番号。使われていれば 基本契約番号-Snn）、
+        // 文書と条件明細を器のものにする（基本契約は個別契約を持ち、条件明細は個別契約が持つ）。
+        let termsAgreementId: number | null = null;
+        if (masterId) {
+          const have = (await client.query(
+            `SELECT a.id FROM documents d JOIN agreements a ON a.id = d.agreement_id
+              WHERE d.id = $1 AND COALESCE(a.kind, 'master') = 'supplement' AND a.parent_id = $2`, [documentId, masterId])).rows[0] as { id: number } | undefined;
+          if (have) termsAgreementId = Number(have.id);
+          else {
+            const taken = (await client.query("SELECT id FROM agreements WHERE lower(btrim(agreement_no)) = lower($1) LIMIT 1", [plan.termsNo])).rows[0];
+            let no = plan.termsNo;
+            if (taken) {
+              const n = Number(((await client.query(
+                "SELECT count(*)::int AS n FROM agreements WHERE parent_id = $1 AND kind = 'supplement'", [masterId])).rows[0] as { n: number }).n) + 1;
+              no = `${plan.masterNo}-S${String(n).padStart(2, "0")}`;
+            }
+            const ins = await client.query(
+              `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id, executed_on, effective_on)
+               VALUES ($1, $2, $3, 'in', 'executed', 'supplement', 'license', $4, $5::date, $5::date) RETURNING id`,
+              [no, plan.terms.title, plan.party.id, masterId, plan.signedOn]);
+            termsAgreementId = Number((ins.rows[0] as { id: number }).id);
+            await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1", [documentId, termsAgreementId]);
+          }
+          await client.query(
+            `UPDATE conditions SET agreement_id = $2, updated_at = now()
+              WHERE id = ANY($1::bigint[]) AND (agreement_id IS NULL OR agreement_id = $3 OR agreement_id = $2) AND agreement_id IS DISTINCT FROM $2`,
+            [conditionIds, termsAgreementId, masterId]);
+        }
         await recordAudit(client, {
           actor, action: "contracts.register_existing", targetType: "document", targetId: documentId,
-          detail: { documentNo: plan.termsNo, created: plan.terms.create, masterNo: plan.masterNo, masterId,
+          detail: { documentNo: plan.termsNo, created: plan.terms.create, masterNo: plan.masterNo, masterId, termsAgreementId,
                     workId: plan.work.id, partyId: plan.party.id, conditionIds }
         });
         return { documentId };
