@@ -118,6 +118,8 @@ export class AgreementService {
       const r = await this.database.query(
         `${HEAD}
           WHERE ($1 = '' OR a.title ILIKE $1 OR COALESCE(a.agreement_no,'') ILIKE $1 OR p.name ILIKE $1)
+            -- 発注書の個別契約（order-agreement.ts）は発注書として見せる。契約の一覧には出さない。
+            AND a.order_document_id IS NULL
             AND ($2::bigint IS NULL OR a.counterparty_id = $2
                  OR a.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $2))
             AND ($3::boolean = false OR a.status = 'executed')

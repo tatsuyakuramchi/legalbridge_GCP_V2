@@ -35,7 +35,7 @@ test("基本契約の無い条件書 → 単体契約を立て、文書と条件
   assert.ok(db.find("UPDATE documents SET agreement_id"));
 });
 
-test("基本契約の下の条件書 → 個別契約。番号は条件書の番号（訂正版の -R2 は除く）。条件は基本契約のまま", async () => {
+test("基本契約の下の条件書 → 個別契約。番号は条件書の番号（訂正版の -R2 は除く）。条件は個別契約のものになる", async () => {
   const db = new FakeDatabase((t) => {
     if (t.includes("FROM conditions c")) return [{ id: 7, counterparty_id: 5, direction: "out",
                                                    agreement_id: 3, agreement_kind: "master", work_title: null }];
@@ -49,7 +49,8 @@ test("基本契約の下の条件書 → 個別契約。番号は条件書の番
   assert.equal(r?.kind, "supplement");
   assert.equal(r?.agreementNo, "ARC-PUBT-2026-1019");
   assert.equal(r?.parentId, 3);
-  assert.equal(db.find("UPDATE conditions SET agreement_id"), undefined);
+  assert.deepEqual(db.find("UPDATE conditions SET agreement_id")!.params, [[7], 92, 3],
+    "契約なし・親の基本契約を直接指す（個別契約待ち）条件を、この個別契約のものにする");
 });
 
 test("条件書の番号が既に契約に使われていれば、親番号-S01 で採番する", async () => {

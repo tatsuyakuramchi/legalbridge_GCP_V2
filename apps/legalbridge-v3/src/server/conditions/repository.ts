@@ -7,6 +7,7 @@ import type {
 import { loadShares } from "../royalty/shares.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./settlement.js";
 import { isSettlementCycle, isSettlementMode } from "./settlement-mode.js";
+import { rootAgreementJoin } from "./contracts.js";
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
@@ -19,8 +20,9 @@ const SUMMARY_COLUMNS = `
      FROM condition_shares s JOIN parties sp ON sp.id = s.party_id WHERE s.condition_id = c.id) AS shares_label,
   c.target_party_id, tp.name AS target_party_name,
   w.id AS work_id, w.work_code, w.title AS work_title,
-  -- 条件は契約の明細。どの契約の行かは一覧でも見えないと、独立した書類に見える。
+  -- 条件が載っている契約（個別契約・単体契約）と、その親の基本契約。どの契約の行かは一覧でも見えないと、独立した書類に見える。
   ag.id AS agreement_id, ag.agreement_no, ag.title AS agreement_title,
+  mg.id AS master_id, mg.agreement_no AS master_no, mg.title AS master_title,
   -- 決着（実績・割当・支払済み・完了扱い）。一覧で「支払済み」を畳むため。
   ${SETTLEMENT_COLUMNS}`;
 
@@ -30,6 +32,7 @@ const SUMMARY_JOINS = `
   LEFT JOIN parties tp ON tp.id = c.target_party_id
   LEFT JOIN works   w ON w.id = c.work_id
   LEFT JOIN agreements ag ON ag.id = c.agreement_id
+  ${rootAgreementJoin("c", "mg")}
   ${SETTLEMENT_LATERAL_SQL}`;
 
 function mapSummary(row: Record<string, any>): ConditionSummary {
@@ -51,6 +54,10 @@ function mapSummary(row: Record<string, any>): ConditionSummary {
     agreement: row.agreement_id
       ? { id: Number(row.agreement_id), agreementNo: str(row.agreement_no),
           title: String(row.agreement_title ?? "") }
+      : null,
+    // 基本契約（個別契約の親）。条件が基本契約・単体契約を直接指していれば agreement と同じなので出さない。
+    master: row.master_id && Number(row.master_id) !== Number(row.agreement_id)
+      ? { id: Number(row.master_id), agreementNo: str(row.master_no), title: String(row.master_title ?? "") }
       : null,
     currency: String(row.currency ?? "JPY"),
     pricingModel: row.pricing_model,

@@ -854,7 +854,7 @@ function PromoteForm(
     setBusy(true);
     try {
       const r = await api.post<{ conditionsMoved: number }>(`/agreement-map/agreements/${a.id}/promote`, {});
-      onSaved(`${a.agreementNo ?? `#${a.id}`} を単体契約に戻しました（条件明細 ${r.conditionsMoved} 本を戻す）`);
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を単体契約に戻しました${r.conditionsMoved ? `（基本契約に直接載っていた条件明細 ${r.conditionsMoved} 本を戻しました）` : ""}`);
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
   }
