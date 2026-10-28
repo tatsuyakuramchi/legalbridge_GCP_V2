@@ -360,6 +360,9 @@ function FixForm(
               <option value="standalone">単体契約</option>
               <option value="document">文書だけ（NDA など）</option>
             </select>
+            {agreement.kind === "master" && kind !== "master" && (
+              <small className="faint">基本契約を別の契約・文書に置き換えるときは、上の図のこの基本契約の「基本契約を差し替える」から（下の個別契約・条件もまとめて移ります）</small>
+            )}
           </label>
           <label className="field"><span>種別{isRoot ? "（必須）" : ""}</span>
             <select value={domain} onChange={(e) => setDomain(e.target.value)}>
