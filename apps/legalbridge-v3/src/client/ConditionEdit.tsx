@@ -736,10 +736,18 @@ export function ConditionEdit(
               </small>
             </div>
           )}
+          {/* 初版の利用許諾料を委託報酬で払う利用許諾条件（A-106）：初回は発注書側で払う。ここは 2 版目以降の分。 */}
+          {kindNow === "license" && v.licenseFeeBasis === "in_lieu" && (
+            <div className="field wide">
+              <span>初回（初版）の支払</span>
+              <div>発注書の制作報酬に含む（検収書で支払。計算書の対象外）</div>
+              <small className="faint">下の支払条件は 2 版目以降・電子の分。出版等利用許諾条件書の支払時期と計算書の回に連動する</small>
+            </div>
+          )}
           <label className="field">
-            <span>支払条件</span>
+            <span>{kindNow === "license" && v.licenseFeeBasis === "in_lieu" ? "2 版目以降・電子の支払条件" : "支払条件"}</span>
             <input list="payment-terms-presets" value={v.paymentTerms}
-                   placeholder="月末締め翌月末払い など"
+                   placeholder={kindNow === "license" && v.licenseFeeBasis === "in_lieu" ? "刊行日を含む月の翌月末日 など" : "月末締め翌月末払い など"}
                    onChange={(e) => set("paymentTerms", e.target.value)} />
             <datalist id="payment-terms-presets">
               {PAYMENT_TERMS_PRESETS_JA.map((f) => <option key={f} value={f} />)}

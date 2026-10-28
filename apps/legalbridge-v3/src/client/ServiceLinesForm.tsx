@@ -139,6 +139,8 @@ export function ServiceLinesForm(
     [{ key: keySeq++, usageType: "pub_print", ratePct: "10", exclusivity: "" }, { key: keySeq++, usageType: "pub_digital", ratePct: "15", exclusivity: "" }]);
   /** 独占／非独占（A-098）。作る利用許諾条件すべての既定。料率の行で利用形態ごとに上書きできる。 */
   const [licExclusivity, setLicExclusivity] = useState<"" | "exclusive" | "non_exclusive">("");
+  /** 利用許諾料の支払条件（A-106）。in_lieu なら 2 版目以降の分（初版は発注書の制作報酬に含む）。 */
+  const [licPaymentTerms, setLicPaymentTerms] = useState("");
   const [inLieuPayOn, setInLieuPayOn] = useState("");
   const [fePrice, setFePrice] = useState("");
   const [feCopies, setFeCopies] = useState("");
@@ -412,6 +414,8 @@ export function ServiceLinesForm(
           creditFromWork, creditNotice: text(creditNotice) ?? null,
           // 独占／非独占（A-098）。
           exclusivity: licExclusivity || null,
+          // 利用許諾料の支払条件（A-106）。
+          paymentTerms: text(licPaymentTerms) ?? null,
           // 再許諾の可否（A-079）。
           sublicense,
           ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
@@ -718,6 +722,18 @@ export function ServiceLinesForm(
                   <label className="field"><span>非加算：2 版目以降（発行部数の %）</span>
                     <input inputMode="decimal" value={exemptLater} placeholder="1" onChange={(e) => setExemptLater(e.target.value)} />
                     <small className="faint">献本等。空なら非加算なし。初版の非加算とは別の欄</small></label>
+                  <div className="field wide">
+                    <span>利用許諾料の支払</span>
+                    <div className="stack" style={{ gap: 4 }}>
+                      <div><b>初回（初版）</b>：発注書の制作報酬に含む（検収書で支払。計算書の対象外）</div>
+                      <label className="row" style={{ gap: 8, alignItems: "center" }}>
+                        <b>2 版目以降・電子</b>
+                        <input style={{ flex: 1 }} value={licPaymentTerms} placeholder="刊行日を含む月の翌月末日 など"
+                               onChange={(e) => setLicPaymentTerms(e.target.value)} />
+                      </label>
+                    </div>
+                    <small className="faint">2 版目以降の文は利用許諾条件の支払条件に入り、出版等利用許諾条件書の支払時期と計算書の回に連動する。空なら条件書の既定（翌月末日）</small>
+                  </div>
                   <label className="field"><span>独占／非独占（利用許諾条件の既定）</span>
                     <select value={licExclusivity} onChange={(e) => setLicExclusivity(e.target.value as "" | "exclusive" | "non_exclusive")}>
                       <option value="">未設定（発注書の表に「独占性 未設定」と出る）</option>
