@@ -1,6 +1,6 @@
 # 条件明細の持ち主を正す（段階2の設計メモ）
 
-状態：§7 を決めて合意済み（2026-10-28）。段階1（表現の整理）は PR #324、PR-A（読み出しの統一）は PR #325 で入れた。PR-B はこのブランチ。
+状態：§7 を決めて合意済み（2026-10-28）。段階1（表現の整理）は PR #324、PR-A（読み出しの統一）は PR #325、PR-B（書き込み）は PR #326 で入れた。PR-C（移行）はこのブランチ。
 
 ## 1. いま何がずれているか
 
@@ -84,7 +84,11 @@
 
 ## 5. 移行（`infra/v3/190_condition_holder.sql`）
 
-列の追加は `infra/v3/189_order_agreements.sql`（`agreements.order_document_id`。PR-B で先に流す）。データの移し替えは 190（PR-C）。
+列の追加は `infra/v3/189_order_agreements.sql`（`agreements.order_document_id`。PR-B で先に流す）。データの移し替えは `190_condition_holder.sql`、戻すのは `190_condition_holder_rollback.sql`、前後の突き合わせは `diag/condition-holder-check.sql`。
+
+流す順：`diag/condition-holder-check.sql` の A（写し）→ `190_condition_holder.sql` → 同 B（0 行が正）・C。ローカル DB で乾式してから本番。
+移行で立てる器は 状態＝締結済み・締結日＝発注書の決定日（決定済みの発注書は取引として動いているため）。
+番号は発注書の本体番号。使われていれば発注書の番号、それも使われていれば `-O<文書id>`。
 
 1. 退避：`CREATE TABLE conditions_agreement_backup_189 AS SELECT id, agreement_id FROM conditions`（戻せるように）。
 2. ライセンス：基本契約を指す条件のうち、`supplement` の行に繋がった条件書（`documents.agreement_id = supplement` かつ `document_conditions`）に載っているもの → `agreement_id = その supplement`。
@@ -92,6 +96,8 @@
    - 1 枚の発注書の条件が 2 本の基本契約に割れているものは移さず、一覧に出す（人が決める）。
 4. 基本契約の無い発注書：条件が NULL で発注書の文書に載っているもの → 発注書ごとに `standalone` の行を立て（番号＝発注書の本体番号、`order_document_id`＝発注書）、条件と文書をそこへ。
 5. 残り（基本契約を指し、どの文書にも載らない）：そのまま（§4 の「個別契約待ち」。画面のずれに出る）。
+   条件が全部、別の契約（単体契約・個別契約）に載っている発注書（契約として登録された発注書＝「寄せる」の対象、条件書の条件を発注書にも載せたもの）も触らない。
+   一部だけ別の契約に載っている発注書・相手先が 1 つに決まらない発注書は `condition_holder_190_review` に出す。
 6. 検証：移行の前後で、決定済み文書ごとに 契約番号・基本契約番号・基本契約名・締結日・自動更新・通知期限 を `template-context` で計算して突き合わせる（差が 0 件であること）。計算書の契約番号（`in-contract.ts`）も同じ。
 7. 件数の突合：`conditions` の `agreement_id` が `master` を指す行数が、§4 の個別契約待ちだけになっていること。
 
