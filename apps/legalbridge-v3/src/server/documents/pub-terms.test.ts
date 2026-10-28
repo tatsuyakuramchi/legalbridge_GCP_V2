@@ -386,3 +386,16 @@ test("紙と電子で取り分が片方にしか無い作品は名指しで知�
   assert.equal(sharesMismatch(sharedContext().conditions).length, 0, "両方に同じ取り分なら何も言わない");
   assert.ok(pubTermsWarnings({ ...ctx, conditions: conds }).some((x) => /取り分があるのに/.test(x.message)));
 });
+
+
+test("A-107：電子の条件が無ければ、電子の集計期間と支払時期は「—」。欄に書いてあればそれ", () => {
+  const conds = context.conditions.filter((c: any) => c.usageType !== "pub_digital")
+    .map((c: any) => ({ ...c, usageType: "pub_print", paymentTerms: "都度、翌月末日までに支払う" }));
+  const ctx = { ...context, conditions: conds };
+  const patch = pubTermsPatch(ctx, {});
+  assert.equal(patch.digitalPeriod, "—");
+  assert.equal(patch.payDigital, "—");
+  assert.equal(patch.payPrint, "翌月末日");
+  const typed = pubTermsPatch(ctx, { "電子の支払時期": "10月末日" });
+  assert.equal(typed.payDigital, "10月末日", "欄に書いてあればそれ");
+});
