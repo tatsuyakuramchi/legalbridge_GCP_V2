@@ -81,6 +81,16 @@ const yen = (v: unknown) =>
  * 実績の日付のうちいちばん遅いもの。実績が 1 件なら（従来どおり）その実績。
  * 日付は ISO の文字列なので文字列比較で並ぶ。
  */
+/**
+ * 検収書の明細（今回検収する行）のいちばん遅い日付（A-119）。行が文脈に添えてあるときだけ。
+ * 頭書きの納品日・検収日は、実績ではなく紙に載る行から出す（行を直せば頭書きも変わる）。
+ */
+function latestLineDate(c: Ctx, field: string): string | undefined {
+  const lines = Array.isArray(c.inspectionLines) ? (c.inspectionLines as Ctx[]) : [];
+  const dates = lines.map((l) => l[field]).filter((d): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d));
+  return dates.length ? dates.reduce((a, b) => (b > a ? b : a)) : undefined;
+}
+
 function latestDate(c: Ctx, pick: (e: Ctx) => unknown, fallback?: unknown): unknown {
   const events = (Array.isArray(c.events) && c.events.length ? c.events : [c.event]).filter(Boolean) as Ctx[];
   const dates = events.map((e) => pick(e)).filter((d): d is string => typeof d === "string" && d !== "");
@@ -423,11 +433,11 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   // 2 回分をまとめた検収書の頭書きが「9/6 に役務完了・検収」と出ていた。
   { names: ["DELIVERY_DATE", "deliveredAt", "実納品日", "納品日", "delivered_on",
             "summaryDeliveryDate"],
-    get: (c) => latestDate(c, (e) => e.occurredOn) },
+    get: (c) => latestLineDate(c, "delivery_date") ?? latestDate(c, (e) => e.occurredOn) },
   { names: ["INSPECTION_DATE", "inspectionCompletedAt", "completionDate",
             "検収完了日", "検収日", "inspected_on", "完成日"],
     // 検収日は納品日と別の日になりうる。実績に入っていればそれを使う。
-    get: (c) => latestDate(c, (e) => e.inspectedOn ?? e.occurredOn) },
+    get: (c) => latestLineDate(c, "inspection_date") ?? latestDate(c, (e) => e.inspectedOn ?? e.occurredOn) },
   // 予定（支払日）が無い実績は、納品日からの既定（翌月末。個人は所定日）で出す（A-113）。
   // 予定を立てていない委託料の行の検収書で「お支払予定日」が空のまま出ていた。
   { names: ["PAYMENT_DATE", "paymentDueDate", "支払期日", "summaryPaymentDate"],

@@ -219,6 +219,8 @@ export const INSPECTION_COLUMNS: Column[] = [
   { name: "ordered_amount_ex_tax", label: "予定額（税抜）", type: "number", helpText: "発注時の金額。検収金額と違えば変更履歴に出る" },
   { name: "inspected_amount_ex_tax", label: "検収金額（税抜）", type: "number" },
   ...dateOrRange("delivery_date", "納品日"),
+  { name: "inspection_date", label: "検収日", type: "date", showWhen: notFolded,
+    helpText: "条件に繋がる行は実績の検収日（無ければ納品日）が入る。頭書きの検収日はこの列のいちばん遅い日" },
   ...dateOrRange("paid_date", "支払日"),
   { name: "inspection_status", label: "扱い", type: "select",
     options: [{ value: "now", label: "今回検収する" }, { value: "paid", label: "支払済み（前回まで）" }, { value: "skip", label: "対象外" }] },

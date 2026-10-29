@@ -1011,7 +1011,7 @@ test("画面で直した明細の発注番号は、いまの文脈で出し直�
   assert.equal((d.delivery_line_items as Array<Record<string, unknown>>)[0].order_no, "KEEP");
 });
 
-test("保存した明細行の役務提供期間・納品日が空なら、いまの実績（同じ条件）から埋める。人が入れた値は触らない", () => {
+test("保存した明細行の役務提供期間が空なら、いまの実績（同じ条件）から埋める。納品日は実績が正（A-119）。人が入れた期間は触らない", () => {
   const c = buildTemplateContext("inspection_certificate", ctx({
     conditions: [condition({ termStart: "2026-10-17", termEnd: "2026-10-18" })],
     events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-18", amount: 116000, serviceFrom: "2026-10-17", serviceTo: "2026-10-18" }]
@@ -1274,6 +1274,44 @@ test("A-118：検収書の件名は宣言に無くても項目として出る（
   const { withImpliedVariables } = await import("./binding.js");
   const vars = withImpliedVariables("inspection_certificate", [{ name: "DELIVERY_DATE" }]);
   assert.ok(vars.some((v) => v.name === "PROJECT_TITLE"));
-  assert.equal(withImpliedVariables("inspection_certificate", [{ name: "PROJECT_TITLE", label: "件名" }]).length, 1, "宣言にあれば足さない");
+  assert.equal(withImpliedVariables("inspection_certificate", [{ name: "PROJECT_TITLE", label: "件名" }]).filter((v) => v.name === "PROJECT_TITLE").length, 1, "宣言にあれば足さない");
   assert.equal(withImpliedVariables("purchase_order", []).length, 0, "発注書には足さない（宣言がある）");
+});
+
+
+test("A-119：検収書の頭書きの納品日・検収日は、今回検収する行のいちばん遅い日付。行を直せば頭書きも変わる", async () => {
+  const { withInspectionLines } = await import("./template-context.js");
+  const { resolveLegacyVariable } = await import("./legacy-variables.js");
+  const context = ctx({
+    conditions: [condition({ id: 1 }), { ...condition({ id: 2 }), name: "b" }],
+    events: [
+      { id: 11, conditionId: 1, occurredOn: "2029-06-25", amount: 100 },
+      { id: 12, conditionId: 2, occurredOn: "2026-10-07", inspectedOn: "2026-10-09", amount: 200 }
+    ]
+  });
+  // 行が無ければ従来どおり実績のいちばん遅い日付。
+  assert.equal(resolveLegacyVariable("DELIVERY_DATE", context), "2029-06-25");
+  // 手で足した行（条件に繋がらない）で日付を直せば、頭書きはその行の日付。対象外の行は見ない。
+  const manual = { delivery_line_items: [
+    { item_name: "a", amount_ex_tax: 100, inspected_amount_ex_tax: 100, delivery_date: "2026-10-05", inspection_date: "2026-10-06" },
+    { item_name: "b", amount_ex_tax: 200, inspected_amount_ex_tax: 200, delivery_date: "2026-10-07", inspection_date: "2026-10-09" },
+    { item_name: "skip", amount_ex_tax: 1, delivery_date: "2030-01-01", inspection_date: "2030-01-01", inspection_status: "skip" }
+  ] };
+  const withLines = withInspectionLines("inspection_certificate", context, manual);
+  assert.equal(resolveLegacyVariable("DELIVERY_DATE", withLines), "2026-10-07");
+  assert.equal(resolveLegacyVariable("INSPECTION_DATE", withLines), "2026-10-09");
+  // 発注書には添えない。
+  assert.equal((withInspectionLines("purchase_order", context, manual) as Record<string, unknown>).inspectionLines, undefined);
+});
+
+test("A-119：条件に繋がる行の納品日は実績が正。実績の日付を直せば保存した行も変わる", () => {
+  const c = buildTemplateContext("inspection_certificate", ctx({
+    conditions: [condition({ id: 1 })],
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-20", amount: 1 }]
+  }), {
+    delivery_line_items: [{ condition_id: 1, item_name: "x", spec: "x", amount_ex_tax: 1, inspected_amount_ex_tax: 1, tax_category: "taxable",
+                            delivery_date: "2029-06-25", inspection_date: "2029-06-25" }]
+  }) as Record<string, any>;
+  assert.equal(c.delivery_line_items[0].delivery_date, "2026-10-20");
+  assert.equal(c.delivery_line_items[0].inspection_date, "2026-10-20");
 });
