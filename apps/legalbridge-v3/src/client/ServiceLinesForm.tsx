@@ -2,13 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { searchWorks } from "./MatterAxis.js";
-import { RightsScopePicker } from "./RightsScopePicker.js";
-import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
+import { createCompanionDocument, inLieuCheck, licensePayload, LicenseTermsSection, newLicenseDraft,
+         type LicenseDraft, type LicMode } from "./LicenseTermsSection.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
 import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
-import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
-import { firstEditionBasisText, firstEditionFee, inLieuSpecialTerms, withinSixtyDays } from "../server/conditions/royalty-in-lieu.js";
 
 /**
  * 業務委託の明細を表で登録する（1 行＝条件明細 1 本）。
@@ -46,7 +44,7 @@ interface WorkOption { id: number; title: string }
 export interface ServiceLinesSeed {
   title?: string;
   ownership?: "orderer" | "contractor";
-  licMode?: "separate" | "included" | "free" | "in_lieu" | "none";
+  licMode?: LicMode;
   lines?: Array<Partial<Pick<Line, "name" | "spec" | "quantity" | "unit" | "unitPrice" | "deliveryDue" | "contractForm" | "ownership" | "workId">>>;
 }
 export interface ServiceLinesCreated {
@@ -123,54 +121,17 @@ export function ServiceLinesForm(
   const [termStart, setTermStart] = useState("");
   /** 業務期間の終了（空なら各行の納期）。初版の利用許諾料で払う発注は特約が業務期間と許諾期間を分けて書く（A-089）。 */
   const [termEnd, setTermEnd] = useState("");
-  /** 利用許諾の開始（空なら開始日）。 */
-  const [licTermStart, setLicTermStart] = useState("");
   const [lines, setLines] = useState<Line[]>(seed?.lines?.length ? seed.lines.map((l) => ({ ...blank(), ...l })) : [blank()]);
   const [paste, setPaste] = useState("");
   const [showPaste, setShowPaste] = useState(false);
   /** 「仕様・成果物」を広げて編集している行の key。表のセルは狭いので、長文は表の下の大きな欄で書く。 */
   const [specOpen, setSpecOpen] = useState<number | null>(null);
-  // 権利の扱い
-  const [licMode, setLicMode] = useState<"separate" | "included" | "free" | "in_lieu" | "none">(seed?.licMode ?? "included");
-  const [licUsage, setLicUsage] = useState("in_house");
-  // 初版の利用許諾料を報酬として払う（A-077）。見込みの本体価格・初版部数・料率（・非加算）で仮計算した額が
-  // 受注者帰属の行の金額。納品後 60 日以内に確定して検収書で払う。2 版目以降・電子の料率は利用形態ごと。
-  const [inLieuRates, setInLieuRates] = useState<Array<{ key: number; usageType: string; ratePct: string; exclusivity: "" | "exclusive" | "non_exclusive" }>>(
-    [{ key: keySeq++, usageType: "pub_print", ratePct: "10", exclusivity: "" }, { key: keySeq++, usageType: "pub_digital", ratePct: "15", exclusivity: "" }]);
-  /** 独占／非独占（A-098）。作る利用許諾条件すべての既定。料率の行で利用形態ごとに上書きできる。 */
-  const [licExclusivity, setLicExclusivity] = useState<"" | "exclusive" | "non_exclusive">("");
-  /** 利用許諾料の支払条件（A-106）。in_lieu なら 2 版目以降の分（初版は発注書の制作報酬に含む）。 */
-  const [licPaymentTerms, setLicPaymentTerms] = useState("");
-  const [inLieuPayOn, setInLieuPayOn] = useState("");
-  const [fePrice, setFePrice] = useState("");
-  const [feCopies, setFeCopies] = useState("");
-  const [feRate, setFeRate] = useState("10");
-  /** 初版の非加算部数（献本・見本等）。既定 0＝全部数。利用許諾料の算定方法の一部（製造代金とは別の整理）。 */
-  const [feExempt, setFeExempt] = useState("0");
-  /** 価格の基準（A-091）。"" は本体価格、supply は卸価格（再許諾先への供給価格）、receipts は受領額。 */
-  const [fePriceBasis, setFePriceBasis] = useState<"" | "supply" | "receipts">("");
-  const [confirmDays, setConfirmDays] = useState("45");
-  /**
-   * 利用許諾条件を載せる契約（出版基本契約）。業務委託の基本契約とは別に選ぶ：成果物を出版・
-   * 再許諾するときの利用許諾は、出版基本契約の個別契約として扱う。"" は業務委託の基本契約と同じ、
-   * "none" は契約に載せない。
-   */
-  const [licAgreementId, setLicAgreementId] = useState("");
-  // クレジット表記（A-076）。作品のクレジット表記（WorksWorkspace の履歴）を引用するか、この条件で文言を持つ。
-  const [creditFromWork, setCreditFromWork] = useState(true);
-  const [creditNotice, setCreditNotice] = useState("");
-  /** 引用する作品の今のクレジット表記（著作権表示／第三者権利）。作品が無い・未登録なら null。 */
-  const [workCredit, setWorkCredit] = useState<string | null>(null);
+  // 権利の扱い（A-120：欄は LicenseTermsSection。条件の登録（1 本）と同じもの）
+  const [lic, setLicDraft] = useState<LicenseDraft>(() => newLicenseDraft(seed?.licMode ?? "included"));
+  const setLic = (patch: Partial<LicenseDraft>) => setLicDraft((prev) => ({ ...prev, ...patch }));
+  const licMode = lic.mode;
   const licenseWorkId = [...new Set(lines.filter((l) => l.kind === "service" && (l.ownership || ownership) === "contractor")
     .map((l) => (l.workId === "" ? workId : l.workId === "none" ? "" : l.workId)).filter(Boolean))][0] ?? "";
-  useEffect(() => {
-    if (!licenseWorkId) { setWorkCredit(null); return; }
-    let alive = true;
-    api.get<{ current: { copyrightNotice: string; thirdPartyRights: string | null } | null }>(`/works/${licenseWorkId}/credits`)
-      .then((r) => { if (alive) setWorkCredit(r.current ? [r.current.copyrightNotice, r.current.thirdPartyRights].filter(Boolean).join("／") : null); })
-      .catch(() => { if (alive) setWorkCredit(null); });
-    return () => { alive = false; };
-  }, [licenseWorkId]);
   /** 作品ごとの構成要素（パート）。受注者帰属の行で選ぶ（A-078）。 */
   const [partsByWork, setPartsByWork] = useState<Record<string, Array<{ id: number; name: string; partRole: string }>>>({});
   const contractorWorkIds = [...new Set(lines.filter((l) => l.kind === "service" && (l.ownership || ownership) === "contractor")
@@ -183,23 +144,6 @@ export function ServiceLinesForm(
         .catch(() => setPartsByWork((p) => ({ ...p, [id]: [] })));
     }
   }, [contractorWorkIds]);
-  /** 文書に出るクレジット表記（引用なら作品の今の表記。無ければ手入力の文言）。 */
-  const creditText = creditFromWork ? (workCredit ?? creditNotice.trim()) : creditNotice.trim();
-  /** 2 版目以降の非加算（献本等。発行部数の %）。既定 1。 */
-  const [exemptLater, setExemptLater] = useState("1");
-  /**
-   * 併せて作る条件書（A-080）。出版なら出版等利用許諾条件書（作品追加の合意）、ゲームなら個別利用許諾条件書。
-   * 既存のひな形で、受注者帰属の行の利用許諾条件を載せた下書きを発注書とは別に起こす。選択式（空なら作らない）。
-   */
-  const [companion, setCompanion] = useState<"" | "pub_license_terms_v3" | "individual_license_terms_v4">("");
-  /** 再許諾の可否（A-079）。既定は可（都度合意）：自社出版だけの案件もこれで足り、後から再許諾が出ても個別出版条件書で進められる。 */
-  const [sublicense, setSublicense] = useState<"no" | "consent" | "covered">("consent");
-  const [showTermsPreview, setShowTermsPreview] = useState(false);
-  const [licRate, setLicRate] = useState("");
-  const [licFlat, setLicFlat] = useState("");
-  const [licTermEnd, setLicTermEnd] = useState("");
-  const [licRegions, setLicRegions] = useState("全世界");
-  const [licLanguages, setLicLanguages] = useState("全言語");
   // 準委任の時間精算（A-073）。契約形式が準委任のときだけ出す。委託料の行に付く。
   const [timeOn, setTimeOn] = useState(false);
   const [hoursIncluded, setHoursIncluded] = useState("");
@@ -238,25 +182,10 @@ export function ServiceLinesForm(
   // 初版の利用許諾料を報酬として払う（A-077）。仮計算額＝本体価格 ×（初版部数 − 非加算）× 率。
   // 表面・明細・特約で同じ額が出るので、受注者帰属の行の合計を仮計算額に合わせる（0 円の行にはしない）。
   const inLieu = hasContractor && licMode === "in_lieu";
-  const rowsTotal = useMemo(() => contractorLines.reduce((a, l) => a + amountOf(l), 0), [contractorLines]);
-  // 受領額基準（再許諾料の入金 × 料率）は部数を持たない。部数 1・非加算 0 として扱う。A-092
-  const firstEdition = fePriceBasis === "receipts"
-    ? { price: num(fePrice), copies: 1, ratePct: num(feRate), exemptCopies: 0, priceBasis: "receipts" as const }
-    : { price: num(fePrice), copies: Math.floor(num(feCopies)), ratePct: num(feRate),
-        exemptCopies: feExempt.trim() === "" ? 0 : Math.floor(num(feExempt)),
-        priceBasis: fePriceBasis || null };
-  const provisional = firstEditionFee(firstEdition);
-  const feOk = firstEdition.price > 0 && firstEdition.copies > 0 && firstEdition.ratePct > 0 && firstEdition.ratePct <= 100
-    && (firstEdition.exemptCopies ?? 0) >= 0 && (firstEdition.exemptCopies ?? 0) < firstEdition.copies;
-  const inLieuRatesOk = inLieuRates.length > 0
-    && inLieuRates.every((r) => r.usageType && num(r.ratePct) > 0 && num(r.ratePct) <= 100)
-    && new Set(inLieuRates.map((r) => r.usageType)).size === inLieuRates.length;
-  const confirmDaysOk = Number.isInteger(num(confirmDays)) && num(confirmDays) >= 1 && num(confirmDays) <= 60;
-  /** 支払期日が納期から 60 日を超えている行（取適法・フリーランス法）。納期の無い行は確かめない。 */
-  const sixtyDayOver = inLieu && inLieuPayOn
-    ? contractorLines.filter((l) => withinSixtyDays(l.deliveryDue || null, inLieuPayOn) === false) : [];
-  const inLieuReady = !inLieu || (feOk && provisional > 0 && rowsTotal === provisional && inLieuRatesOk && confirmDaysOk
-    && Boolean(inLieuPayOn) && contractorLines.every((l) => amountOf(l) > 0) && sixtyDayOver.length === 0 && payMode !== "periodic");
+  const deliverables = contractorLines.map((l) => ({ label: `${lines.indexOf(l) + 1} 行目`, name: l.name, amount: amountOf(l), deliveryDue: l.deliveryDue }));
+  const check = inLieuCheck(lic, deliverables);
+  const { provisional, rowsTotal, feOk } = check;
+  const inLieuReady = !inLieu || (check.ready && payMode !== "periodic");
   /** 仮計算額を受注者帰属の行に入れる（1 行ならその行、複数なら先頭の行に残りを入れる）。 */
   const fillProvisional = () => {
     if (!contractorLines.length || provisional <= 0) return;
@@ -276,23 +205,6 @@ export function ServiceLinesForm(
     if (soloKey === null || !feOk || provisional <= 0 || soloAmount === provisional) return;
     update(soloKey, { quantity: "1", unitPrice: String(provisional) });
   }, [soloKey, feOk, provisional, soloAmount]);
-  const termsPreview = inLieu ? inLieuSpecialTerms({
-    servicePeriod: { start: termStart || null, end: termEnd || contractorLines.map((l) => l.deliveryDue).filter(Boolean).sort().at(-1) || null },
-    licensePeriod: { start: licTermStart || termStart || null, end: licTermEnd || null },
-    deliverables: contractorLines.map((l) => ({ name: l.name || title, amount: amountOf(l) })),
-    firstEdition, provisionalAmount: rowsTotal || provisional,
-    confirmWithinDays: confirmDaysOk ? num(confirmDays) : null,
-    payOn: inLieuPayOn || null,
-    laterRates: inLieuRates.filter((r) => num(r.ratePct) > 0).map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct) })),
-    laterExemptPct: exemptLater.trim() === "" ? null : num(exemptLater),
-    masterAgreement: (() => {
-      const id = licAgreementId === "" ? agreementId : licAgreementId === "none" ? "" : licAgreementId;
-      const a = agreements.find((x) => String(x.id) === id);
-      return a ? { no: a.agreementNo, title: a.title } : null;
-    })(),
-    creditNotice: creditText || null,
-    sublicense
-  }) : "";
 
   const ready = Boolean(partyId) && title.trim() !== "" && serviceLines.length > 0
     && serviceLines.every((l) => l.name.trim() && num(l.unitPrice) >= 0)
@@ -310,14 +222,7 @@ export function ServiceLinesForm(
     payMode === "periodic" && !(periodFrom && periodTo) ? "定期払いの期間（開始・終了）" : null,
     timeSettled && !(num(hoursIncluded) > 0) ? "月間包括枠（時間）" : null,
     timeSettled && overageUnit.trim() === "" ? "超過単価" : null,
-    inLieu && !feOk ? "初版の算定の基礎（見込みの本体価格・初版部数・料率。非加算は部数より少なく）" : null,
-    inLieu && feOk && rowsTotal !== provisional ? `受注者帰属の行の金額の合計を仮計算額 ¥${yen(provisional)} に合わせる` : null,
-    inLieu && !inLieuRatesOk ? "2 版目以降・電子の料率（0 より大きく、重複なし）" : null,
-    inLieu && !confirmDaysOk ? "確定の期限（受領後 1〜60 日）" : null,
-    inLieu && !inLieuPayOn ? "支払期日" : null,
-    inLieu && contractorLines.some((l) => amountOf(l) <= 0) ? "受注者帰属の行の金額（仮計算額の配分。0 円にはしない）" : null,
-    inLieu && sixtyDayOver.length > 0
-      ? `支払期日が納期から 60 日を超えている行（${sixtyDayOver.map((l) => lines.indexOf(l) + 1).join("・")} 行目）` : null,
+    ...(inLieu ? check.missing : []),
     inLieu && payMode === "periodic" ? "支払方法（初版利用許諾料は定期払いにできない）" : null
   ].filter((m): m is string => Boolean(m));
 
@@ -366,10 +271,6 @@ export function ServiceLinesForm(
         const found = await findDupes();
         if (found.length) { setDupes(found); return; }
       }
-      const scopes = [
-        ...parseRegions(licRegions).map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
-        ...parseLanguages(licLanguages).map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
-      ];
       const posted = await api.post<ServiceLinesCreated>("/conditions/service-set", {
         title: title.trim(), counterpartyId: int(partyId), agreementId: int(agreementId) ?? null,
         matterId: int(preset?.matterId ?? "") ?? null, workId: int(workId) ?? null,
@@ -406,44 +307,14 @@ export function ServiceLinesForm(
           ...((l.ownership || ownership) === "contractor" && l.partId.startsWith("new:") ? { newPartRole: l.partId.slice(4) }
              : (l.ownership || ownership) === "contractor" && l.partId ? { workPartId: int(l.partId) ?? null } : {})
         })),
-        license: hasContractor ? {
-          mode: licMode, workId: int(workId) ?? null, usageType: licUsage,
-          // 出版基本契約。"" は送らない（業務委託の基本契約と同じ）、"none" は null（載せない）。
-          ...(licAgreementId === "" ? {} : { agreementId: licAgreementId === "none" ? null : int(licAgreementId) ?? null }),
-          // クレジット表記（A-076）。引用なら文書が作品の今の表記を差す（文言は控え）。
-          creditFromWork, creditNotice: text(creditNotice) ?? null,
-          // 独占／非独占（A-098）。
-          exclusivity: licExclusivity || null,
-          // 利用許諾料の支払条件（A-106）。
-          paymentTerms: text(licPaymentTerms) ?? null,
-          // 再許諾の可否（A-079）。
-          sublicense,
-          ratePct: licMode === "separate" && licRate.trim() ? num(licRate) : null,
-          flatAmount: licMode === "separate" && !licRate.trim() && licFlat.trim() ? Math.round(num(licFlat)) : null,
-          termStart: text(licTermStart) ?? text(termStart) ?? null, termEnd: text(licTermEnd) ?? null,
-          scopes: scopes.length ? scopes : undefined,
-          // 初版の利用許諾料を報酬として払う（A-077）。仮計算額と行の合計はサーバが突き合わせる。
-          ...(licMode === "in_lieu" ? {
-            rates: inLieuRates.map((r) => ({ usageType: r.usageType, ratePct: num(r.ratePct), exclusivity: r.exclusivity || null })),
-            firstEdition: { price: Math.round(firstEdition.price), copies: firstEdition.copies, ratePct: firstEdition.ratePct,
-                            exemptCopies: firstEdition.exemptCopies || null, priceBasis: fePriceBasis || null },
-            confirmWithinDays: num(confirmDays), payOn: text(inLieuPayOn) ?? null,
-            exemptLaterPct: exemptLater.trim() === "" ? null : num(exemptLater)
-          } : {})
-        } : null,
+        license: hasContractor ? licensePayload(lic, { workId, termStart }) : null,
         payment: { mode: payMode, periodicFrom: text(periodFrom) ?? null, periodicTo: text(periodTo) ?? null,
                    everyMonths: int(every) ?? 1 }
       });
       // 併せて作る条件書（A-080）。利用許諾条件を載せた下書きを先に起こす（発注書の特約が「その条件書に当たる」と書けるように）。
       const r: ServiceLinesCreated = { ...posted, companionDocument: null };
-      if (companion && posted.licenseConditions.length) {
-        const licAgreement = licAgreementId === "" ? int(agreementId) : licAgreementId === "none" ? undefined : int(licAgreementId);
-        const d = await api.post<{ id: number }>("/documents", {
-          templateKey: companion, conditionIds: posted.licenseConditions.map((c) => c.id),
-          matterId: int(preset?.matterId ?? "") ?? null, agreementId: licAgreement ?? null
-        }).catch(() => null);
-        r.companionDocument = d ? { id: d.id, templateKey: companion } : null;
-      }
+      r.companionDocument = await createCompanionDocument(lic, posted.licenseConditions.map((c) => c.id),
+                                                          { matterId: preset?.matterId, agreementId });
       onDone(r);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -641,183 +512,13 @@ export function ServiceLinesForm(
         </div>
 
         {hasContractor && (
-          <div className="note stack" style={{ gap: 8 }}>
-            <b>権利の扱い（帰属先が受注者の行がある）</b>
-            <span className="faint">受注者に権利が残る成果物は、当社は許諾を受けて使います。許諾の条件を作品 × 受託者の利用許諾条件（IN）として立て、発注書の「■ 利用許諾条件」に差し込みます。</span>
-            <div className="row" style={{ flexWrap: "wrap" }}>
-              {([["separate", "別途（許諾料を払う）"], ["included", "委託報酬に含む（推奨）"], ["free", "無償"],
-                 ["in_lieu", "初版の利用許諾料を報酬として払う（仮計算 → 納品後に確定）"], ["none", "条件を立てない（例外）"]] as const).map(([v, label]) => (
-                <button key={v} className="chip" aria-pressed={licMode === v} onClick={() => setLicMode(v)}>{label}</button>
-              ))}
-            </div>
-            {licMode === "in_lieu" && (
-              <div className="stack" style={{ gap: 8 }}>
-                <span className="faint">
-                  別途の制作報酬は払わず、<b>初版の出版に係る利用許諾料</b>を対価にします。発注時は見込みの本体価格・初版部数・料率で<b>仮計算</b>した額を
-                  受注者帰属の行（{contractorLines.map((l) => `${lines.indexOf(l) + 1} 行目`).join("・")}）の確定額にし、納品後 60 日以内に本体価格・部数を確定して検収書で払います
-                  （確定額が仮計算額を下回っても仮計算額＝減額にしない）。2 版目以降・電子は出版基本契約の個別契約による印税で、初版は計算書の対象外です。
-                  発注書には特約（下の文）が既定で入ります（文書の欄で直せます）。
-                </span>
-                <div className="form-grid">
-                  <label className="field"><span>価格の基準</span>
-                    <select value={fePriceBasis} onChange={(e) => setFePriceBasis(e.target.value as "" | "supply" | "receipts")}>
-                      <option value="">定価（本体価格）× 部数 × 料率</option>
-                      {fePriceBasis === "supply" && <option value="supply">卸価格（再許諾先への供給価格）※ 使わない</option>}
-                      <option value="receipts">受領した再許諾料 × 料率（部数は使わない）</option>
-                    </select>
-                    <small className="faint">自社出版（アークライト名・新紀元社名）も他社出版（KADOKAWA 等）も定価が基準。受領した再許諾料から分配するときだけ受領額。2 版目以降の式にも使う（A-101）</small></label>
-                  <label className="field"><span>{fePriceBasis === "supply" ? "見込み卸価格（税抜・円）" : fePriceBasis === "receipts" ? "見込みの再許諾料の受領額（税抜・円）" : "見込み本体価格（税抜・円）"}</span>
-                    <input inputMode="numeric" value={fePrice} placeholder={fePriceBasis === "receipts" ? "10000000" : "1000"} onChange={(e) => setFePrice(e.target.value)} /></label>
-                  {fePriceBasis !== "receipts" && <label className="field"><span>見込み初版部数</span>
-                    <input inputMode="numeric" value={feCopies} placeholder="3000" onChange={(e) => setFeCopies(e.target.value)} /></label>}
-                  <label className="field"><span>初版の料率（%）</span>
-                    <input inputMode="decimal" value={feRate} placeholder="10" onChange={(e) => setFeRate(e.target.value)} /></label>
-                  {fePriceBasis !== "receipts" && <label className="field"><span>初版の非加算部数（献本・見本等）</span>
-                    <input inputMode="numeric" value={feExempt} placeholder="0" onChange={(e) => setFeExempt(e.target.value)} />
-                    <small className="faint">既定 0（全部数）。入れると算定方法に「− ○部」が明記される（利用許諾料の算定方法の一部。製造委託の製造代金とは別の整理）</small></label>}
-                </div>
-                <div className="row" style={{ gap: 18, flexWrap: "wrap", alignItems: "center" }}>
-                  <span>仮計算額 <b>¥{yen(provisional)}</b>{feOk && <span className="faint">　{firstEditionBasisText(firstEdition).replace("算定の基礎（見込み）：", "＝ ")}</span>}</span>
-                  <span className={rowsTotal === provisional ? "faint" : "tag warn"}>受注者帰属の行の合計 ¥{yen(rowsTotal)}{rowsTotal !== provisional && feOk ? "（仮計算額と合っていません）" : ""}</span>
-                  {feOk && rowsTotal !== provisional && contractorLines.length > 1 && (
-                    <button type="button" className="btn btn-sm" onClick={fillProvisional}>仮計算額を先頭の受注者帰属の行に入れる</button>
-                  )}
-                  {feOk && contractorLines.length === 1 && (
-                    <span className="faint">行が 1 本なので、仮計算額がそのまま行の金額に入ります（数量 1 × 単価 ¥{yen(provisional)}）</span>
-                  )}
-                  {contractorLines.length > 1 && (
-                    <span className="faint">内訳：{contractorLines.map((l) => `${l.name || title} ¥${yen(amountOf(l))}`).join("、")}</span>
-                  )}
-                </div>
-                <div className="stack" style={{ gap: 4 }}>
-                  <b style={{ fontSize: "0.9em" }}>2 版目以降・電子の料率（利用形態ごとに利用許諾条件が 1 本立ちます）</b>
-                  {inLieuRates.map((r, i) => (
-                    <div key={r.key} className="row" style={{ gap: 6, alignItems: "center" }}>
-                      <select value={r.usageType} aria-label={`${i + 1} 番目の利用形態`}
-                              onChange={(e) => setInLieuRates((p) => p.map((x) => (x.key === r.key ? { ...x, usageType: e.target.value } : x)))}>
-                        {CONDITION_USAGE_TYPES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-                      </select>
-                      <input style={{ width: 80, textAlign: "right" }} inputMode="decimal" value={r.ratePct} aria-label={`${i + 1} 番目の料率`}
-                             onChange={(e) => setInLieuRates((p) => p.map((x) => (x.key === r.key ? { ...x, ratePct: e.target.value } : x)))} />
-                      <span>%</span>
-                      <select value={r.exclusivity} aria-label={`${i + 1} 番目の独占性`}
-                              onChange={(e) => setInLieuRates((p) => p.map((x) => (x.key === r.key ? { ...x, exclusivity: e.target.value as "" | "exclusive" | "non_exclusive" } : x)))}>
-                        <option value="">独占性：共通の設定</option>
-                        <option value="exclusive">独占</option>
-                        <option value="non_exclusive">非独占</option>
-                      </select>
-                      <span className="faint">{r.usageType === "pub_print" ? "本体価格 × 発行部数 × 料率" : r.usageType === "pub_digital" ? "当社の受領額 × 料率" : "当社の受領額 × 料率"}</span>
-                      {inLieuRates.length > 1 && <button className="linky" onClick={() => setInLieuRates((p) => p.filter((x) => x.key !== r.key))} aria-label="料率の行を外す">✕</button>}
-                    </div>
-                  ))}
-                  <div><button className="btn btn-sm" onClick={() => setInLieuRates((p) => [...p, { key: keySeq++, usageType: "in_house", ratePct: "", exclusivity: "" }])}>利用形態を足す</button></div>
-                  <small className="faint">紙と電子の両方を出すなら両方の行を残す（利用形態ごとに利用許諾条件が 1 本立ち、発注書の表に 1 行ずつ出る）。電子を出さないなら電子の行を ✕ で外す</small>
-                </div>
-                <div className="form-grid">
-                  <label className="field"><span>確定の期限（受領後 ○ 日）</span>
-                    <input inputMode="numeric" value={confirmDays} placeholder="45" onChange={(e) => setConfirmDays(e.target.value)} />
-                    <small className="faint">本体価格・初版部数を書面で通知し乙の確認を得る期限。60 日以内</small></label>
-                  <label className="field"><span>支払期日</span>
-                    <input type="date" value={inLieuPayOn} onChange={(e) => setInLieuPayOn(e.target.value)} />
-                    <small className="faint">成果物の受領（納期）から 60 日以内。各行の予定明細の支払日になり、発注書の支払期日に出る。期限までに確定しなければ仮計算額を払い、差額は確定後 30 日以内</small></label>
-                  <label className="field"><span>非加算：2 版目以降（発行部数の %）</span>
-                    <input inputMode="decimal" value={exemptLater} placeholder="1" onChange={(e) => setExemptLater(e.target.value)} />
-                    <small className="faint">献本等。空なら非加算なし。初版の非加算とは別の欄</small></label>
-                  <div className="field wide">
-                    <span>利用許諾料の支払</span>
-                    <div className="stack" style={{ gap: 4 }}>
-                      <div><b>初回（初版）</b>：発注書の制作報酬に含む（検収書で支払。計算書の対象外）</div>
-                      <label className="row" style={{ gap: 8, alignItems: "center" }}>
-                        <b>2 版目以降・電子</b>
-                        <input style={{ flex: 1 }} value={licPaymentTerms} placeholder="刊行日を含む月の翌月末日 など"
-                               onChange={(e) => setLicPaymentTerms(e.target.value)} />
-                      </label>
-                    </div>
-                    <small className="faint">2 版目以降の文は利用許諾条件の支払条件に入り、出版等利用許諾条件書の支払時期と計算書の回に連動する。空なら条件書の既定（翌月末日）</small>
-                  </div>
-                  <label className="field"><span>独占／非独占（利用許諾条件の既定）</span>
-                    <select value={licExclusivity} onChange={(e) => setLicExclusivity(e.target.value as "" | "exclusive" | "non_exclusive")}>
-                      <option value="">未設定（発注書の表に「独占性 未設定」と出る）</option>
-                      <option value="exclusive">独占</option>
-                      <option value="non_exclusive">非独占</option>
-                    </select>
-                    <small className="faint">発注書の利用許諾条件の表と条件書の独占区分に出る。紙と電子で違うなら上の料率の行で上書き</small></label>
-                  <label className="field"><span>再許諾（第三者への翻訳出版等）</span>
-                    <select value={sublicense} onChange={(e) => setSublicense(e.target.value as "no" | "consent" | "covered")}>
-                      <option value="consent">可（都度合意）：乙の事前の書面同意を得て行う（既定）</option>
-                      <option value="covered">可（包括同意）：本特約で同意済み。翻訳出版が前提の案件だけ</option>
-                      <option value="no">不可：自社出版のみ</option>
-                    </select>
-                    <small className="faint">可否と同意の要否はここで決め、再許諾先・料率・範囲は個別出版条件書で。再許諾の料率を先に決めるなら上の料率に「翻訳版再許諾」を足す</small></label>
-                </div>
-                {sixtyDayOver.length > 0 && (
-                  <div className="alert">支払期日 {inLieuPayOn} が納期から 60 日を超えている行があります（{sixtyDayOver.map((l) => `${lines.indexOf(l) + 1} 行目 ${l.deliveryDue}`).join("・")}）。取適法・フリーランス法の支払期日に合わせてください</div>
-                )}
-                <div className="stack" style={{ gap: 4 }}>
-                  <button className="linky" type="button" onClick={() => setShowTermsPreview((v) => !v)}>
-                    {showTermsPreview ? "特約の文を閉じる" : "発注書に入る特約の文を見る"}
-                  </button>
-                  {showTermsPreview && <textarea rows={14} readOnly value={termsPreview} aria-label="発注書に入る特約の文" />}
-                </div>
-              </div>
-            )}
-            {licMode !== "none" && (
-              <div className="form-grid">
-                <label className="field"><span>利用許諾条件を載せる契約（出版基本契約）</span>
-                  <select value={licAgreementId} onChange={(e) => setLicAgreementId(e.target.value)}>
-                    <option value="">{agreementId ? "業務委託の基本契約と同じ" : "（業務委託と同じ：契約に載せない）"}</option>
-                    {agreementOptions.filter((a) => String(a.id) !== agreementId).map((a) =>
-                      <option key={a.id} value={a.id}>{[a.agreementNo, a.title].filter(Boolean).join(" ")}</option>)}
-                    {agreementId && <option value="none">契約に載せない（個別出版条件書のみ）</option>}
-                  </select>
-                  <small className="faint">成果物を出版・再許諾するときの利用許諾は、業務委託の基本契約とは別に、出版基本契約の個別契約として扱えます。発注書の利用許諾条件の表と特約に「その個別契約」と出ます</small></label>
-                <label className="field"><span>条件書も併せて作る（任意）</span>
-                  <select value={companion} onChange={(e) => setCompanion(e.target.value as typeof companion)}>
-                    <option value="">作らない（発注書だけ）</option>
-                    <option value="pub_license_terms_v3">出版等利用許諾条件書（作品追加の合意）{inLieuRates.some((r) => r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
-                    <option value="individual_license_terms_v4">個別利用許諾条件書（ゲーム）{licMode !== "in_lieu" || inLieuRates.every((r) => !r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
-                  </select>
-                  <small className="faint">コアロジックを生む利用許諾条件が付く発注では、利用許諾条件を載せた条件書の下書きを発注書とは別に起こします（既存のひな形）。発注書の特約に「本発注書の利用許諾の条件はこの条件書に当たる」と入ります</small></label>
-                <div className="field wide stack" style={{ gap: 4 }}>
-                  <span>クレジット表記（成果物を利用するときの表示）</span>
-                  <div className="row" style={{ flexWrap: "wrap" }}>
-                    <button type="button" className="chip" aria-pressed={creditFromWork} onClick={() => setCreditFromWork(true)}>作品のクレジット表記を引用</button>
-                    <button type="button" className="chip" aria-pressed={!creditFromWork} onClick={() => setCreditFromWork(false)}>この条件で文言を定める</button>
-                  </div>
-                  {creditFromWork ? (
-                    <small className="faint">
-                      {licenseWorkId
-                        ? (workCredit
-                          ? <>作品の今の表記：<b>{workCredit}</b>（文書を作る日時点の表記を差します。重版で変われば作品側で履歴を足してください）</>
-                          : <>作品にクレジット表記が登録されていません。作品の画面で登録するか、下に文言を入れると控えとして使います。</>)
-                        : "受注者帰属の行に作品を選ぶと、その作品のクレジット表記を引用できます"}
-                    </small>
-                  ) : null}
-                  <textarea rows={2} value={creditNotice} aria-label="クレジット表記の文言"
-                            placeholder={creditFromWork ? "（作品に表記が無いときの控え）© 2026 山田太郎／イラスト：山田太郎" : "© 2026 山田太郎／イラスト：山田太郎"}
-                            onChange={(e) => setCreditNotice(e.target.value)} />
-                  <small className="faint">発注書の利用許諾条件の下と特約に出ます。</small>
-                </div>
-                {licMode !== "in_lieu" && (
-                <label className="field"><span>利用形態</span>
-                  <select value={licUsage} onChange={(e) => setLicUsage(e.target.value)}>
-                    {CONDITION_USAGE_TYPES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-                  </select></label>)}
-                {licMode === "separate" && (<>
-                  <label className="field"><span>料率（%）</span><input value={licRate} placeholder="8" onChange={(e) => setLicRate(e.target.value)} /></label>
-                  <label className="field"><span>または 定額（税抜）</span><input value={licFlat} placeholder="料率が空のとき" onChange={(e) => setLicFlat(e.target.value)} /></label>
-                </>)}
-                <label className="field"><span>許諾開始（空なら開始日）</span><input type="date" value={licTermStart} onChange={(e) => setLicTermStart(e.target.value)} /></label>
-                <label className="field"><span>許諾終了（空なら期間の定めなし）</span><input type="date" value={licTermEnd} onChange={(e) => setLicTermEnd(e.target.value)} /></label>
-                <div className="field"><span>地域（許諾範囲）</span><RightsScopePicker kind="region" value={licRegions} onChange={setLicRegions} /></div>
-                <div className="field"><span>言語（許諾範囲）</span><RightsScopePicker kind="language" value={licLanguages} onChange={setLicLanguages} /></div>
-                {contractorWithoutWork.length > 0
-                  ? <div className="alert">受注者帰属の行（{contractorWithoutWork.map((l) => lines.indexOf(l) + 1).join("・")} 行目）に作品を選んでください（利用許諾条件は作品にぶら下がります）</div>
-                  : licenseWorks.length > 0 && <div className="faint">利用許諾条件を立てる作品：{licenseWorks.map(workName).join("、")}（作品ごとに 1 本。同じ作品・利用形態の条件が既にあればそれを使う）</div>}
-              </div>
-            )}
-            {licMode === "none" && <span className="faint">発注書に許諾条項が出ず、台帳からも権利が見えません。</span>}
-          </div>
+          <LicenseTermsSection draft={lic} onChange={setLic} deliverables={deliverables} workId={licenseWorkId}
+                               agreements={agreementOptions} baseAgreementId={agreementId} title={title}
+                               servicePeriod={{ start: termStart, end: termEnd }}
+                               onFillProvisional={fillProvisional} periodicChosen={inLieu && payMode === "periodic"}
+                               workNote={contractorWithoutWork.length > 0
+                                 ? <div className="alert">受注者帰属の行（{contractorWithoutWork.map((l) => lines.indexOf(l) + 1).join("・")} 行目）に作品を選んでください（利用許諾条件は作品にぶら下がります）</div>
+                                 : licenseWorks.length > 0 && <div className="faint">利用許諾条件を立てる作品：{licenseWorks.map(workName).join("、")}（作品ごとに 1 本。同じ作品・利用形態の条件が既にあればそれを使う）</div>} />
         )}
 
         {hasQuasi && (

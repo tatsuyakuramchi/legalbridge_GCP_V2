@@ -58,6 +58,13 @@ export interface CreateFormProps {
    * その相手の契約を当てる、など）に使う。set で他の項目を書き換えられる。
    */
   onValues?: (values: Record<string, string>, set: (name: string, value: string) => void) => void;
+  /**
+   * 送り先を差し替える（A-120）。渡すと path へ送らず、これの結果を onDone に渡す。
+   * 条件の登録で受注者帰属を選んだとき、委託料と利用許諾条件をまとめて作る口へ送るのに使う。
+   */
+  submitOverride?: (values: Record<string, string>) => Promise<unknown> | null;
+  /** 欄の外で決まる「まだ足りないもの」。あれば登録ボタンを押せない（理由を横に出す）。 */
+  blockers?: string[];
 }
 
 export function CreateForm(props: CreateFormProps) {
@@ -71,7 +78,8 @@ export function CreateForm(props: CreateFormProps) {
   async function submit(extra: Record<string, unknown> = {}) {
     setBusy(true); setError(null);
     try {
-      const result = await api.post<any>(props.path, { ...props.toPayload(values), ...extra });
+      const custom = props.submitOverride?.(values) ?? null;
+      const result = custom ? await custom : await api.post<any>(props.path, { ...props.toPayload(values), ...extra });
       props.onDone(result);
     } catch (e) {
       const err = e as ApiError;
@@ -166,7 +174,7 @@ export function CreateForm(props: CreateFormProps) {
         )}
 
         <div className="row">
-          <button className="btn primary" disabled={busy || missing.length > 0}
+          <button className="btn primary" disabled={busy || missing.length > 0 || (props.blockers?.length ?? 0) > 0}
             onClick={() => submit()}>
             {busy ? "登録中…" : props.submitLabel ?? "登録する"}
           </button>
@@ -176,6 +184,9 @@ export function CreateForm(props: CreateFormProps) {
               {missing.map((f) => (typeof f.label === "function" ? f.label(values) : f.label)).join("・")}
               {" が未入力です"}
             </span>
+          )}
+          {missing.length === 0 && (props.blockers?.length ?? 0) > 0 && (
+            <span className="tag warn">あと：{props.blockers!.join("・")}</span>
           )}
         </div>
       </div>
