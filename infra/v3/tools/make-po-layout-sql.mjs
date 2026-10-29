@@ -78,12 +78,13 @@ const TARGETS = [
        (strpos(v.html_source, '{{> ') > 0) AS terms_partial,`
   },
   {
-    no: "170", key: "inspection_certificate", label: "検収書",
+    // r2（189）：頭書きの契約種別を、今回検収する行の契約形式を重複なく並べたもの（請負／準委任）にする（A-118）。
+    no: "189", key: "inspection_certificate", label: "検収書",
     body: "templates/inspection_certificate_v2_body.html", css: "templates/inspection_certificate_v2_css.txt",
-    mark: 'data-layout="ins-v2-2026-10"', family: 'data-layout="ins-v2',
-    out: "170_inspection_layout_v2.sql",
+    mark: 'data-layout="ins-v2-2026-10r2"', family: 'data-layout="ins-v2',
+    out: "189_inspection_layout_v2_r2.sql",
     termsPlaceholder: null,
-    title: "検収書のひな形 v2：役務提供完了通知書（169）と同じ段構成に",
+    title: "検収書のひな形 v2 r2：頭書きの契約種別を明細の契約形式から（請負・準委任）",
     intro: `--   役務提供完了通知書（169）と同じ考え方で検収書を組み直す。
 --   宛先と当社を横に並べ、件名〜基本契約を「■ 検収概要」の表に、明細は 1 本の表（No.・品目・
 --   発注番号・納品日・数量・単価・金額）、合計は表の下に右寄せの小さな欄（小計・消費税・実費・

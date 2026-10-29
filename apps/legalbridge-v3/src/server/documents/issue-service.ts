@@ -6,7 +6,7 @@ import { inContractRef } from "../royalty/in-contract.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { MatterLinkService } from "../matters/link-service.js";
-import { assertComplete, bindVariables, type BindingResult } from "./binding.js";
+import { withImpliedVariables, assertComplete, bindVariables, type BindingResult } from "./binding.js";
 import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
@@ -158,7 +158,7 @@ export class DocumentIssueService {
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
       // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
       // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
-      const first = bindVariables(template.variables, context, manual,
+      const first = bindVariables(withImpliedVariables(template.templateKey, template.variables), context, manual,
         { templateKey: template.templateKey });
       // 文案（条件から組み立てた地域・言語・許諾範囲）。1回目の束縛で埋まった
       // 値を見るので、人が欄で直していればそちらで組み直る。本文もこれを差すので、
@@ -166,7 +166,7 @@ export class DocumentIssueService {
       const suggested = suggestionsFor(template.templateKey, context, withCoversKey(first.values, manual));
       const computed = buildTemplateContext(template.templateKey, context, manual,
         { ...suggested, ...first.values });
-      const binding = bindVariables(template.variables, context, manual,
+      const binding = bindVariables(withImpliedVariables(template.templateKey, template.variables), context, manual,
         { templateKey: template.templateKey, computed, suggested });
       // 候補は文脈そのものから作る。ひな形の宣言には依らない。
       const partials = await this.repository.partials();
@@ -186,7 +186,7 @@ export class DocumentIssueService {
         candidates: buildCandidates(context, template.templateKey),
         // 宣言済みの項目は binding.missing が別に報告する。重ねない。
         warnings: [
-          ...documentWarnings(template.htmlSource, values, template.variables.map((v) => v.name)),
+          ...documentWarnings(template.htmlSource, values, withImpliedVariables(template.templateKey, template.variables).map((v) => v.name)),
           // ひな形ごとの警告（出版の条件書：一覧に載せられない条件明細）。
           ...templateWarnings(template.templateKey, context, manual)
         ],
@@ -481,7 +481,7 @@ export class DocumentIssueService {
         const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。
-        const first = bindVariables(template.variables, context, manual,
+        const first = bindVariables(withImpliedVariables(template.templateKey, template.variables), context, manual,
           { templateKey: template.templateKey });
         const suggested = suggestionsFor(template.templateKey, context, withCoversKey(first.values, manual));
         // 検収書の減額ガード（A-100）：初版の利用許諾料で払う行は仮計算額が下限。下回る行があれば決定しない。
@@ -494,7 +494,7 @@ export class DocumentIssueService {
         }
         const computed = buildTemplateContext(template.templateKey, context, manual,
           { ...suggested, ...first.values });
-        const binding = bindVariables(template.variables, context, manual,
+        const binding = bindVariables(withImpliedVariables(template.templateKey, template.variables), context, manual,
           { templateKey: template.templateKey, computed, suggested });
         assertComplete(binding);
 
