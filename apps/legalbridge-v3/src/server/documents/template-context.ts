@@ -457,8 +457,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 役務提供期間。本文の「役務提供期間」がここを読む。実績に無ければ条件の契約期間（両端あるとき）。
         // ただし成果物納品の行（請負など）は期間ではなく納品日を出す（A-114）。契約期間を持つ請負の行が
         // 「2026/05/15〜2031/05/14」と期間で刷られ、納品日が読めなかった。
-        term_start: event.serviceFrom ?? (serviceRow && condition.termStart && condition.termEnd ? condition.termStart : null),
-        term_end: event.serviceTo ?? (serviceRow && condition.termStart && condition.termEnd ? condition.termEnd : null),
+        term_start: serviceRow ? (event.serviceFrom ?? (condition.termStart && condition.termEnd ? condition.termStart : null)) : null,
+        term_end: serviceRow ? (event.serviceTo ?? (condition.termStart && condition.termEnd ? condition.termEnd : null)) : null,
         delivery_date: event.occurredOn ?? null,
         inspection_date: event.inspectedOn ?? event.occurredOn ?? null,
         payment_date: payOnFor(event, condition) ?? event.schedule?.dueOn ?? null,
