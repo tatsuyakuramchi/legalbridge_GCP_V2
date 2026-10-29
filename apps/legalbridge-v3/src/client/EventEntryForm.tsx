@@ -228,8 +228,9 @@ export function ServiceEntry(
         deliverable: settlement ? d.name : (firstLine(d.spec) || d.name),
         contractForm: line?.contractForm ?? d.contractForm ?? "",
         // 役務提供期間。回に決めてあればそれ、無ければ条件の契約期間。通知書・検収書の「役務提供期間」に出る。
-        serviceFrom: line?.serviceFrom ?? d.termStart ?? "",
-        serviceTo: line?.serviceTo ?? d.termEnd ?? ""
+        // 請負・売買（成果物納品）の行には入れない（A-116）。入れると検収書の納品日が契約期間で刷られる。
+        serviceFrom: line?.serviceFrom ?? (/請負|売買/.test(String(line?.contractForm ?? d.contractForm ?? "")) ? "" : d.termStart ?? ""),
+        serviceTo: line?.serviceTo ?? (/請負|売買/.test(String(line?.contractForm ?? d.contractForm ?? "")) ? "" : d.termEnd ?? "")
       }));
     }).catch((e: ApiError) => setError(e.message));
   }, [conditionId]);

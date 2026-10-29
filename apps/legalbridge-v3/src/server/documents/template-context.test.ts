@@ -1221,3 +1221,13 @@ test("A-115：行を直していても、請負の行に残った古い役務提
   assert.equal(line.term_start, null); assert.equal(line.term_end, null);
   assert.equal(line.delivery_date, "2026-10-31");
 });
+
+
+test("A-116：請負の行は、実績に役務提供期間が入っていても納品日で出る", () => {
+  const lines = deliveryLinesFrom({
+    conditions: [{ id: 1, name: "原稿制作", contractForm: "請負", counterparty: { kind: "corporate" }, flatAmount: 844190 }],
+    events: [{ conditionId: 1, occurredOn: "2026-10-07", amount: 844190, serviceFrom: "2026-05-15", serviceTo: "2031-05-14" }]
+  });
+  assert.equal(lines[0]!.term_start, null); assert.equal(lines[0]!.term_end, null);
+  assert.equal(lines[0]!.delivery_date, "2026-10-07");
+});
