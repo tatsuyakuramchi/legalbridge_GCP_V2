@@ -163,6 +163,11 @@ export function withImpliedVariables(templateKey: string, variables: TemplateVar
   if (/inspection_certificate|acceptance_certificate|delivery_note|service_completion/.test(templateKey)) {
     implied.push({ name: "PROJECT_TITLE", label: "件名", group: "I. 検収概要",
                    helpText: "空なら案件の件名（この文書に載っている作品に絞る）。検収書だけ別の件名にするならここで上書き" });
+    // 頭書きの納品日・検収日（A-119）。明細の行から自動で入る。別の日にするならここで上書き。
+    implied.push({ name: "DELIVERY_DATE", label: "納品日（頭書き）", type: "date", group: "I. 検収概要",
+                   helpText: "自動は今回検収する行のいちばん遅い納品日。別の日を書くならここで上書き" });
+    implied.push({ name: "INSPECTION_DATE", label: "検収日（頭書き）", type: "date", group: "I. 検収概要",
+                   helpText: "自動は今回検収する行のいちばん遅い検収日（実績の検収日。無ければ納品日）。別の日を書くならここで上書き" });
   }
   const names = new Set(variables.map((v) => v.name));
   return [...variables, ...implied.filter((v) => !names.has(v.name))];

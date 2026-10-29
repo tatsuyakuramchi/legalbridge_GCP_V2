@@ -11,7 +11,7 @@ import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { renderDocumentHtml } from "./render.js";
-import { inLieuInspectionViolations,
+import { inLieuInspectionViolations, withInspectionLines,
   buildTemplateContext, INTL_INSPECTION_KEY, isStatementTemplate, seedLines, suggestionsFor, templateWarnings
 } from "./template-context.js";
 
@@ -153,8 +153,9 @@ export class DocumentIssueService {
             WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
           [input.documentId])).rows[0] as any)?.request_id);
       }
-      const context = await this.buildContext(this.database, input, await this.previewNumber(input, manual), null, ownerStaffId,
-                                              chosenRefs(manual));
+      const context = withInspectionLines(template.templateKey,
+        await this.buildContext(this.database, input, await this.previewNumber(input, manual), null, ownerStaffId,
+                                chosenRefs(manual)), manual);
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
       // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
       // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
@@ -468,7 +469,7 @@ export class DocumentIssueService {
               `SELECT request_id FROM intake_request_links
                 WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
               [documentId])).rows[0] as any)?.request_id);
-        const context = await this.buildContext(client, {
+        const context = withInspectionLines(template.templateKey, await this.buildContext(client, {
           templateKey: template.templateKey,
           conditionIds,
           matterId: row.matter_id,
@@ -477,7 +478,7 @@ export class DocumentIssueService {
           eventIds: extra.eventIds ?? [],
           royalty: extra.royalty ?? null
         }, printedNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId),
-           chosenRefs(settled.manual));
+           chosenRefs(settled.manual)), settled.manual as Record<string, unknown>);
         const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。

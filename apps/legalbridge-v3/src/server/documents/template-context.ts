@@ -751,11 +751,16 @@ function conditionTotalFor(context: Ctx): number {
   return target.reduce((sum, c) => sum + num(c.flatAmount), 0);
 }
 
-function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate: number) {
+/**
+ * 検収書の明細の行（保存した行といまの実績を突き合わせたあとの形）。
+ * 頭書きの納品日・検収日もこの行から出すので（A-119）、束縛の前にも同じ行が要る。
+ */
+export function inspectionLines(context: Ctx, manual: Record<string, unknown>): Row[] {
   const saved = rows(manual.delivery_line_items);
   const lines = saved.length ? saved : deliveryLinesFrom(context);
-  // 下書きに保存した行は、作ったときの日付のまま。実績を選ぶ前に作った行（条件から組んだ行）は
-  // 役務提供期間・納品日が空なので、いまの実績（同じ条件の行）から埋める。人が入れた値は触らない。
+  // 下書きに保存した行は、作ったときの日付のまま。条件に繋がる行の納品日・検収日は実績が正なので、
+  // いまの実績（同じ条件の行）から出し直す（A-119。実績の日付を直しても行が古い日付のままだった）。
+  // 役務提供期間は人が手で入れた値を残す。
   if (saved.length && (context.events ?? []).length) {
     const fresh = deliveryLinesFrom(context);
     const used = new Set<number>();
@@ -765,7 +770,7 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
       if (idx < 0) continue;
       used.add(idx);
       for (const k of ["delivery_date", "inspection_date"] as const) {
-        if ((line[k] === null || line[k] === undefined || line[k] === "") && fresh[idx][k]) line[k] = fresh[idx][k];
+        if (fresh[idx][k]) line[k] = fresh[idx][k];
       }
       // 役務提供期間は条件（契約形式・契約期間）と実績から引き直す（A-115）。行を直していても、請負の行に
       // 古い期間が残ったままだと納品日が出ない。人が期間を手で入れた行（実績に無い値）はそのまま。
@@ -785,6 +790,21 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
       if (!already) lines.push(f);
     }
   }
+  return lines;
+}
+
+/**
+ * 検収書なら、頭書きの納品日・検収日の元になる「今回検収する行」を文脈に添える（A-119）。
+ * 頭書きは実績のいちばん遅い日付から出していて、明細の行の日付を見ていなかった。
+ */
+export function withInspectionLines(templateKey: string, context: Ctx, manual: Record<string, unknown>): Ctx {
+  if (!INSPECTION_KEYS.has(templateKey)) return context;
+  const now = inspectionLines(context, manual).filter((l) => String(l.inspection_status ?? "now") === "now");
+  return now.length ? { ...context, inspectionLines: now } : context;
+}
+
+function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate: number) {
+  const lines = inspectionLines(context, manual);
   // 手数料・経費は画面が条件から種を作って手入力として送ってくる。欄そのものが無い
   // （画面を通らない API や試算）ときだけ、条件から組む。空の配列は「消した」なので尊重する。
   const otherFees = manual.other_fees === undefined
