@@ -1304,14 +1304,24 @@ test("A-119：検収書の頭書きの納品日・検収日は、今回検収す
   assert.equal((withInspectionLines("purchase_order", context, manual) as Record<string, unknown>).inspectionLines, undefined);
 });
 
-test("A-119：条件に繋がる行の納品日は実績が正。実績の日付を直せば保存した行も変わる", () => {
-  const c = buildTemplateContext("inspection_certificate", ctx({
-    conditions: [condition({ id: 1 })],
-    events: [{ id: 9, conditionId: 1, occurredOn: "2026-10-20", amount: 1 }]
-  }), {
-    delivery_line_items: [{ condition_id: 1, item_name: "x", spec: "x", amount_ex_tax: 1, inspected_amount_ex_tax: 1, tax_category: "taxable",
-                            delivery_date: "2029-06-25", inspection_date: "2029-06-25" }]
+test("A-119：条件に繋がる行の納品日は、人が触っていなければ実績に追従し、行で直した日付は残す", () => {
+  const events = [{ id: 9, conditionId: 1, occurredOn: "2026-10-20", amount: 1 }];
+  const row = { condition_id: 1, item_name: "x", spec: "x", amount_ex_tax: 1, inspected_amount_ex_tax: 1, tax_category: "taxable" };
+  // 行を作ったときの実績の日付のまま（_auto と同じ）→ 実績を直したら追従する。
+  const follow = buildTemplateContext("inspection_certificate", ctx({ conditions: [condition({ id: 1 })], events }), {
+    delivery_line_items: [{ ...row, delivery_date: "2029-06-25", delivery_date_auto: "2029-06-25",
+                            inspection_date: "2029-06-25", inspection_date_auto: "2029-06-25" }]
   }) as Record<string, any>;
-  assert.equal(c.delivery_line_items[0].delivery_date, "2026-10-20");
-  assert.equal(c.delivery_line_items[0].inspection_date, "2026-10-20");
+  assert.equal(follow.delivery_line_items[0].delivery_date, "2026-10-20");
+  assert.equal(follow.delivery_line_items[0].inspection_date, "2026-10-20");
+  // 人が行で直した日付（_auto と違う）→ 実績の日付で押しのけない。
+  const typed = buildTemplateContext("inspection_certificate", ctx({ conditions: [condition({ id: 1 })], events }), {
+    delivery_line_items: [{ ...row, delivery_date: "2026-09-28", delivery_date_auto: "2029-06-25" }]
+  }) as Record<string, any>;
+  assert.equal(typed.delivery_line_items[0].delivery_date, "2026-09-28");
+  // 古い下書きの行（_auto が無い）に日付が入っていれば、人が入れたものとして残す。
+  const legacy = buildTemplateContext("inspection_certificate", ctx({ conditions: [condition({ id: 1 })], events }), {
+    delivery_line_items: [{ ...row, delivery_date: "2026-09-28" }]
+  }) as Record<string, any>;
+  assert.equal(legacy.delivery_line_items[0].delivery_date, "2026-09-28");
 });
