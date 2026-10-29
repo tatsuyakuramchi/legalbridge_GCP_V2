@@ -440,6 +440,8 @@ export function deliveryLinesFrom(context: Ctx): Row[] {
         // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
         condition_id: condition.id ?? null,
         condition_name: condition.name ?? null,
+        /** 元の実績。下書きの行に無い実績を足すときの照合に使う（A-117）。紙には出ない。 */
+        event_id: event.id ?? null,
         // 元の予定が定期の回なら、同じ額の回は 1 行に畳む（発注書と同じ）。
         trigger_kind: event.triggerKind ?? null,
         // 名前は本番のひな形が差しているものに合わせる。inspected_quantity と
@@ -770,6 +772,16 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
         if (!fresh[idx][k] && line[k] && !line[`${k}_typed`]) line[k] = null;
         else if (fresh[idx][k] && !line[k]) line[k] = fresh[idx][k];
       }
+    }
+    // 下書きの行を保存したあとに選んだ実績は、行が無いので紙に出なかった（A-117）。保存した行に
+    // 対応しない実績の行を後ろに足す。載せたくない実績は「実績を選ぶ」で外す。
+    // 手で組んだ明細（条件に繋がらない行がある）は触らない。
+    const ledgerOnly = lines.every((l) => Number(l.condition_id) > 0);
+    for (const [i, f] of fresh.entries()) {
+      if (!ledgerOnly || used.has(i)) continue;
+      const already = f.event_id !== null && f.event_id !== undefined
+        && lines.some((l) => Number(l.event_id) === Number(f.event_id));
+      if (!already) lines.push(f);
     }
   }
   // 手数料・経費は画面が条件から種を作って手入力として送ってくる。欄そのものが無い
