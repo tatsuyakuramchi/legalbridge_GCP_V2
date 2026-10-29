@@ -1,4 +1,4 @@
-<body data-layout="ins-v2-2026-10">
+<body data-layout="ins-v2-2026-10r2">
 
 <!-- ===== ヘッダ ===== -->
 <div class="doc-head">
@@ -45,7 +45,7 @@
     <th>検収日</th><td>{{#if INSPECTION_DATE}}{{formatDate INSPECTION_DATE}}{{else}}{{formatDate documentDate}}{{/if}}</td>
   </tr>
   <tr>
-    <th>契約種別</th><td>{{#each delivery_line_items}}{{#if @first}}{{#if payment_terms}}{{payment_terms}}{{else}}明細のとおり{{/if}}{{/if}}{{/each}}{{#if WITHHOLDING_TAX}}（源泉徴収 {{WITHHOLDING_TAX}}）{{/if}}</td>
+    <th>契約種別</th><td>{{#if contract_form_summary}}{{contract_form_summary}}{{else}}明細のとおり{{/if}}{{#if WITHHOLDING_TAX}}（源泉徴収 {{WITHHOLDING_TAX}}）{{/if}}</td>
     <th>基本契約</th><td>{{#if HAS_BASE_CONTRACT}}あり{{#if MASTER_CONTRACT_REF}}（{{MASTER_CONTRACT_REF}}）{{/if}}{{else}}なし（発注書の標準約款による）{{/if}}</td>
   </tr>
 </table>

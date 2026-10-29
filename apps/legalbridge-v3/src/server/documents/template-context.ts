@@ -814,6 +814,8 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
   const visible = lines.filter((l) => String(l.inspection_status ?? "now") !== "skip");
   const paid = visible.filter((l) => String(l.inspection_status ?? "") === "paid");
   const now = visible.filter((l) => String(l.inspection_status ?? "now") === "now");
+  // 頭書きの契約種別：今回検収する行の契約形式を重複なく並べる（請負・準委任）。先頭の行だけ見ていた（A-118）。
+  const contractFormSummary = distinctJoin(now.map((l) => l.payment_terms));
 
   // 進捗（検収率・検収済額・発注総額・未検収額）。予定額を持つ行から出す。
   //
@@ -880,6 +882,7 @@ function inspectionBlock(context: Ctx, manual: Record<string, unknown>, taxRate:
     ...lineTotals,
     ...progress,
     delivery_line_items: now,
+    contract_form_summary: contractFormSummary,
     items: now,
     expenses,
     other_fees: otherFees,

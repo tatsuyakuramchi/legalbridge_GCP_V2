@@ -1251,3 +1251,29 @@ test("A-117：下書きの行を保存したあとに選んだ実績は、行と
   assert.equal(lines[1]!.item_name, "イラスト制作");
   assert.equal(lines[1]!.event_id, 12);
 });
+
+
+test("A-118：検収書の頭書きの契約種別は、今回検収する行の契約形式を重複なく並べる", () => {
+  const context = {
+    conditions: [
+      { id: 1, name: "原稿制作", contractForm: "請負", counterparty: { kind: "corporate" }, flatAmount: 100 },
+      { id: 2, name: "編集費", contractForm: "準委任", counterparty: { kind: "corporate" }, flatAmount: 200 },
+      { id: 3, name: "カバー", contractForm: "請負", counterparty: { kind: "corporate" }, flatAmount: 300 }
+    ],
+    events: [
+      { id: 11, conditionId: 1, occurredOn: "2026-10-07", amount: 100 },
+      { id: 12, conditionId: 2, occurredOn: "2026-10-07", amount: 200 },
+      { id: 13, conditionId: 3, occurredOn: "2026-10-07", amount: 300 }
+    ]
+  };
+  const block = buildTemplateContext("inspection_certificate", context, {});
+  assert.equal(block.contract_form_summary, "請負／準委任");
+});
+
+test("A-118：検収書の件名は宣言に無くても項目として出る（上書きできる）", async () => {
+  const { withImpliedVariables } = await import("./binding.js");
+  const vars = withImpliedVariables("inspection_certificate", [{ name: "DELIVERY_DATE" }]);
+  assert.ok(vars.some((v) => v.name === "PROJECT_TITLE"));
+  assert.equal(withImpliedVariables("inspection_certificate", [{ name: "PROJECT_TITLE", label: "件名" }]).length, 1, "宣言にあれば足さない");
+  assert.equal(withImpliedVariables("purchase_order", []).length, 0, "発注書には足さない（宣言がある）");
+});

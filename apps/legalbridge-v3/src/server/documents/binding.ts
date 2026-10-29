@@ -154,6 +154,20 @@ export interface BindOptions {
   suggested?: Record<string, unknown>;
 }
 
+/**
+ * ひな形の宣言に無くても画面で直せるようにする項目（A-118）。検収書の件名は本文が {{PROJECT_TITLE}} を
+ * 読んでいるのに宣言が無く、案件の件名が出るだけで上書きできなかった。宣言に同名があれば足さない。
+ */
+export function withImpliedVariables(templateKey: string, variables: TemplateVariable[]): TemplateVariable[] {
+  const implied: TemplateVariable[] = [];
+  if (/inspection_certificate|acceptance_certificate|delivery_note|service_completion/.test(templateKey)) {
+    implied.push({ name: "PROJECT_TITLE", label: "件名", group: "I. 検収概要",
+                   helpText: "空なら案件の件名（この文書に載っている作品に絞る）。検収書だけ別の件名にするならここで上書き" });
+  }
+  const names = new Set(variables.map((v) => v.name));
+  return [...variables, ...implied.filter((v) => !names.has(v.name))];
+}
+
 export function bindVariables(
   variables: TemplateVariable[],
   context: Record<string, unknown>,
