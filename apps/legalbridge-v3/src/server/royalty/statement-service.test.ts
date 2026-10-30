@@ -15,6 +15,8 @@ interface Options {
   ag?: number | null;
   /** 対象日に効いていた版。null を渡すと「見つからない」を再現する。 */
   appliedVersion?: Record<string, unknown> | null;
+  /** 条件の利用形態（pub_print など）。 */
+  usageType?: string | null;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -27,7 +29,7 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
   if (text.includes("FROM conditions c") && text.includes("LEFT JOIN parties p")) {
     return [{ id: 5, condition_no: "CL-2026-00042", name: "配信許諾", kind: "license",
               direction: "out", counterparty_id: 11, currency: "JPY",
-              pricing_model: "revenue_rate", rate_ppm: 125000,
+              pricing_model: "revenue_rate", rate_ppm: 125000, usage_type: options.usageType ?? null,
               unit_amount: null, flat_amount: null,
               mg_amount: options.mg ?? null, ag_amount: options.ag ?? null,
               tax_category: "taxable", status: options.conditionStatus ?? "active",
@@ -313,6 +315,21 @@ test("実績の束：他の条件・取消済み・文書に結ばれた実績�
   await assert.rejects(() => taken.service.preview({ conditionId: 5, eventIds: [41, 42] }), /別の文書に結ばれています/);
   const mixed = withEvents(eventRows([{ event_type: "manufacturing", quantity: 100 }]));
   await assert.rejects(() => mixed.service.preview({ conditionId: 5, eventIds: [41, 42] }), /売上 と 再許諾の受領 の実績だけ/);
+});
+
+test("実績の束：紙出版の料率条件は、台帳で入れた製造（刷）の報告額で計算できる", async () => {
+  const rows = eventRows([{ event_type: "manufacturing", quantity: 3000 }, { event_type: "manufacturing", quantity: 2000 }]);
+  const { service: royalty } = withEvents(rows, { usageType: "pub_print" });
+  const r = await royalty.preview({ conditionId: 5, eventIds: [41, 42] });
+  assert.equal(r.reported.salesInput, 5000000);
+  assert.equal(r.fee.gross_ex_tax, 625000, "500万 × 12.5%");
+  // 紙出版でも、報告額の無い製造の報告は止める（0 円の計算書を出さない）。
+  const empty = withEvents(eventRows([{ event_type: "manufacturing", quantity: 3000, gross_amount: null, amount: null }]),
+    { usageType: "pub_print" });
+  await assert.rejects(() => empty.service.preview({ conditionId: 5, eventIds: [41, 42] }), /報告額/);
+  // 紙出版以外の料率条件は従来どおり製造を断る。
+  const digital = withEvents(eventRows([{ event_type: "manufacturing", quantity: 100 }]), { usageType: "pub_digital" });
+  await assert.rejects(() => digital.service.preview({ conditionId: 5, eventIds: [41, 42] }), /売上 と 再許諾の受領 の実績だけ/);
 });
 
 test("実績の束の確定：実績は作らず、明細を実績ごとに根拠比で按分し、実績を文書に結ぶ", async () => {

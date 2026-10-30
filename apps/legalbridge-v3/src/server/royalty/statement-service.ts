@@ -279,12 +279,15 @@ export class RoyaltyStatementService {
     const basisOf = (e: Record<string, any>): number => {
       const type = String(e.event_type);
       if (model === "revenue_rate") {
-        if (type !== "sales" && type !== "sublicense_receipt") {
+        // 紙出版の料率条件は刷（製造）ごとのイベント式で、台帳は報告を「製造」として入れる
+        // （RoundReport の eventTypeFor）。算定の基礎は報告額（本体価格 × 部数）なので売上と同じに読む。
+        const printRun = type === "manufacturing" && condition.usageType === "pub_print";
+        if (type !== "sales" && type !== "sublicense_receipt" && !printRun) {
           throw new DomainError("VALIDATION",
             `料率の条件の計算書に載せられるのは 売上 と 再許諾の受領 の実績だけです（実績 #${e.id} は ${type}）`);
         }
         const gross = Number(e.gross_amount ?? e.amount ?? 0);
-        if (!(gross > 0)) throw new DomainError("VALIDATION", `実績 #${e.id} に報告売上（額）が入っていません`);
+        if (!(gross > 0)) throw new DomainError("VALIDATION", `実績 #${e.id} に報告額（本体価格 × 部数などの売上）が入っていません`);
         return gross;
       }
       if (model === "unit_rate") {
