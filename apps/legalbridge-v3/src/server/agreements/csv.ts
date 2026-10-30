@@ -1,5 +1,5 @@
 import { DomainError } from "../core/errors.js";
-import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.js";
+import { KIND_LABEL, directionLabel, type AgreementDirection, type AgreementDomain, type AgreementKind } from "./service.js";
 import { DOMAIN_LABEL, type RemapInput } from "./party-map.js";
 
 /**
@@ -10,6 +10,7 @@ import { DOMAIN_LABEL, type RemapInput } from "./party-map.js";
  *
  * 当てる先は 契約ID（無ければ 契約番号）。空欄の列は触らない。
  * 消したいときは「なし」と書く（親契約・締結日・有効開始日・終了日・相手方番号）。
+ * 方向の「向きなし」は文書だけの契約（NDA・覚書など）にだけ書ける。
  * 取引先・状態・既定・ずれ は参考の列で、取り込んでも変わらない。
  */
 
@@ -39,8 +40,9 @@ const DOMAIN_BY_TEXT: Record<string, AgreementDomain | null> = {
   未設定: null, なし: null
 };
 
-const DIRECTION_BY_TEXT: Record<string, "in" | "out"> = {
-  in: "in", IN: "in", In: "in", 取得: "in", out: "out", OUT: "out", Out: "out", 許諾: "out", 委託: "out"
+const DIRECTION_BY_TEXT: Record<string, AgreementDirection> = {
+  in: "in", IN: "in", In: "in", 取得: "in", out: "out", OUT: "out", Out: "out", 許諾: "out", 委託: "out",
+  向きなし: null, その他: null, none: null
 };
 
 const AUTO_RENEW: Record<string, boolean> = {
@@ -90,9 +92,10 @@ export async function agreementCsvPatch(
   }
   const direction = text("方向");
   if (direction) {
-    const d = DIRECTION_BY_TEXT[direction];
-    if (!d) throw new DomainError("VALIDATION", `方向は IN・OUT のいずれかです（"${direction}"）`);
-    patch.direction = d;
+    if (!Object.hasOwn(DIRECTION_BY_TEXT, direction)) {
+      throw new DomainError("VALIDATION", `方向は IN・OUT・向きなし のいずれかです（"${direction}"）`);
+    }
+    patch.direction = DIRECTION_BY_TEXT[direction];
   }
   const parent = text("親契約番号");
   if (parent) patch.parentId = CLEAR.has(parent) ? null : await findParent(parent);
@@ -117,7 +120,7 @@ export async function agreementCsvPatch(
 /** 書き出しの1行。 */
 export interface AgreementCsvRow {
   id: number; agreementNo: string | null; partyName: string; partyCode: string | null;
-  title: string; kind: AgreementKind; domain: AgreementDomain | null; direction: "in" | "out";
+  title: string; kind: AgreementKind; domain: AgreementDomain | null; direction: AgreementDirection;
   parentNo: string | null; executedOn: string | null; effectiveOn: string | null; expiresOn: string | null;
   autoRenewal: boolean; counterpartyRefNo: string | null; status: string;
   primary: boolean; issues: string[];
@@ -127,7 +130,7 @@ export function agreementCsvValues(r: AgreementCsvRow): Record<(typeof AGREEMENT
   return {
     契約ID: String(r.id), 契約番号: r.agreementNo ?? "", 取引先: r.partyName, 取引先コード: r.partyCode ?? "",
     件名: r.title, 種類: KIND_LABEL[r.kind], 種別: r.domain ? DOMAIN_LABEL[r.domain] : "",
-    方向: r.direction === "in" ? "IN" : "OUT", 親契約番号: r.parentNo ?? "",
+    方向: directionLabel(r.direction), 親契約番号: r.parentNo ?? "",
     締結日: r.executedOn ?? "", 有効開始日: r.effectiveOn ?? "", 終了日: r.expiresOn ?? "",
     自動更新: r.autoRenewal ? "する" : "しない", 相手方番号: r.counterpartyRefNo ?? "",
     状態: STATUS_LABEL[r.status] ?? r.status, 既定: r.primary ? "既定" : "", ずれ: r.issues.join(" / ")

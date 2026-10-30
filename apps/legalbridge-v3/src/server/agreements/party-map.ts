@@ -1,7 +1,7 @@
 import { type Queryable, type Transactable, inTransaction, dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
-import { KIND_LABEL, type AgreementDomain, type AgreementKind } from "./service.js";
+import { KIND_LABEL, checkDirection, directionOf, type AgreementDirection, type AgreementDomain, type AgreementKind } from "./service.js";
 import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { agreementDatedTitle } from "../documents/legacy-variables.js";
 import type { AgreementCsvRow } from "./csv.js";
@@ -42,7 +42,8 @@ export interface MapAgreement {
   title: string;
   kind: AgreementKind;
   domain: AgreementDomain | null;
-  direction: "in" | "out";
+  /** null は向きなし（文書だけの契約）。基本契約・単体契約・補助文書・解除合意は必ず IN／OUT。 */
+  direction: AgreementDirection;
   status: string;
   parentId: number | null;
   executedOn: string | null;
@@ -289,7 +290,7 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
   roots.sort((x, y) =>
     Number(y.primary) - Number(x.primary) ||
     String(x.domain ?? "~").localeCompare(String(y.domain ?? "~")) ||
-    x.direction.localeCompare(y.direction) || x.id - y.id);
+    String(x.direction ?? "").localeCompare(String(y.direction ?? "")) || x.id - y.id);
   for (const r of roots) r.children.sort((x, y) => x.id - y.id);
 
   return { party, roots, loose, documents, issues, unlinked: [], looseConditions: [] };
@@ -302,7 +303,8 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
 export interface RemapInput {
   kind?: AgreementKind;
   domain?: AgreementDomain | null;
-  direction?: "in" | "out";
+  /** null は向きなし（文書だけの契約のときだけ）。 */
+  direction?: AgreementDirection;
   parentId?: number | null;
   counterpartyId?: number;
   /**
@@ -327,8 +329,10 @@ class DryRunRollback extends Error {
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface RemapCurrent {
-  id: number; kind: AgreementKind; domain: AgreementDomain | null; direction: "in" | "out";
+  id: number; kind: AgreementKind; domain: AgreementDomain | null; direction: AgreementDirection;
   parentId: number | null; counterpartyId: number; resolvedPartyId: number; childCount: number;
+  /** 載っている条件明細の数。向きなしにするときに見る（向きなしの契約は条件明細を持たない）。 */
+  conditionCount?: number;
 }
 
 export interface RemapParent {
@@ -342,11 +346,11 @@ export interface RemapParent {
 export function planRemap(
   current: RemapCurrent, input: RemapInput,
   parent: RemapParent | null, targetResolvedPartyId: number
-): { kind: AgreementKind; domain: AgreementDomain | null; direction: "in" | "out";
+): { kind: AgreementKind; domain: AgreementDomain | null; direction: AgreementDirection;
      parentId: number | null; counterpartyId: number } {
   const kind = input.kind ?? current.kind;
   const domain = input.domain !== undefined ? input.domain : current.domain;
-  const direction = input.direction ?? current.direction;
+  const direction = input.direction !== undefined ? input.direction : current.direction;
   const counterpartyId = input.counterpartyId ?? current.counterpartyId;
   let parentId = input.parentId !== undefined ? input.parentId : current.parentId;
   if (!isChildKind(kind)) parentId = null;
@@ -361,6 +365,11 @@ export function planRemap(
   }
   if (isRootKind(kind) && !domain) {
     throw new DomainError("VALIDATION", "基本契約・単体契約には種別（業務委託／ライセンス）を選んでください");
+  }
+  checkDirection(kind, direction);
+  if (direction === null && (current.conditionCount ?? 0) > 0) {
+    throw new DomainError("VALIDATION",
+      `条件明細が ${current.conditionCount} 件載っているので、向きなしにはできません（条件明細は IN／OUT のどちらかに載ります）`);
   }
   if (isChildKind(kind)) {
     if (!parentId) throw new DomainError("VALIDATION", "補助文書・解除合意は親の契約を選んでください");
@@ -401,7 +410,7 @@ export interface DocumentRefs {
   /** 基本契約（単体契約は含めない）。primary は他の画面が既定で拾う1本。 */
   masters: Array<{
     id: number; agreementNo: string | null; title: string; kind: AgreementKind;
-    domain: AgreementDomain | null; direction: "in" | "out"; status: string;
+    domain: AgreementDomain | null; direction: AgreementDirection; status: string;
     executedOn: string | null; terminatedOn: string | null; primary: boolean;
     /** 文書に出る呼び方「2024年4月1日付◯◯」。 */
     datedTitle: string;
@@ -463,7 +472,7 @@ export function mapAgreementRow(row: any): MapAgreement {
     // 移行した行は kind が空のことがある。他の画面と同じく基本契約とみなす。
     kind: (str(row.kind) ?? "master") as AgreementKind,
     domain: (str(row.domain) as AgreementDomain | null) ?? null,
-    direction: row.direction === "out" ? "out" : "in",
+    direction: directionOf(row.direction),
     status: String(row.status ?? ""),
     parentId: int(row.parent_id),
     executedOn: dateStr(row.executed_on), terminatedOn: dateStr(row.terminated_on),
@@ -1383,7 +1392,8 @@ export class PartyAgreementMapService {
           `SELECT a.id, a.kind, a.domain, a.direction, a.parent_id, a.counterparty_id,
                   a.status, a.executed_on, a.title, a.effective_on, a.expires_on, a.auto_renewal,
                   a.counterparty_ref_no, r.resolved_id,
-                  (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count
+                  (SELECT count(*) FROM agreements k WHERE k.parent_id = a.id)::int AS child_count,
+                  (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count
              FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
             WHERE a.id = $1 FOR UPDATE OF a`, [id]);
         const row = cr.rows[0] as any;
@@ -1391,9 +1401,10 @@ export class PartyAgreementMapService {
         const current: RemapCurrent = {
           id, kind: (str(row.kind) ?? "master") as AgreementKind,
           domain: (str(row.domain) as AgreementDomain | null) ?? null,
-          direction: row.direction === "out" ? "out" : "in",
+          direction: directionOf(row.direction),
           parentId: int(row.parent_id), counterpartyId: Number(row.counterparty_id),
-          resolvedPartyId: Number(row.resolved_id), childCount: Number(row.child_count ?? 0)
+          resolvedPartyId: Number(row.resolved_id), childCount: Number(row.child_count ?? 0),
+          conditionCount: Number(row.condition_count ?? 0)
         };
 
         let targetResolved = current.resolvedPartyId;

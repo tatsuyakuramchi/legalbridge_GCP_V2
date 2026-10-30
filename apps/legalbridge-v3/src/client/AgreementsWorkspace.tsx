@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { ListCount, ListSearch, useDebounced } from "./ListTools.js";
-import { StatusTag } from "./labels.js";
+import { DirectionTag, StatusTag } from "./labels.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { Successions } from "./Successions.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
@@ -209,7 +209,7 @@ export function AgreementsWorkspace(
                     <td className="code">
                       {r.parentId
                         ? <span className="faint">　└ {r.agreementNo ?? `#${r.id}`}</span>
-                        : <><span className={`tag ${r.direction}`}>{r.direction === "in" ? "IN" : "OUT"}</span>
+                        : <><DirectionTag direction={r.direction} />
                            {" "}{r.agreementNo ?? <span className="faint">（番号なし）</span>}</>}
                     </td>
                     <td><KindTag kind={r.kind} /></td>
@@ -241,7 +241,7 @@ export function AgreementsWorkspace(
               <div className="panel-hd" style={{ gap: 8, flexWrap: "wrap" }}>
                 <h2><span className="code">{a.agreementNo ?? `#${a.id}`}</span>　{a.title}</h2>
                 <KindTag kind={a.kind} />
-                <span className={`tag ${a.direction}`}>{a.direction === "in" ? "IN" : "OUT"}</span>
+                <DirectionTag direction={a.direction} />
                 <StatusTag kind="agreement" value={a.status} />
                 <span className="faint" style={{ marginLeft: "auto" }}>{a.counterparty.name}</span>
               </div>
@@ -444,7 +444,8 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
   onCancel: () => void;
 }) {
   const [partyId, setPartyId] = useState(preset.partyId ? String(preset.partyId) : "");
-  const [direction, setDirection] = useState<"in" | "out">("in");
+  /** none は向きなし（文書だけの契約のときだけ。NDA・覚書など）。 */
+  const [direction, setDirection] = useState<"in" | "out" | "none">("in");
   const [domain, setDomain] = useState<AgreementDomain>(preset.domain ?? "service");
   const [title, setTitle] = useState("");
   const [executedOn, setExecutedOn] = useState("");
@@ -475,14 +476,16 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
 
   const parent = parents.find((p) => String(p.id) === parentId) ?? null;
   const effectiveKind: AgreementKind = hasConditions === false ? "document" : kind;
+  /** 向きなしにできるのは文書だけの契約（条件明細を持たない）。 */
+  const directionOk = direction !== "none" || effectiveKind === "document";
   const ready = partyId && title.trim() && executedOn && hasConditions !== null
-    && (effectiveKind !== "supplement" || parentId);
+    && (effectiveKind !== "supplement" || parentId) && directionOk;
 
   async function submit(thenConditions: boolean) {
     setBusy(true); setError(null);
     try {
       const made = await api.post<{ id: number; agreementNo: string | null }>("/agreements", {
-        counterpartyId: Number(partyId), direction, kind: effectiveKind,
+        counterpartyId: Number(partyId), direction: direction === "none" ? null : direction, kind: effectiveKind,
         domain: effectiveKind === "document" ? null : domain,
         parentId: effectiveKind === "supplement" ? Number(parentId) : null,
         title: title.trim(), executedOn, status: "executed",
@@ -515,9 +518,14 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
             <small>無ければ「取引先・担当」で登録してから</small>
           </label>
           <label className="fld"><span>向き <em>必須</em></span>
-            <select value={direction} onChange={(e) => setDirection(e.target.value as "in" | "out")}>
+            <select value={direction} onChange={(e) => setDirection(e.target.value as "in" | "out" | "none")}>
               <option value="in">IN 取得（費用側）</option><option value="out">OUT 許諾（収入側）</option>
-            </select></label>
+              <option value="none">向きなし（その他：NDA・覚書など）</option>
+            </select>
+            {direction === "none" && (directionOk
+              ? <small>お金の流れの無い契約。条件明細は載せられません</small>
+              : <small className="bad">向きなしにできるのは、条件明細がぶら下がらない契約（下で「いいえ」）だけです</small>)}
+          </label>
           {/* 種別は、条件明細がぶら下がる契約（基本契約・単体契約）の番号の頭を決めるだけ。
               NDA・覚書のように文書として登録するだけの契約には要らないので、問わない。 */}
           {effectiveKind === "document" ? (

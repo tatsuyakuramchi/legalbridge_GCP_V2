@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { buildPartyMap, executedChange, planRemap, PartyAgreementMapService, type MapAgreement, type RemapCurrent } from "./party-map.js";
+import { buildPartyMap, executedChange, mapAgreementRow, planRemap, PartyAgreementMapService, type MapAgreement, type RemapCurrent } from "./party-map.js";
 
 const party = { id: 5, name: "株式会社サンプル" };
 
@@ -100,6 +100,29 @@ test("付け替え：通らない形を断る", () => {
   const root: RemapCurrent = { ...current, kind: "master", childCount: 2 };
   assert.throws(() => planRemap(root, { kind: "document" }, null, 5), /ぶら下がっています/);
   assert.throws(() => planRemap(root, { counterpartyId: 8 }, null, 8), /相手先は変えられません/);
+});
+
+test("付け替え：向きなしは文書だけの契約にだけ。条件明細が載っていればできない", () => {
+  const doc: RemapCurrent = { ...current, kind: "document", domain: null, conditionCount: 0 };
+  assert.equal(planRemap(doc, { direction: null }, null, 5).direction, null);
+  assert.equal(planRemap({ ...doc, direction: null }, {}, null, 5).direction, null, "向きを渡さなければ向きなしのまま");
+  assert.throws(() => planRemap(current, { parentId: 1, direction: null }, { id: 1, kind: "master", resolvedPartyId: 5 }, 5),
+                /向きなしにできるのは「文書だけ」/);
+  assert.throws(() => planRemap({ ...doc, direction: null }, { kind: "master", domain: "service" }, null, 5),
+                /向き（IN／OUT）を選んでください/, "向きなしのまま基本契約にはできない");
+  assert.equal(planRemap({ ...doc, direction: null }, { kind: "master", domain: "service", direction: "in" }, null, 5).direction, "in");
+  assert.throws(() => planRemap({ ...doc, conditionCount: 2 }, { direction: null }, null, 5), /条件明細が 2 件/);
+});
+
+test("向きなしの文書だけの契約もマップに並ぶ", () => {
+  const map = buildPartyMap({ id: 5, name: "株式会社サンプル" }, [
+    mapAgreementRow({ id: 1, agreement_no: "ARC-LIC-2025-0001", title: "基本", kind: "master", domain: "license",
+                      direction: "out", status: "executed", counterparty_id: 5, party_name: "株式会社サンプル" }),
+    mapAgreementRow({ id: 2, agreement_no: null, title: "秘密保持契約書", kind: "document", domain: null,
+                      direction: null, status: "executed", counterparty_id: 5, party_name: "株式会社サンプル" })
+  ]);
+  assert.deepEqual(map.documents.map((d) => [d.id, d.direction]), [[2, null]]);
+  assert.deepEqual(map.roots.map((r) => r.id), [1]);
 });
 
 test("取引先のマップは統合先で引き、件数の上限を付けない", async () => {

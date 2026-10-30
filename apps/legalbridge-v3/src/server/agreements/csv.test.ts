@@ -37,6 +37,20 @@ test("CSV の1行：読めない値は断る（黙って読み飛ばさない）
   await assert.rejects(agreementCsvPatch({ 自動更新: "たぶん" }, noParent), /自動更新は/);
 });
 
+test("CSV の1行：方向の「向きなし」は空（null）として読み、書き出しも同じ言葉で出す", async () => {
+  assert.deepEqual(await agreementCsvPatch({ 方向: "向きなし" }, noParent), { direction: null });
+  assert.deepEqual(await agreementCsvPatch({ 方向: "その他" }, noParent), { direction: null });
+  await assert.rejects(agreementCsvPatch({ 方向: "constructor" }, noParent), /方向は/);
+  const v = agreementCsvValues({
+    id: 13, agreementNo: null, partyName: "株式会社サンプル", partyCode: null,
+    title: "秘密保持契約書", kind: "document", domain: null, direction: null, parentNo: null,
+    executedOn: "2024-04-01", effectiveOn: null, expiresOn: null, autoRenewal: false,
+    counterpartyRefNo: null, status: "executed", primary: false, issues: []
+  });
+  assert.equal(v.方向, "向きなし");
+  assert.deepEqual(await agreementCsvPatch({ 方向: v.方向 }, noParent), { direction: null });
+});
+
 test("書き出しの1行は、そのまま取り込み直せる形（ラベルで出す）", () => {
   const v = agreementCsvValues({
     id: 12, agreementNo: "ARC-LIC-2024-0012", partyName: "株式会社サンプル", partyCode: "V-1",
