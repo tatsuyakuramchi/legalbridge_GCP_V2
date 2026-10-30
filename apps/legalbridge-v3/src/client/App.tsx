@@ -20,7 +20,7 @@ import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
 import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
-import { RoyaltyRounds } from "./RoundsOverview.js";
+import { RoundsWorkspace } from "./RoundsOverview.js";
 import type { PayDocTile } from "../server/paydocs/rows.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
@@ -505,7 +505,7 @@ export function App() {
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }} />
         )}
         {view === "rounds" && (
-          <RoyaltyRounds onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+          <RoundsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenWork={(id) => openEntity("work", id)} />
         )}
         {view === "workbench" && (

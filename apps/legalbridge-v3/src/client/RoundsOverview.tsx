@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { RoyaltyReceipts } from "./RoyaltyReceipts.js";
 
 /**
  * 回と文書（docs/royalty-ledger.md §9）。
@@ -153,9 +154,9 @@ export function WorkRounds({ workId, onOpenCondition, onOpenDocument }: {
           <label className="row" style={{ gap: 4 }}>
             <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />開いている回だけ
           </label>
-          <span className="faint">
-            <span className={`tag ${KIND.period.tag}`}>時限式</span> {KIND.period.hint}　
-            <span className={`tag ${KIND.event.tag}`}>イベント式</span> {KIND.event.hint}
+          <span className="faint row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <span><span className={`tag ${KIND.period.tag}`}>時限式</span> {KIND.period.hint}</span>
+            <span><span className={`tag ${KIND.event.tag}`}>イベント式</span> {KIND.event.hint}</span>
           </span>
         </div>
       </div>
@@ -325,6 +326,26 @@ export function RoyaltyRounds({ onOpenCondition, onOpenDocument, onOpenWork }: {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** 作業 › 回の一覧。回（締め・製造）と、入金と作者への支払（docs/royalty-ledger.md §10）の 2 枚。 */
+export function RoundsWorkspace(props: {
+  onOpenCondition?: (id: number) => void;
+  onOpenDocument?: (id: number) => void;
+  onOpenWork?: (id: number) => void;
+}) {
+  const [tab, setTab] = useState<"rounds" | "receipts">("rounds");
+  return (
+    <div className="stack">
+      <div className="tabs" role="tablist" aria-label="回の一覧">
+        <button role="tab" aria-selected={tab === "rounds"} onClick={() => setTab("rounds")}>回</button>
+        <button role="tab" aria-selected={tab === "receipts"} onClick={() => setTab("receipts")}>入金と作者への支払</button>
+      </div>
+      {tab === "rounds"
+        ? <RoyaltyRounds {...props} />
+        : <RoyaltyReceipts onOpenCondition={props.onOpenCondition} onOpenDocument={props.onOpenDocument} />}
     </div>
   );
 }

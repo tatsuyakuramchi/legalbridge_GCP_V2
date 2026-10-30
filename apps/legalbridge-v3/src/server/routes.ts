@@ -75,6 +75,7 @@ import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService, WORK_LINEAGE_UP_SQL } from "./royalty/ledger-service.js";
 import { RoundOverviewService } from "./royalty/round-overview.js";
+import { RoyaltyReceiptService } from "./royalty/receipts.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
@@ -3151,6 +3152,34 @@ export function createRoutes(database: Transactable) {
   router.get("/works/:id/round-overview", asyncRoute(async (req, res) => {
     res.json(await roundOverview.forWork(Number(req.params.id)));
   }));
+  // 入金と作者への支払（docs/royalty-ledger.md §10）。取引先からの入金（OUT）から作者（IN）ごとの報告を起こす。
+  const royaltyReceipts = new RoyaltyReceiptService(database, conditionEvents);
+  router.get("/royalty-receipts", asyncRoute(async (req, res) => {
+    const input = z.object({
+      from: z.string().date().optional(), to: z.string().date().optional(),
+      outConditionId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      state: z.enum(["unreported", "mismatch", "waiting", "issued", "none", "open"]).optional()
+    }).parse(req.query);
+    res.json(await royaltyReceipts.list(input));
+  }));
+  router.post("/royalty-receipts/reports", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        paymentId: z.coerce.number().int().positive(),
+        outConditionId: z.coerce.number().int().positive(),
+        entries: z.array(z.object({
+          conditionId: z.coerce.number().int().positive(),
+          grossAmount: z.coerce.number().int().positive().nullable().optional(),
+          taxIncluded: z.boolean().nullable().optional(),
+          paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
+          languages: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
+          regions: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
+          note: z.string().trim().max(2000).nullable().optional()
+        })).min(1).max(30)
+      }).parse(req.body ?? {});
+      res.status(201).json(await royaltyReceipts.createReports(input, actor(res)));
+    }));
   router.get("/royalty-rounds", asyncRoute(async (req, res) => {
     const input = z.object({
       from: z.string().date().optional(), to: z.string().date().optional(),
