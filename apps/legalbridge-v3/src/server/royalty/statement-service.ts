@@ -16,6 +16,11 @@ import { floorRoyalty, roundRoyalty, taxOf } from "./rounding.js";
 
 /** 出版（紙・電子）の条件か。印税は実績ごとに切り捨てる（rounding.ts）。 */
 const isPublishingUsage = (usage: string | null | undefined) => usage === "pub_print" || usage === "pub_digital";
+
+/** 紙の行の注記「報告額 ¥3,000,000 × （3,000部 − 非加算 30部（1%））÷ 3,000部」。 */
+const laterExemptNote = (x: { copies: number; exempt: number; pct: number | null }, gross: number) =>
+  `報告額 ¥${Math.round(gross).toLocaleString("ja-JP")} ×（${x.copies.toLocaleString("ja-JP")}部 − 非加算 ${
+    x.exempt.toLocaleString("ja-JP")}部${x.pct ? `（${x.pct}%）` : ""}）÷ ${x.copies.toLocaleString("ja-JP")}部`;
 import { allocateShares, loadDistribution, loadShares, pickShare, type ConditionShareRow } from "./shares.js";
 import { rootAgreementJoin } from "../conditions/contracts.js";
 
@@ -276,6 +281,23 @@ export class RoyaltyStatementService {
     // ごとに 売上 × 料率 を切り捨てて足す。合計に料率を掛けて 1 回丸めると Excel と 1 円ずれる。
     const perEvent = model === "revenue_rate" && isPublishingUsage(condition.usageType);
     const conditionRatePct = ppmToPct(condition.ratePpm);
+    /**
+     * 紙出版の 2 版目以降の非加算（条件の royalty_exempt_later_pct。発行部数の %）。
+     * 人が実績に非加算部数（見本・献本の欄）を入れていればそれを使い、無ければ 部数 × % を切り捨てる
+     * （作者に不利にならない向き）。受領額基準（receipts）は部数を掛けないので効かない。
+     */
+    const laterExemptOf = (e: Record<string, any>): { copies: number; exempt: number; pct: number | null } | null => {
+      if (condition.usageType !== "pub_print" || !condition.exemptLaterPct || condition.priceBasis === "receipts") return null;
+      const copies = Number(e.quantity ?? 0);
+      if (!(copies > 0)) {
+        throw new DomainError("VALIDATION",
+          `実績 #${e.id} に発行部数が入っていません（この条件は発行部数の${condition.exemptLaterPct}%を非加算にするので部数が要ります）`);
+      }
+      const manual = e.sample_quantity === null || e.sample_quantity === undefined ? null : Number(e.sample_quantity);
+      const exempt = manual !== null && manual > 0 ? Math.floor(manual) : Math.floor((copies * condition.exemptLaterPct) / 100);
+      if (exempt >= copies) throw new DomainError("VALIDATION", `実績 #${e.id} の非加算部数が発行部数以上です`);
+      return { copies, exempt, pct: manual !== null && manual > 0 ? null : condition.exemptLaterPct };
+    };
     const basisOf = (e: Record<string, any>): number => {
       const type = String(e.event_type);
       if (model === "revenue_rate") {
@@ -288,7 +310,10 @@ export class RoyaltyStatementService {
         }
         const gross = Number(e.gross_amount ?? e.amount ?? 0);
         if (!(gross > 0)) throw new DomainError("VALIDATION", `実績 #${e.id} に報告額（本体価格 × 部数などの売上）が入っていません`);
-        return gross;
+        const exempt = laterExemptOf(e);
+        if (!exempt) return gross;
+        // 発行部数の X% は非加算（献本等）。報告額 × （部数 − 非加算）÷ 部数。端数は四捨五入。
+        return Math.round((gross * (exempt.copies - exempt.exempt)) / exempt.copies);
       }
       if (model === "unit_rate") {
         if (type !== "manufacturing" && type !== "sales") {
@@ -309,7 +334,11 @@ export class RoyaltyStatementService {
       occurredOn: dateStr(e.occurred_on), period: e.period ? String(e.period) : null,
       basis: basis[i],
       quantity: e.quantity === null ? null : Number(e.quantity),
-      sampleQuantity: e.sample_quantity === null ? null : Number(e.sample_quantity),
+      // 非加算を引いた紙出版の行は、非加算部数を見本の欄に持たせる（紙の部数は 部数 − 非加算）。
+      sampleQuantity: model === "revenue_rate" && laterExemptOf(e)
+        ? laterExemptOf(e)!.exempt
+        : e.sample_quantity === null ? null : Number(e.sample_quantity),
+      ...(model === "revenue_rate" && laterExemptOf(e) ? { basisNote: laterExemptNote(laterExemptOf(e)!, Number(e.gross_amount ?? e.amount ?? 0)) } : {}),
       salesInput: model === "revenue_rate" ? basis[i] : null,
       share: total > 0 ? basis[i] / total : 0,
       note: e.note ? String(e.note) : null,
@@ -822,6 +851,9 @@ export class RoyaltyStatementService {
     const r = await client.query(
       `SELECT c.id, c.condition_no, c.name, c.kind, c.direction, c.currency, c.pricing_model,
               c.counterparty_id, c.usage_type,
+              -- 2 版目以降の非加算（発行部数の %）と価格の基準。列が無い DB でも落ちないように JSON で読む。
+              to_jsonb(c) ->> 'royalty_exempt_later_pct' AS royalty_exempt_later_pct,
+              to_jsonb(c) ->> 'price_basis' AS price_basis,
               c.rate_ppm, c.unit_amount, c.flat_amount, c.mg_amount, c.ag_amount,
               c.tax_category, c.status,
               a.title AS agreement_title, a.agreement_no,
@@ -861,6 +893,10 @@ export class RoyaltyStatementService {
       direction: String(row.direction ?? "out"),
       /** 利用形態（出版の紙・電子など）。端数の決まりが変わる。 */
       usageType: row.usage_type ? String(row.usage_type) : null,
+      /** 2 版目以降の非加算（発行部数の %）。空・0 なら非加算なし。 */
+      exemptLaterPct: Number(row.royalty_exempt_later_pct ?? 0) > 0 ? Number(row.royalty_exempt_later_pct) : null,
+      /** 価格の基準（list / supply / receipts）。receipts は部数を掛けないので非加算も効かない。 */
+      priceBasis: row.price_basis ? String(row.price_basis) : null,
       agreementTitle: row.agreement_title ? String(row.agreement_title) : null,
       agreementNo: row.agreement_no ? String(row.agreement_no) : null
     };
