@@ -499,7 +499,7 @@ export class DocumentContextRepository {
 
   private async events(client: Queryable, ids: number[]) {
     const r = await client.query(
-      `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.period, e.quantity,
+      `SELECT e.id, e.condition_id, e.schedule_id, e.event_type, e.occurred_on, e.period, e.quantity,
               e.gross_amount, e.deductions, e.amount, e.note,
               e.deliverable, e.inspected_on, e.inspector_dept, e.inspector_name,
               e.contract_form, e.service_from, e.service_to, e.hours, e.report_received_on,
@@ -597,6 +597,8 @@ export class DocumentContextRepository {
         inspectorName: str(row.inspector_name),
         /** その回の予定。支払期日は支払通知書に要る。 */
         schedule: row.schedule_seq === null ? null : {
+          // 予定の行の id。文書で直した支払日を予定へ書き戻すときに使う（documents/write-back.ts）。
+          id: int(row.schedule_id),
           seq: int(row.schedule_seq), label: str(row.schedule_label),
           dueOn: dateStr(row.schedule_due_on), payOn: dateStr(row.schedule_pay_on)
         }

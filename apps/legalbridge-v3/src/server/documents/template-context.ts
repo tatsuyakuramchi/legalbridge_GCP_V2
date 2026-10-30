@@ -543,6 +543,8 @@ export function orderLinesFrom(context: Ctx): Row[] {
         // 畳むときのまとまりの単位と、まとめの品目名。紙には出ない。
         condition_id: condition.id ?? null,
         condition_name: condition.name ?? null,
+        // どの予定の回の行か。文書で直した支払日をその回へ書き戻す（documents/write-back.ts）。紙には出ない。
+        schedule_id: s.id ?? null,
         // 定期の回（業務委託の「定期払い」）か。計算方式が単価×数量でも、定期の回は 1 行に畳む。
         trigger_kind: s.triggerKind ?? null,
         deliverable_ownership: ownershipOf(condition),
