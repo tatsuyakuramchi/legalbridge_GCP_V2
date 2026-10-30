@@ -632,7 +632,8 @@ export function createRoutes(database: Transactable) {
       const input = z.object({
         kind: z.enum(["master", "standalone", "supplement", "termination", "document"]).optional(),
         domain: z.enum(["service", "license"]).nullable().optional(),
-        direction: z.enum(["in", "out"]).optional(),
+        // null は向きなし（文書だけの契約のときだけ。NDA・覚書など）。
+        direction: z.enum(["in", "out"]).nullable().optional(),
         parentId: z.coerce.number().int().positive().nullable().optional(),
         counterpartyId: z.coerce.number().int().positive().optional(),
         executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
@@ -645,7 +646,8 @@ export function createRoutes(database: Transactable) {
 
   const agreementBody = z.object({
     counterpartyId: z.coerce.number().int().positive(),
-    direction: z.enum(["in", "out"]),
+    // null は向きなし（文書だけの契約のときだけ。NDA・覚書など）。
+    direction: z.enum(["in", "out"]).nullable(),
     kind: z.enum(["master", "standalone", "supplement", "termination", "document"]),
     domain: z.enum(["service", "license"]).nullable().optional(),
     parentId: z.coerce.number().int().positive().nullable().optional(),

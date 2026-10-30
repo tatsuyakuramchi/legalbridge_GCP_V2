@@ -22,6 +22,13 @@ export const statusFor = (code: DomainErrorCode): number =>
   : 503;
 
 /** PostgreSQL の権限不足・表未整備を、機能縮退できる形の DomainError に変換する。 */
+/** 台帳の決まり（CHECK・トリガー）のうち、人に読める言い方があるもの。 */
+const CHECK_MESSAGES: Record<string, string> = {
+  agreements_direction_chk: "向き（IN／OUT）を選んでください。向きなしにできるのは「文書だけ」の契約だけです",
+  conditions_agreement_direction_chk: "向き（IN／OUT）の無い契約（NDA・覚書など）には条件明細を載せられません。IN／OUT のある契約を選んでください",
+  agreements_direction_conditions_chk: "条件明細の載った契約は向きなしにできません"
+};
+
 export function translate(error: unknown): unknown {
   const e = error as { code?: string; column?: string; constraint?: string; detail?: string; message?: string };
   const code = e?.code;
@@ -46,6 +53,8 @@ export function translate(error: unknown): unknown {
     return new DomainError("VALIDATION", `${e.column ?? "必須の欄"} が空です`);
   }
   if (code === "23514") {
+    const known = e.constraint ? CHECK_MESSAGES[e.constraint] : undefined;
+    if (known) return new DomainError("VALIDATION", known);
     return new DomainError("VALIDATION", `台帳の決まりに合いません（${e.constraint ?? "check"}）`);
   }
   if (code === "23503") {

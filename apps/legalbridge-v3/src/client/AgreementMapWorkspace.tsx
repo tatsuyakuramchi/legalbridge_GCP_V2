@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
-import { StatusTag } from "./labels.js";
+import { DirectionTag, StatusTag } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { useReadOnly } from "./read-only.js";
 import { CsvBar } from "./CsvBar.js";
@@ -661,7 +661,7 @@ function AgreementNode(
   return (
     <div className={`amap-node${issues.length ? " bad" : ""}`}>
       <div className="amap-line">
-        <span className={`tag ${a.direction}`}>{a.direction === "in" ? "IN" : "OUT"}</span>
+        <DirectionTag direction={a.direction} />
         <span className="tag ghost">{KIND_LABEL[a.kind]}</span>
         {(a.kind === "master" || a.kind === "standalone") && (
           a.domain ? <span className="tag ghost">{DOMAIN_LABEL[a.domain]}</span>
@@ -879,7 +879,8 @@ function RemapForm(
 ) {
   const [kind, setKind] = useState<AgreementKind>(a.kind);
   const [domain, setDomain] = useState<string>(a.domain ?? "");
-  const [direction, setDirection] = useState<"in" | "out">(a.direction);
+  /** none は向きなし（文書だけの契約のときだけ）。 */
+  const [direction, setDirection] = useState<"in" | "out" | "none">(a.direction ?? "none");
   const [parentId, setParentId] = useState<string>(a.parentId ? String(a.parentId) : "");
   const [counterpartyId, setCounterpartyId] = useState<string>(String(a.counterparty.id));
   const [executedOn, setExecutedOn] = useState<string>(a.executedOn ?? "");
@@ -892,7 +893,7 @@ function RemapForm(
     setBusy(true);
     try {
       await api.patch(`/agreement-map/agreements/${a.id}`, {
-        kind, direction,
+        kind, direction: direction === "none" ? null : direction,
         domain: domain ? domain : null,
         parentId: needsParent && parentId ? Number(parentId) : null,
         counterpartyId: Number(counterpartyId),
@@ -918,10 +919,14 @@ function RemapForm(
         </select>
       </label>
       <label className="field"><span>方向</span>
-        <select value={direction} onChange={(e) => setDirection(e.target.value as "in" | "out")}>
+        <select value={direction} onChange={(e) => setDirection(e.target.value as "in" | "out" | "none")}>
           <option value="in">IN（取得）</option>
           <option value="out">OUT（許諾・委託）</option>
+          <option value="none">向きなし（文書だけ）</option>
         </select>
+        {direction === "none" && kind !== "document" && (
+          <small className="bad">向きなしにできるのは「文書だけ」の契約だけです</small>
+        )}
       </label>
       {needsParent && (
         <label className="field"><span>親の契約</span>

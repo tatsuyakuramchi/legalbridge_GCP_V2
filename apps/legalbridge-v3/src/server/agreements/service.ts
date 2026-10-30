@@ -23,6 +23,23 @@ import { termHistory, type TermEvent, type TermHistory, type TermInput } from ".
 
 export type AgreementKind = "master" | "standalone" | "supplement" | "termination" | "document";
 export type AgreementDomain = "service" | "license";
+/** 向き。null は向きなし（文書だけの契約：NDA・覚書など。条件明細を持たない）。 */
+export type AgreementDirection = "in" | "out" | null;
+
+/** DB の値から向きを読む。 */
+export const directionOf = (value: unknown): AgreementDirection =>
+  value === "out" ? "out" : value === "in" ? "in" : null;
+
+/** 向きの表示。 */
+export const directionLabel = (direction: AgreementDirection): string =>
+  direction === "in" ? "IN" : direction === "out" ? "OUT" : "向きなし";
+
+/** 向きなしにできるのは文書だけの契約。ほかの種類は IN／OUT を選ぶ。 */
+export function checkDirection(kind: AgreementKind, direction: AgreementDirection): void {
+  if (direction === null && kind !== "document") {
+    throw new DomainError("VALIDATION", "向き（IN／OUT）を選んでください。向きなしにできるのは「文書だけ」の契約だけです");
+  }
+}
 
 export const KIND_LABEL: Record<AgreementKind, string> = {
   master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書",
@@ -38,7 +55,7 @@ export function numberPrefix(kind: AgreementKind, domain: AgreementDomain | null
 
 export interface AgreementInput {
   counterpartyId: number;
-  direction: "in" | "out";
+  direction: AgreementDirection;
   kind: AgreementKind;
   domain?: AgreementDomain | null;
   /** 補助文書・解除合意の親。 */
@@ -62,7 +79,7 @@ export interface AgreementInput {
 }
 
 export interface AgreementRow {
-  id: number; agreementNo: string | null; title: string; direction: "in" | "out";
+  id: number; agreementNo: string | null; title: string; direction: AgreementDirection;
   kind: AgreementKind; domain: AgreementDomain | null; parentId: number | null;
   status: string; executedOn: string | null; effectiveOn: string | null; expiresOn: string | null;
   autoRenewal: boolean; renewalMonths: number | null; renewalNoticeMonths: number | null;
@@ -198,6 +215,7 @@ export class AgreementService {
     if (!["master", "standalone", "supplement", "termination", "document"].includes(input.kind)) {
       throw new DomainError("VALIDATION", "契約の種類が読めません");
     }
+    checkDirection(input.kind, input.direction ?? null);
     if ((input.kind === "master" || input.kind === "standalone") && !input.domain) {
       throw new DomainError("VALIDATION", "種別（業務委託／ライセンス）を選んでください。番号の頭が決まります");
     }
@@ -243,7 +261,7 @@ export class AgreementService {
               counterparty_ref_no, source_url)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10::date, $11::date, $12, $13, $14, $15, $16)
            RETURNING id`,
-          [agreementNo, title, input.counterpartyId, input.direction, status, input.kind,
+          [agreementNo, title, input.counterpartyId, input.direction ?? null, status, input.kind,
            input.domain ?? parent?.domain ?? null, input.parentId ?? null,
            input.executedOn ?? null, input.effectiveOn ?? input.executedOn ?? null, input.expiresOn ?? null,
            input.autoRenewal === true, input.renewalMonths ?? null, input.renewalNoticeMonths ?? null,
@@ -545,7 +563,7 @@ export function mapRow(row: any, events: TermEvent[] = []): AgreementRow {
   const h = historyOf(row, events);
   return {
     id: Number(row.id), agreementNo: str(row.agreement_no), title: String(row.title),
-    direction: row.direction === "out" ? "out" : "in",
+    direction: directionOf(row.direction),
     kind: (row.kind ?? "master") as AgreementKind,
     domain: (str(row.domain) as AgreementDomain | null) ?? null,
     parentId: int(row.parent_id),

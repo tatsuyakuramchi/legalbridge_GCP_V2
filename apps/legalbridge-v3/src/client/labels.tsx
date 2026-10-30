@@ -54,6 +54,13 @@ export function StatusTag({ kind, value }: { kind: StatusKind; value: string | n
 }
 
 export const DIRECTION_LABEL: Record<string, string> = { in: "IN 取得", out: "OUT 許諾" };
+/** 契約の向きの札。null は向きなし（文書だけの契約：NDA・覚書など）。 */
+export function DirectionTag({ direction }: { direction: "in" | "out" | null | undefined }) {
+  if (direction === "in" || direction === "out") {
+    return <span className={`tag ${direction}`}>{direction === "in" ? "IN" : "OUT"}</span>;
+  }
+  return <span className="tag" title="IN／OUT のどちらでもない契約（NDA・覚書など）">向きなし</span>;
+}
 /**
  * 案件の種類（A-044）。案件は 作品ごと か 業務ごと の2択に その他 を足した3種。
  *   作品案件 … 作品 1 つが軸。制作委託 → 許諾、または許諾のみ
