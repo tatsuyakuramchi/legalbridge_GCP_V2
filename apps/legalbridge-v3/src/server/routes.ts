@@ -73,7 +73,7 @@ import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from 
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
-import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
+import { RoyaltyLedgerService, WORK_LINEAGE_UP_SQL } from "./royalty/ledger-service.js";
 import { RoundOverviewService } from "./royalty/round-overview.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
@@ -2800,6 +2800,8 @@ export function createRoutes(database: Transactable) {
           AND ($4 = '' OR c.usage_type IS NULL OR c.usage_type NOT IN ('sublicense', 'oem')
                OR c.usage_type = $4)
         ORDER BY (c.work_id IS NOT DISTINCT FROM $2::bigint) DESC,
+                 -- 次に、この作品から派生した作品（言語版など）の許諾。
+                 (COALESCE($2::bigint = ANY(${WORK_LINEAGE_UP_SQL("c.work_id")}), false)) DESC,
                  (c.usage_type IS NOT DISTINCT FROM NULLIF($4, '')) DESC,
                  c.condition_no NULLS LAST, c.id
         LIMIT 50`,

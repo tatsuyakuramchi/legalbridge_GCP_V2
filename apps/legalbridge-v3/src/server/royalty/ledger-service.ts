@@ -26,6 +26,21 @@ import { rootAgreementJoin } from "../conditions/contracts.js";
  */
 
 export type Timing = "periodic" | "event";
+
+/**
+ * 作品とその祖先（原作・元の作品）の id の配列（SQL）。<workExpr> は作品 id の式。
+ *
+ * IN 条件（作者 → 当社）は当社作品に付き、OUT 条件（当社 → 取引先）はその作品から
+ * 派生した作品（言語版など）に付くことがある。OUT の作品から祖先をたどって IN の作品に当たれば、
+ * その IN 条件の作者に払いが出る。循環は UNION で止まる。
+ * 末尾の ::bigint[] で配列の式にする（無いと `= ANY((…))` が集合の比較に読まれて型が合わない）。
+ */
+export const WORK_LINEAGE_UP_SQL = (workExpr: string) => `(
+  WITH RECURSIVE up(wid) AS (
+    SELECT ${workExpr}
+    UNION
+    SELECT l.parent_work_id FROM work_lineage l JOIN up ON l.child_work_id = up.wid
+  ) SELECT array_agg(wid) FROM up WHERE wid IS NOT NULL)::bigint[]`;
 export type Bundle = "per_work" | "per_party";
 
 /**
@@ -155,7 +170,13 @@ export interface OutLite {
   seriesIds?: number[];
   /** 許諾先（取引先）。許諾先専用の IN 条件と突き合わせる。 */
   partyId?: number | null;
+  /** OUT の作品とその祖先（作品の親子関係）。IN の作品がこの中にあれば、その IN 条件の許諾先。 */
+  lineageWorkIds?: number[];
 }
+
+/** OUT 条件がこの IN の作品の許諾か。作品の無い OUT はどの作品にも効く。派生作品の OUT は元の作品の IN に効く。 */
+export const outCoversWork = (o: Pick<OutLite, "workId" | "lineageWorkIds">, inWorkId: number | null): boolean =>
+  o.workId === null || o.workId === inWorkId || (inWorkId !== null && (o.lineageWorkIds ?? []).includes(inWorkId));
 
 /**
  * 回を組み立てる（純粋関数）。
@@ -261,7 +282,7 @@ export function buildRounds(input: {
           .filter((x) => x.id !== c.id && x.workId === c.workId && x.usageType === c.usageType && x.targetPartyId)
           .map((x) => x.targetPartyId!));
         for (const o of input.outs.filter((x) => x.usageType === c.usageType
-            && (x.workId === null || x.workId === c.workId)
+            && outCoversWork(x, c.workId)
             && (c.targetPartyId ? x.partyId === c.targetPartyId : !(x.partyId && claimed.has(x.partyId)))
             && (!x.termStart || !p.closeOn || x.termStart <= p.closeOn))) {
           // 報告は 言語×地域 ごとに来る（英語×北米、英語×欧州、フランス語×欧州）。
@@ -585,8 +606,11 @@ export class RoyaltyLedgerService {
                        fromOn: dateStr(x.from_on) ?? "0000-01-01" }))
         : [];
       const workIds = [...new Set(rows.map((c) => int(c.work_id)).filter((x): x is number => !!x))];
+      // 許諾先（OUT 条件）。この作品のものと、この作品から派生した作品のもの（言語版など）。
       const outs = workIds.length ? ((await q.query(
-        `SELECT id, name, usage_type, work_id, term_start, counterparty_id,
+        `SELECT * FROM (
+         SELECT id, name, usage_type, work_id, term_start, counterparty_id,
+                ${WORK_LINEAGE_UP_SQL("conditions.work_id")} AS lineage_ids,
                 (SELECT array_agg(x.id) FROM conditions x
                   WHERE COALESCE(x.series_id, x.id) = COALESCE(conditions.series_id, conditions.id)) AS series_ids,
                 (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
@@ -595,13 +619,15 @@ export class RoyaltyLedgerService {
                   WHERE sc.condition_id = conditions.id AND sc.scope_type = 'region') AS regions
            FROM conditions
           WHERE direction = 'out' AND status IN ('active', 'scheduled')
-            AND usage_type IN ('sublicense', 'oem') AND work_id = ANY($1::bigint[])`, [workIds])).rows as any[])
+            AND usage_type IN ('sublicense', 'oem') AND work_id IS NOT NULL
+         ) o WHERE o.lineage_ids && $1::bigint[]`, [workIds])).rows as any[])
         .map((o): OutLite => ({ id: Number(o.id), name: String(o.name), usageType: str(o.usage_type),
                                 workId: int(o.work_id), termStart: dateStr(o.term_start),
                                 languages: Array.isArray(o.languages) ? o.languages.map(String) : [],
                                 regions: Array.isArray(o.regions) ? o.regions.map(String) : [],
                                 seriesIds: Array.isArray(o.series_ids) ? o.series_ids.map(Number) : [],
-                                partyId: int(o.counterparty_id) }))
+                                partyId: int(o.counterparty_id),
+                                lineageWorkIds: Array.isArray(o.lineage_ids) ? o.lineage_ids.map(Number) : [] }))
         : [];
 
       // 共著の取り分（A-068）。回の画面で受取人を選ばせるために条件に添える。
@@ -819,7 +845,8 @@ export class RoyaltyLedgerService {
            LEFT JOIN works w ON w.id = c.work_id
           WHERE c.direction = 'in' AND c.kind = 'license' AND c.status IN ('active', 'scheduled')
             AND c.usage_type = (SELECT usage_type FROM conditions WHERE id = $1)
-            AND (c.work_id = (SELECT work_id FROM conditions WHERE id = $1)
+            -- OUT の作品か、その祖先（元の作品）に付いた IN 条件。派生作品の許諾も元の作品の作者に払う。
+            AND (c.work_id = ANY(${WORK_LINEAGE_UP_SQL("(SELECT work_id FROM conditions WHERE id = $1)")})
                  OR c.id IN (SELECT DISTINCT condition_id FROM condition_events WHERE out_condition_id IN ${series}))
           ORDER BY w.title NULLS LAST, c.id`, [outConditionId])).rows as any[];
       return {

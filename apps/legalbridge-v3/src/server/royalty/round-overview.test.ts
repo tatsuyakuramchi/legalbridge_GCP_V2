@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildRounds, numberStatements, type LedgerCondition, type LedgerEvent, type LedgerView, type Round } from "./ledger-service.js";
+import { buildRounds, numberStatements, outCoversWork, type LedgerCondition, type LedgerEvent, type LedgerView, type Round } from "./ledger-service.js";
 import { crossRounds, overviewRows } from "./round-overview.js";
 
 const cond = (id: number, over: Partial<LedgerCondition> = {}): LedgerCondition => ({
@@ -83,4 +83,34 @@ test("回と文書：条件の行に回号・状態・その回の計算書と�
   const [x] = crossRounds(view);
   assert.equal(x.key, `5:${built[0].key}`);
   assert.deepEqual(x.conditions.map((c) => c.roundNo), [1]);
+});
+
+test("派生作品（言語版など）の許諾先も、元の作品の IN 条件（作者）に来るはずの行として出る", () => {
+  const rounds = buildRounds({
+    conditions: [cond(1, { usageType: "sublicense", workId: 1 }), cond(2, { usageType: "sublicense", workId: 1 })],
+    schedules: [
+      { id: 11, conditionId: 1, seq: 1, dueOn: "2026-09-30", payOn: "2026-10-31", label: "7〜9月" },
+      { id: 21, conditionId: 2, seq: 1, dueOn: "2026-09-30", payOn: "2026-10-31", label: "7〜9月" }
+    ],
+    events: [], skips: [],
+    outs: [
+      // 作品 2 は作品 1 の派生（英語版）。
+      { id: 70, name: "Asmodee｜英語版", usageType: "sublicense", workId: 2, termStart: null, lineageWorkIds: [2, 1] },
+      // 関係の無い作品の許諾は出ない。
+      { id: 71, name: "別作品", usageType: "sublicense", workId: 3, termStart: null, lineageWorkIds: [3] }
+    ],
+    bundle: "single_work", today: "2026-10-05"
+  });
+  const parts = rounds.flatMap((r) => r.parts);
+  // 1 つの許諾先から、作者 2 人（IN 条件 2 本）にそれぞれ来るはずの行が立つ。
+  for (const id of [1, 2]) {
+    assert.deepEqual(parts.find((p) => p.conditionId === id)!.expected.map((x) => x.outConditionId), [70]);
+  }
+});
+
+test("outCoversWork：同じ作品・作品の無い OUT・派生作品の OUT は効く。元の作品の OUT は派生作品の IN には効かない", () => {
+  assert.equal(outCoversWork({ workId: 1, lineageWorkIds: [1] }, 1), true);
+  assert.equal(outCoversWork({ workId: null, lineageWorkIds: [] }, 1), true);
+  assert.equal(outCoversWork({ workId: 2, lineageWorkIds: [2, 1] }, 1), true);
+  assert.equal(outCoversWork({ workId: 1, lineageWorkIds: [1] }, 2), false);
 });
