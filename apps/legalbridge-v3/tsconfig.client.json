@@ -17,5 +17,8 @@
   "include": [
     "src/client",
     "src/server/core/model.ts"
+  ],
+  "exclude": [
+    "src/client/**/*.test.ts"
   ]
 }
