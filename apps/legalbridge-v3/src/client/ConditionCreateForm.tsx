@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm } from "./CreateForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
-import type { ServiceLinesSeed } from "./ServiceLinesForm.js";
+import type { ServiceLinesCreated } from "./ServiceLinesForm.js";
+import { createCompanionDocument, inLieuCheck, licensePayload, LicenseTermsSection, newLicenseDraft,
+         type LicenseDeliverable, type LicenseDraft } from "./LicenseTermsSection.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
@@ -68,7 +70,7 @@ const renewMonths = (v: unknown) => {
 };
 
 export function ConditionCreateForm(
-  { title = "条件の登録", preset, presetLabels, onDone, onCancel, onRegisterAgreement, onSwitchToService }: {
+  { title = "条件の登録", preset, presetLabels, onDone, onCancel, onRegisterAgreement }: {
     title?: string;
     /**
      * 分かっている項目を埋めた状態で開く。案件から作るなら相手先も
@@ -77,24 +79,26 @@ export function ConditionCreateForm(
      */
     preset?: Partial<Record<
       "direction" | "kind" | "counterpartyId" | "workId" | "agreementId"
-      | "currency" | "taxCategory" | "pricingModel" | "name", string>>;
+      | "currency" | "taxCategory" | "pricingModel" | "name" | "matterId", string>>;
     /** preset の検索項目の表示名。無いと「#2」と出る。 */
     presetLabels?: Partial<Record<"counterpartyId" | "workId" | "agreementId", string | null>>;
-    onDone: (created: { id: number }) => void;
+    /** 受注者帰属で委託料と利用許諾条件をまとめて作ったときは conditionIds（委託料の条件）と templateKey も返す。 */
+    onDone: (created: { id: number; conditionIds?: number[]; templateKey?: string | null }) => void;
     onCancel: () => void;
     /** 相手先に締結済みの契約が無いとき、その場で契約の登録へ移る口。 */
     onRegisterAgreement?: (partyId: number) => void;
-    /**
-     * 受注者帰属（利用許諾型）を選んだとき、委託料・利用許諾条件・特約をまとめて作る
-     * 『業務委託（発注）』のフォームへ、打ちかけの内容ごと切り替える口（A-081）。
-     * 1 本だけ登録すると利用許諾条件・算定の基礎・支払期日が無いまま発注書に出て、
-     * 「原稿料 0 円／許諾料は別途」の旧い見え方になる。条件が文書の骨格なので、ここで形ごと切り替える。
-     */
-    onSwitchToService?: (seed: ServiceLinesSeed) => void;
   }
 ) {
-  /** 『業務委託（発注）』へ切り替えるときに引き継ぐ種。受注者帰属を選んだ時点から持つ。 */
-  const [switchSeed, setSwitchSeed] = useState<ServiceLinesSeed | null>(null);
+  /**
+   * 受注者帰属の成果物の利用許諾（A-120）。帰属先で受注者を選ぶと、この画面の下に利用許諾の欄が開き、
+   * 登録 1 回で委託料（請負など。納期で検収する）と利用許諾条件を両方作って対応を張る。
+   * 以前は『業務委託（発注）』のフォームへ切り替えさせていて、入口が二つあり迷った。
+   */
+  const [lic, setLicDraft] = useState<LicenseDraft>(() => newLicenseDraft("included"));
+  const setLic = (patch: Partial<LicenseDraft>) => setLicDraft((prev) => ({ ...prev, ...patch }));
+  /** いまの欄の値（利用許諾の欄が金額・納期・作品を見る）と、欄を書き換える口。 */
+  const [cur, setCur] = useState<Record<string, string>>({});
+  const setField = useRef<((name: string, value: string) => void) | null>(null);
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
   /**
@@ -130,6 +134,69 @@ export function ConditionCreateForm(
       .then((a) => setAgreements(a.agreements)).catch(() => undefined);
   }, []);
 
+  // 受注者帰属の委託料（A-120）。金額は 定額 か 単価 × 個数。
+  const contractorMode = cur.direction !== "out" && cur.kind === "service" && cur.deliverableOwnership === "contractor";
+  const amountOf = (v: Record<string, string>) => v.pricingModel === "fixed" ? (Number(v.flatAmount) || 0)
+    : v.pricingModel === "unit_rate" ? Math.round((Number(v.unitAmount) || 0) * (String(v.quantity ?? "").trim() ? Number(v.quantity) || 0 : 1)) : 0;
+  const deliverables: LicenseDeliverable[] = contractorMode
+    ? [{ label: String(cur.name ?? "").trim() || "この委託料", name: String(cur.name ?? ""), amount: amountOf(cur),
+         deliveryDue: String(cur.deliveryDue ?? "") }] : [];
+  const inLieu = contractorMode && lic.mode === "in_lieu";
+  const check = inLieuCheck(lic, deliverables);
+  const contractorBlockers = [
+    !String(cur.workId ?? "").trim() ? "作品（利用許諾条件は作品にぶら下がる）" : null,
+    cur.pricingModel !== "fixed" && cur.pricingModel !== "unit_rate"
+      ? "計算方式（定額か単価×数量。定期払い・売上連動は『業務委託（発注）』で）" : null,
+    ...(inLieu ? check.missing : [])
+  ].filter((m): m is string => Boolean(m));
+  const licAgreements = (candidates && candidates.length ? candidates : agreements)
+    .filter((a) => !partyFor || String(a.counterparty?.id ?? "") === partyFor);
+  // 初版の利用許諾料を報酬として払う：計算方式は定額、報酬名は「初版利用許諾料」、金額は仮計算額（A-077）。
+  // ほかの形に戻したら報酬名を空に戻す（人が別の名前を入れていればそのまま）。
+  useEffect(() => {
+    const set = setField.current;
+    if (!set || !contractorMode) return;
+    if (inLieu) {
+      if (cur.pricingModel !== "fixed") set("pricingModel", "fixed");
+      if ((cur.rewardLabel ?? "") !== "初版利用許諾料") set("rewardLabel", "初版利用許諾料");
+      if (check.feOk && check.provisional > 0 && String(check.provisional) !== String(cur.flatAmount ?? "")) {
+        set("flatAmount", String(check.provisional));
+      }
+    } else if ((cur.rewardLabel ?? "") === "初版利用許諾料") {
+      set("rewardLabel", "");
+    }
+  }, [contractorMode, inLieu, check.feOk, check.provisional, cur.pricingModel, cur.rewardLabel, cur.flatAmount]);
+
+  /** 委託料 1 本と利用許諾条件をまとめて作る（『業務委託（発注）』と同じ口）。 */
+  async function submitWithLicense(v: Record<string, string>) {
+    const qty = v.pricingModel === "unit_rate" && String(v.quantity ?? "").trim() ? Number(v.quantity) : 1;
+    const unit = v.pricingModel === "fixed" ? int(v.flatAmount) ?? 0 : int(v.unitAmount) ?? 0;
+    const posted = await api.post<ServiceLinesCreated>("/conditions/service-set", {
+      title: text(v.name) ?? "", counterpartyId: int(v.counterpartyId), agreementId: int(v.agreementId) ?? null,
+      matterId: int(preset?.matterId) ?? null, workId: int(v.workId) ?? null,
+      termStart: text(v.termStart) ?? null, termEnd: text(v.termEnd) ?? null,
+      currency: v.currency || "JPY", taxCategory: v.taxCategory || "taxable", paymentTerms: text(v.paymentTerms) ?? null,
+      contractForm: text(v.contractForm) ?? null, deliverableOwnership: "contractor",
+      ...(v.timeSettlement ? {
+        timeSettlement: true, hoursIncluded: Number(v.hoursIncluded) || null,
+        overageUnitAmount: int(v.overageUnitAmount), shortfallUnitAmount: int(v.shortfallUnitAmount) ?? null
+      } : {}),
+      rows: [{
+        kind: "service", name: text(v.name) ?? null, pricingModel: "unit_rate",
+        unitAmount: unit, quantity: qty, unitLabel: v.pricingModel === "fixed" ? "式" : null,
+        spec: text(v.spec) ?? null, notes: text(v.notes) ?? null, deliveryDue: text(v.deliveryDue) ?? null,
+        contractForm: text(v.contractForm) ?? null, deliverableOwnership: "contractor",
+        rewardLabel: text(v.rewardLabel) ?? null
+      }],
+      license: licensePayload(lic, { workId: String(v.workId ?? ""), termStart: String(v.termStart ?? "") }),
+      payment: { mode: "per_delivery" }
+    });
+    await createCompanionDocument(lic, posted.licenseConditions.map((c) => c.id),
+                                  { matterId: preset?.matterId, agreementId: String(v.agreementId ?? "") });
+    const ids = posted.conditions.map((c) => c.id);
+    return { id: ids[0], conditionIds: ids, templateKey: "purchase_order" };
+  }
+
   if (outFrom) {
     const carry = (k: "workId" | "counterpartyId" | "agreementId") =>
       outFrom[k] ? { [k]: outFrom[k]! } : {};
@@ -158,31 +225,17 @@ export function ConditionCreateForm(
 <CreateForm
       title={title}
       path="/conditions"
+      submitLabel={contractorMode && lic.mode !== "none" ? "委託料と利用許諾条件を登録する" : undefined}
+      blockers={contractorMode && lic.mode !== "none" ? contractorBlockers : undefined}
+      submitOverride={(v) => (contractorMode && lic.mode !== "none" ? submitWithLicense(v) : null)}
       onValues={(v, set) => {
         if (v.direction === "out") { setOutFrom({ ...v }); return; }
-        // 支払の形（①）→ 計算方式・報酬名（③・⑤）。人が③で直したらそのまま（同じ値を入れ直すだけ）。
-        if (v.kind === "service") {
-          if (v.deliverableOwnership === "contractor") {
-            if (v.paySchemeLic === "in_lieu") {
-              if (v.pricingModel !== "fixed") set("pricingModel", "fixed");
-              if ((v.rewardLabel ?? "") !== "初版利用許諾料") set("rewardLabel", "初版利用許諾料");
-            } else if (v.paySchemeLic === "fixed" && (v.rewardLabel ?? "") === "初版利用許諾料") {
-              set("rewardLabel", "");
-            }
-          } else if (v.payScheme && v.pricingModel !== v.payScheme) {
-            set("pricingModel", v.payScheme);
-          }
-          // 受注者帰属なら、切り替え先に引き継ぐ種を持ち続ける（切り替えボタンは下に出る）。
-          if (v.deliverableOwnership === "contractor") {
-            const line: NonNullable<ServiceLinesSeed["lines"]>[number] = {
-              name: String(v.name ?? ""), spec: String(v.spec ?? ""), quantity: String(v.quantity ?? "") || "1",
-              unitPrice: String(v.unitAmount ?? ""), deliveryDue: String(v.deliveryDue ?? ""),
-              contractForm: String(v.contractForm ?? ""), ownership: "contractor", workId: ""
-            };
-            setSwitchSeed({ title: String(v.name ?? ""), ownership: "contractor",
-                            licMode: v.paySchemeLic === "in_lieu" ? "in_lieu" : "separate", lines: [line] });
-          } else if (switchSeed) setSwitchSeed(null);
-        } else if (switchSeed) setSwitchSeed(null);
+        setField.current = set;
+        setCur(v);
+        // 支払の形（①）→ 計算方式（③）。受注者帰属なら支払の形は下の利用許諾の欄で選ぶ。
+        if (v.kind === "service" && v.deliverableOwnership !== "contractor" && v.payScheme && v.pricingModel !== v.payScheme) {
+          set("pricingModel", v.payScheme);
+        }
         const party = String(v.counterpartyId ?? "");
         if (party !== partyFor) { setPartyFor(party); setNoAgreement(false); return; }
         // 候補が 1 本で、まだ何も入っていなければ自動で入れる。人が空にしたら戻さない。
@@ -208,19 +261,14 @@ export function ConditionCreateForm(
         { name: "deliverableOwnership", label: "成果物の権利の帰属先", type: "select",
           visibleWhen: (v) => v.kind === "service" || v.kind === "product",
           options: [{ value: "orderer", label: "発注者（譲渡型）：権利は当社に移る" }, { value: "contractor", label: "受注者（利用許諾型）：権利は相手に残り、当社は許諾を受ける" }],
-          hint: "発注書の明細に出る。ここで支払の形の選択肢が変わる" },
+          hint: (v) => v.kind === "service" && v.deliverableOwnership === "contractor"
+            ? "受注者帰属：この画面の下に利用許諾の欄が開きます。登録 1 回で委託料と利用許諾条件を両方作ります"
+            : "発注書の明細に出る。受注者を選ぶと利用許諾の欄が開く" },
         { name: "payScheme", label: "支払の形", type: "select",
           visibleWhen: (v) => v.kind === "service" && v.deliverableOwnership !== "contractor",
           options: [{ value: "fixed", label: "固定額（納品ごとに検収して支払）" }, { value: "unit_rate", label: "単価 × 数量" },
                     { value: "subscription", label: "定期払い（毎月・毎期の 1 回あたり）" }, { value: "revenue_rate", label: "売上連動（インセンティブ報酬）" }],
           hint: "選ぶと③の計算方式が入る（③で直せる）" },
-        { name: "paySchemeLic", label: "支払の形", type: "select",
-          visibleWhen: (v) => v.kind === "service" && v.deliverableOwnership === "contractor",
-          options: [{ value: "fixed", label: "委託報酬（固定額）。利用許諾料の扱い（別途／含む）は利用許諾の条件で決める" },
-                    { value: "in_lieu", label: "初版の利用許諾料を報酬として払う（仮計算 → 納品後 60 日以内に確定）" }],
-          hint: (v) => v.paySchemeLic === "in_lieu"
-            ? "計算方式は定額、報酬名は「初版利用許諾料」になる。利用許諾条件（紙・電子）と特約は『業務委託（発注）』のフォームからまとめて登録するのが早い"
-            : "受注者帰属の成果物は、利用許諾の条件（許諾料の扱い・クレジット・再許諾）を別の条件『利用許諾』で持つ。『業務委託（発注）』のフォームなら一緒に作れる" },
         // 取引先は 2,500 件ある。一覧から選ばせず、名前で探して決める。
         { name: "counterpartyId", label: "相手先", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
@@ -353,8 +401,8 @@ export function ConditionCreateForm(
           hint: "未消化の時間 × 控除単価 を減額。空なら未消化でも減額しない" },
         { name: "_s6", type: "section", label: "⑥ 利用許諾の条件", hint: "利用形態・許諾料の扱い・独占性・クレジット表記・地域と言語。発注書の「利用許諾条件」と条件書に出ます",
           visibleWhen: (v) => v.kind === "license" },
-        { name: "_s6b", type: "section", label: "⑥ 利用許諾の条件 — この条件では持ちません",
-          hint: "受注者帰属の成果物の利用許諾（許諾料の扱い・クレジット表記・再許諾・地域と言語）は、別の条件『利用許諾』で持ちます。作品 × 構成要素 × 利用形態で 1 本。『業務委託（発注）』のフォームなら委託料と一緒に作れます",
+        { name: "_s6b", type: "section", label: "⑥ 利用許諾の条件 — 下の欄で入れます",
+          hint: "受注者帰属の成果物の利用許諾（支払の形・初版の算定の基礎・料率・独占性・許諾期間・クレジット表記）は、この画面の下（登録ボタンの上）の欄で入れます。登録すると利用許諾条件が別の条件明細として立ち、この委託料に対応づきます",
           visibleWhen: (v) => v.kind === "service" && v.deliverableOwnership === "contractor" },
         // 利用形態（A-027）。条件書の行・計算書の製品名はこれで決まる。
         // 作品1点ぶんをまとめて作るなら「許諾セット」「出版セット」のほうが早い。
@@ -494,18 +542,14 @@ export function ConditionCreateForm(
   onDone={onDone}
   onCancel={onCancel}
 >
-  {/* 受注者帰属：この 1 本だけでは利用許諾条件・算定の基礎・支払期日が作られない。形ごと切り替えてもらう。 */}
-  {onSwitchToService && switchSeed && (
-    <div className={`note ${switchSeed.licMode === "in_lieu" ? "warn" : ""}`} style={{ marginTop: 8 }}>
-      {switchSeed.licMode === "in_lieu"
-        ? "「初版の利用許諾料を報酬として払う」は、この 1 本だけでは成立しません。発注書には 算定の基礎（見込み価格 × 部数 × 料率）・仮計算額・確定期限・支払期日・2 版目以降の利用許諾条件・特約 が要り、これらは『業務委託（発注）』のフォームでまとめて作ります。"
-        : "受注者帰属の成果物は、利用許諾の条件（許諾料の扱い・クレジット表記・再許諾）を別の条件『利用許諾』で持ちます。この 1 本だけ登録すると、発注書は「利用許諾料は別途」とだけ出ます。"}
-      <span className="row" style={{ gap: 8, marginTop: 6 }}>
-        <button type="button" className="btn btn-sm primary" onClick={() => onSwitchToService(switchSeed)}>
-          『業務委託（発注）』のフォームに切り替える（入力した品目・金額・納期は引き継ぐ）
-        </button>
-        <span className="faint">{switchSeed.licMode === "in_lieu" ? "切り替え先では「初版の利用許諾料を報酬として払う」が選ばれた状態で開きます" : "そのまま 1 本だけ登録することもできます"}</span>
-      </span>
+  {contractorMode && (
+    <div style={{ marginTop: 8 }}>
+      <LicenseTermsSection draft={lic} onChange={setLic} deliverables={deliverables}
+                           workId={String(cur.workId ?? "")} title={String(cur.name ?? "")}
+                           agreements={licAgreements} baseAgreementId={String(cur.agreementId ?? "")}
+                           servicePeriod={{ start: String(cur.termStart ?? ""), end: String(cur.termEnd ?? "") }}
+                           workNote={!String(cur.workId ?? "").trim() && lic.mode !== "none"
+                             ? <div className="alert">①の「作品」を選んでください（利用許諾条件は作品にぶら下がります）</div> : null} />
     </div>
   )}
   {/* 相手に締結済みの契約が無い。黙って契約なしの条件を増やさず、ここで決めてもらう。 */}
