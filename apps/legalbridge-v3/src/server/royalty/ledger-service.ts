@@ -31,13 +31,15 @@ export type Bundle = "per_work" | "per_party";
 /**
  * 出し方。条件の決済の型（A-071）があればそこから決める：回数無制限（出来事のたび）＝イベント式、
  * それ以外（一回きり・回数固定・期間で決まる）＝時限式。型が無い条件だけ、旧 statement_timing →
- * 利用形態（紙出版は刷ごと）の順で推す。
+ * 利用形態（紙出版・OEM は製造ごと）の順で推す。
  */
 export function timingOf(explicit: unknown, usageType: unknown, settlementMode?: unknown): Timing {
   if (settlementMode === "open") return "event";
   if (settlementMode === "once" || settlementMode === "fixed_count" || settlementMode === "term_bound") return "periodic";
   if (explicit === "periodic" || explicit === "event") return explicit;
-  return usageType === "pub_print" ? "event" : "periodic";
+  // 型の推し方（conditions/settlement-mode.ts の deriveSettlementRule・A-071 の移行）と揃える：
+  // 紙出版と自社製造・他社販売（OEM）は製造のたび。
+  return usageType === "pub_print" || usageType === "oem" ? "event" : "periodic";
 }
 
 export interface LedgerCondition {

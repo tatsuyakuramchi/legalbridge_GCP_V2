@@ -23,6 +23,9 @@ const Q = (conditionId: number, base = 0) => [
 test("出し方の既定は、紙出版がイベント式、それ以外は時限式。明示があればそれ", () => {
   assert.equal(timingOf(null, "pub_print"), "event");
   assert.equal(timingOf(null, "in_house"), "periodic");
+  // 型の無い OEM（自社製造・他社販売）は製造のたび。settlement-mode.ts の推し方と同じ。
+  assert.equal(timingOf(null, "oem"), "event");
+  assert.equal(timingOf(null, "sublicense"), "periodic");
   assert.equal(timingOf("event", "in_house"), "event");
 });
 
