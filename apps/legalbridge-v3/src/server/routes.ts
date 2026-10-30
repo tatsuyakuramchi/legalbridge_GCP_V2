@@ -74,6 +74,7 @@ import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
+import { RoundOverviewService } from "./royalty/round-overview.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
@@ -3142,6 +3143,21 @@ export function createRoutes(database: Transactable) {
   // 作品を許諾している作家の一覧。
   router.get("/works/:id/royalty", asyncRoute(async (req, res) => {
     res.json(await royaltyLedger.forWork(Number(req.params.id)));
+  }));
+  // 回と文書（docs/royalty-ledger.md §9）。条件の行 × 回のマス、回号・計算書・支払・条件書。
+  const roundOverview = new RoundOverviewService(database);
+  router.get("/works/:id/round-overview", asyncRoute(async (req, res) => {
+    res.json(await roundOverview.forWork(Number(req.params.id)));
+  }));
+  router.get("/royalty-rounds", asyncRoute(async (req, res) => {
+    const input = z.object({
+      from: z.string().date().optional(), to: z.string().date().optional(),
+      partyId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      kind: z.enum(["period", "event"]).optional(),
+      openOnly: z.enum(["1", "true", "0", "false"]).optional()
+    }).parse(req.query);
+    res.json(await roundOverview.cross({ ...input, openOnly: input.openOnly === "1" || input.openOnly === "true" }));
   }));
   // 台帳。workId を付ければ作家 × その作品、付けなければ作家 × 全作品。
   /** 取引モデル（利用形態）ごとの計算書の出し分け表。運用の画面が見せる。 */

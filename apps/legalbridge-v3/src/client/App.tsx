@@ -20,13 +20,14 @@ import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
 import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
+import { RoyaltyRounds } from "./RoundsOverview.js";
 import type { PayDocTile } from "../server/paydocs/rows.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 import { formatHash, parseHash, pushRoute, routePath, type Route } from "./route.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "rounds" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
@@ -50,7 +51,9 @@ const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> 
     { view: "workbench", label: "作業テーブル" },
     // 計算書・検収書・役務提供完了通知書を回ごとに 起点 → 文書 → 送付 → 受領 → 支払 まで（A-074）。
     // 以前の「取引管理」「支払文書処理」はここへまとめた（取引管理の表は案件・条件明細の中に残る）。
-    { view: "paydocs", label: "支払文書" }
+    { view: "paydocs", label: "支払文書" },
+    // 時限式（締め）とイベント式（印刷・製造）の回と、その回で出した計算書・支払を横断で（docs/royalty-ledger.md §9）。
+    { view: "rounds", label: "回の一覧" }
   ] },
   { section: "横断で見る", items: [
     // 契約が器で、条件はその明細。並びもその順にする。
@@ -500,6 +503,10 @@ export function App() {
             author={payAuthor} onOpenAuthor={openAuthor}
             onLedgerCompose={(ids, events, key, back, revise) => startCompose(ids, events, null, key, back, revise ?? null)}
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }} />
+        )}
+        {view === "rounds" && (
+          <RoyaltyRounds onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+            onOpenWork={(id) => openEntity("work", id)} />
         )}
         {view === "workbench" && (
           <WorkbenchWorkspace state={workbench} onState={setWorkbench}

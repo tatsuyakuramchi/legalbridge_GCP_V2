@@ -11,6 +11,7 @@ import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import type { DocBack } from "./RoyaltyLedger.js";
 import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayDocsWorkspace.js";
+import { WorkRounds } from "./RoundsOverview.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
@@ -164,7 +165,7 @@ export function WorksWorkspace(
   const [selected, setSelected] = useState<number | undefined>(initialId);
   useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   // 「利用許諾計算」タブは閉じた（A-074）。報告・計算書は支払文書の「作家の報告と計算書」へ。
-  const [pane, setPane] = useState<"work" | "paydocs">("work");
+  const [pane, setPane] = useState<"work" | "rounds" | "paydocs">("work");
   /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */
   const [payCounts, setPayCounts] = useState<Map<number, { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }>>(new Map());
   useEffect(() => {
@@ -772,8 +773,12 @@ export function WorksWorkspace(
           {work && (
             <div className="tabs" role="tablist" aria-label="作品の見出し">
               <button role="tab" aria-selected={pane === "work"} onClick={() => setPane("work")}>作品</button>
+              <button role="tab" aria-selected={pane === "rounds"} onClick={() => setPane("rounds")}>回と文書</button>
               {payDocs && <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>}
             </div>
+          )}
+          {work && pane === "rounds" && (
+            <WorkRounds workId={work.id} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />
           )}
           {work && pane === "paydocs" && payDocs && (
             <PayDocsWorkspace scope={{ workId: work.id }} onOpenCondition={onOpenCondition}
