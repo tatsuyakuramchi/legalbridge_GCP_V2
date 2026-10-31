@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
-import { RoyaltyReceipts } from "./RoyaltyReceipts.js";
 
 /**
  * 回と文書（docs/royalty-ledger.md §9）。
@@ -8,7 +7,6 @@ import { RoyaltyReceipts } from "./RoyaltyReceipts.js";
  *   作品タブ「回と文書」… その作品の許諾料の条件（IN）ごとに、回（時限式の締め・イベント式の製造）を
  *     回号の順に並べ、各回の状態・計算書（番号・作家×作品の第 N 回・決定日・送付）・支払と、
  *     条件の根拠の契約書・条件書、報告の来た許諾先（OUT 条件）を 1 枚で見せる。
- *   横断の「回の一覧」… 作品・作家をまたいで回を日付順に並べる。期間・出し方・開いている回で絞る。
  *
  * 見るだけ。報告を入れる・計算書を作るのは台帳（支払文書 › 作家 × 作品）で。
  */
@@ -28,12 +26,6 @@ interface Row {
   timing: "periodic" | "event"; settlementMode: string | null;
   ratePpm: number | null; unitAmount: number | null; pricingModel: string; targetPartyName: string | null;
   contracts: Contract[]; outs: Out[]; cells: Cell[];
-}
-interface CrossRound {
-  key: string; kind: "period" | "event"; partyId: number; partyName: string;
-  works: Array<{ id: number; title: string }>;
-  conditions: Array<{ id: number; conditionNo: string | null; name: string; usageLabel: string; roundNo: number | null; label: string | null }>;
-  closeOn: string | null; payOn: string | null; state: string; reports: number; documents: Doc[]; payments: Payment[];
 }
 
 const PART_STATE: Record<string, { label: string; tag: string }> = {
@@ -238,114 +230,6 @@ export function WorkRounds({ workId, onOpenCondition, onOpenDocument }: {
           ))}
         </div>
       ))}
-    </div>
-  );
-}
-
-const iso = (d: Date) => d.toISOString().slice(0, 10);
-const shift = (months: number) => { const d = new Date(); d.setMonth(d.getMonth() + months); return iso(d); };
-
-/** 横断の「回の一覧」。作品・作家をまたいで、回を日付の新しい順に。 */
-export function RoyaltyRounds({ onOpenCondition, onOpenDocument, onOpenWork }: {
-  onOpenCondition?: (id: number) => void;
-  onOpenDocument?: (id: number) => void;
-  onOpenWork?: (id: number) => void;
-}) {
-  const [from, setFrom] = useState(shift(-12));
-  const [to, setTo] = useState(shift(3));
-  const [kind, setKind] = useState<KindFilter>("all");
-  const [openOnly, setOpenOnly] = useState(false);
-  const [rounds, setRounds] = useState<CrossRound[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setRounds(null); setError(null);
-    const q = new URLSearchParams();
-    if (from) q.set("from", from);
-    if (to) q.set("to", to);
-    if (kind !== "all") q.set("kind", kind);
-    if (openOnly) q.set("openOnly", "1");
-    api.get<{ rounds: CrossRound[] }>(`/royalty-rounds?${q.toString()}`)
-      .then((r) => setRounds(r.rounds)).catch((e: ApiError) => setError(e.message));
-  }, [from, to, kind, openOnly]);
-  return (
-    <div className="stack">
-      <div className="panel">
-        <div className="panel-hd">
-          <h2>回の一覧</h2>
-          <span className="faint">時限式（締め）とイベント式（印刷・製造）の回と、その回で出した計算書・支払</span>
-        </div>
-        <div className="panel-bd row" style={{ gap: 12, flexWrap: "wrap" }}>
-          <label className="row" style={{ gap: 4 }}>締め・製造日・支払日
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />〜
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          </label>
-          <KindChips value={kind} onChange={setKind} />
-          <label className="row" style={{ gap: 4 }}>
-            <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />開いている回だけ
-          </label>
-        </div>
-      </div>
-      {error && <div className="alert">{error}</div>}
-      {!rounds && !error && <div className="panel"><div className="panel-bd faint">読み込み中…</div></div>}
-      {rounds && (
-        <div className="panel">
-          <div className="panel-bd">
-            {rounds.length ? (
-              <table className="table">
-                <thead>
-                  <tr><th>締め・製造日</th><th>出し方</th><th>作家</th><th>作品</th><th>条件と回号</th><th>状態</th><th>計算書</th><th>支払</th></tr>
-                </thead>
-                <tbody>
-                  {rounds.map((r) => {
-                    const st = ROUND_STATE[r.state] ?? { label: r.state, tag: "" };
-                    return (
-                      <tr key={r.key}>
-                        <td>{md(r.closeOn)}<div className="faint">支払 {md(r.payOn)}</div></td>
-                        <td><span className={`tag ${KIND[r.kind].tag}`}>{KIND[r.kind].label}</span></td>
-                        <td>{r.partyName}</td>
-                        <td>{r.works.map((w) => onOpenWork
-                          ? <div key={w.id}><button className="linky" onClick={() => onOpenWork(w.id)}>{w.title}</button></div>
-                          : <div key={w.id}>{w.title}</div>)}</td>
-                        <td>{r.conditions.map((c) => (
-                          <div key={`${c.id}:${c.roundNo}`}>
-                            {onOpenCondition ? <button className="linky code" onClick={() => onOpenCondition(c.id)}>{c.conditionNo ?? `#${c.id}`}</button>
-                                             : <span className="code">{c.conditionNo ?? `#${c.id}`}</span>}{" "}
-                            <span className="faint">{c.usageLabel}</span> <b>{roundNoText(c.roundNo)}</b>
-                            {c.label && r.kind === "period" ? <span className="faint">（{c.label}）</span> : null}
-                          </div>
-                        ))}</td>
-                        <td><span className={`tag ${st.tag}`}>{st.label}</span>{r.reports ? <div className="faint">報告 {r.reports} 件</div> : null}</td>
-                        <td><Docs docs={r.documents} onOpen={onOpenDocument} /></td>
-                        <td><Payments list={r.payments} /></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            ) : <span className="faint">この範囲に回はありません</span>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 作業 › 回の一覧。回（締め・製造）と、入金と作者への支払（docs/royalty-ledger.md §10）の 2 枚。 */
-export function RoundsWorkspace(props: {
-  onOpenCondition?: (id: number) => void;
-  onOpenDocument?: (id: number) => void;
-  onOpenWork?: (id: number) => void;
-}) {
-  const [tab, setTab] = useState<"rounds" | "receipts">("rounds");
-  return (
-    <div className="stack">
-      <div className="tabs" role="tablist" aria-label="回の一覧">
-        <button role="tab" aria-selected={tab === "rounds"} onClick={() => setTab("rounds")}>回</button>
-        <button role="tab" aria-selected={tab === "receipts"} onClick={() => setTab("receipts")}>入金と作者への支払</button>
-      </div>
-      {tab === "rounds"
-        ? <RoyaltyRounds {...props} />
-        : <RoyaltyReceipts onOpenCondition={props.onOpenCondition} onOpenDocument={props.onOpenDocument} />}
     </div>
   );
 }

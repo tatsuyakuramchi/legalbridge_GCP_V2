@@ -5,6 +5,7 @@ import { SearchSelect, searchParties, type SearchOption } from "./SearchSelect.j
 import { EventEntryForm } from "./EventEntryForm.js";
 import { RoyaltyLedger, type DocBack } from "./RoyaltyLedger.js";
 import { EbookSalesImport } from "./EbookSalesImport.js";
+import { RoyaltyReceipts } from "./RoyaltyReceipts.js";
 import type { PayDocRow, PayDocTile, NextAction } from "../server/paydocs/rows.js";
 import type { PayDocsList } from "../server/paydocs/service.js";
 import { ProcessRail, type Station } from "./ProcessRail.js";
@@ -23,7 +24,8 @@ export interface PayDocsHandoff {
   conditionId: number; conditionName: string; roundLabel: string; scheduleId: number | null; eventId: number | null;
 }
 
-type Pane = "list" | "author" | "imports" | "plans" | "past";
+export type PayDocsPane = "list" | "receipts" | "author" | "imports" | "plans" | "past";
+type Pane = PayDocsPane;
 
 /** 作家の報告と計算書を開く先。支払文書の行・作品・デイリータスクから来る。 */
 export interface AuthorTarget { partyId: number; partyName?: string | null; workId?: number | null;
@@ -90,7 +92,7 @@ function SourceCell({ r }: { r: PayDocRow }) {
   const tone = r.source.state === "ok" ? "ok" : r.source.state === "late" ? "bad" : r.source.state === "waiting" ? "warn" : "none";
   return (
     <>
-      <div className="faint">{r.trigger === "active" ? "能動" : "受動"}</div>
+      <div className="faint">{r.trigger === "active" ? "イベント式" : "時限式"}</div>
       <Pill tone={tone}>{r.source.state === "late" ? `${r.source.label}（期限超過）` : r.source.label}</Pill>
       {r.source.detail && <div className="faint">{r.source.detail}</div>}
     </>
@@ -147,9 +149,11 @@ function PayCell({ r }: { r: PayDocRow }) {
 
 export function PayDocsWorkspace(
   { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenClosing,
-    author, onOpenAuthor, onLedgerCompose, onOpenRequest, initialTile }: {
+    author, onOpenAuthor, onLedgerCompose, onOpenRequest, initialTile, initialPane }: {
     /** 開いたときに押しておく札（ホームの盤面から）。 */
     initialTile?: PayDocTile | null;
+    /** 開いたときのタブ（旧 回の一覧の URL から来たときは「入金と作者への支払」）。 */
+    initialPane?: PayDocsPane | null;
     /** 予定どおりにまとめて締める（旧 支払文書処理の一括）。 */
     onOpenClosing?: () => void;
     /** 開いておく作家（支払文書の外から「作家の報告と計算書」へ来たとき）。 */
@@ -173,7 +177,7 @@ export function PayDocsWorkspace(
   }
 ) {
   const embedded = !!scope;
-  const [pane, setPane] = useState<Pane>(author ? "author" : "list");
+  const [pane, setPane] = useState<Pane>(author ? "author" : initialPane ?? "list");
   /** 作家の台帳から「送付・受領・支払」へ戻ったとき、一覧をその作家で絞る。 */
   const [listParty, setListParty] = useState<number | null>(null);
   const [who, setWho] = useState<(AuthorTarget & { nonce: number }) | null>(author ?? null);
@@ -195,8 +199,10 @@ export function PayDocsWorkspace(
       {!embedded && (
         <div className="tabs" role="tablist" aria-label="支払文書の見出し">
           <button role="tab" aria-selected={pane === "list"} onClick={() => setPane("list")}>一覧</button>
+          {/* 取引先からの入金（OUT）ごとに、払うべき作者（IN）の報告と計算書（docs/royalty-ledger.md §10）。 */}
+          <button role="tab" aria-selected={pane === "receipts"} onClick={() => setPane("receipts")}>入金と作者への支払</button>
           <button role="tab" aria-selected={pane === "author"} onClick={() => setPane("author")}>作家の報告と計算書</button>
-          <button role="tab" aria-selected={pane === "imports"} onClick={() => setPane("imports")}>取込（電子書籍売上・年次締め）</button>
+          <button role="tab" aria-selected={pane === "imports"} onClick={() => setPane("imports")}>売上の取込（電子書籍・年次締め）</button>
           <button role="tab" aria-selected={pane === "plans"} onClick={() => setPane("plans")}>製造予定</button>
           <button role="tab" aria-selected={pane === "past"} onClick={() => setPane("past")}>過去分の整理</button>
         </div>
@@ -211,6 +217,7 @@ export function PayDocsWorkspace(
                     onOpenRequest={onOpenRequest} onLedgerCompose={onLedgerCompose}
                     onOpenList={(partyId) => { setPane("list"); setListParty(partyId); }} />
       )}
+      {pane === "receipts" && <RoyaltyReceipts onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "imports" && <EbookSalesImport />}
       {pane === "plans" && <PlansPane />}
       {pane === "past" && <PastPane />}
@@ -339,7 +346,7 @@ function PayDocsTable(
             {KINDS.map(([v, l]) => <button key={v} type="button" className="chip" aria-pressed={kind === v} onClick={() => setKind(v)}>{l}</button>)}
           </span>
           <span className="chips" role="group" aria-label="起点">
-            {([["", "起点：すべて"], ["active", "能動（製造・納品）"], ["passive", "受動（報告・入金の締め）"]] as const).map(([v, l]) => (
+            {([["", "起点：すべて"], ["active", "イベント式（製造・納品）"], ["passive", "時限式（締め・報告・入金）"]] as const).map(([v, l]) => (
               <button key={v} type="button" className="chip" aria-pressed={trigger === v} onClick={() => setTrigger(v)}>{l}</button>
             ))}
           </span>
@@ -420,7 +427,7 @@ function PayDocsTable(
                                onChange={() => setSelected((x) => { const n = new Set(x); if (n.has(r.key)) n.delete(r.key); else n.add(r.key); return n; })} /></td>
                     <td>
                       <div style={{ fontWeight: 700 }}>{r.condition.name}</div>
-                      <div className="faint">{r.label}{r.closeOn && r.closeOn !== r.periodFrom ? `（締め ${r.closeOn}）` : ""}</div>
+                      <div className="faint">{r.roundNo ? <b style={{ marginRight: 4 }}>第{r.roundNo}回</b> : null}{r.label}{r.closeOn && r.closeOn !== r.periodFrom ? `（締め ${r.closeOn}）` : ""}</div>
                       <span className="tag" style={{ marginTop: 2 }}>{r.documentLabel}</span>
                     </td>
                     <td>{r.party?.name ?? "—"}{r.work && <div className="faint">{r.work.title}</div>}</td>
@@ -454,7 +461,7 @@ function PayDocsTable(
         <div className="row" style={{ gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 300px" }}>
             <b>起点</b>
-            <div className="faint">能動＝製造・印刷・納品など自社の記録で回が立つ（製造予定を入れておくと記録漏れが見える）。受動＝締めのあと報告・入金を待つ（締めから報告期限〔既定 30 日〕を過ぎたら督促）。</div>
+            <div className="faint">イベント式＝製造・印刷・納品など自社の記録で回が立つ（製造予定を入れておくと記録漏れが見える）。時限式＝締めのあと報告・入金を待つ（締めから報告期限〔既定 30 日〕を過ぎたら督促）。</div>
           </div>
           <div style={{ flex: "1 1 300px" }}>
             <b>受領</b>

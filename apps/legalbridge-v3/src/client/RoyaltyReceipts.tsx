@@ -215,3 +215,48 @@ function ReceiptCard({ r, canWrite, onOpenCondition, onOpenDocument, onError, on
     </div>
   );
 }
+
+/**
+ * 入金 1 件から払うべき作者（取引管理で「入金を確認した」直後・入金済みの行から）。
+ * 再許諾・他社販売の許諾先の入金でなければ（作者のいない入金）何も出さない。
+ */
+export function ReceiptsForPayment({ paymentId, onOpenCondition, onOpenDocument, onClose }: {
+  paymentId: number;
+  onOpenCondition?: (id: number) => void;
+  onOpenDocument?: (id: number) => void;
+  onClose?: () => void;
+}) {
+  const readOnly = useReadOnly();
+  const [role, setRole] = useState<string | null>(null);
+  const canWrite = !readOnly && (role === "admin" || role === "legal");
+  const [receipts, setReceipts] = useState<Receipt[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    api.get<{ user?: { role: string } }>("/me").then((r) => setRole(r.user?.role ?? null)).catch(() => setRole(null));
+  }, []);
+  useEffect(() => {
+    api.get<{ receipts: Receipt[] }>(`/royalty-receipts?paymentId=${paymentId}`)
+      .then((r) => setReceipts(r.receipts)).catch((e: ApiError) => setError(e.message));
+  }, [paymentId, version]);
+  if (error) return <div className="alert">{error}</div>;
+  const withAuthors = (receipts ?? []).filter((r) => r.ins.length > 0);
+  if (!withAuthors.length) return null;
+  const pending = withAuthors.flatMap((r) => r.ins).filter((x) => x.state === "unreported").length;
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
+        <b>この入金で作者に払いが出ます</b>
+        <span className="faint">{pending ? `未報告の作者 ${pending} 人。選んで報告を起こしてください（各作者が入金の全額にそれぞれの料率を掛けます）` : "作者の報告は起きています"}</span>
+        {onClose && <button className="linky" style={{ marginLeft: "auto" }} onClick={onClose}>閉じる</button>}
+      </div>
+      {notice && <div className="note ok">{notice}</div>}
+      {withAuthors.map((r) => (
+        <ReceiptCard key={r.key} r={r} canWrite={canWrite} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+                     onError={setError} onMade={(m) => { setNotice(m); setVersion((v) => v + 1); }} />
+      ))}
+    </div>
+  );
+}
+

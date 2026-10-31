@@ -7,8 +7,8 @@ test("メニューの区分は ホーム／格納情報／作業／一括処理�
   assert.deepEqual(NAV[2].hubs.map((h) => h.label), ["受付", "取引開始作業", "支払処理作業"]);
 });
 
-test("今ある画面はすべてどこかの項目から開ける（古い URL・ほかの画面からの飛び先が生きる）", () => {
-  for (const v of ["home", "intake", "daily", "matters", "workbench", "paydocs", "rounds", "deals", "agreements", "agreement-map",
+test("今ある画面はすべてどこかの項目から開ける（古い URL・ほかの画面からの飛び先が生きる。旧 回の一覧は App が支払文書へ転送）", () => {
+  for (const v of ["home", "intake", "daily", "matters", "workbench", "paydocs", "deals", "agreements", "agreement-map",
                    "conditions", "works", "parties", "documents", "ringi", "rpt", "closing", "money", "drift", "flows", "ops"]) {
     assert.ok(NAV_VIEWS.has(v), v);
   }

@@ -19,8 +19,7 @@ import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type BulkMode, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
-import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
-import { RoundsWorkspace } from "./RoundsOverview.js";
+import { PayDocsWorkspace, type AuthorTarget, type PayDocsPane } from "./PayDocsWorkspace.js";
 import type { PayDocTile } from "../server/paydocs/rows.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
@@ -275,6 +274,8 @@ export function App() {
   const [docStep, setDocStep] = useState<string | null>(null);
   /** 支払文書を開くときの札（ホームの盤面から）。 */
   const [payTile, setPayTile] = useState<PayDocTile | null>(null);
+  /** 支払文書を開くときのタブ（旧 回の一覧の URL は「入金と作者への支払」へ）。 */
+  const [payPane, setPayPane] = useState<PayDocsPane | null>(null);
   /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
   const [pick, setPick] = useState<{ view: View; id: number } | null>(null);
   const pickFor = (v: View) => (id: number | undefined) => setPick(id ? { view: v, id } : null);
@@ -285,6 +286,12 @@ export function App() {
   const applyRoute = (r: Route | null) => {
     applyingRoute.current = true;
     try {
+      // 旧 回の一覧（rounds）は支払文書の「入金と作者への支払」へ移した（docs/navigation.md）。
+      if (r?.view === "rounds") {
+        setFocus(null); setPayPane("receipts"); setView("paydocs");
+        window.history.replaceState(null, "", "#/paydocs");
+        return;
+      }
       if (!r || !VIEWS.current.has(r.view)) { setFocus(null); setView("home"); return; }
       const v = r.view as View;
       setPick(null);
@@ -353,6 +360,7 @@ export function App() {
     setDocFlow(null);
     setFocus(null);
     if (to.view === "ops") setOpsTab(to.sub as OpsTab);
+    if (to.view === "paydocs") setPayPane(null);
     if (to.view === "workbench") {
       if (to.sub) { startWorkbench({ kind: "bulk", mode: to.sub as BulkMode }); return; }
       setWorkbench(null);
@@ -476,7 +484,7 @@ export function App() {
             onIssueDocument={issueRound} />
         )}
         {view === "paydocs" && (
-          <PayDocsWorkspace key={`pd${payTile ?? ""}`} initialTile={payTile} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+          <PayDocsWorkspace key={`pd${payTile ?? ""}${payPane ?? ""}`} initialTile={payTile} initialPane={payPane} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
             onIssueRound={issueRound}
             onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}
@@ -484,10 +492,6 @@ export function App() {
             author={payAuthor} onOpenAuthor={openAuthor}
             onLedgerCompose={(ids, events, key, back, revise) => startCompose(ids, events, null, key, back, revise ?? null)}
             onOpenRequest={(id) => { setFocus({ view: "intake", id }); setView("intake"); }} />
-        )}
-        {view === "rounds" && (
-          <RoundsWorkspace onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
-            onOpenWork={(id) => openEntity("work", id)} />
         )}
         {view === "workbench" && (
           <WorkbenchWorkspace state={workbench} onState={setWorkbench}

@@ -103,6 +103,8 @@ export class RoyaltyReceiptService {
 
   /** 入金の一覧。期間は入金日（未入金の予定は含めない）。 */
   async list(input: { from?: string | null; to?: string | null; outConditionId?: number | null; workId?: number | null;
+                      /** 入金 1 件だけ（取引管理で入金を確認した直後のパネル）。 */
+                      paymentId?: number | null;
                       state?: ReceiptInState | "none" | "open" | null } = {}): Promise<{ receipts: Receipt[] }> {
     try {
       const rows = (await this.database.query(
@@ -113,9 +115,11 @@ export class RoyaltyReceiptService {
             AND ($3::date IS NULL OR p.paid_on <= $3::date)
             AND ($4::bigint IS NULL OR oc.id = $4)
             AND ($5::bigint IS NULL OR $5 = ANY(${WORK_LINEAGE_UP_SQL("oc.work_id")}))
+            AND ($6::bigint IS NULL OR p.id = $6)
           ORDER BY p.paid_on DESC NULLS LAST, p.id DESC
           LIMIT 500`,
-        [OUT_USAGES, input.from ?? null, input.to ?? null, input.outConditionId ?? null, input.workId ?? null])).rows as any[];
+        [OUT_USAGES, input.from ?? null, input.to ?? null, input.outConditionId ?? null, input.workId ?? null,
+         input.paymentId ?? null])).rows as any[];
       const receipts: Receipt[] = [];
       for (const r of rows) receipts.push(await this.assemble(this.database, r));
       const open = new Set(["unreported", "mismatch", "waiting", "none"]);

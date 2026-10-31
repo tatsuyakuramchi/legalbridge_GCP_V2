@@ -14,7 +14,7 @@
  * どの項目を光らせるかは、いま開いている画面から決める（同じ画面が 2 つの項目にあれば、最後に押した方）。
  */
 
-export type NavView = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "rounds" | "deals" | "agreements"
+export type NavView = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "deals" | "agreements"
   | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift"
   | "flows" | "ops";
 
@@ -61,7 +61,6 @@ export const NAV: NavSection[] = [
     { key: "payment", label: "支払処理作業", tabs: [
       { label: "支払文書", to: { view: "paydocs" } },
       { label: "入金（取引管理）", to: { view: "deals" } },
-      { label: "入金と作者への支払", to: { view: "rounds" } },
       { label: "まとめて締める", to: { view: "closing" } },
       { label: "支払・お金", to: { view: "money" } }
     ] }

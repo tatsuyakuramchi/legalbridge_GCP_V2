@@ -3159,6 +3159,7 @@ export function createRoutes(database: Transactable) {
       from: z.string().date().optional(), to: z.string().date().optional(),
       outConditionId: z.coerce.number().int().positive().optional(),
       workId: z.coerce.number().int().positive().optional(),
+      paymentId: z.coerce.number().int().positive().optional(),
       state: z.enum(["unreported", "mismatch", "waiting", "issued", "none", "open"]).optional()
     }).parse(req.query);
     res.json(await royaltyReceipts.list(input));

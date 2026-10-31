@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ReceiptsForPayment } from "./RoyaltyReceipts.js";
 import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
@@ -46,6 +47,8 @@ export function DealsWorkspace(
   const [q, setQ] = useState("");
   const [data, setData] = useState<DealsList | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 入金を確認した（入金済みの）許諾先の入金。作者への報告のパネルを出す。 */
+  const [receiptPayment, setReceiptPayment] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -87,6 +90,8 @@ export function DealsWorkspace(
       } else if (action === "paid" && r.paymentId) {
         await api.post(`/payments/${r.paymentId}/paid`, { paidOn: data?.today ?? new Date().toISOString().slice(0, 10) });
         setNotice(`${r.conditionName}：${r.direction === "out" ? "入金を確認しました" : "支払済みにしました"}`);
+        // 許諾先からの入金なら、その場で作者への報告を起こせるようにする（docs/royalty-ledger.md §10）。
+        if (r.direction === "out") setReceiptPayment(r.paymentId);
       } else if (action === "revise") {
         onOpenCondition(r.conditionId); setBusy(null); return;
       } else if (action === "schedule") {
@@ -169,6 +174,12 @@ export function DealsWorkspace(
 
       {error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}
+      {receiptPayment && (
+        <div className="panel"><div className="panel-bd">
+          <ReceiptsForPayment key={receiptPayment} paymentId={receiptPayment} onOpenCondition={onOpenCondition}
+                              onOpenDocument={onOpenDocument} onClose={() => setReceiptPayment(null)} />
+        </div></div>
+      )}
 
       {running && (
         <ClosingRun scheduleIds={[...selected]} onOpenDocument={onOpenDocument}
@@ -275,6 +286,9 @@ export function DealsWorkspace(
                         {r.eventOn && <>実績 {r.eventOn}</>}
                         {r.documentNo && <>　<button className="linky code" onClick={() => onOpenDocument(r.documentId!)}>{r.documentNo}</button>{r.documentSentAt ? "（送付済）" : "（未送付）"}</>}
                         {r.paymentNo && <>　支払 {r.paymentNo}{paid ? `（${r.direction === "out" ? "入金" : "支払"}済 ${r.paidOn ?? ""}）` : r.due.on ? `（期日 ${r.due.on}）` : ""}</>}
+                        {paid && r.direction === "out" && r.paymentId && (
+                          <>　<button className="linky" onClick={() => setReceiptPayment(r.paymentId)}>作者への支払を見る</button></>
+                        )}
                       </div>
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
