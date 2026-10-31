@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { searchWorks } from "./MatterAxis.js";
-import { createCompanionDocument, inLieuCheck, licensePayload, LicenseTermsSection, newLicenseDraft,
+import { createCompanionDocument, inLieuCheck, licensePayload, licensePeriodMissing, LicenseTermsSection, newLicenseDraft,
          type LicenseDraft, type LicMode } from "./LicenseTermsSection.js";
-import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { CONTRACT_FORMS, CONTRACT_FORMS_EN, workShapeOf } from "../server/conditions/contract-form.js";
 import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 
@@ -223,6 +223,7 @@ export function ServiceLinesForm(
     timeSettled && !(num(hoursIncluded) > 0) ? "月間包括枠（時間）" : null,
     timeSettled && overageUnit.trim() === "" ? "超過単価" : null,
     ...(inLieu ? check.missing : []),
+    hasContractor ? licensePeriodMissing(lic) : null,
     inLieu && payMode === "periodic" ? "支払方法（初版利用許諾料は定期払いにできない）" : null
   ].filter((m): m is string => Boolean(m));
 
@@ -274,7 +275,9 @@ export function ServiceLinesForm(
       const posted = await api.post<ServiceLinesCreated>("/conditions/service-set", {
         title: title.trim(), counterpartyId: int(partyId), agreementId: int(agreementId) ?? null,
         matterId: int(preset?.matterId ?? "") ?? null, workId: int(workId) ?? null,
-        termStart: text(termStart) ?? null, termEnd: text(termEnd) ?? null,
+        // 請負は納期だけ（業務期間の欄を出さない）。前に入れた値が残っていても送らない（A-121）。
+        termStart: workShapeOf(contractForm) === "ukeoi" ? null : text(termStart) ?? null,
+        termEnd: workShapeOf(contractForm) === "ukeoi" ? null : text(termEnd) ?? null,
         currency, taxCategory: tax, paymentTerms: text(paymentTerms) ?? null,
         contractForm: text(contractForm) ?? null, deliverableOwnership: ownership || null,
         // 準委任の時間精算（A-073）。束の既定。準委任の委託料の行に付く（サーバが委託料の行だけに付ける）。
@@ -357,7 +360,7 @@ export function ServiceLinesForm(
           <label className="field"><span>契約形式（既定）</span>
             <select value={contractForm} onChange={(e) => setContractForm(e.target.value)}>
               <option value="">（未定）</option>
-              {CONTRACT_FORMS.map((f) => <option key={f} value={f}>{f}</option>)}
+              {CONTRACT_FORMS.map((f) => <option key={f} value={f}>{f === "請負" ? "請負（成果物を納める）" : f === "準委任" ? "準委任（役務を提供する）" : f}</option>)}
               {CONTRACT_FORMS_EN.map((f) => <option key={f} value={f}>{f}（海外版）</option>)}
             </select></label>
           <label className="field"><span>成果物の帰属先（既定）</span>
@@ -378,8 +381,17 @@ export function ServiceLinesForm(
                 <option value="JPY">JPY</option><option value="USD">USD</option><option value="EUR">EUR</option>
               </select>
             </span></label>
-          <label className="field"><span>開始日</span><input type="date" value={termStart} onChange={(e) => setTermStart(e.target.value)} /></label>
-          <label className="field"><span>業務終了（空なら各行の納期）</span><input type="date" value={termEnd} onChange={(e) => setTermEnd(e.target.value)} /></label>
+          {/* 期日（A-121）。請負は成果物の納期だけ（明細の行ごと）、準委任は役務提供期間（成果物があれば行の納期も）。 */}
+          {workShapeOf(contractForm) === "ukeoi" ? (
+            <div className="field"><span>期日</span>
+              <small className="faint">請負は成果物を納める日（納期）だけです。明細の行ごとに「納期」を入れてください</small></div>
+          ) : (<>
+            <label className="field"><span>{workShapeOf(contractForm) === "junin" ? "役務提供の開始" : "業務の開始"}</span>
+              <input type="date" value={termStart} onChange={(e) => setTermStart(e.target.value)} /></label>
+            <label className="field"><span>{workShapeOf(contractForm) === "junin" ? "役務提供の終了" : "業務の終了（空なら各行の納期）"}</span>
+              <input type="date" value={termEnd} onChange={(e) => setTermEnd(e.target.value)} />
+              {workShapeOf(contractForm) === "junin" && <small className="faint">明細の行の「納期」は成果物があるときだけ入れます</small>}</label>
+          </>)}
         </div>
 
         <div className="row" style={{ gap: 8 }}>

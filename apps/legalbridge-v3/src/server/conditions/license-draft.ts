@@ -44,6 +44,11 @@ export interface LicenseDraft {
   /** 別途のときの料率・定額。 */
   rate: string;
   flat: string;
+  /**
+   * 許諾期間（当社が成果物を使える期間）。納期・役務提供期間とは別。
+   * 無期限なら termEnd は送らない（期間の定めなし）。有期なら終了日が要る。
+   */
+  termKind: "perpetual" | "fixed";
   termStart: string;
   termEnd: string;
   regions: string;
@@ -70,7 +75,7 @@ export function newLicenseDraft(mode: LicMode = "included"): LicenseDraft {
     exclusivity: "", paymentTerms: "", payOn: "",
     fePrice: "", feCopies: "", feRate: "10", feExempt: "0", fePriceBasis: "", confirmDays: "45", exemptLater: "1",
     agreementId: "", creditFromWork: true, creditNotice: "", companion: "", sublicense: "consent",
-    rate: "", flat: "", termStart: "", termEnd: "", regions: "全世界", languages: "全言語"
+    rate: "", flat: "", termKind: "perpetual", termStart: "", termEnd: "", regions: "全世界", languages: "全言語"
   };
 }
 
@@ -115,6 +120,14 @@ export function inLieuCheck(d: LicenseDraft, deliverables: LicenseDeliverable[])
   return { firstEdition: fe, provisional, rowsTotal, feOk, ratesOk, confirmOk, sixtyDayOver, missing, ready: missing.length === 0 };
 }
 
+/** 許諾期間の足りないところ（有期なのに終了日が無い・終了が開始より前）。無ければ null。 */
+export function licensePeriodMissing(d: Pick<LicenseDraft, "mode" | "termKind" | "termStart" | "termEnd">): string | null {
+  if (d.mode === "none" || d.termKind !== "fixed") return null;
+  if (!d.termEnd.trim()) return "許諾期間の終了日（有期を選んだとき）";
+  if (d.termStart.trim() && d.termEnd < d.termStart) return "許諾期間の終了日を開始日より後に";
+  return null;
+}
+
 /** サーバ（/conditions/service-set の license）へ送る形。 */
 export function licensePayload(d: LicenseDraft, opts: { workId: string; termStart: string }) {
   const scopes = [
@@ -133,7 +146,8 @@ export function licensePayload(d: LicenseDraft, opts: { workId: string; termStar
     sublicense: d.sublicense,
     ratePct: d.mode === "separate" && d.rate.trim() ? num(d.rate) : null,
     flatAmount: d.mode === "separate" && !d.rate.trim() && d.flat.trim() ? Math.round(num(d.flat)) : null,
-    termStart: text(d.termStart) ?? text(opts.termStart) ?? null, termEnd: text(d.termEnd) ?? null,
+    termStart: text(d.termStart) ?? text(opts.termStart) ?? null,
+    termEnd: d.termKind === "perpetual" ? null : text(d.termEnd) ?? null,
     scopes: scopes.length ? scopes : undefined,
     // 初版の利用許諾料を報酬として払う（A-077）。仮計算額と行の合計はサーバが突き合わせる。
     ...(d.mode === "in_lieu" ? {

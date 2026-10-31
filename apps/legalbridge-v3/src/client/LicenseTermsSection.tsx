@@ -3,10 +3,10 @@ import { api } from "./api.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
 import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
 import { firstEditionBasisText, inLieuSpecialTerms } from "../server/conditions/royalty-in-lieu.js";
-import { firstEditionOf, inLieuCheck, newRate, type Exclusivity, type InLieuRate, type LicenseDeliverable, type LicenseDraft }
+import { firstEditionOf, inLieuCheck, licensePeriodMissing, newRate, type Exclusivity, type InLieuRate, type LicenseDeliverable, type LicenseDraft }
   from "../server/conditions/license-draft.js";
 
-export { firstEditionOf, inLieuCheck, licensePayload, newLicenseDraft, newRate }
+export { firstEditionOf, inLieuCheck, licensePayload, licensePeriodMissing, newLicenseDraft, newRate }
   from "../server/conditions/license-draft.js";
 export type { Exclusivity, InLieuRate, LicenseDeliverable, LicenseDraft, LicMode } from "../server/conditions/license-draft.js";
 
@@ -110,6 +110,33 @@ export function LicenseTermsSection(
           <button key={v} type="button" className="chip" aria-pressed={d.mode === v} onClick={() => onChange({ mode: v })}>{label}</button>
         ))}
       </div>
+      {/* 許諾期間（A-121）。納期（いつ納めるか）・役務提供期間（いつ働くか）とは別の、当社が成果物を使える期間。 */}
+      {d.mode !== "none" && (
+        <div className="stack" style={{ gap: 6, borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
+            <b>許諾期間</b>
+            <span className="faint">当社がこの成果物を使える期間。上の「納期」「役務提供期間」とは別です</span>
+          </div>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <button type="button" className="chip" aria-pressed={d.termKind === "perpetual"} onClick={() => onChange({ termKind: "perpetual", termEnd: "" })}>
+              無期限（期間の定めなし）
+            </button>
+            <button type="button" className="chip" aria-pressed={d.termKind === "fixed"} onClick={() => onChange({ termKind: "fixed" })}>
+              有期（終了日まで）
+            </button>
+          </div>
+          <div className="form-grid">
+            <label className="field"><span>許諾開始</span>
+              <input type="date" value={d.termStart} onChange={(e) => onChange({ termStart: e.target.value })} />
+              <small className="faint">空なら業務（役務提供）の開始日から{servicePeriod.start ? `（${servicePeriod.start}）` : ""}</small></label>
+            {d.termKind === "fixed" && (
+              <label className="field"><span>許諾終了 <em className="req">必須</em></span>
+                <input type="date" value={d.termEnd} onChange={(e) => onChange({ termEnd: e.target.value })} />
+                {licensePeriodMissing(d) && <small className="bad">{licensePeriodMissing(d)}</small>}</label>
+            )}
+          </div>
+        </div>
+      )}
       {d.mode === "in_lieu" && (
         <div className="stack" style={{ gap: 8 }}>
           <span className="faint">
@@ -258,6 +285,14 @@ export function LicenseTermsSection(
                       onChange={(e) => onChange({ creditNotice: e.target.value })} />
             <small className="faint">発注書の利用許諾条件の下と特約に出ます。</small>
           </div>
+          {/* 許諾の中身。報酬に含む・無償なら範囲だけ、別途なら料金（料率・定額）も。 */}
+          {d.mode !== "in_lieu" && (
+            <div className="form-section field wide">
+              <b>{d.mode === "separate" ? "許諾条件（許諾料と範囲）" : "許諾の範囲"}</b>
+              <small>{d.mode === "separate"
+                ? "委託報酬とは別に払う許諾料（料率か定額）と、利用形態・独占性・地域・言語"
+                : "許諾料は委託報酬に含む（または無償）。どう使えるか（利用形態・独占性・地域・言語）だけ決めます"}</small>
+            </div>)}
           {d.mode !== "in_lieu" && (
             <label className="field"><span>利用形態</span>
               <select value={d.usage} onChange={(e) => onChange({ usage: e.target.value })}>
@@ -274,8 +309,6 @@ export function LicenseTermsSection(
                 <option value="exclusive">独占</option>
                 <option value="non_exclusive">非独占</option>
               </select></label>)}
-          <label className="field"><span>許諾開始（空なら開始日）</span><input type="date" value={d.termStart} onChange={(e) => onChange({ termStart: e.target.value })} /></label>
-          <label className="field"><span>許諾終了（空なら期間の定めなし）</span><input type="date" value={d.termEnd} onChange={(e) => onChange({ termEnd: e.target.value })} /></label>
           <div className="field"><span>地域（許諾範囲）</span><RightsScopePicker kind="region" value={d.regions} onChange={(v) => onChange({ regions: v })} /></div>
           <div className="field"><span>言語（許諾範囲）</span><RightsScopePicker kind="language" value={d.languages} onChange={(v) => onChange({ languages: v })} /></div>
           {workNote}
