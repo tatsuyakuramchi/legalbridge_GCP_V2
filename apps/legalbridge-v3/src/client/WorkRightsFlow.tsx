@@ -41,6 +41,11 @@ export function WorkRightsFlow({ workId, onOpenCondition, onOpenWork, onOpenChec
 }) {
   const [flow, setFlow] = useState<RightsFlow | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 当社に残る額（入金 − 作者への許諾料）は管理者だけに出す。原価・利益に近い数字なので。 */
+  const [admin, setAdmin] = useState(false);
+  useEffect(() => {
+    api.get<{ user?: { role: string } }>("/me").then((r) => setAdmin(r.user?.role === "admin")).catch(() => setAdmin(false));
+  }, []);
   useEffect(() => {
     setFlow(null); setError(null);
     api.get<RightsFlow>(`/works/${workId}/rights-flow`).then(setFlow).catch((e: ApiError) => setError(e.message));
@@ -138,7 +143,7 @@ export function WorkRightsFlow({ workId, onOpenCondition, onOpenWork, onOpenChec
         <div className="panel">
           <div className="panel-hd">
             <h2>お金の流れ（直近 12 か月）</h2>
-            <span className="faint">許諾先ごとの入金と、そこから作者へ払う許諾料（報告を起こした分）</span>
+            <span className="faint">許諾先ごとの入金と、そこから作者へ払う許諾料（報告を起こした分）{admin ? "。当社に残る額は管理者だけに出ています" : ""}</span>
           </div>
           <div className="tablewrap">
             <table>
@@ -146,6 +151,7 @@ export function WorkRightsFlow({ workId, onOpenCondition, onOpenWork, onOpenChec
                 <tr>
                   <th>取引先</th><th className="num">入金</th>
                   {authors.map(([id, name]) => <th key={id} className="num">{name}</th>)}
+                  {admin && <th className="num" title="入金 − 作者への許諾料（報告を起こした分）。管理者だけに表示">当社に残る</th>}
                   <th>未処理</th>
                 </tr>
               </thead>
@@ -160,6 +166,9 @@ export function WorkRightsFlow({ workId, onOpenCondition, onOpenWork, onOpenChec
                         const covered = flow.ins.some((c) => c.partyId === id && o.covers.includes(c.id));
                         return <td key={id} className="num">{covered ? yen(m?.byAuthor[id] ?? 0) : <span className="faint">条件なし</span>}</td>;
                       })}
+                      {admin && (
+                        <td className="num">{yen((m?.received ?? 0) - Object.values(m?.byAuthor ?? {}).reduce((a, b) => a + b, 0))}</td>
+                      )}
                       <td>{m?.open ? <span className="tag warn">作者の報告・計算書 {m.open} 件</span> : <span className="tag ok">済</span>}</td>
                     </tr>
                   );

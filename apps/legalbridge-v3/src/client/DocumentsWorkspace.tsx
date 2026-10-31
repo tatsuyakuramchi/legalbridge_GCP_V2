@@ -2088,6 +2088,8 @@ export function carryOverInputs(manual: Record<string, unknown>): {
 
 /** 決定のときに台帳へ書き戻したもの（server/documents/write-back.ts）。 */
 interface WriteBack {
+  fields?: Array<{ conditionId: number; label: string; from: string | number | null; to: string | number }>;
+  skipped?: Array<{ conditionId: number; label: string; reason: string }>;
   schedules: Array<{ scheduleId: number; conditionId: number | null; from: string | null; to: string }>;
   payments: Array<{ paymentId: number; paymentNo: string | null; from: string | null; to: string }>;
   paidKept: Array<{ paymentId: number; paymentNo: string | null; dueOn: string | null }>;
@@ -2097,14 +2099,19 @@ interface WriteBack {
 /** 文書で直した支払日・通知先を、条件明細・支払・取引先に反映した結果。何も無ければ出さない。 */
 function WriteBackNote({ w }: { w: WriteBack }) {
   const lines: string[] = [];
+  const v = (x: string | number | null) => x === null ? "（空）" : typeof x === "number" ? x.toLocaleString("ja-JP") : x;
+  for (const f of w.fields ?? []) lines.push(`条件明細の${f.label} ${v(f.from)} → ${v(f.to)}`);
   for (const s of w.schedules) lines.push(`条件明細の支払日 ${s.from ?? "（空）"} → ${s.to}`);
   for (const p of w.payments) lines.push(`支払 ${p.paymentNo ?? `#${p.paymentId}`} の予定日 ${p.from ?? "（空）"} → ${p.to}`);
   if (w.contact) lines.push(`取引先の主担当を${w.contact.action === "added" ? "登録" : "更新"}：${w.contact.name ?? "（氏名なし）"}`);
-  if (!lines.length && !w.paidKept.length) return null;
+  if (!lines.length && !w.paidKept.length && !(w.skipped ?? []).length) return null;
   return (
     <div className="stack" style={{ gap: 2 }}>
       <b>文書で直した値を台帳にも反映しました</b>
       {lines.map((l) => <span key={l}>・{l}</span>)}
+      {(w.skipped ?? []).map((x, i) => (
+        <span key={`s${i}`} className="warn">・{x.label}は反映していません：{x.reason}</span>
+      ))}
       {w.paidKept.map((p) => (
         <span key={p.paymentId} className="warn">・支払 {p.paymentNo ?? `#${p.paymentId}`} は支払済みのため予定日（{p.dueOn ?? "—"}）を動かしていません</span>
       ))}

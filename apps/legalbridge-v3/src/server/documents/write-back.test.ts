@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { contactPlan, noticeContactOf, payOnChanges } from "./write-back.js";
+import { contactPlan, noticeContactOf, orderFieldChanges, payOnChanges } from "./write-back.js";
 
 const condition = { id: 5, name: "原稿制作", kind: "service", counterparty: { id: 9, kind: "corporate", name: "株式会社A" } };
 const orderContext = {
@@ -82,4 +82,26 @@ test("通知先：同じ人がいれば違うところを直して主担当に�
   assert.deepEqual(contactPlan(stored, { department: null, name: "田中", email: null, phone: null }), { kind: "insert" });
   assert.deepEqual(contactPlan(stored, { department: null, name: null, email: "S@A.JP", phone: "03" }),
     { kind: "update", id: 2, set: { phone: "03" }, makePrimary: false }, "氏名が無ければメールで同じ人を探す");
+});
+
+test("発注書：行で直した金額・納期・業務期間。回の行はその回へ、回の無い条件の行は条件へ。既定のままは触らない", () => {
+  const manual = { items: [
+    { condition_id: 5, schedule_id: 11, amount_ex_tax: "350,000", delivery_date: "2026-07-15", payment_date: "2026-07-31" },
+    { condition_id: 5, schedule_id: 12, amount_ex_tax: 100000, delivery_date: "2026-08-31" }
+  ] };
+  assert.deepEqual(orderFieldChanges("purchase_order", manual, orderContext), [
+    { target: "schedule", id: 11, conditionId: 5, field: "planned_amount", from: 300000, to: 350000 },
+    { target: "schedule", id: 11, conditionId: 5, field: "due_on", from: "2026-06-30", to: "2026-07-15" }
+  ]);
+  const flat = { id: 6, name: "イラスト", kind: "service", currency: "JPY", flatAmount: 200000, quantity: 1, unitAmount: null,
+                 deliveryDue: "2026-09-30", termStart: null, termEnd: null, counterparty: condition.counterparty };
+  const ctx = { condition: flat, conditions: [flat], schedules: [] };
+  assert.deepEqual(orderFieldChanges("purchase_order", { items: [{ condition_id: 6, amount_ex_tax: 250000, unit_price: 200000, quantity: 1, delivery_date: "2026-10-15" }] }, ctx), [
+    { target: "condition", id: 6, conditionId: 6, field: "flat_amount", from: 200000, to: 250000 },
+    { target: "condition", id: 6, conditionId: 6, field: "delivery_due", from: "2026-09-30", to: "2026-10-15" }
+  ]);
+  const usd = { ...ctx, conditions: [{ ...flat, currency: "USD" }] };
+  assert.deepEqual(orderFieldChanges("intl_purchase_order", { items: [{ condition_id: 6, amount_ex_tax: 250000 }] }, usd), [],
+    "外貨の金額は書き戻さない");
+  assert.deepEqual(orderFieldChanges("inspection_certificate", manual, orderContext), [], "発注書だけ");
 });

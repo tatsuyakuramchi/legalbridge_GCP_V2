@@ -37,6 +37,8 @@ export function ConditionCheck({ onOpenCondition }: { onOpenCondition: (id: numb
   const [notice, setNotice] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [pick, setPick] = useState<Record<number, "periodic" | "event">>({});
+  /** 重複のまとまりごとに、残す条件。 */
+  const [keep, setKeep] = useState<Record<string, number>>({});
   useEffect(() => {
     api.get<ConditionCheckData>("/conditions-check").then(setData).catch((e: ApiError) => setError(e.message));
   }, [version]);
@@ -50,6 +52,19 @@ export function ConditionCheck({ onOpenCondition }: { onOpenCondition: (id: numb
     try {
       await api.put("/royalty-ledger/timing", { conditionId: c.id, timing });
       setNotice(`${c.conditionNo ?? `#${c.id}`} を${timing === "event" ? "イベント式（製造のたび）" : "時限式（締めごと）"}に決めました`);
+      setVersion((v) => v + 1);
+    } catch (e) { setError((e as ApiError).message); }
+  }
+  async function merge(group: { key: string; conditions: CheckCondition[] }) {
+    // 既定で残すのは、報告・決定した文書の多い方（付け替えが少なくて済む）。
+    const keepId = keep[group.key] ?? [...group.conditions].sort((a, b) => (b.documents + b.events) - (a.documents + a.events))[0].id;
+    const kept = group.conditions.find((c) => c.id === keepId)!;
+    const drops = group.conditions.filter((c) => c.id !== keepId);
+    if (!window.confirm(`${drops.map((c) => c.conditionNo ?? `#${c.id}`).join("・")} の報告を ${kept.conditionNo ?? `#${keepId}`} に移し、無効にします。よろしいですか？`)) return;
+    setError(null);
+    try {
+      const r = await api.post<{ movedEvents: number }>("/conditions-check/merge", { keepId, dropIds: drops.map((c) => c.id) });
+      setNotice(`${kept.conditionNo ?? `#${keepId}`} にまとめました（報告 ${r.movedEvents} 件を移しました）`);
       setVersion((v) => v + 1);
     } catch (e) { setError((e as ApiError).message); }
   }
@@ -85,12 +100,17 @@ export function ConditionCheck({ onOpenCondition }: { onOpenCondition: (id: numb
         <div key={g.key} className="panel">
           <div className="panel-hd">
             <h2>{g.conditions[0].partyName} × {g.conditions[0].workTitle} × {g.conditions[0].usageLabel}</h2>
-            <span className="faint">生きている条件が {g.conditions.length} 本。入金・報告がどちらに付くか決まりません。残す方に報告を寄せ、もう一方を無効にしてください</span>
+            <span className="faint">生きている条件が {g.conditions.length} 本。入金・報告がどちらに付くか決まりません。残す方を選んでまとめてください（ほかの条件の報告を移して無効にします。決定した文書・支払・計算書のある条件は寄せられません）</span>
+            {!readOnly && <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => void merge(g)}>選んだ条件にまとめる</button>}
           </div>
           <div className="tablewrap"><table>
-            <thead><tr><th>条件</th><th>作者</th><th>作品</th><th>利用形態・料率</th><th>決済の型</th><th>根拠</th><th className="num">報告</th><th className="num">決定した文書</th></tr></thead>
+            <thead><tr><th>残す</th><th>条件</th><th>作者</th><th>作品</th><th>利用形態・料率</th><th>決済の型</th><th>根拠</th><th className="num">報告</th><th className="num">決定した文書</th></tr></thead>
             <tbody>{g.conditions.map((c) => (
-              <tr key={c.id}>{head(c)}
+              <tr key={c.id}>
+                <td><input type="radio" name={`keep-${g.key}`} aria-label={`${c.conditionNo ?? c.id} を残す`}
+                           checked={(keep[g.key] ?? [...g.conditions].sort((a, b) => (b.documents + b.events) - (a.documents + a.events))[0].id) === c.id}
+                           onChange={() => setKeep((k) => ({ ...k, [g.key]: c.id }))} /></td>
+                {head(c)}
                 <td>{c.settlementMode ? (c.timing === "event" ? "イベント式" : "時限式") : <span className="tag warn">空</span>}</td>
                 <td>{c.agreementNo ? <span className="code">{c.agreementNo}</span> : <span className="tag warn">なし</span>}</td>
                 <td className="num">{c.events}</td><td className="num">{c.documents}</td>

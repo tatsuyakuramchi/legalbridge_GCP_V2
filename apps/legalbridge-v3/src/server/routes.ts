@@ -3155,6 +3155,15 @@ export function createRoutes(database: Transactable) {
   router.get("/conditions-check", asyncRoute(async (_req, res) => {
     res.json(await new ConditionCheckService(database).run());
   }));
+  // 重複した条件をまとめる（寄せる条件の報告・予定の行・依頼を残す条件へ移し、寄せる条件を無効にする）。
+  router.post("/conditions-check/merge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        keepId: z.coerce.number().int().positive(),
+        dropIds: z.array(z.coerce.number().int().positive()).min(1).max(20)
+      }).parse(req.body ?? {});
+      res.json(await new ConditionCheckService(database).merge(input.keepId, input.dropIds, actor(res)));
+    }));
   // 作品 › 権利とお金の流れ（docs/navigation.md §5）。作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近 12 か月のお金。
   router.get("/works/:id/rights-flow", asyncRoute(async (req, res) => {
     res.json(await new WorkRightsFlowService(database, royaltyReceipts).forWork(Number(req.params.id)));

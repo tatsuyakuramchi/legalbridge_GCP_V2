@@ -160,7 +160,93 @@ export function contactPlan(contacts: StoredContact[], v: ContactValue):
   return Object.keys(set).length || makePrimary ? { kind: "update", id: same.id, set, makePrimary } : { kind: "none" };
 }
 
+/** 発注書の行で直した金額・納期・業務期間の書き戻し先。 */
+export type FieldName = "planned_amount" | "due_on" | "service_from" | "service_to"
+  | "flat_amount" | "unit_amount" | "quantity" | "delivery_due" | "term_start" | "term_end";
+export const FIELD_LABEL: Record<FieldName, string> = {
+  planned_amount: "予定額", due_on: "納期（予定の回）", service_from: "業務期間の開始（予定の回）", service_to: "業務期間の終了（予定の回）",
+  flat_amount: "金額", unit_amount: "単価", quantity: "数量", delivery_due: "納期", term_start: "業務期間の開始", term_end: "業務期間の終了"
+};
+const MONEY_FIELDS = new Set<FieldName>(["planned_amount", "flat_amount", "unit_amount", "quantity"]);
+export interface FieldChange {
+  /** 予定の回（condition_schedules）か、条件そのもの（conditions）か。 */
+  target: "schedule" | "condition";
+  id: number; conditionId: number; field: FieldName;
+  from: string | number | null; to: string | number;
+}
+
+const numOf = (v: unknown): number | null => {
+  if (v === null || v === undefined || String(v).trim() === "") return null;
+  const n = Number(String(v).replace(/[,，¥￥\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * 発注書の行で直した金額・納期・業務期間（純粋関数）。既定（条件から組んだ行）と違うものだけ。
+ *   予定の回の行 … 金額 → 予定額、納品日 → 納期、業務期間 → その回の役務提供期間
+ *   回の無い条件の行 … 金額・単価・数量 → 条件の定額・単価・数量、納品日 → 納期、業務期間 → 条件の期間
+ * 金額は円の条件だけ（外貨は紙の額と台帳の最小単位がずれるので書き戻さない）。まとめた行は書き戻さない。
+ */
+export function orderFieldChanges(templateKey: string, manual: Row, context: Ctx): FieldChange[] {
+  if (!ORDER_TEMPLATES.has(templateKey)) return [];
+  const rows = Array.isArray(manual.items) ? manual.items as Row[] : [];
+  if (!rows.length) return [];
+  const defaults = orderLinesFrom(context);
+  const conditions = ((context.conditions ?? []) as Ctx[]);
+  const schedules = ((context.schedules ?? []) as Ctx[]);
+  const out: FieldChange[] = [];
+  const day = (v: unknown) => isoDay(v);
+  for (const row of rows) {
+    if (row.folded) continue;
+    const conditionId = int(row.condition_id);
+    if (!conditionId) continue;
+    const condition = conditions.find((c) => Number(c.id) === conditionId);
+    const yen = String(condition?.currency ?? "JPY") === "JPY";
+    const sid = int(row.schedule_id);
+    if (sid) {
+      const def = defaults.find((d) => Number(d.schedule_id) === sid);
+      if (!def) continue;
+      const pairs: Array<[FieldName, unknown, unknown, "money" | "day"]> = [
+        ["planned_amount", row.amount_ex_tax, def.amount_ex_tax, "money"],
+        ["due_on", row.delivery_date, def.delivery_date, "day"],
+        ["service_from", row.term_start, def.term_start, "day"],
+        ["service_to", row.term_end, def.term_end, "day"]
+      ];
+      for (const [field, now, was, kind] of pairs) {
+        const to = kind === "money" ? numOf(now) : day(now);
+        const from = kind === "money" ? numOf(was) : day(was);
+        if (to === null || to === from || (kind === "money" && !yen)) continue;
+        out.push({ target: "schedule", id: sid, conditionId, field, from, to });
+      }
+      continue;
+    }
+    // 回の無い条件の行。条件に予定の回があれば、どの回か決められないので触らない。
+    if (schedules.some((x) => Number(x.conditionId) === conditionId)) continue;
+    const def = defaults.find((d) => Number(d.condition_id) === conditionId && !d.schedule_id);
+    if (!def) continue;
+    const pairs: Array<[FieldName, unknown, unknown, "money" | "day"]> = [
+      ["unit_amount", row.unit_price, def.unit_price, "money"],
+      ["quantity", row.quantity, def.quantity, "money"],
+      ["flat_amount", row.amount_ex_tax, def.amount_ex_tax, "money"],
+      ["delivery_due", row.delivery_date, def.delivery_date, "day"],
+      ["term_start", row.term_start, def.term_start, "day"],
+      ["term_end", row.term_end, def.term_end, "day"]
+    ];
+    for (const [field, now, was, kind] of pairs) {
+      const to = kind === "money" ? numOf(now) : day(now);
+      const from = kind === "money" ? numOf(was) : day(was);
+      if (to === null || to === from || (kind === "money" && !yen)) continue;
+      out.push({ target: "condition", id: conditionId, conditionId, field, from, to });
+    }
+  }
+  return out;
+}
+
 export interface WriteBackResult {
+  /** 金額・納期・業務期間で反映したもの。 */
+  fields?: Array<FieldChange & { label: string }>;
+  /** 反映しなかったもの（実績・支払がある、など）とその理由。 */
+  skipped?: Array<{ conditionId: number; label: string; reason: string }>;
   schedules: Array<{ scheduleId: number; conditionId: number | null; from: string | null; to: string }>;
   payments: Array<{ paymentId: number; paymentNo: string | null; from: string | null; to: string }>;
   /** 支払済みで動かさなかった支払。 */
@@ -168,7 +254,7 @@ export interface WriteBackResult {
   contact: { partyId: number; action: "updated" | "added"; name: string | null } | null;
 }
 
-export const emptyWriteBack = (): WriteBackResult => ({ schedules: [], payments: [], paidKept: [], contact: null });
+export const emptyWriteBack = (): WriteBackResult => ({ fields: [], skipped: [], schedules: [], payments: [], paidKept: [], contact: null });
 
 /** 決定の取引の中で書き戻す。 */
 export async function applyWriteBack(client: Queryable, input: {
@@ -223,6 +309,55 @@ export async function applyWriteBack(client: Queryable, input: {
     }
   }
 
+  // ---- 金額・納期・業務期間（発注書の行）----
+  for (const change of orderFieldChanges(input.templateKey, input.manual, input.context)) {
+    const label = FIELD_LABEL[change.field];
+    const money = MONEY_FIELDS.has(change.field);
+    if (change.target === "schedule") {
+      // 実績の付いた回の予定額は動かさない（実績の額が別にあり、検収の「予定と違う額」で扱う）。
+      if (money) {
+        const ev = await client.query(
+          "SELECT 1 FROM condition_events WHERE schedule_id = $1 AND status = 'active' LIMIT 1", [change.id]);
+        if (ev.rows[0]) { result.skipped!.push({ conditionId: change.conditionId, label, reason: "実績の付いた回の予定額は動かしません" }); continue; }
+      }
+      const r = await guarded(client, () => client.query(
+        `UPDATE condition_schedules SET ${change.field} = $2 WHERE id = $1 AND ${change.field} IS DISTINCT FROM $2 RETURNING id`,
+        [change.id, change.to]));
+      if (r === "failed") { result.skipped!.push({ conditionId: change.conditionId, label, reason: "条件明細の決まり（期間の前後など）に合わないので反映していません" }); continue; }
+      if (!r.rows[0]) continue;
+    } else {
+      const c = (await client.query(
+        `SELECT c.kind, c.status, COALESCE(c.series_id, c.id) AS series,
+                EXISTS (SELECT 1 FROM condition_events e JOIN conditions x ON x.id = e.condition_id
+                         WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id) AND e.status = 'active') AS has_events,
+                EXISTS (SELECT 1 FROM payment_allocations al JOIN payments p ON p.id = al.payment_id
+                          JOIN conditions x ON x.id = al.condition_id
+                         WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id) AND p.status <> 'canceled') AS has_payments
+           FROM conditions c WHERE c.id = $1`, [change.id])).rows[0] as Record<string, any> | undefined;
+      if (!c || !["active", "draft"].includes(String(c.status))) continue;
+      // 許諾の条件の期間は許諾期間（契約の中身）。文書の行からは動かさない。
+      if (!money && String(c.kind) === "license") {
+        result.skipped!.push({ conditionId: change.conditionId, label, reason: "許諾の条件の期間は条件明細で直してください" }); continue;
+      }
+      // 実績・支払のある条件の金額は、直接直すと過去の回の額まで変わる。改訂（版を分ける）で直す。
+      if (money && (c.has_events || c.has_payments)) {
+        result.skipped!.push({ conditionId: change.conditionId, label, reason: "実績・支払がある条件の金額は、条件明細で改訂してください" }); continue;
+      }
+      const r = await guarded(client, () => client.query(
+        `UPDATE conditions SET ${change.field} = $2, updated_at = now() WHERE id = $1 AND ${change.field} IS DISTINCT FROM $2 RETURNING id`,
+        [change.id, change.to]));
+      if (r === "failed") { result.skipped!.push({ conditionId: change.conditionId, label, reason: "条件明細の決まり（期間の前後など）に合わないので反映していません" }); continue; }
+      if (!r.rows[0]) continue;
+    }
+    result.fields!.push({ ...change, label });
+    await recordAudit(client, {
+      actor: input.actor, action: change.target === "schedule" ? "condition.schedule_field" : "condition.field",
+      targetType: "condition", targetId: change.conditionId,
+      detail: { field: change.field, ...(change.target === "schedule" ? { scheduleId: change.id } : {}),
+                from: change.from, to: change.to, documentId: input.documentId, reason: why }
+    });
+  }
+
   // ---- 通知先 ----
   const party = await counterpartyOf(client, input);
   if (party) {
@@ -270,13 +405,30 @@ export async function applyWriteBack(client: Queryable, input: {
     }
   }
 
-  if (result.schedules.length || result.payments.length || result.paidKept.length || result.contact) {
+  if (result.schedules.length || result.payments.length || result.paidKept.length || result.contact
+      || result.fields!.length || result.skipped!.length) {
     await recordAudit(client, {
       actor: input.actor, action: "document.write_back", targetType: "document", targetId: input.documentId,
       detail: { ...result }
     });
   }
   return result;
+}
+
+/**
+ * 1 つの書き戻しを、決定の取引を壊さずに試す（失敗したらその書き戻しだけ戻す）。
+ * 期間の前後などの制約に当たっても、文書の決定は止めない。
+ */
+async function guarded<T>(client: Queryable, run: () => Promise<T>): Promise<T | "failed"> {
+  await client.query("SAVEPOINT write_back");
+  try {
+    const out = await run();
+    await client.query("RELEASE SAVEPOINT write_back");
+    return out;
+  } catch {
+    await client.query("ROLLBACK TO SAVEPOINT write_back");
+    return "failed";
+  }
 }
 
 /**
