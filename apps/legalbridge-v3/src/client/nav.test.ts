@@ -9,7 +9,7 @@ test("メニューの区分は ホーム／格納情報／作業／一括処理�
 
 test("今ある画面はすべてどこかの項目から開ける（古い URL・ほかの画面からの飛び先が生きる。旧 回の一覧は App が支払文書へ転送）", () => {
   for (const v of ["home", "intake", "daily", "matters", "workbench", "paydocs", "deals", "agreements", "agreement-map",
-                   "conditions", "works", "parties", "documents", "ringi", "rpt", "closing", "money", "drift", "flows", "ops"]) {
+                   "conditions", "works", "parties", "documents", "ringi", "rpt", "closing", "money", "drift", "flows", "ops", "condition-check"]) {
     assert.ok(NAV_VIEWS.has(v), v);
   }
   const opsTabs = ALL_HUBS.flatMap((h) => h.tabs).filter((t) => t.to.view === "ops").map((t) => t.to.sub).sort();

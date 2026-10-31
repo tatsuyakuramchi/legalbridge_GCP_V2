@@ -16,7 +16,7 @@
 
 export type NavView = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "deals" | "agreements"
   | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift"
-  | "flows" | "ops";
+  | "flows" | "ops" | "condition-check";
 
 /**
  * 開く先。運用（ops）はタブ（sub）まで指す。取引開始作業（workbench）の sub は一括のモード
@@ -92,6 +92,8 @@ export const NAV: NavSection[] = [
     { key: "check", label: "点検・取り残し", hint: "データの不整合と、条件を直したあとに取り残された金額・日付",
       tabs: [
         { label: "データ品質", to: ops("quality") },
+        // 重複・決済の型が空・根拠の文書なし・作者に届かない許諾（server/conditions/check-service.ts）。
+        { label: "条件の点検", to: { view: "condition-check" } },
         { label: "金額の取り残し", to: { view: "drift" } }
       ] },
     { key: "monitor", label: "フロー監視・期限", hint: "取適法・債権・契約チェック・作品運用と、近づく期限",

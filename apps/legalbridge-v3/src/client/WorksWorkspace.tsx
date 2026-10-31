@@ -11,6 +11,7 @@ import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import type { DocBack } from "./RoyaltyLedger.js";
 import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { WorkRounds } from "./RoundsOverview.js";
+import { WorkRightsFlow } from "./WorkRightsFlow.js";
 import type { ImportPreset } from "./BulkRegister.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
@@ -138,9 +139,11 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs, onSelectId, onOpenImport }: {
+  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs, onSelectId, onOpenImport, onOpenCheck }: {
     /** CSV の一括登録：一括処理 › まとめて登録・更新する を開く（取込の入口は 1 つ。docs/navigation.md）。 */
     onOpenImport?: (preset: ImportPreset) => void;
+    /** 権利とお金の流れの「条件の点検で直す」：監査 › 条件の点検 へ。 */
+    onOpenCheck?: () => void;
     /** 支払文書のタブ（A-074）。この作品の回を支払文書と同じ表で出す。 */
     payDocs?: { onIssueRound: (h: PayDocsHandoff) => void; onOpenDraft: (id: number) => void;
                 /** 許諾料の報告・計算書は支払文書の「作家の報告と計算書」で。 */
@@ -167,7 +170,9 @@ export function WorksWorkspace(
   const [selected, setSelected] = useState<number | undefined>(initialId);
   useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   // 「利用許諾計算」タブは閉じた（A-074）。報告・計算書は支払文書の「作家の報告と計算書」へ。
-  const [pane, setPane] = useState<"work" | "rounds" | "paydocs">("work");
+  const [pane, setPane] = useState<"work" | "rights" | "paydocs">("work");
+  /** 支払文書のタブの見せ方：進み順（支払文書の表）か、条件ごと（回号・根拠の契約書・計算書）。 */
+  const [payView, setPayView] = useState<"progress" | "conditions">("progress");
   /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */
   const [payCounts, setPayCounts] = useState<Map<number, { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }>>(new Map());
   useEffect(() => {
@@ -763,19 +768,34 @@ export function WorksWorkspace(
           {work && (
             <div className="tabs" role="tablist" aria-label="作品の見出し">
               <button role="tab" aria-selected={pane === "work"} onClick={() => setPane("work")}>作品</button>
-              <button role="tab" aria-selected={pane === "rounds"} onClick={() => setPane("rounds")}>回と文書</button>
-              {payDocs && <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>}
+              {/* 作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近のお金（docs/navigation.md §5）。 */}
+              <button role="tab" aria-selected={pane === "rights"} onClick={() => setPane("rights")}>権利とお金の流れ</button>
+              <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>
             </div>
           )}
-          {work && pane === "rounds" && (
-            <WorkRounds workId={work.id} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />
+          {work && pane === "rights" && (
+            <WorkRightsFlow workId={work.id} onOpenCondition={onOpenCondition} onOpenWork={(id) => setSelected(id)}
+                            onOpenCheck={onOpenCheck} />
           )}
-          {work && pane === "paydocs" && payDocs && (
-            <PayDocsWorkspace scope={{ workId: work.id }} onOpenCondition={onOpenCondition}
-                              onOpenDocument={(id) => onOpenDocument?.(id)} onOpenDraft={payDocs.onOpenDraft}
-                              onIssueRound={payDocs.onIssueRound}
-                              onComposeEvents={(ids, events, key) => onCompose?.(ids, events, null, key)}
-                              onOpenAuthor={payDocs.onOpenAuthor} />
+          {work && pane === "paydocs" && (
+            <div className="stack">
+              {/* 以前の「回と文書」タブはここの「条件ごと」に入れた。 */}
+              <div className="chips" role="group" aria-label="支払文書の見せ方">
+                <button className="chip" aria-pressed={payView === "progress" || !payDocs} disabled={!payDocs}
+                        onClick={() => setPayView("progress")}>進み順（作る → 送る → 受領 → 支払）</button>
+                <button className="chip" aria-pressed={payView === "conditions" || !payDocs}
+                        onClick={() => setPayView("conditions")}>条件ごと（回号・根拠の契約書・計算書）</button>
+              </div>
+              {payView === "progress" && payDocs ? (
+                <PayDocsWorkspace scope={{ workId: work.id }} onOpenCondition={onOpenCondition}
+                                  onOpenDocument={(id) => onOpenDocument?.(id)} onOpenDraft={payDocs.onOpenDraft}
+                                  onIssueRound={payDocs.onIssueRound}
+                                  onComposeEvents={(ids, events, key) => onCompose?.(ids, events, null, key)}
+                                  onOpenAuthor={payDocs.onOpenAuthor} />
+              ) : (
+                <WorkRounds workId={work.id} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />
+              )}
+            </div>
           )}
           {work && pane === "work" && (<>
             <div className="panel">

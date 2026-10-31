@@ -26,6 +26,7 @@ import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 import { formatHash, parseHash, pushRoute, routePath, type Route } from "./route.js";
 import type { ImportPreset } from "./BulkRegister.js";
+import { ConditionCheck } from "./ConditionCheck.js";
 import { NAV, NAV_VIEWS, activeHub, activeTab, visibleTabs, type NavHub, type NavTarget, type NavView } from "./nav.js";
 
 type View = NavView;
@@ -542,6 +543,7 @@ export function App() {
         )}
         {view === "works" && (
           <WorksWorkspace key={`w${focusFor("works") ?? 0}`} onOpenImport={openImport}
+            onOpenCheck={() => { setLastHub("check"); go({ view: "condition-check" }); }}
             onOpenCondition={openCondition} initialId={focusFor("works")}
             onOpenDocument={openDocumentAt}
             onOpen={openEntity} onCompose={startCompose}
@@ -599,6 +601,7 @@ export function App() {
             onOpenMatter={(id) => openEntity("matter", id)} />
         )}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
+        {view === "condition-check" && <ConditionCheck onOpenCondition={openCondition} />}
         {view === "ops" && <OpsWorkspace key={`${opsTab ?? "quality"}:${importPreset?.kind ?? ""}:${importPreset?.mode ?? ""}`}
                                          initialTab={opsTab} onTabChange={setOpsTab} importPreset={importPreset}
                                          embedded={hubNow ? { title: hubNow.label, hint: hubNow.hint ?? null } : undefined} />}

@@ -76,6 +76,8 @@ import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService, WORK_LINEAGE_UP_SQL } from "./royalty/ledger-service.js";
 import { RoundOverviewService } from "./royalty/round-overview.js";
 import { RoyaltyReceiptService } from "./royalty/receipts.js";
+import { WorkRightsFlowService } from "./works/rights-flow.js";
+import { ConditionCheckService } from "./conditions/check-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
@@ -3149,6 +3151,14 @@ export function createRoutes(database: Transactable) {
   }));
   // 回と文書（docs/royalty-ledger.md §9）。条件の行 × 回のマス、回号・計算書・支払・条件書。
   const roundOverview = new RoundOverviewService(database);
+  // 監査 › 条件の点検（docs/navigation.md §6）。重複・決済の型が空・根拠の文書なし・作者に届かない許諾。
+  router.get("/conditions-check", asyncRoute(async (_req, res) => {
+    res.json(await new ConditionCheckService(database).run());
+  }));
+  // 作品 › 権利とお金の流れ（docs/navigation.md §5）。作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近 12 か月のお金。
+  router.get("/works/:id/rights-flow", asyncRoute(async (req, res) => {
+    res.json(await new WorkRightsFlowService(database, royaltyReceipts).forWork(Number(req.params.id)));
+  }));
   router.get("/works/:id/round-overview", asyncRoute(async (req, res) => {
     res.json(await roundOverview.forWork(Number(req.params.id)));
   }));
