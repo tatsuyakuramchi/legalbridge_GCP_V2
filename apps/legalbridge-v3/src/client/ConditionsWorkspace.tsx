@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ConditionEvents } from "./ConditionEvents.js";
-import { CsvImport } from "./CsvImport.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
+import type { ImportPreset } from "./BulkRegister.js";
 import { useReadOnly } from "./read-only.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionSchedules } from "./ConditionSchedules.js";
@@ -54,9 +54,11 @@ type WriteResult = {
 };
 
 export function ConditionsWorkspace(
-  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated, onIssueRound, onSelectId }:
+  { initialId, initialSchedule, onCompose, onOpen, onOpenDocument, onCreated, onIssueRound, onSelectId, onOpenImport }:
   {
     initialId?: number;
+    /** CSV の一括編集：一括処理 › まとめて登録・更新する を開く（取込の入口は 1 つ。docs/navigation.md）。 */
+    onOpenImport?: (preset: ImportPreset) => void;
     /** 選んだ行を親へ知らせる（URL に写す）。 */
     onSelectId?: (id: number | undefined) => void;
     /**
@@ -91,7 +93,7 @@ export function ConditionsWorkspace(
   const [error, setError] = useState<string | null>(null);
   const [sales, setSales] = useState("");
   const [royalty, setRoyalty] = useState<RoyaltyPreview | null>(null);
-  const [creating, setCreating] = useState<"entry" | "csv" | false>(false);
+  const [creating, setCreating] = useState<"entry" | false>(false);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState(false);
   /** イン条件（再許諾・他社販売）から許諾先（OUT）を作る欄。 */
@@ -280,24 +282,14 @@ export function ConditionsWorkspace(
             ↓ 書き出す（業務委託など）
           </a>
         )}
-        {!creating && (
-          <button className="btn btn-sm" onClick={() => setCreating("csv")}
+        {!creating && onOpenImport && (
+          <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "license_conditions", mode: "update" })}
                   title="書き出した CSV を直して取り込み、登録済みの条件に当てる（条件番号で当てる。空欄の列は触らない）">
             CSV で一括編集
           </button>
         )}
       </div>
 
-      {creating === "csv" && (
-        <div className="panel">
-          <div className="panel-hd"><h2>条件の一括編集（CSV）</h2>
-            <span className="faint">左の「書き出す」で今の内容を CSV に出し、直したい列だけ直して取り込みます。空欄の列は触りません。まず試算で確かめてから取り込んでください</span>
-            <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setCreating(false)}>閉じる</button></div>
-          <div className="panel-bd">
-            <CsvImport initialKind="license_conditions" initialMode="update" onApplied={() => reload()} />
-          </div>
-        </div>
-      )}
 
       {creating === "entry" && (
         <ConditionEntryForm onDone={({ conditionIds, templateKey }) => void created(conditionIds, templateKey)}

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { StatusTag } from "./labels.js";
 import { CsvBar } from "./CsvBar.js";
 import { api, ApiError, money } from "./api.js";
-import { CsvImport } from "./CsvImport.js";
+import { BulkRegister, type ImportPreset } from "./BulkRegister.js";
 import { MissingContracts } from "./MissingContracts.js";
 import { UnsentBundles } from "./UnsentBundles.js";
 import { Leftovers } from "./Leftovers.js";
@@ -73,13 +73,15 @@ export type OpsTab = "quality" | "deadlines" | "fixes" | "leftovers" | "exports"
 /** 専用のフォームで編集する設定。下の一覧には生の JSON を出さない。 */
 const FORM_KEYS = new Set(["company_profile", "delivery_alert", "mail_templates", "dispatch_allowlist"]);
 
-export function OpsWorkspace({ initialTab, onTabChange, embedded }: {
+export function OpsWorkspace({ initialTab, onTabChange, embedded, importPreset }: {
   initialTab?: OpsTab; onTabChange?: (tab: OpsTab) => void;
   /**
    * メニューの項目（一括処理・監査・設定）から開いたとき。運用のタブは束ねた項目の切り替えが代わりに出るので
    * 出さず、見出しは項目の名前にする（docs/navigation.md）。
    */
   embedded?: { title: string; hint: string | null };
+  /** まとめて登録・更新する を開いたときに選んでおく対象（条件明細・作品などのボタンから）。 */
+  importPreset?: ImportPreset | null;
 } = {}) {
   const [tab, setTabState] = useState<OpsTab>(initialTab ?? "quality");
   const setTab = (t: OpsTab) => { setTabState(t); onTabChange?.(t); };
@@ -238,9 +240,9 @@ export function OpsWorkspace({ initialTab, onTabChange, embedded }: {
       {tab === "leftovers" && <Leftovers />}
 
       {tab === "imports" && (<>
-        {/* 電子書籍売上の取込・年次締めは支払文書の「取込」へ移した（実績の入口なので）。 */}
-        <div className="note">電子書籍売上の取込と年次締めは「支払文書 › 取込（電子書籍売上・年次締め）」に移しました。</div>
-        <CsvImport /></>)}
+        {/* 電子書籍売上の取込・年次締めは支払文書の「売上の取込」へ移した（実績の入口なので）。 */}
+        <div className="note">電子書籍売上の取込と年次締めは「支払処理作業 › 支払文書 › 売上の取込」にあります。</div>
+        <BulkRegister preset={importPreset} /></>)}
       {tab === "contracts" && <MissingContracts />}
       {tab === "sending" && <UnsentBundles />}
 

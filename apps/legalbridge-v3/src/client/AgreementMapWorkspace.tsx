@@ -4,8 +4,8 @@ import { ListSearch, useDebounced } from "./ListTools.js";
 import { DirectionTag, StatusTag } from "./labels.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { useReadOnly } from "./read-only.js";
+import type { ImportPreset } from "./BulkRegister.js";
 import { CsvBar } from "./CsvBar.js";
-import { CsvImport } from "./CsvImport.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { TidyFlow } from "./TidyFlow.js";
 import { DocMatter } from "./DocMatter.js";
@@ -46,7 +46,9 @@ const canBeOrder = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title" | "do
   isOrderAgreement(a) || a.kind === "document" || (a.kind === "standalone" && a.domain === "service");
 
 export function AgreementMapWorkspace(
-  { initialPartyId, onOpen, onRegisterAgreement, initialMode, onModeChange, onPartyChange }: {
+  { initialPartyId, onOpen, onRegisterAgreement, initialMode, onModeChange, onPartyChange, onOpenImport }: {
+    /** 直した CSV の取り込み：一括処理 › まとめて登録・更新する を開く（取込の入口は 1 つ。docs/navigation.md）。 */
+    onOpenImport?: (preset: ImportPreset) => void;
     initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void;
     /** URL から来た切り替え（マップ／整理する）と、切り替え・取引先の変更を親（URL）へ知らせる。 */
     initialMode?: "map" | "tidy"; onModeChange?: (mode: "map" | "tidy") => void; onPartyChange?: (id: number | undefined) => void;
@@ -87,7 +89,6 @@ export function AgreementMapWorkspace(
 
   const issueCount = parties.filter((p) => p.issues > 0).length;
   /** CSV の一括修正を開いているか。 */
-  const [csvOpen, setCsvOpen] = useState(false);
 
   const switcher = (
     <div className="chips" style={{ marginBottom: 10 }}>
@@ -124,16 +125,10 @@ export function AgreementMapWorkspace(
         ]}
         note={<>
           書き出した CSV の 件名・種類・種別・方向・親契約番号・締結日・有効開始日・終了日・自動更新・相手方番号 を直して、
-          下の「取り込む」で戻します。空欄は触りません。消すときは「なし」。
-          <button className="btn btn-sm" style={{ marginLeft: 8 }}
-                  onClick={() => setCsvOpen((v) => !v)}>{csvOpen ? "取り込みを閉じる" : "直した CSV を取り込む"}</button>
+          一括処理 › まとめて登録・更新する（基本契約を直す）で戻します。空欄は触りません。消すときは「なし」。
+          {onOpenImport && <button className="btn btn-sm" style={{ marginLeft: 8 }}
+                  onClick={() => onOpenImport({ kind: "agreements", mode: "update" })}>直した CSV を取り込む</button>}
         </>} />
-      {csvOpen && (
-        <div style={{ marginBottom: 12 }}>
-          <CsvImport initialKind="agreements" lockKind
-            onApplied={() => { setNotice("CSV の修正を取り込みました。図を読み直しました"); bump(); }} />
-        </div>
-      )}
 
       <div className="ledger-split">
         <div className="panel">

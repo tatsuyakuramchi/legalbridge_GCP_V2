@@ -25,6 +25,7 @@ import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 import { formatHash, parseHash, pushRoute, routePath, type Route } from "./route.js";
+import type { ImportPreset } from "./BulkRegister.js";
 import { NAV, NAV_VIEWS, activeHub, activeTab, visibleTabs, type NavHub, type NavTarget, type NavView } from "./nav.js";
 
 type View = NavView;
@@ -50,6 +51,8 @@ export function App() {
   const [focus, setFocus] = useState<{ view: View; id: number } | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [opsTab, setOpsTab] = useState<OpsTab | undefined>();
+  /** まとめて登録・更新する を開いたときに選んでおく対象。 */
+  const [importPreset, setImportPreset] = useState<ImportPreset | null>(null);
   /** 最後に押したメニューの項目（同じ画面が 2 つの項目にあるとき、どちらを光らせるか）。 */
   const [lastHub, setLastHub] = useState<string | null>(null);
   /** 「金額の直し」を案件の工程表から開いたとき、その案件で絞る。 */
@@ -361,11 +364,18 @@ export function App() {
     setFocus(null);
     if (to.view === "ops") setOpsTab(to.sub as OpsTab);
     if (to.view === "paydocs") setPayPane(null);
+    if (to.view === "ops") setImportPreset(null);
     if (to.view === "workbench") {
       if (to.sub) { startWorkbench({ kind: "bulk", mode: to.sub as BulkMode }); return; }
       setWorkbench(null);
     }
     setView(to.view);
+  };
+  /** 台帳の画面の「CSV で一括…」から、一括処理 › まとめて登録・更新する をその対象で開く。 */
+  const openImport = (preset: ImportPreset) => {
+    setLastHub("bulk-register");
+    go({ view: "ops", sub: "imports" });
+    setImportPreset(preset);
   };
   const openHub = (hub: NavHub) => {
     setLastHub(hub.key);
@@ -520,7 +530,7 @@ export function App() {
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} onSelectId={pickFor("matters")} />
         )}
         {view === "conditions" && (
-          <ConditionsWorkspace key={`${conditionId ?? 0}-${conditionSchedule ?? 0}`}
+          <ConditionsWorkspace key={`${conditionId ?? 0}-${conditionSchedule ?? 0}`} onOpenImport={openImport}
                                initialId={conditionId} initialSchedule={conditionSchedule}
                                onCompose={startCompose} onOpen={openEntity}
                                onOpenDocument={openDocumentAt}
@@ -531,7 +541,7 @@ export function App() {
                                onSelectId={pickFor("conditions")} />
         )}
         {view === "works" && (
-          <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
+          <WorksWorkspace key={`w${focusFor("works") ?? 0}`} onOpenImport={openImport}
             onOpenCondition={openCondition} initialId={focusFor("works")}
             onOpenDocument={openDocumentAt}
             onOpen={openEntity} onCompose={startCompose}
@@ -568,7 +578,7 @@ export function App() {
             onSelectId={pickFor("agreements")} />
         )}
         {view === "agreement-map" && (
-          <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? mapParty ?? 0}`}
+          <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? mapParty ?? 0}`} onOpenImport={openImport}
             initialPartyId={focusFor("agreement-map") ?? mapParty} onOpen={openEntity}
             onRegisterAgreement={startAgreement}
             initialMode={mapMode} onModeChange={setMapMode} onPartyChange={setMapParty} />
@@ -589,7 +599,8 @@ export function App() {
             onOpenMatter={(id) => openEntity("matter", id)} />
         )}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
-        {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} onTabChange={setOpsTab}
+        {view === "ops" && <OpsWorkspace key={`${opsTab ?? "quality"}:${importPreset?.kind ?? ""}:${importPreset?.mode ?? ""}`}
+                                         initialTab={opsTab} onTabChange={setOpsTab} importPreset={importPreset}
                                          embedded={hubNow ? { title: hubNow.label, hint: hubNow.hint ?? null } : undefined} />}
       </main>
     </div>

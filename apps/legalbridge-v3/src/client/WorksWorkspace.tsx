@@ -5,13 +5,13 @@ import { api, ApiError, money, rate } from "./api.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, text } from "./CreateForm.js";
 import { WorkCreateForm } from "./WorkCreateForm.js";
-import { CsvImport } from "./CsvImport.js";
 import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import type { DocBack } from "./RoyaltyLedger.js";
 import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { WorkRounds } from "./RoundsOverview.js";
+import type { ImportPreset } from "./BulkRegister.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
@@ -138,7 +138,9 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs, onSelectId }: {
+  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs, onSelectId, onOpenImport }: {
+    /** CSV の一括登録：一括処理 › まとめて登録・更新する を開く（取込の入口は 1 つ。docs/navigation.md）。 */
+    onOpenImport?: (preset: ImportPreset) => void;
     /** 支払文書のタブ（A-074）。この作品の回を支払文書と同じ表で出す。 */
     payDocs?: { onIssueRound: (h: PayDocsHandoff) => void; onOpenDraft: (id: number) => void;
                 /** 許諾料の報告・計算書は支払文書の「作家の報告と計算書」で。 */
@@ -183,7 +185,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "import_works" | "import_conditions" | null>(null);
+  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | null>(null);
   /** クレジット表記の履歴（A-031）。重版で変わる著作権表示を適用開始日つきで持つ。 */
   const [credits, setCredits] = useState<Credit[]>([]);
   const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
@@ -583,10 +585,11 @@ export function WorksWorkspace(
         {editable && creating === null && (<>
           <button className="btn primary btn-sm" onClick={() => setCreating("work")}>作品を登録</button>
           <button className="btn btn-sm" onClick={() => setCreating("source")}>原作を登録</button>
-          <button className="btn btn-sm" onClick={() => setCreating("import_works")}
-                  title="作品を CSV でまとめて登録する（試算してから登録）">↑ 作品を一括登録</button>
-          <button className="btn btn-sm" onClick={() => setCreating("import_conditions")}
-                  title="作品に紐づく利用許諾条件を CSV でまとめて登録する。条件名は 作品名｜取引モデル で付く">↑ 条件を一括登録</button>
+          {/* CSV の一括登録は 一括処理 › まとめて登録・更新する へ（取込の入口は 1 つ。docs/navigation.md）。 */}
+          {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "works" })}
+                  title="作品を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 作品を一括登録</button>}
+          {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "license_conditions" })}
+                  title="作品に紐づく利用許諾条件を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 条件を一括登録</button>}
         </>)}
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={cleanupOpen}
                 onClick={() => setCleanupOpen((v) => !v)}>
@@ -597,19 +600,6 @@ export function WorksWorkspace(
       {creating === "work" && (
         <WorkCreateForm onDone={(r) => { setCreating(null); void reloadTree(r.id); }}
                         onCancel={() => setCreating(null)} />
-      )}
-      {(creating === "import_works" || creating === "import_conditions") && (
-        <div className="stack">
-          <div className="row">
-            <button className="btn btn-sm" onClick={() => { setCreating(null); void reloadTree(); }}>閉じる</button>
-            <span className="faint">
-              {creating === "import_works"
-                ? "作品名が同じ行は重複として出ます。親作品を書くと派生作品として原作にぶら下がります"
-                : "1行が条件1本。作品名・許諾者は登録済みのものに一致させてください。条件名は打ちません（作品名｜取引モデル）"}
-            </span>
-          </div>
-          <CsvImport initialKind={creating === "import_works" ? "works" : "license_conditions"} />
-        </div>
       )}
       {creating === "source" && (
         <CreateForm title="原作（Core Logic）の登録" path="/works"
