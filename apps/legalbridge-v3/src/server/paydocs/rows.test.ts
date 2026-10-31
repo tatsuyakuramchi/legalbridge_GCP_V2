@@ -195,3 +195,21 @@ test("締め日の無い回（いつでも）：回に結び付けずに入れ�
   assert.equal(rows2.length, 2);
   assert.deepEqual(rows2[0].eventIds, [1]);
 });
+
+test("共著の取り分：受取人の計算書がそろうまで文書は決定にしない。受取人ごとの計算書を両方並べる", () => {
+  const sched = { id: 1, conditionId: 1, seq: 1, label: "4〜6月", dueOn: "2026-06-30", payOn: "2026-07-31", plannedAmount: 0, triggerKind: "periodic" };
+  const rows = buildPayDocRows(base({
+    schedules: [sched],
+    events: [ev(10, "2026-06-30", { scheduleId: 1, documentId: 100, missingPayees: ["イラストB"] })],
+    documents: [doc(100)]
+  }));
+  assert.notEqual(rows[0].doc.state, "done");
+  assert.deepEqual(rows[0].doc.missingPayees, ["イラストB"]);
+  const done = buildPayDocRows(base({
+    schedules: [sched],
+    events: [ev(10, "2026-06-30", { scheduleId: 1, documentId: 100, missingPayees: [], extraDocumentIds: [101] })],
+    documents: [doc(100), doc(101)]
+  }));
+  assert.equal(done[0].doc.state, "done");
+  assert.deepEqual(done[0].doc.documents.map((d) => d.id).sort(), [100, 101]);
+});

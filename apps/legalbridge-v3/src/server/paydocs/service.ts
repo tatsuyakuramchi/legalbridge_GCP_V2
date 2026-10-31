@@ -1,6 +1,7 @@
 import { type Queryable, type Transactable, dateStr, inTransaction, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
+import { missingPayees, payeeCoverage } from "../royalty/payee-coverage.js";
 import { RECEIVED_VIA, SENT_VIA, type ManualReceivedVia, type ManualSentVia } from "../documents/delivery.js";
 import {
   buildPayDocRows, countTiles, isTodo, sortRows, TILE_TEST,
@@ -120,7 +121,15 @@ export class PayDocsService {
       quantity: num(e.quantity), period: str(e.period)
     }));
     const eventIds = events.map((e) => e.id);
-    const docIds = [...new Set(events.map((e) => e.documentId).filter((x): x is number => !!x))];
+    // 共著の取り分：受取人ごとの計算書がそろったか（報告は 1 人目の計算書だけを指す）。
+    const coverage = await payeeCoverage(this.database, eventIds);
+    for (const e of events) {
+      const cov = coverage.get(e.id);
+      if (!cov) continue;
+      e.missingPayees = missingPayees(cov);
+      e.extraDocumentIds = cov.documentIds.filter((id) => id !== e.documentId);
+    }
+    const docIds = [...new Set(events.flatMap((e) => [e.documentId, ...(e.extraDocumentIds ?? [])]).filter((x): x is number => !!x))];
 
     const [dr, fr, ar] = await Promise.all([
       docIds.length ? this.database.query(

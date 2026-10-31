@@ -108,6 +108,8 @@ function DocCell({ r, onOpenDocument }: { r: PayDocRow; onOpenDocument: (id: num
       {r.doc.documents.map((d) => (
         <div key={d.id}><button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button></div>
       ))}
+      {/* 共著の取り分：まだ計算書の無い受取人（1 人目の計算書だけで決定にしない）。 */}
+      {r.doc.missingPayees?.length ? <div className="faint">{r.doc.missingPayees.join("・")} の計算書がまだ</div> : null}
     </>
   );
 }

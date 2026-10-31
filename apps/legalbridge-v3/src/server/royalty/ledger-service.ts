@@ -7,6 +7,7 @@ import { basisOf, type UsageType } from "./usage-type.js";
 import { ppmToPct } from "./economics.js";
 import { roundRoyalty } from "./rounding.js";
 import { rootAgreementJoin } from "../conditions/contracts.js";
+import { missingPayees, payeeCoverage } from "./payee-coverage.js";
 
 /**
  * 許諾料の台帳（作品 › 利用許諾計算）。docs/royalty-ledger.md
@@ -93,7 +94,14 @@ export interface LedgerEvent {
   taxIncluded?: boolean | null;
   /** 報告の備考。前金・後金の報告では計算書の備考に出る説明。 */
   note?: string | null;
+  /** 共著の取り分（当社が各人に払う）で、まだ計算書の無い受取人（royalty/payee-coverage.ts）。 */
+  missingPayees?: string[];
+  /** ほかの受取人の計算書（明細で繋がる、決定済み）。 */
+  extraDocumentIds?: number[];
 }
+
+/** 計算書が出そろった報告か。共著の取り分は受取人全員の計算書が要る（1 人目だけで済にしない）。 */
+const eventIssued = (e: Pick<LedgerEvent, "documentId" | "missingPayees">) => Boolean(e.documentId) && !(e.missingPayees ?? []).length;
 
 /** 来るはずの行（前の回にあった・生きている許諾先がある）。 */
 export interface ExpectedLine {
@@ -233,7 +241,7 @@ export function buildRounds(input: {
           label: list.find((e) => e.period)?.period ?? null,
           periodFrom: on, closeOn: on, roundNo: on ? days.indexOf(on) + 1 : null,
           payOn: payOnFor(on, forPartyKind(parsePaymentTerms(c.paymentTerms), input.partyKind)), events: list, skipped: false,
-          expected: [], state: list.every((e) => e.documentId) ? "issued" : "reported" });
+          expected: [], state: list.every(eventIssued) ? "issued" : "reported" });
       }
       continue;
     }
@@ -345,7 +353,7 @@ export function buildRounds(input: {
     // （古い予定明細は skipBefore でまとめて報告なしにできる）。
     for (const p of mine) {
       p.state = p.skipped ? "skipped"
-        : p.events.length && p.events.every((e) => e.documentId) ? "issued"
+        : p.events.length && p.events.every(eventIssued) ? "issued"
         : p.events.length ? "reported"
         : p.closeOn && p.closeOn > today ? "before" : "waiting";
       if (p.state === "skipped" || p.state === "issued") p.expected = [];
@@ -652,11 +660,20 @@ export class RoyaltyLedgerService {
         targetPartyId: int(c.target_party_id), targetPartyName: str(c.target_party_name)
       }));
 
+      // 共著の取り分：受取人ごとの計算書がそろったか。報告は 1 人目の計算書だけを指すので、明細から数える。
+      // 回の状態（計算書済か）を決める前に入れる。
+      const coverage = await payeeCoverage(q, events.map((e) => e.id));
+      for (const e of events) {
+        const cov = coverage.get(e.id);
+        if (!cov) continue;
+        e.missingPayees = missingPayees(cov);
+        e.extraDocumentIds = cov.documentIds.filter((id) => id !== e.documentId);
+      }
       const built = buildRounds({ conditions, schedules, events, skips, outs, plans, today, partyKind: str(p.kind),
         bundle: workId ? "single_work" : bundle, splitByModel: !mixModels });
 
       // 文書・送付・支払。
-      const docIds = [...new Set(events.map((e) => e.documentId).filter((x): x is number => !!x))];
+      const docIds = [...new Set(events.flatMap((e) => [e.documentId, ...(e.extraDocumentIds ?? [])]).filter((x): x is number => !!x))];
       const docs = docIds.length ? (await q.query(
         `SELECT d.id, d.document_no, d.status, d.issued_at,
                 (SELECT dv.sent_at IS NOT NULL FROM document_delivery(d.id) dv) AS sent,
@@ -700,9 +717,10 @@ export class RoyaltyLedgerService {
 
       const settled = built.map((round) => {
         const evIds = new Set(round.parts.flatMap((p) => p.events.map((e) => e.id)));
-        const dIds = new Set(round.parts.flatMap((p) => p.events.map((e) => e.documentId)).filter(Boolean));
+        const dIds = new Set(round.parts.flatMap((p) => p.events.flatMap((e) => [e.documentId, ...(e.extraDocumentIds ?? [])])).filter(Boolean));
         round.documents = docs.filter((d) => dIds.has(Number(d.id))).map((d) => {
-          const docEvents = new Set(round.parts.flatMap((p) => p.events.filter((e) => e.documentId === Number(d.id)).map((e) => e.id)));
+          const docEvents = new Set(round.parts.flatMap((p) => p.events
+            .filter((e) => e.documentId === Number(d.id) || (e.extraDocumentIds ?? []).includes(Number(d.id))).map((e) => e.id)));
           return {
             id: Number(d.id), documentNo: str(d.document_no), status: String(d.status),
             sent: Boolean(d.sent), net: Number(d.net ?? 0), issuedOn: dateStr(d.issued_at),

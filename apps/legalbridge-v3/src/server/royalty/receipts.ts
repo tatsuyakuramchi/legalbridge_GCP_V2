@@ -3,6 +3,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
 import type { ConditionEventService } from "../conditions/event-service.js";
 import { WORK_LINEAGE_UP_SQL } from "./ledger-service.js";
+import { missingPayees, payeeCoverage } from "./payee-coverage.js";
 import { ppmToPct } from "./economics.js";
 
 /**
@@ -27,6 +28,13 @@ export const RECEIPT_IN_STATE_LABEL: Record<ReceiptInState, string> = {
 export interface ReceiptReport {
   id: number; grossAmount: number | null; amount: number; occurredOn: string | null;
   languages: string[]; documentId: number | null; documentNo: string | null;
+  /**
+   * 共著の取り分（当社が各人に払う）で、計算書の要る受取人と、まだ計算書の無い受取人。
+   * 取り分の無い報告は空。1 人目の計算書だけで「計算書済」にしない（royalty/payee-coverage.ts）。
+   */
+  payees?: { total: number; missing: string[] };
+  /** この報告に繋がる決定した計算書（受取人ごとの計算書を含む）。 */
+  documents?: Array<{ id: number; documentNo: string | null }>;
 }
 export interface ReceiptIn {
   conditionId: number; conditionNo: string | null; name: string;
@@ -54,11 +62,13 @@ export interface Receipt {
 }
 
 /** 入金に対する作者 1 人（IN 条件 1 本）の状態（純粋関数）。 */
-export function receiptInState(amount: number, reports: Array<{ grossAmount: number | null; documentId: number | null }>): ReceiptInState {
+export function receiptInState(amount: number,
+  reports: Array<{ grossAmount: number | null; documentId: number | null; payees?: { missing: string[] } }>): ReceiptInState {
   if (!reports.length) return "unreported";
   const reported = reports.reduce((n, r) => n + Number(r.grossAmount ?? 0), 0);
   if (reported !== amount) return "mismatch";
-  return reports.every((r) => r.documentId) ? "issued" : "waiting";
+  // 共著の取り分は受取人ごとの計算書がそろって済。
+  return reports.every((r) => r.documentId && !(r.payees?.missing.length)) ? "issued" : "waiting";
 }
 
 /** 入金全体の状態：いちばん手前の作者の状態。 */
@@ -143,12 +153,23 @@ export class RoyaltyReceiptService {
           AND e.status = 'active'
         ORDER BY e.id`, [r.payment_id, r.out_id])).rows as any[] : [];
     const amount = Number(r.amount);
+    const coverage = await payeeCoverage(q, reports.map((e) => Number(e.id)));
+    const docIds = [...new Set([...coverage.values()].flatMap((c) => c.documentIds))];
+    const docNos = new Map(docIds.length ? ((await q.query(
+      "SELECT id, document_no FROM documents WHERE id = ANY($1::bigint[])", [docIds])).rows as any[])
+      .map((d) => [Number(d.id), str(d.document_no)] as const) : []);
     const list: ReceiptIn[] = ins.map((c) => {
-      const mine = reports.filter((e) => Number(e.series) === c.series).map((e): ReceiptReport => ({
-        id: Number(e.id), grossAmount: int(e.gross_amount), amount: Number(e.amount ?? 0), occurredOn: dateStr(e.occurred_on),
-        languages: Array.isArray(e.scope_languages) ? e.scope_languages.map(String) : [],
-        documentId: int(e.document_id), documentNo: str(e.document_no)
-      }));
+      const mine = reports.filter((e) => Number(e.series) === c.series).map((e): ReceiptReport => {
+        const cov = coverage.get(Number(e.id));
+        const ids = [...new Set([...(int(e.document_id) ? [Number(e.document_id)] : []), ...(cov?.documentIds ?? [])])];
+        return {
+          id: Number(e.id), grossAmount: int(e.gross_amount), amount: Number(e.amount ?? 0), occurredOn: dateStr(e.occurred_on),
+          languages: Array.isArray(e.scope_languages) ? e.scope_languages.map(String) : [],
+          documentId: int(e.document_id), documentNo: str(e.document_no),
+          ...(cov && cov.required.length ? { payees: { total: cov.required.length, missing: missingPayees(cov) } } : {}),
+          documents: ids.map((id) => ({ id, documentNo: id === int(e.document_id) ? str(e.document_no) : docNos.get(id) ?? null }))
+        };
+      });
       return {
         conditionId: c.conditionId, conditionNo: c.conditionNo, name: c.name, partyId: c.partyId, partyName: c.partyName,
         workId: c.workId, workTitle: c.workTitle, usageLabel: conditionUsageLabel(c.usageType), ratePct: c.ratePct,

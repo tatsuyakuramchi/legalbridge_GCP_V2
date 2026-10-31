@@ -12,7 +12,13 @@ import { useReadOnly } from "./read-only.js";
  */
 
 type InState = "unreported" | "mismatch" | "waiting" | "issued";
-interface Report { id: number; grossAmount: number | null; amount: number; occurredOn: string | null; languages: string[]; documentId: number | null; documentNo: string | null }
+interface Report {
+  id: number; grossAmount: number | null; amount: number; occurredOn: string | null; languages: string[]; documentId: number | null; documentNo: string | null;
+  /** 共著の取り分（当社が各人に払う）：受取人の数と、まだ計算書の無い受取人。 */
+  payees?: { total: number; missing: string[] };
+  /** この報告に繋がる決定した計算書（受取人ごとの計算書を含む）。 */
+  documents?: Array<{ id: number; documentNo: string | null }>;
+}
 interface ReceiptIn {
   conditionId: number; conditionNo: string | null; name: string; partyId: number; partyName: string;
   workId: number | null; workTitle: string | null; usageLabel: string; ratePct: number | null; targeted: boolean;
@@ -168,13 +174,23 @@ function ReceiptCard({ r, canWrite, onOpenCondition, onOpenDocument, onError, on
                     <td>{x.partyName}{x.targeted ? <span className="tag" style={{ marginLeft: 4 }}>許諾先専用</span> : null}</td>
                     <td>{link(x.conditionId, x.conditionNo ?? `#${x.conditionId}`)}{x.workTitle && x.workTitle !== r.workTitle ? <div className="faint">{x.workTitle}</div> : null}</td>
                     <td>{x.ratePct === null ? "—" : `${x.ratePct}%`}</td>
-                    <td><span className={`tag ${s.tag}`}>{s.label}</span></td>
+                    <td><span className={`tag ${s.tag}`}>{s.label}</span>
+                      {(() => {
+                        // 共著の取り分：受取人ごとの計算書のそろい具合（1 人目だけで済にしない）。
+                        const p = x.reports.find((e) => e.payees)?.payees;
+                        const missing = [...new Set(x.reports.flatMap((e) => e.payees?.missing ?? []))];
+                        return p ? <div className={missing.length ? "warn" : "faint"}>
+                          受取人 {p.total - missing.length}/{p.total} 人{missing.length ? `（${missing.join("・")} の計算書がまだ）` : ""}
+                        </div> : null;
+                      })()}</td>
                     <td>{x.reports.length ? money(x.reported, r.currency) : "—"}
                       {x.state === "mismatch" ? <div className="faint">入金 {money(r.amount, r.currency)} より {money(Math.abs(x.reported - r.amount), r.currency)} {x.reported < r.amount ? "少ない" : "多い"}</div> : null}</td>
                     <td>{x.reports.length ? money(x.reports.reduce((n, e) => n + e.amount, 0), r.currency) : "—"}</td>
-                    <td>{x.reports.filter((e) => e.documentId).map((e) => onOpenDocument
-                      ? <div key={e.id}><button className="linky code" onClick={() => onOpenDocument(e.documentId!)}>{e.documentNo ?? `#${e.documentId}`}</button></div>
-                      : <div key={e.id} className="code">{e.documentNo ?? `#${e.documentId}`}</div>)}
+                    <td>{x.reports.flatMap((e) => e.documents ?? (e.documentId ? [{ id: e.documentId, documentNo: e.documentNo }] : []))
+                      .filter((d, i, a) => a.findIndex((y) => y.id === d.id) === i)
+                      .map((d) => onOpenDocument
+                        ? <div key={d.id}><button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button></div>
+                        : <div key={d.id} className="code">{d.documentNo ?? `#${d.id}`}</div>)}
                       {!x.reports.some((e) => e.documentId) && <span className="faint">—</span>}</td>
                   </tr>
                 );
