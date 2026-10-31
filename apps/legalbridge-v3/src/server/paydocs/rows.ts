@@ -41,6 +41,13 @@ export interface PdEvent {
   id: number; conditionId: number; scheduleId: number | null; eventType: string;
   occurredOn: string; amount: number; documentId: number | null;
   reportReceivedOn: string | null; quantity: number | null; period: string | null;
+  /**
+   * 共著の取り分（当社が各人に払う）で、まだ計算書の無い受取人。空なら全員そろった（royalty/payee-coverage.ts）。
+   * 報告は 1 人目の計算書だけを指すので、これが空でなければ「文書済」にしない。
+   */
+  missingPayees?: string[];
+  /** ほかの受取人の計算書（明細で繋がる、決定済み）。 */
+  extraDocumentIds?: number[];
 }
 export interface PdDocument {
   id: number; documentNo: string | null; status: string; templateKey: string | null;
@@ -91,7 +98,9 @@ export interface PayDocRow {
   source: { state: SourceState; label: string; detail: string | null; reportDueOn: string | null };
   amount: number | null;
   templateKey: string; documentLabel: string;
-  doc: { state: DocState; partial: boolean; draftId: number | null; documents: PdDocRef[] };
+  doc: { state: DocState; partial: boolean; draftId: number | null; documents: PdDocRef[];
+         /** 共著の取り分で、まだ計算書の無い受取人。 */
+         missingPayees?: string[] };
   send: { state: SendState; on: string | null; via: string | null };
   receipt: { state: ReceiptState; dueOn: string | null; on: string | null; via: string | null };
   payment: { state: PayState; paymentIds: number[]; paymentNo: string | null; dueOn: string | null; paidOn: string | null };
@@ -265,8 +274,13 @@ function buildRow(c: PdCondition, x: {
   let covered = 0;
   for (const e of x.events) {
     const d = e.documentId ? ctx.docById.get(e.documentId) : undefined;
-    if (d && d.status === "issued") { issued.set(d.id, d); covered++; }
+    for (const id of e.extraDocumentIds ?? []) {
+      const extra = ctx.docById.get(id);
+      if (extra && extra.status === "issued") issued.set(extra.id, extra);
+    }
+    if (d && d.status === "issued") { issued.set(d.id, d); if (!(e.missingPayees ?? []).length) covered++; }
   }
+  const missingPayees = [...new Set(x.events.flatMap((e) => e.missingPayees ?? []))];
   const eventIds = x.events.map((e) => e.id);
   const draft = covered < x.events.length
     ? ctx.drafts.find((d) => d.eventIds.some((id) => eventIds.includes(id))) ?? null : null;
@@ -352,7 +366,8 @@ function buildRow(c: PdCondition, x: {
     scheduleId: x.scheduleId, planId: x.planId, eventIds,
     label: x.label, periodFrom: x.periodFrom, closeOn: x.closeOn, payOn: x.payOn, roundNo: x.roundNo,
     trigger, source, amount, templateKey: settlement.templateKey, documentLabel: settlement.label,
-    doc: { state: docState, partial: docState !== "done" && covered > 0, draftId: draft?.id ?? null, documents },
+    doc: { state: docState, partial: docState !== "done" && (covered > 0 || issued.size > 0), draftId: draft?.id ?? null, documents,
+           ...(missingPayees.length ? { missingPayees } : {}) },
     send, receipt, payment, next, overdue,
     past: tracked.length > 0 && tracked.every((d) => d.past),
     skipped: ctx.skipped

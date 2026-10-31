@@ -56,7 +56,8 @@ export function overviewRows(view: LedgerView): OverviewRow[] {
     const outs = new Map<number, OverviewOut>();
     for (const r of rounds) {
       for (const p of r.parts.filter((x) => x.conditionId === c.id)) {
-        const docIds = new Set(p.events.map((e) => e.documentId).filter((x): x is number => !!x));
+        // 共著の取り分は受取人ごとの計算書も（明細で繋がるもの）。
+        const docIds = new Set(p.events.flatMap((e) => [e.documentId, ...(e.extraDocumentIds ?? [])]).filter((x): x is number => !!x));
         cells.push({
           roundKey: r.key, kind: p.scheduleId ? "period" : r.kind,
           roundNo: p.roundNo ?? null, label: p.label,
