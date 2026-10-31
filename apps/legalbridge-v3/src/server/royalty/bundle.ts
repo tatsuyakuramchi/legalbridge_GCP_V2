@@ -97,7 +97,7 @@ export function eventBundleLines(preview: CalculationPreview): BundleLine[] {
     ratePct: e.ratePct ?? c.ratePct,
     paymentJpy: toMajor(e.amount ?? 0, currency),
     ...shareOf(preview),
-    basisNote: [e.period ? `対象期間 ${e.period}` : "", storeOfNote(e.note)].filter(Boolean).join("・"),
+    basisNote: [e.period ? `対象期間 ${e.period}` : "", storeOfNote(e.note), e.basisNote ?? ""].filter(Boolean).join("・"),
     occurredOn: e.occurredOn ?? null,
     quantity: Number(e.quantity ?? 0) > 0
       ? Math.max(0, Number(e.quantity ?? 0) - Number(e.sampleQuantity ?? 0)) : null,

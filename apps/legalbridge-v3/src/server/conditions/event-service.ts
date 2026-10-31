@@ -91,6 +91,11 @@ export interface EventInput {
   /** 差分への次のアクション。wait=不足分を待つ / settle_short=不足のまま終了（減額） / as_is=意図どおり。 */
   followUp?: "wait" | "settle_short" | "as_is" | null;
   followUpDueOn?: string | null;
+  /**
+   * この報告の元になった取引先からの入金（192。payments.id）。入金から作者ごとの報告を起こしたとき
+   * （royalty/receipts.ts）だけ入る。入れたときだけ列に書くので、192 を当てる前の DB でも他の記録は通る。
+   */
+  sourcePaymentId?: number | null;
 }
 
 /**
@@ -353,157 +358,164 @@ export class ConditionEventService {
 
   async add(conditionId: number, input: EventInput, actor: string): Promise<{ id: number }> {
     try {
-      return await inTransaction(this.database, async (client) => {
-        const head = await client.query(
-          "SELECT id, status, direction, rate_ppm, currency, kind FROM conditions WHERE id = $1",
-          [conditionId]);
-        const condition = head.rows[0] as {
-          id: number; status: string; direction: string;
-          rate_ppm: number | null; currency: string; kind?: string;
-        } | undefined;
-        if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
-        if (condition.status !== "active" && condition.status !== "draft") {
-          // 差し替え済み・無効の版に実績を足すと、どの版の実績か分からなくなる。
-          // 適用待ちの版はまだ効いていないので、実績はいまの版に付ける。
-          throw new DomainError("CONFLICT",
-            condition.status === "superseded"
-              ? "旧版には実績を足せません。最新版に記録してください"
-              : condition.status === "scheduled"
-              ? "この版はまだ適用前です。実績はいま有効な版に記録してください"
-              : "無効にした条件には実績を足せません");
-        }
-
-        // 回を選んでいれば、規則も既定値も予定側に合わせる。
-        // 予定の行から作った実績と、ここから作った実績を同じものにする。
-        let scheduleId: number | null = null;
-        let occurredOn = input.occurredOn;
-        let period = str(input.period);
-        // 契約形式と役務提供期間は、書いていなければ予定の回から継ぐ。
-        // 回ごとに決めたものを、実績を入れるたびに人が写し直すのは無駄で、
-        // 写し忘れれば紙が空欄で出る。
-        let contractForm = readContractForm(input.contractForm);
-        let serviceFrom = input.serviceFrom || null;
-        let serviceTo = input.serviceTo || null;
-        if (input.scheduleId) {
-          // 許諾料の締めには、許諾先 × 言語 × 地域 ごとの報告が何件も付く。
-          const line = await claimSchedule(client, conditionId, input.scheduleId,
-            { allowMany: condition.kind === "license" });
-          scheduleId = input.scheduleId;
-          occurredOn = occurredOn || (dateStr(line.due_on) ?? occurredOn);
-          // 予定の名前を実績の期間に写す。「2026年4月分」がそのまま計算書に出る。
-          period = period ?? str(line.label);
-          contractForm = contractForm ?? readContractForm(line.contract_form);
-          serviceFrom = serviceFrom ?? dateStr(line.service_from);
-          serviceTo = serviceTo ?? dateStr(line.service_to);
-        }
-        if (serviceFrom && serviceTo && serviceTo < serviceFrom) {
-          throw new DomainError("VALIDATION", "役務提供期間の終了が開始より前です");
-        }
-
-        // 権利の使い方。入れてあれば、その形に要る数字が揃っているかを先に見る。
-        // 足りないまま実績を作ると、計算書を出す段になって初めて気づく。
-        const usageType = (input.usageType ?? null) as UsageType | null;
-        const unitAmount = input.unitAmount === null || input.unitAmount === undefined
-          ? null : Math.round(input.unitAmount);
-        // 料率はイン条件から引く。その回だけ違う料率があれば入力が勝つ。
-        const ratePpm = input.ratePpm === null || input.ratePpm === undefined
-          ? (usageType ? int(condition.rate_ppm) : null)
-          : Math.round(input.ratePpm);
-        if (usageType) {
-          if (condition.direction !== "in") {
-            throw new DomainError("VALIDATION",
-              "利用形態を付けられるのは取得（IN）の条件の実績だけです。" +
-              "許諾料は作者から取った権利に対して払うものなので、実績はイン条件に載せます");
-          }
-          await this.assertOutCondition(client, conditionId, input.outConditionId ?? null, usageType);
-          await assertEventScope(client, input.outConditionId ?? null, input.languages, input.regions);
-          if (input.workId) {
-            const w = await client.query("SELECT id FROM works WHERE id = $1", [input.workId]);
-            if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
-          }
-          assertUsageInput({
-            usageType,
-            unitAmount, quantity: input.quantity ?? null,
-            sampleQuantity: input.sampleQuantity ?? null,
-            grossAmount: input.grossAmount ?? null,
-            paymentStage: input.paymentStage ?? null,
-            taxIncluded: input.taxIncluded ?? null,
-            outConditionId: input.outConditionId ?? null
-          }, "この実績");
-        }
-
-        const gross = input.grossAmount === null || input.grossAmount === undefined
-          ? null : Math.round(input.grossAmount);
-        const deductions = Math.round(input.deductions ?? 0);
-
-        // 利用形態のある実績は、実額を人が入れるものではない。
-        // 算定の基礎（基準価格×個数／受領価格）に料率を掛けた額がそのまま
-        // 作者に払う額なので、ここで出す。人に入れさせると、紙の数字と
-        // 実績の数字が食い違ったまま残る。
-        //
-        // 「総額 − 控除 = 実額」の決まりは、報告売上をそのまま実額にしていた
-        // 古い形のもの。受領価格に料率を掛ける形では成り立たないので見ない。
-        const amount = usageType
-          ? roundRoyalty((basisOf({
-              usageType, unitAmount, quantity: input.quantity ?? null,
-              sampleQuantity: input.sampleQuantity ?? null, grossAmount: gross,
-              paymentStage: input.paymentStage ?? null,
-              taxIncluded: input.taxIncluded ?? null
-            }, "この実績") * ppmToPct(ratePpm)) / 100)
-          : Math.round(input.amount);
-        if (!usageType && gross !== null && gross - deductions !== amount) {
-          // 総額・控除・実額が合わない記録を残すと、あとで検算できない。
-          throw new DomainError("VALIDATION",
-            `総額 ${gross} − 控除 ${deductions} = ${gross - deductions} が実額 ${amount} と合いません`);
-        }
-        if (usageType && !(amount > 0)) {
-          throw new DomainError("VALIDATION",
-            "算定の結果が0になります。基準価格・個数・受領価格・料率を確かめてください");
-        }
-
-        const inserted = await client.query(
-          `INSERT INTO condition_events
-             (condition_id, schedule_id, event_type, occurred_on, period,
-              quantity, sample_quantity, gross_amount, deductions, amount, note, created_by,
-              deliverable, inspected_on, inspector_dept, inspector_name,
-              contract_form, service_from, service_to,
-              usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage,
-              tax_included, work_id,
-              expected_quantity, expected_amount, variance_note, follow_up, follow_up_due_on,
-              scope_languages, scope_regions, hours, report_received_on)
-           VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
-                   $13, $14::date, $15, $16, $17, $18::date, $19::date,
-                   $20, $21, $22, $23, $24, $25, $26,
-                   $27, $28, $29, $30, $31::date, $32::text[], $33::text[], $34, $35::date)
-           RETURNING id`,
-          [conditionId, scheduleId, input.eventType, occurredOn, period,
-           input.quantity ?? null, input.sampleQuantity ?? null,
-           gross, deductions, amount, str(input.note), actor,
-           str(input.deliverable), str(input.inspectedOn),
-           str(input.inspectorDept), str(input.inspectorName),
-           contractForm, serviceFrom, serviceTo,
-           usageType, input.outConditionId ?? null, unitAmount, ratePpm,
-           input.paymentStage ?? null, input.taxIncluded ?? null, input.workId ?? null,
-           input.expectedQuantity ?? null,
-           input.expectedAmount === null || input.expectedAmount === undefined ? null : Math.round(input.expectedAmount),
-           str(input.varianceNote), input.followUp ?? null, input.followUpDueOn || null,
-           scopeList(input.languages), scopeList(input.regions),
-           input.hours === null || input.hours === undefined ? null : Number(input.hours),
-           input.reportReceivedOn || null]);
-        const id = Number((inserted.rows[0] as { id: number }).id);
-
-        await recordAudit(client, {
-          actor, action: "condition.event_add", targetType: "condition", targetId: conditionId,
-          detail: { eventId: id, eventType: input.eventType, occurredOn, amount, scheduleId,
-                    usageType, outConditionId: input.outConditionId ?? null,
-                    ...(input.varianceNote || input.followUp
-                      ? { expectedQuantity: input.expectedQuantity ?? null, expectedAmount: input.expectedAmount ?? null,
-                          varianceNote: str(input.varianceNote), followUp: input.followUp ?? null,
-                          followUpDueOn: input.followUpDueOn || null } : {}) }
-        });
-        return { id };
-      });
+      return await inTransaction(this.database, (client) => this.addWithin(client, conditionId, input, actor));
     } catch (error) { throw translate(error); }
+  }
+
+  /** 実績を 1 件足す（呼び手の取引の中で）。入金から作者ごとの報告をまとめて起こすときに使う。 */
+  async addWithin(client: Queryable, conditionId: number, input: EventInput, actor: string): Promise<{ id: number }> {
+    const head = await client.query(
+      "SELECT id, status, direction, rate_ppm, currency, kind FROM conditions WHERE id = $1",
+      [conditionId]);
+    const condition = head.rows[0] as {
+      id: number; status: string; direction: string;
+      rate_ppm: number | null; currency: string; kind?: string;
+    } | undefined;
+    if (!condition) throw new DomainError("NOT_FOUND", `条件 ${conditionId} が見つかりません`);
+    if (condition.status !== "active" && condition.status !== "draft") {
+      // 差し替え済み・無効の版に実績を足すと、どの版の実績か分からなくなる。
+      // 適用待ちの版はまだ効いていないので、実績はいまの版に付ける。
+      throw new DomainError("CONFLICT",
+        condition.status === "superseded"
+          ? "旧版には実績を足せません。最新版に記録してください"
+          : condition.status === "scheduled"
+          ? "この版はまだ適用前です。実績はいま有効な版に記録してください"
+          : "無効にした条件には実績を足せません");
+    }
+
+    // 回を選んでいれば、規則も既定値も予定側に合わせる。
+    // 予定の行から作った実績と、ここから作った実績を同じものにする。
+    let scheduleId: number | null = null;
+    let occurredOn = input.occurredOn;
+    let period = str(input.period);
+    // 契約形式と役務提供期間は、書いていなければ予定の回から継ぐ。
+    // 回ごとに決めたものを、実績を入れるたびに人が写し直すのは無駄で、
+    // 写し忘れれば紙が空欄で出る。
+    let contractForm = readContractForm(input.contractForm);
+    let serviceFrom = input.serviceFrom || null;
+    let serviceTo = input.serviceTo || null;
+    if (input.scheduleId) {
+      // 許諾料の締めには、許諾先 × 言語 × 地域 ごとの報告が何件も付く。
+      const line = await claimSchedule(client, conditionId, input.scheduleId,
+        { allowMany: condition.kind === "license" });
+      scheduleId = input.scheduleId;
+      occurredOn = occurredOn || (dateStr(line.due_on) ?? occurredOn);
+      // 予定の名前を実績の期間に写す。「2026年4月分」がそのまま計算書に出る。
+      period = period ?? str(line.label);
+      contractForm = contractForm ?? readContractForm(line.contract_form);
+      serviceFrom = serviceFrom ?? dateStr(line.service_from);
+      serviceTo = serviceTo ?? dateStr(line.service_to);
+    }
+    if (serviceFrom && serviceTo && serviceTo < serviceFrom) {
+      throw new DomainError("VALIDATION", "役務提供期間の終了が開始より前です");
+    }
+
+    // 権利の使い方。入れてあれば、その形に要る数字が揃っているかを先に見る。
+    // 足りないまま実績を作ると、計算書を出す段になって初めて気づく。
+    const usageType = (input.usageType ?? null) as UsageType | null;
+    const unitAmount = input.unitAmount === null || input.unitAmount === undefined
+      ? null : Math.round(input.unitAmount);
+    // 料率はイン条件から引く。その回だけ違う料率があれば入力が勝つ。
+    const ratePpm = input.ratePpm === null || input.ratePpm === undefined
+      ? (usageType ? int(condition.rate_ppm) : null)
+      : Math.round(input.ratePpm);
+    if (usageType) {
+      if (condition.direction !== "in") {
+        throw new DomainError("VALIDATION",
+          "利用形態を付けられるのは取得（IN）の条件の実績だけです。" +
+          "許諾料は作者から取った権利に対して払うものなので、実績はイン条件に載せます");
+      }
+      await this.assertOutCondition(client, conditionId, input.outConditionId ?? null, usageType);
+      await assertEventScope(client, input.outConditionId ?? null, input.languages, input.regions);
+      if (input.workId) {
+        const w = await client.query("SELECT id FROM works WHERE id = $1", [input.workId]);
+        if (!w.rows[0]) throw new DomainError("NOT_FOUND", `作品 ${input.workId} が見つかりません`);
+      }
+      assertUsageInput({
+        usageType,
+        unitAmount, quantity: input.quantity ?? null,
+        sampleQuantity: input.sampleQuantity ?? null,
+        grossAmount: input.grossAmount ?? null,
+        paymentStage: input.paymentStage ?? null,
+        taxIncluded: input.taxIncluded ?? null,
+        outConditionId: input.outConditionId ?? null
+      }, "この実績");
+    }
+
+    const gross = input.grossAmount === null || input.grossAmount === undefined
+      ? null : Math.round(input.grossAmount);
+    const deductions = Math.round(input.deductions ?? 0);
+
+    // 利用形態のある実績は、実額を人が入れるものではない。
+    // 算定の基礎（基準価格×個数／受領価格）に料率を掛けた額がそのまま
+    // 作者に払う額なので、ここで出す。人に入れさせると、紙の数字と
+    // 実績の数字が食い違ったまま残る。
+    //
+    // 「総額 − 控除 = 実額」の決まりは、報告売上をそのまま実額にしていた
+    // 古い形のもの。受領価格に料率を掛ける形では成り立たないので見ない。
+    const amount = usageType
+      ? roundRoyalty((basisOf({
+          usageType, unitAmount, quantity: input.quantity ?? null,
+          sampleQuantity: input.sampleQuantity ?? null, grossAmount: gross,
+          paymentStage: input.paymentStage ?? null,
+          taxIncluded: input.taxIncluded ?? null
+        }, "この実績") * ppmToPct(ratePpm)) / 100)
+      : Math.round(input.amount);
+    if (!usageType && gross !== null && gross - deductions !== amount) {
+      // 総額・控除・実額が合わない記録を残すと、あとで検算できない。
+      throw new DomainError("VALIDATION",
+        `総額 ${gross} − 控除 ${deductions} = ${gross - deductions} が実額 ${amount} と合いません`);
+    }
+    if (usageType && !(amount > 0)) {
+      throw new DomainError("VALIDATION",
+        "算定の結果が0になります。基準価格・個数・受領価格・料率を確かめてください");
+    }
+
+    const inserted = await client.query(
+      `INSERT INTO condition_events
+         (condition_id, schedule_id, event_type, occurred_on, period,
+          quantity, sample_quantity, gross_amount, deductions, amount, note, created_by,
+          deliverable, inspected_on, inspector_dept, inspector_name,
+          contract_form, service_from, service_to,
+          usage_type, out_condition_id, unit_amount, rate_ppm, payment_stage,
+          tax_included, work_id,
+          expected_quantity, expected_amount, variance_note, follow_up, follow_up_due_on,
+          scope_languages, scope_regions, hours, report_received_on)
+       VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12,
+               $13, $14::date, $15, $16, $17, $18::date, $19::date,
+               $20, $21, $22, $23, $24, $25, $26,
+               $27, $28, $29, $30, $31::date, $32::text[], $33::text[], $34, $35::date)
+       RETURNING id`,
+      [conditionId, scheduleId, input.eventType, occurredOn, period,
+       input.quantity ?? null, input.sampleQuantity ?? null,
+       gross, deductions, amount, str(input.note), actor,
+       str(input.deliverable), str(input.inspectedOn),
+       str(input.inspectorDept), str(input.inspectorName),
+       contractForm, serviceFrom, serviceTo,
+       usageType, input.outConditionId ?? null, unitAmount, ratePpm,
+       input.paymentStage ?? null, input.taxIncluded ?? null, input.workId ?? null,
+       input.expectedQuantity ?? null,
+       input.expectedAmount === null || input.expectedAmount === undefined ? null : Math.round(input.expectedAmount),
+       str(input.varianceNote), input.followUp ?? null, input.followUpDueOn || null,
+       scopeList(input.languages), scopeList(input.regions),
+       input.hours === null || input.hours === undefined ? null : Number(input.hours),
+       input.reportReceivedOn || null]);
+    const id = Number((inserted.rows[0] as { id: number }).id);
+    if (input.sourcePaymentId) {
+      await client.query("UPDATE condition_events SET source_payment_id = $2 WHERE id = $1", [id, input.sourcePaymentId]);
+    }
+
+    await recordAudit(client, {
+      actor, action: "condition.event_add", targetType: "condition", targetId: conditionId,
+      detail: { eventId: id, eventType: input.eventType, occurredOn, amount, scheduleId,
+                usageType, outConditionId: input.outConditionId ?? null,
+                ...(input.sourcePaymentId ? { sourcePaymentId: input.sourcePaymentId } : {}),
+                ...(input.varianceNote || input.followUp
+                  ? { expectedQuantity: input.expectedQuantity ?? null, expectedAmount: input.expectedAmount ?? null,
+                      varianceNote: str(input.varianceNote), followUp: input.followUp ?? null,
+                      followUpDueOn: input.followUpDueOn || null } : {}) }
+    });
+    return { id };
   }
 
   /**

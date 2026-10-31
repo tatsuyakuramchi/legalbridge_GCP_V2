@@ -36,6 +36,7 @@ test("受動：締めを過ぎて報告が無い回は報告待ち。報告期�
   assert.equal(sep.source.label, "報告待ち");
   assert.equal(dec.source.state, "before");
   assert.equal(dec.next, "none");
+  assert.deepEqual(rows.map((r) => r.roundNo), [1, 2, 3], "時限式の回号は締めの seq");
   const longer = buildPayDocRows(base({ conditions: [cond({ reportDueDays: 120 })], schedules: [sched(1, "2026-06-30")] }));
   assert.equal(longer[0].source.state, "waiting", "条件ごとの報告期限");
 });
@@ -88,6 +89,18 @@ test("能動：刷ごと（イベント式）は製造の実績 1 日が 1 回�
   assert.equal(plan.source.state, "plan");
   assert.equal(plan.next, "record_event");
   assert.equal(countTiles(rows).wait, 1);
+  assert.equal(made.roundNo, 1, "イベント式の回号は製造日の順");
+  assert.equal(plan.roundNo, null, "製造予定は数えない");
+});
+
+test("イベント式の回号は製造日の順（入れた順ではない）", () => {
+  const c = cond({ usageType: "pub_print", settlementMode: null, pricingModel: "unit_rate" });
+  const rows = buildPayDocRows(base({
+    conditions: [c],
+    events: [ev(31, "2026-10-05", { eventType: "manufacturing", quantity: 1 }),
+             ev(30, "2026-03-01", { eventType: "manufacturing", quantity: 1 })]
+  }));
+  assert.deepEqual(rows.map((r) => [r.closeOn, r.roundNo]).sort(), [["2026-03-01", 1], ["2026-10-05", 2]]);
 });
 
 test("能動：納品の回（on_delivery）は納品待ち。報告期限は付かない", () => {

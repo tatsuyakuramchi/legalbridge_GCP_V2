@@ -5,12 +5,14 @@ import { api, ApiError, money, rate } from "./api.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, text } from "./CreateForm.js";
 import { WorkCreateForm } from "./WorkCreateForm.js";
-import { CsvImport } from "./CsvImport.js";
 import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import type { DocBack } from "./RoyaltyLedger.js";
 import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayDocsWorkspace.js";
+import { WorkRounds } from "./RoundsOverview.js";
+import { WorkRightsFlow } from "./WorkRightsFlow.js";
+import type { ImportPreset } from "./BulkRegister.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
 import { CONDITION_KIND_LABEL, EVENT_TYPE_LABEL, StatusTag } from "./labels.js";
@@ -137,7 +139,11 @@ interface Credit {
 }
 
 export function WorksWorkspace(
-  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs, onSelectId }: {
+  { onOpenCondition, initialId, onOpen, onCompose, onOpenDocument, payDocs, onSelectId, onOpenImport, onOpenCheck }: {
+    /** CSV の一括登録：一括処理 › まとめて登録・更新する を開く（取込の入口は 1 つ。docs/navigation.md）。 */
+    onOpenImport?: (preset: ImportPreset) => void;
+    /** 権利とお金の流れの「条件の点検で直す」：監査 › 条件の点検 へ。 */
+    onOpenCheck?: () => void;
     /** 支払文書のタブ（A-074）。この作品の回を支払文書と同じ表で出す。 */
     payDocs?: { onIssueRound: (h: PayDocsHandoff) => void; onOpenDraft: (id: number) => void;
                 /** 許諾料の報告・計算書は支払文書の「作家の報告と計算書」で。 */
@@ -164,7 +170,9 @@ export function WorksWorkspace(
   const [selected, setSelected] = useState<number | undefined>(initialId);
   useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   // 「利用許諾計算」タブは閉じた（A-074）。報告・計算書は支払文書の「作家の報告と計算書」へ。
-  const [pane, setPane] = useState<"work" | "paydocs">("work");
+  const [pane, setPane] = useState<"work" | "rights" | "paydocs">("work");
+  /** 支払文書のタブの見せ方：進み順（支払文書の表）か、条件ごと（回号・根拠の契約書・計算書）。 */
+  const [payView, setPayView] = useState<"progress" | "conditions">("progress");
   /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */
   const [payCounts, setPayCounts] = useState<Map<number, { make: number; unsent: number; await: number; overdue: number; wait: number; rounds: number }>>(new Map());
   useEffect(() => {
@@ -182,7 +190,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | "import_works" | "import_conditions" | null>(null);
+  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | null>(null);
   /** クレジット表記の履歴（A-031）。重版で変わる著作権表示を適用開始日つきで持つ。 */
   const [credits, setCredits] = useState<Credit[]>([]);
   const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
@@ -582,10 +590,11 @@ export function WorksWorkspace(
         {editable && creating === null && (<>
           <button className="btn primary btn-sm" onClick={() => setCreating("work")}>作品を登録</button>
           <button className="btn btn-sm" onClick={() => setCreating("source")}>原作を登録</button>
-          <button className="btn btn-sm" onClick={() => setCreating("import_works")}
-                  title="作品を CSV でまとめて登録する（試算してから登録）">↑ 作品を一括登録</button>
-          <button className="btn btn-sm" onClick={() => setCreating("import_conditions")}
-                  title="作品に紐づく利用許諾条件を CSV でまとめて登録する。条件名は 作品名｜取引モデル で付く">↑ 条件を一括登録</button>
+          {/* CSV の一括登録は 一括処理 › まとめて登録・更新する へ（取込の入口は 1 つ。docs/navigation.md）。 */}
+          {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "works" })}
+                  title="作品を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 作品を一括登録</button>}
+          {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "license_conditions" })}
+                  title="作品に紐づく利用許諾条件を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 条件を一括登録</button>}
         </>)}
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={cleanupOpen}
                 onClick={() => setCleanupOpen((v) => !v)}>
@@ -596,19 +605,6 @@ export function WorksWorkspace(
       {creating === "work" && (
         <WorkCreateForm onDone={(r) => { setCreating(null); void reloadTree(r.id); }}
                         onCancel={() => setCreating(null)} />
-      )}
-      {(creating === "import_works" || creating === "import_conditions") && (
-        <div className="stack">
-          <div className="row">
-            <button className="btn btn-sm" onClick={() => { setCreating(null); void reloadTree(); }}>閉じる</button>
-            <span className="faint">
-              {creating === "import_works"
-                ? "作品名が同じ行は重複として出ます。親作品を書くと派生作品として原作にぶら下がります"
-                : "1行が条件1本。作品名・許諾者は登録済みのものに一致させてください。条件名は打ちません（作品名｜取引モデル）"}
-            </span>
-          </div>
-          <CsvImport initialKind={creating === "import_works" ? "works" : "license_conditions"} />
-        </div>
       )}
       {creating === "source" && (
         <CreateForm title="原作（Core Logic）の登録" path="/works"
@@ -772,15 +768,34 @@ export function WorksWorkspace(
           {work && (
             <div className="tabs" role="tablist" aria-label="作品の見出し">
               <button role="tab" aria-selected={pane === "work"} onClick={() => setPane("work")}>作品</button>
-              {payDocs && <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>}
+              {/* 作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近のお金（docs/navigation.md §5）。 */}
+              <button role="tab" aria-selected={pane === "rights"} onClick={() => setPane("rights")}>権利とお金の流れ</button>
+              <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>
             </div>
           )}
-          {work && pane === "paydocs" && payDocs && (
-            <PayDocsWorkspace scope={{ workId: work.id }} onOpenCondition={onOpenCondition}
-                              onOpenDocument={(id) => onOpenDocument?.(id)} onOpenDraft={payDocs.onOpenDraft}
-                              onIssueRound={payDocs.onIssueRound}
-                              onComposeEvents={(ids, events, key) => onCompose?.(ids, events, null, key)}
-                              onOpenAuthor={payDocs.onOpenAuthor} />
+          {work && pane === "rights" && (
+            <WorkRightsFlow workId={work.id} onOpenCondition={onOpenCondition} onOpenWork={(id) => setSelected(id)}
+                            onOpenCheck={onOpenCheck} />
+          )}
+          {work && pane === "paydocs" && (
+            <div className="stack">
+              {/* 以前の「回と文書」タブはここの「条件ごと」に入れた。 */}
+              <div className="chips" role="group" aria-label="支払文書の見せ方">
+                <button className="chip" aria-pressed={payView === "progress" || !payDocs} disabled={!payDocs}
+                        onClick={() => setPayView("progress")}>進み順（作る → 送る → 受領 → 支払）</button>
+                <button className="chip" aria-pressed={payView === "conditions" || !payDocs}
+                        onClick={() => setPayView("conditions")}>条件ごと（回号・根拠の契約書・計算書）</button>
+              </div>
+              {payView === "progress" && payDocs ? (
+                <PayDocsWorkspace scope={{ workId: work.id }} onOpenCondition={onOpenCondition}
+                                  onOpenDocument={(id) => onOpenDocument?.(id)} onOpenDraft={payDocs.onOpenDraft}
+                                  onIssueRound={payDocs.onIssueRound}
+                                  onComposeEvents={(ids, events, key) => onCompose?.(ids, events, null, key)}
+                                  onOpenAuthor={payDocs.onOpenAuthor} />
+              ) : (
+                <WorkRounds workId={work.id} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />
+              )}
+            </div>
           )}
           {work && pane === "work" && (<>
             <div className="panel">

@@ -555,7 +555,8 @@ export class PaymentService {
                   p.kind AS party_kind, p.withholding,
                   p.residency, p.treaty_rate_pct, p.treaty_docs_received_on,
                   s.pay_on AS schedule_pay_on,
-                  d.manual_inputs->>'tax_rounding' AS tax_rounding
+                  d.manual_inputs->>'tax_rounding' AS tax_rounding,
+                  d.rendered_values->'delivery_line_items' AS printed_lines
              FROM condition_events e
              JOIN conditions c ON c.id = e.condition_id
              LEFT JOIN parties p ON p.id = c.counterparty_id
@@ -646,7 +647,15 @@ export class PaymentService {
         const deliveredDates = rows.map((r) => dateStr(r.occurred_on))
           .filter((d): d is string => Boolean(d)).sort();
         const delivered = deliveredDates[deliveredDates.length - 1] ?? basis;
+        // 検収書の行に刷った支払日（人が直していればその日）が先。行の既定も納品日からの同じ規則なので、
+        // 直していなければ結果は変わらない。直した日を無視すると、紙と支払の期日が食い違う。
+        const eventIds = new Set(rows.map((r) => Number(r.event_id)));
+        const printed = (Array.isArray(rows[0].printed_lines) ? rows[0].printed_lines as Array<Record<string, unknown>> : [])
+          .filter((l) => eventIds.has(Number(l.event_id)))
+          .map((l) => String(l.payment_date ?? "").trim())
+          .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
         const dueOn = options.dueOn
+          ?? printed[printed.length - 1]
           ?? payDateFromDelivery(delivered, str(rows[0].party_kind))
           ?? dueLimitFrom(basis);
         // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。

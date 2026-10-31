@@ -17,69 +17,24 @@ import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
-import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
+import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type BulkMode, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
 import { DealsWorkspace } from "./DealsWorkspace.js";
-import { PayDocsWorkspace, type AuthorTarget } from "./PayDocsWorkspace.js";
+import { PayDocsWorkspace, type AuthorTarget, type PayDocsPane } from "./PayDocsWorkspace.js";
 import type { PayDocTile } from "../server/paydocs/rows.js";
 import { RingiWorkspace } from "./RingiWorkspace.js";
 import { RptWorkspace } from "./RptWorkspace.js";
 import type { DocFlow } from "./FlowBar.js";
 import { formatHash, parseHash, pushRoute, routePath, type Route } from "./route.js";
+import type { ImportPreset } from "./BulkRegister.js";
+import { ConditionCheck } from "./ConditionCheck.js";
+import { NAV, NAV_VIEWS, activeHub, activeTab, visibleTabs, type NavHub, type NavTarget, type NavView } from "./nav.js";
 
-type View = "home" | "intake" | "daily" | "matters" | "workbench" | "paydocs" | "deals" | "agreements" | "agreement-map" | "conditions" | "works" | "parties" | "documents" | "ringi" | "rpt" | "closing" | "money" | "drift" | "flows" | "ops";
+type View = NavView;
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
   site?: { label: string; dataAsOf: string | null };
 }
-
-// 入口（案件）／横断で見る／監視・運用 の3段。案件が制御レイヤー、他は参照。
-const NAV: Array<{ section: string; items: Array<{ view: View; label: string }> }> = [
-  { section: "入口", items: [
-    { view: "home", label: "ホーム" },
-    // 依頼はまず受付箱に入り、そこで振り分ける（docs/v3-request-inbox.md）。
-    // 軽微ならデイリータスク、大きければ案件。どちらも作業テーブルは tasks。
-    { view: "intake", label: "受付箱" },
-    { view: "daily", label: "デイリータスク" },
-    { view: "matters", label: "案件" }
-  ] },
-  // 文書は作業テーブル、お金は取引管理。どちらも「決める台帳（条件・作品・契約）」とは別の、進める画面。
-  { section: "作業", items: [
-    // 文書を作る・登録する・繋ぐのはこの 1 枚だけ。デイリータスク・案件からも同じ画面に入る。
-    // 以前の「取引を進める」（基礎情報 → 契約 → 条件 → 文書 → 送信）はここに一本化した。
-    { view: "workbench", label: "作業テーブル" },
-    // 計算書・検収書・役務提供完了通知書を回ごとに 起点 → 文書 → 送付 → 受領 → 支払 まで（A-074）。
-    // 以前の「取引管理」「支払文書処理」はここへまとめた（取引管理の表は案件・条件明細の中に残る）。
-    { view: "paydocs", label: "支払文書" }
-  ] },
-  { section: "横断で見る", items: [
-    // 契約が器で、条件はその明細。並びもその順にする。
-    { view: "agreements", label: "契約" },
-    // 取引先ごとの基本契約の木。画面によって基本契約の見え方が違う原因（ずれ）を直す。
-    { view: "agreement-map", label: "取引先⇔基本契約" },
-    { view: "conditions", label: "条件明細" },
-    { view: "works", label: "作品" },
-    { view: "parties", label: "取引先・担当" },
-    { view: "documents", label: "文書" },
-    // 稟議（R-）と取締役会決議（B-）。文書・契約に繋いで /法務検索 で引ける。
-    { view: "ringi", label: "稟議" },
-    // 取引が会社法の利益相反・会計の関連当事者に当たるかの判定と、取締役会の議案。
-    { view: "rpt", label: "関連当事者" }
-  ] },
-  // 文書とお金のあいだ。予定 → 実績 → 決済文書 → 支払 を1本の表で進める
-  // ところなので、紙の話と金の話の継ぎ目に、見出しを付けて置く
-  // （見出しが無いと「横断で見る」の続きに読めて、何をする所か分からなかった）。
-  { section: "お金の流れ", items: [
-    { view: "money", label: "お金" }
-  ] },
-  { section: "監視・運用", items: [
-    // 条件を直したあとに取り残された金額・日付を集めて直す。案件をまたぐので
-    // 工程表（案件1件）とは別の入口にする。ホームの札「金額の取り残し」と同じ語にする。
-    { view: "drift", label: "金額の取り残し" },
-    { view: "flows", label: "フロー監視" },
-    { view: "ops", label: "運用" }
-  ] }
-];
 
 const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
   a.kind === b.kind && (a.kind === "task" ? a.taskId === (b as typeof a).taskId
@@ -97,6 +52,10 @@ export function App() {
   const [focus, setFocus] = useState<{ view: View; id: number } | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [opsTab, setOpsTab] = useState<OpsTab | undefined>();
+  /** まとめて登録・更新する を開いたときに選んでおく対象。 */
+  const [importPreset, setImportPreset] = useState<ImportPreset | null>(null);
+  /** 最後に押したメニューの項目（同じ画面が 2 つの項目にあるとき、どちらを光らせるか）。 */
+  const [lastHub, setLastHub] = useState<string | null>(null);
   /** 「金額の直し」を案件の工程表から開いたとき、その案件で絞る。 */
   const [driftMatter, setDriftMatter] = useState<number | null>(null);
 
@@ -319,16 +278,24 @@ export function App() {
   const [docStep, setDocStep] = useState<string | null>(null);
   /** 支払文書を開くときの札（ホームの盤面から）。 */
   const [payTile, setPayTile] = useState<PayDocTile | null>(null);
+  /** 支払文書を開くときのタブ（旧 回の一覧の URL は「入金と作者への支払」へ）。 */
+  const [payPane, setPayPane] = useState<PayDocsPane | null>(null);
   /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
   const [pick, setPick] = useState<{ view: View; id: number } | null>(null);
   const pickFor = (v: View) => (id: number | undefined) => setPick(id ? { view: v, id } : null);
   /** URL から来た場所を適用している最中（書き戻さない）。 */
   const applyingRoute = useRef(false);
-  const VIEWS = useRef(new Set<string>(NAV.flatMap((g) => g.items.map((i) => i.view)).concat(["closing", "deals"])));
+  const VIEWS = useRef(NAV_VIEWS);
 
   const applyRoute = (r: Route | null) => {
     applyingRoute.current = true;
     try {
+      // 旧 回の一覧（rounds）は支払文書の「入金と作者への支払」へ移した（docs/navigation.md）。
+      if (r?.view === "rounds") {
+        setFocus(null); setPayPane("receipts"); setView("paydocs");
+        window.history.replaceState(null, "", "#/paydocs");
+        return;
+      }
       if (!r || !VIEWS.current.has(r.view)) { setFocus(null); setView("home"); return; }
       const v = r.view as View;
       setPick(null);
@@ -379,6 +346,44 @@ export function App() {
     pushRoute(r);
   }, [view, focus, pick, conditionId, openDocument, opsTab, mapMode, mapParty, driftMatter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- 左のメニュー（docs/navigation.md）----
+  const isAdmin = me?.user?.role === "admin";
+  /** いまの画面の sub（運用はタブ、作業テーブルは一括のモード）。光らせる項目とタブを決める。 */
+  const subNow = view === "ops" ? (opsTab ?? "quality")
+    : view === "workbench" && workbench?.entry.kind === "bulk" ? workbench.entry.mode : null;
+  const hubNow = activeHub(view, subNow, lastHub);
+  const hubTabs = hubNow ? visibleTabs(hubNow, isAdmin) : [];
+  const tabNow = hubNow ? activeTab(hubNow, view, subNow) : null;
+  /** メニュー・タブから開く。左から開いたときは、ほかの画面から持ち込んだ絞り・作業の繋がりを解く。 */
+  const go = (to: NavTarget) => {
+    if (to.view === "conditions") setConditionId(undefined);
+    // 案件から開いた絞りが残っていると、件数が合わずに見落とす。
+    if (to.view === "drift") setDriftMatter(null);
+    setTaskCtx(null);
+    // 左の「文書」は素の文書の画面。流れの帯も外す。
+    setDocFlow(null);
+    setFocus(null);
+    if (to.view === "ops") setOpsTab(to.sub as OpsTab);
+    if (to.view === "paydocs") setPayPane(null);
+    if (to.view === "ops") setImportPreset(null);
+    if (to.view === "workbench") {
+      if (to.sub) { startWorkbench({ kind: "bulk", mode: to.sub as BulkMode }); return; }
+      setWorkbench(null);
+    }
+    setView(to.view);
+  };
+  /** 台帳の画面の「CSV で一括…」から、一括処理 › まとめて登録・更新する をその対象で開く。 */
+  const openImport = (preset: ImportPreset) => {
+    setLastHub("bulk-register");
+    go({ view: "ops", sub: "imports" });
+    setImportPreset(preset);
+  };
+  const openHub = (hub: NavHub) => {
+    setLastHub(hub.key);
+    const first = visibleTabs(hub, isAdmin)[0];
+    if (first) go(first.to);
+  };
+
   return (
     <ReadOnlyContext.Provider value={Boolean(me?.readOnly)}>
     <div className={`app${railSlim ? " rail-slim" : ""}`}>
@@ -392,29 +397,18 @@ export function App() {
         </button>
         <div className="wordmark"><b>LegalBridge</b><span>Core</span></div>
         <GlobalSearch onOpen={openHit} />
-        {NAV.map((group) => (
-          <div key={group.section}>
-            <div className="nav-sec">{group.section}</div>
-            {group.items.map((item) => (
-              <button key={item.view} className="nav-item"
-                      aria-current={view === item.view ? "page" : undefined}
-                      onClick={() => {
-                        if (item.view === "conditions") setConditionId(undefined);
-                        // 左から開いたときは全社に戻す。案件から開いた絞りが
-                        // 残っていると、件数が合わずに見落とす。
-                        if (item.view === "drift") setDriftMatter(null);
-                        // 左から開いたら、進めていたデイリータスクとの繋がりは解く。
-                        setTaskCtx(null);
-                        // 左の「文書」は素の文書の画面。流れの帯も外す。
-                        setDocFlow(null);
-                        setFocus(null);
-                        setView(item.view);
-                      }}>{item.label}
-                      {item.view === "intake" && intakeCount > 0 && (
-                        <span className="tag warn" style={{ marginLeft: 6 }}>{intakeCount}</span>
+        {NAV.map((group, gi) => (
+          <div key={group.section ?? `g${gi}`}>
+            {group.section && <div className="nav-sec">{group.section}</div>}
+            {group.hubs.filter((hub) => visibleTabs(hub, isAdmin).length > 0).map((hub) => (
+              <button key={hub.key} className="nav-item"
+                      aria-current={hubNow?.key === hub.key ? "page" : undefined}
+                      onClick={() => openHub(hub)}>{hub.label}
+                      {hub.key === "reception" && intakeCount > 0 && (
+                        <span className="tag warn" style={{ marginLeft: 6 }} title="受付箱の未処理・更新あり">{intakeCount}</span>
                       )}
-                      {item.view === "daily" && dailyCount > 0 && (
-                        <span className="tag in" style={{ marginLeft: 6 }}>{dailyCount}</span>
+                      {hub.key === "reception" && dailyCount > 0 && (
+                        <span className="tag in" style={{ marginLeft: 6 }} title="デイリータスクの終わっていない作業">{dailyCount}</span>
                       )}</button>
             ))}
           </div>
@@ -437,6 +431,15 @@ export function App() {
           <div className="note warn" style={{ marginBottom: 12 }}>
             読み取り専用で動いています。登録・変更・送信はできません。
             {me.site?.dataAsOf ? `データは ${me.site.dataAsOf} 時点の写しです。` : ""}
+          </div>
+        )}
+        {/* メニューの項目が画面を 2 つ以上束ねているときは、その切り替え（docs/navigation.md）。 */}
+        {hubNow && hubTabs.length > 1 && (
+          <div className="tabs hub-tabs" role="tablist" aria-label={hubNow.label}>
+            {hubTabs.map((t) => (
+              <button key={`${t.to.view}:${t.to.sub ?? ""}`} role="tab" aria-selected={tabNow === t}
+                      onClick={() => go(t.to)}>{t.label}</button>
+            ))}
           </div>
         )}
         {taskCtx && view !== "daily" && (
@@ -492,7 +495,7 @@ export function App() {
             onIssueDocument={issueRound} />
         )}
         {view === "paydocs" && (
-          <PayDocsWorkspace key={`pd${payTile ?? ""}`} initialTile={payTile} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+          <PayDocsWorkspace key={`pd${payTile ?? ""}${payPane ?? ""}`} initialTile={payTile} initialPane={payPane} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
             onIssueRound={issueRound}
             onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}
@@ -528,7 +531,7 @@ export function App() {
             onFixDrift={(matterId) => { setDriftMatter(matterId); setView("drift"); }} onSelectId={pickFor("matters")} />
         )}
         {view === "conditions" && (
-          <ConditionsWorkspace key={`${conditionId ?? 0}-${conditionSchedule ?? 0}`}
+          <ConditionsWorkspace key={`${conditionId ?? 0}-${conditionSchedule ?? 0}`} onOpenImport={openImport}
                                initialId={conditionId} initialSchedule={conditionSchedule}
                                onCompose={startCompose} onOpen={openEntity}
                                onOpenDocument={openDocumentAt}
@@ -539,7 +542,8 @@ export function App() {
                                onSelectId={pickFor("conditions")} />
         )}
         {view === "works" && (
-          <WorksWorkspace key={`w${focusFor("works") ?? 0}`}
+          <WorksWorkspace key={`w${focusFor("works") ?? 0}`} onOpenImport={openImport}
+            onOpenCheck={() => { setLastHub("check"); go({ view: "condition-check" }); }}
             onOpenCondition={openCondition} initialId={focusFor("works")}
             onOpenDocument={openDocumentAt}
             onOpen={openEntity} onCompose={startCompose}
@@ -576,7 +580,7 @@ export function App() {
             onSelectId={pickFor("agreements")} />
         )}
         {view === "agreement-map" && (
-          <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? mapParty ?? 0}`}
+          <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? mapParty ?? 0}`} onOpenImport={openImport}
             initialPartyId={focusFor("agreement-map") ?? mapParty} onOpen={openEntity}
             onRegisterAgreement={startAgreement}
             initialMode={mapMode} onModeChange={setMapMode} onPartyChange={setMapParty} />
@@ -597,7 +601,10 @@ export function App() {
             onOpenMatter={(id) => openEntity("matter", id)} />
         )}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
-        {view === "ops" && <OpsWorkspace key={opsTab ?? "quality"} initialTab={opsTab} onTabChange={setOpsTab} />}
+        {view === "condition-check" && <ConditionCheck onOpenCondition={openCondition} />}
+        {view === "ops" && <OpsWorkspace key={`${opsTab ?? "quality"}:${importPreset?.kind ?? ""}:${importPreset?.mode ?? ""}`}
+                                         initialTab={opsTab} onTabChange={setOpsTab} importPreset={importPreset}
+                                         embedded={hubNow ? { title: hubNow.label, hint: hubNow.hint ?? null } : undefined} />}
       </main>
     </div>
     </ReadOnlyContext.Provider>

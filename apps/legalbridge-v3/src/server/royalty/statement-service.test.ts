@@ -15,6 +15,11 @@ interface Options {
   ag?: number | null;
   /** 対象日に効いていた版。null を渡すと「見つからない」を再現する。 */
   appliedVersion?: Record<string, unknown> | null;
+  /** 条件の利用形態（pub_print など）。 */
+  usageType?: string | null;
+  /** 2 版目以降の非加算（発行部数の %）と価格の基準。 */
+  exemptLaterPct?: number | null;
+  priceBasis?: string | null;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -27,7 +32,8 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
   if (text.includes("FROM conditions c") && text.includes("LEFT JOIN parties p")) {
     return [{ id: 5, condition_no: "CL-2026-00042", name: "配信許諾", kind: "license",
               direction: "out", counterparty_id: 11, currency: "JPY",
-              pricing_model: "revenue_rate", rate_ppm: 125000,
+              pricing_model: "revenue_rate", rate_ppm: 125000, usage_type: options.usageType ?? null,
+              royalty_exempt_later_pct: options.exemptLaterPct ?? null, price_basis: options.priceBasis ?? null,
               unit_amount: null, flat_amount: null,
               mg_amount: options.mg ?? null, ag_amount: options.ag ?? null,
               tax_category: "taxable", status: options.conditionStatus ?? "active",
@@ -313,6 +319,50 @@ test("実績の束：他の条件・取消済み・文書に結ばれた実績�
   await assert.rejects(() => taken.service.preview({ conditionId: 5, eventIds: [41, 42] }), /別の文書に結ばれています/);
   const mixed = withEvents(eventRows([{ event_type: "manufacturing", quantity: 100 }]));
   await assert.rejects(() => mixed.service.preview({ conditionId: 5, eventIds: [41, 42] }), /売上 と 再許諾の受領 の実績だけ/);
+});
+
+test("実績の束：紙出版の料率条件は、台帳で入れた製造（刷）の報告額で計算できる", async () => {
+  const rows = eventRows([{ event_type: "manufacturing", quantity: 3000 }, { event_type: "manufacturing", quantity: 2000 }]);
+  const { service: royalty } = withEvents(rows, { usageType: "pub_print" });
+  const r = await royalty.preview({ conditionId: 5, eventIds: [41, 42] });
+  assert.equal(r.reported.salesInput, 5000000);
+  assert.equal(r.fee.gross_ex_tax, 625000, "500万 × 12.5%");
+  // 紙出版でも、報告額の無い製造の報告は止める（0 円の計算書を出さない）。
+  const empty = withEvents(eventRows([{ event_type: "manufacturing", quantity: 3000, gross_amount: null, amount: null }]),
+    { usageType: "pub_print" });
+  await assert.rejects(() => empty.service.preview({ conditionId: 5, eventIds: [41, 42] }), /報告額/);
+  // 紙出版以外の料率条件は従来どおり製造を断る。
+  const digital = withEvents(eventRows([{ event_type: "manufacturing", quantity: 100 }]), { usageType: "pub_digital" });
+  await assert.rejects(() => digital.service.preview({ conditionId: 5, eventIds: [41, 42] }), /売上 と 再許諾の受領 の実績だけ/);
+});
+
+test("実績の束：紙出版の 2 版目以降は発行部数の % を非加算にして算定する", async () => {
+  // 3,000部・報告額 300万（本体 1,000円）、2,000部・報告額 200万。1% 非加算 → 30部・20部。
+  const rows = eventRows([{ event_type: "manufacturing", quantity: 3000 }, { event_type: "manufacturing", quantity: 2000 }]);
+  const { service: royalty } = withEvents(rows, { usageType: "pub_print", exemptLaterPct: 1 });
+  const r = await royalty.preview({ conditionId: 5, eventIds: [41, 42] });
+  assert.deepEqual(r.events.map((e) => e.basis), [2970000, 1980000], "報告額 ×（部数 − 非加算）÷ 部数");
+  assert.deepEqual(r.events.map((e) => e.sampleQuantity), [30, 20], "非加算部数は見本の欄に持つ（紙の部数は 部数 − 非加算）");
+  assert.equal(r.fee.gross_ex_tax, 618750, "495万 × 12.5%");
+  assert.match(String(r.events[0].basisNote), /3,000部 − 非加算 30部（1%）/);
+  // 端数の部数は切り捨て（作者に不利にしない）：150部の 1% は 1部。
+  const small = withEvents(eventRows([{ event_type: "manufacturing", quantity: 150, gross_amount: 150000, amount: 150000 }]),
+    { usageType: "pub_print", exemptLaterPct: 1 });
+  const s = await small.service.preview({ conditionId: 5, eventIds: [41] });
+  assert.equal(s.events[0].basis, 149000);
+  // 人が実績に非加算部数を入れていればそれを使う。
+  const manual = withEvents(eventRows([{ event_type: "manufacturing", quantity: 3000, sample_quantity: 100 }]),
+    { usageType: "pub_print", exemptLaterPct: 1 });
+  const m = await manual.service.preview({ conditionId: 5, eventIds: [41] });
+  assert.equal(m.events[0].basis, 2900000);
+  // 部数の無い報告は止める（非加算が計算できない）。
+  const noQty = withEvents(eventRows([{ event_type: "manufacturing" }]), { usageType: "pub_print", exemptLaterPct: 1 });
+  await assert.rejects(() => noQty.service.preview({ conditionId: 5, eventIds: [41] }), /発行部数が入っていません/);
+  // 受領額基準・電子は部数を掛けないので非加算は効かない。
+  const receipts = withEvents(eventRows([{ event_type: "manufacturing" }]), { usageType: "pub_print", exemptLaterPct: 1, priceBasis: "receipts" });
+  assert.equal((await receipts.service.preview({ conditionId: 5, eventIds: [41] })).events[0].basis, 3000000);
+  const digital = withEvents(eventRows(), { usageType: "pub_digital", exemptLaterPct: 1 });
+  assert.equal((await digital.service.preview({ conditionId: 5, eventIds: [41, 42] })).reported.salesInput, 5000000);
 });
 
 test("実績の束の確定：実績は作らず、明細を実績ごとに根拠比で按分し、実績を文書に結ぶ", async () => {

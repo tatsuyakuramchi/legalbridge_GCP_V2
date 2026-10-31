@@ -9,9 +9,9 @@ import { timingOf } from "../royalty/ledger-service.js";
  * （回の最初の実績だけ見る／下書きでも済にする／条件単位で見る）のを、ここ 1 か所にする。
  *
  * 起点は 2 つ：
- *   能動（active）  … 製造・印刷・納品・検収など、自社の記録で回が立つ。記録漏れを防ぐため
+ *   イベント式（active。画面の呼び方。旧「能動」） … 製造・印刷・納品・検収など、自社の記録で回が立つ。記録漏れを防ぐため
  *                     製造予定（production_plans）の行も出す。
- *   受動（passive） … 締め（時限）のあと、報告書（売上報告・月次報告）や入金を待つ。
+ *   時限式（passive。旧「受動」） … 締め（時限）のあと、報告書（売上報告・月次報告）や入金を待つ。
  *                     締めから報告期限（既定 30 日）を過ぎたら督促の対象。
  *
  * 文書が「済」なのは、回の実績が全部、決定した決済文書に載っているときだけ。
@@ -82,6 +82,11 @@ export interface PayDocRow {
   scheduleId: number | null; planId: number | null; eventIds: number[];
   /** 回の名前（「2026年上期」「初版3刷」など）と期間。 */
   label: string; periodFrom: string | null; closeOn: string | null; payOn: string | null;
+  /**
+   * 回号（この条件の第 N 回）。時限式は締め（予定明細）の seq、イベント式は製造・納品の日の順。
+   * 予定の外の実績・製造予定は null。台帳（royalty/ledger-service.ts の roundNo）と同じ数え方。
+   */
+  roundNo: number | null;
   trigger: Trigger;
   source: { state: SourceState; label: string; detail: string | null; reportDueOn: string | null };
   amount: number | null;
@@ -162,6 +167,7 @@ export function buildPayDocRows(input: BuildInput): PayDocRow[] {
       key: string; scheduleId: number | null; planId: number | null; label: string;
       periodFrom: string | null; closeOn: string | null; payOn: string | null;
       events: PdEvent[]; plannedAmount: number | null; triggerKind: string | null; plan: PdPlan | null;
+      roundNo: number | null;
     }) => out.push(buildRow(c, x, { today, docById, allocByEvent, drafts: input.drafts,
                                     skipped: x.scheduleId !== null && skipSet.has(`${c.id}:${x.scheduleId}`) }));
 
@@ -188,7 +194,7 @@ export function buildPayDocRows(input: BuildInput): PayDocRow[] {
         add({ key: `s:${s.id}`, scheduleId: s.id, planId: null,
               label: s.label ?? (s.dueOn ? `${s.dueOn.slice(0, 7)} 締め` : `第 ${s.seq} 回`),
               periodFrom: from, closeOn: s.dueOn, payOn: s.payOn, events: mine,
-              plannedAmount: s.plannedAmount, triggerKind: s.triggerKind, plan: null });
+              plannedAmount: s.plannedAmount, triggerKind: s.triggerKind, plan: null, roundNo: s.seq });
       });
     }
     // イベント式の回、または予定の外の実績：発生日ごとに 1 回（同じ日の報告は 1 枚にまとめる）。
@@ -197,8 +203,11 @@ export function buildPayDocRows(input: BuildInput): PayDocRow[] {
       if (!byDay.has(e.occurredOn)) byDay.set(e.occurredOn, []);
       byDay.get(e.occurredOn)!.push(e);
     }
+    const days = [...byDay.keys()].sort();
     for (const [day, list] of byDay) {
       add({ key: `e:${c.id}:${day}`, scheduleId: null, planId: null,
+            // イベント式なら製造・納品の日の順が回号。時限式の予定の外の実績は数えない。
+            roundNo: timing === "event" ? days.indexOf(day) + 1 : null,
             label: list.find((e) => e.period)?.period ?? `${EVENT_NAME[list[0].eventType] ?? "実績"} ${day}`,
             periodFrom: day, closeOn: day, payOn: null, events: list, plannedAmount: null,
             triggerKind: list.every((e) => ACTIVE_EVENTS.has(e.eventType)) || timing === "event" ? "on_delivery" : null,
@@ -208,7 +217,7 @@ export function buildPayDocRows(input: BuildInput): PayDocRow[] {
     for (const p of input.plans.filter((x) => x.conditionId === c.id)) {
       add({ key: `p:${p.id}`, scheduleId: null, planId: p.id,
             label: p.label ?? `製造予定 ${p.plannedOn}`, periodFrom: p.plannedOn, closeOn: p.plannedOn, payOn: null,
-            events: [], plannedAmount: null, triggerKind: "on_delivery", plan: p });
+            events: [], plannedAmount: null, triggerKind: "on_delivery", plan: p, roundNo: null });
     }
   }
   return out;
@@ -218,6 +227,7 @@ function buildRow(c: PdCondition, x: {
   key: string; scheduleId: number | null; planId: number | null; label: string;
   periodFrom: string | null; closeOn: string | null; payOn: string | null;
   events: PdEvent[]; plannedAmount: number | null; triggerKind: string | null; plan: PdPlan | null;
+  roundNo: number | null;
 }, ctx: {
   today: string; docById: Map<number, PdDocument>; allocByEvent: Map<number, PdAllocation[]>;
   drafts: PdDraft[]; skipped: boolean;
@@ -340,7 +350,7 @@ function buildRow(c: PdCondition, x: {
                  usageType: c.usageType, direction: c.direction, timeSettlement: c.timeSettlement },
     party: c.party, work: c.work,
     scheduleId: x.scheduleId, planId: x.planId, eventIds,
-    label: x.label, periodFrom: x.periodFrom, closeOn: x.closeOn, payOn: x.payOn,
+    label: x.label, periodFrom: x.periodFrom, closeOn: x.closeOn, payOn: x.payOn, roundNo: x.roundNo,
     trigger, source, amount, templateKey: settlement.templateKey, documentLabel: settlement.label,
     doc: { state: docState, partial: docState !== "done" && covered > 0, draftId: draft?.id ?? null, documents },
     send, receipt, payment, next, overdue,

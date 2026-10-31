@@ -323,7 +323,7 @@ export function DocumentsWorkspace(
   const [sendingPicked, setSendingPicked] = useState(false);
   // 決定した結果。番号だけでなく id も持つ（そのまま開けるように）。
   /** 決定した文書。again は「作成のフォームから決定した」（続けてもう1枚作れる）。 */
-  const [issued, setIssued] = useState<{ id: number; documentNo: string; again?: boolean } | null>(null);
+  const [issued, setIssued] = useState<{ id: number; documentNo: string; again?: boolean; writeBack?: WriteBack | null } | null>(null);
   // 決定したことに気づかず同じ画面を見続けないよう、結果まで運ぶ。
   const issuedRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -907,7 +907,7 @@ export function DocumentsWorkspace(
     setWorking({ action: "issue", what: draft ? "直して決定しています" : "決定しています",
                  hint: "番号を振り、文書を作って保存しています" });
     try {
-      let done: { id: number; documentNo: string };
+      let done: { id: number; documentNo: string; writeBack?: WriteBack | null };
       if (isStatement && (reviseCtx || !draft)) {
         // 計算書は 試算 → 発行 → 確定 を1本にしてある。金額は確定時にもう一度
         // 計算し直すので、画面に出ている試算の値は送らない。
@@ -918,7 +918,7 @@ export function DocumentsWorkspace(
           reason = window.prompt("訂正版を出す理由を書いてください");
           if (reason === null) { setBusy(false); return; }
         }
-        const result = await api.post<{ document: { id: number; documentNo: string } }>(
+        const result = await api.post<{ document: { id: number; documentNo: string; writeBack?: WriteBack } }>(
           "/statement-documents", {
             // 選んだ基本契約も渡す。渡さないとプレビューと決定で「契約番号」が食い違う。
             templateKey, matterId, requestId, agreementId,
@@ -927,7 +927,7 @@ export function DocumentsWorkspace(
             // 訂正版：決定の瞬間に元の計算書が退き、実績がこちらへ移る。
             supersedesId: reviseCtx?.ids[0] ?? null, supersedesExtraIds: reviseCtx?.ids.slice(1) ?? [], reason
           });
-        done = { id: result.document.id, documentNo: result.document.documentNo };
+        done = { id: result.document.id, documentNo: result.document.documentNo, writeBack: result.document.writeBack ?? null };
         // 開いていた訂正版の下書きは役目を終えたので無効にする（残すと「訂正版の下書きがあります」と出続ける）。
         if (draft) {
           await api.post(`/documents/${draft.id}/void`, { reason: `訂正版 ${done.documentNo} を出し直したため` }).catch(() => undefined);
@@ -937,15 +937,15 @@ export function DocumentsWorkspace(
         // 手入力しか見ないので、先に書き戻す。
         await api.patch(`/documents/${draft.id}/draft`,
           { manualInputs: { ...inputsWithPayee, _eventIds: pickedEvents }, conditionIds: picked, agreementId });
-        const r = await api.post<{ id: number; documentNo: string }>(
+        const r = await api.post<{ id: number; documentNo: string; writeBack?: WriteBack }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
-        done = { id: r.id, documentNo: r.documentNo };
+        done = { id: r.id, documentNo: r.documentNo, writeBack: r.writeBack ?? null };
       } else {
         // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
         // 途中で落ちたときは下書きごと捨てられる。
-        const result = await api.post<{ document: { id: number; documentNo: string } }>(
+        const result = await api.post<{ document: { id: number; documentNo: string; writeBack?: WriteBack } }>(
           "/documents/compose", body);
-        done = { id: result.document.id, documentNo: result.document.documentNo };
+        done = { id: result.document.id, documentNo: result.document.documentNo, writeBack: result.document.writeBack ?? null };
       }
       setIssued({ ...done, again: true });
       // 手で打った項目だけ覚える。日付と金額は毎回変わるので覚えない
@@ -1224,6 +1224,7 @@ export function DocumentsWorkspace(
             <span className="code">{issued.documentNo}</span>
             <span className="faint">番号が振られ、中身は直せなくなりました。下に決定した文書を開いています（送付・支払・無効化はそこから）</span>
           </div>
+          {issued.writeBack && <WriteBackNote w={issued.writeBack} />}
           <div className="row">
             {/* 流れの途中では、決定した文書がこのすぐ下に開いている。押す意味の無いボタンは出さない。 */}
             {!flow && (
@@ -2084,3 +2085,37 @@ export function carryOverInputs(manual: Record<string, unknown>): {
     refNoMode: refNoModeOf(manual._refNoMode)
   };
 }
+
+/** 決定のときに台帳へ書き戻したもの（server/documents/write-back.ts）。 */
+interface WriteBack {
+  fields?: Array<{ conditionId: number; label: string; from: string | number | null; to: string | number }>;
+  skipped?: Array<{ conditionId: number; label: string; reason: string }>;
+  schedules: Array<{ scheduleId: number; conditionId: number | null; from: string | null; to: string }>;
+  payments: Array<{ paymentId: number; paymentNo: string | null; from: string | null; to: string }>;
+  paidKept: Array<{ paymentId: number; paymentNo: string | null; dueOn: string | null }>;
+  contact: { partyId: number; action: "updated" | "added"; name: string | null } | null;
+}
+
+/** 文書で直した支払日・通知先を、条件明細・支払・取引先に反映した結果。何も無ければ出さない。 */
+function WriteBackNote({ w }: { w: WriteBack }) {
+  const lines: string[] = [];
+  const v = (x: string | number | null) => x === null ? "（空）" : typeof x === "number" ? x.toLocaleString("ja-JP") : x;
+  for (const f of w.fields ?? []) lines.push(`条件明細の${f.label} ${v(f.from)} → ${v(f.to)}`);
+  for (const s of w.schedules) lines.push(`条件明細の支払日 ${s.from ?? "（空）"} → ${s.to}`);
+  for (const p of w.payments) lines.push(`支払 ${p.paymentNo ?? `#${p.paymentId}`} の予定日 ${p.from ?? "（空）"} → ${p.to}`);
+  if (w.contact) lines.push(`取引先の主担当を${w.contact.action === "added" ? "登録" : "更新"}：${w.contact.name ?? "（氏名なし）"}`);
+  if (!lines.length && !w.paidKept.length && !(w.skipped ?? []).length) return null;
+  return (
+    <div className="stack" style={{ gap: 2 }}>
+      <b>文書で直した値を台帳にも反映しました</b>
+      {lines.map((l) => <span key={l}>・{l}</span>)}
+      {(w.skipped ?? []).map((x, i) => (
+        <span key={`s${i}`} className="warn">・{x.label}は反映していません：{x.reason}</span>
+      ))}
+      {w.paidKept.map((p) => (
+        <span key={p.paymentId} className="warn">・支払 {p.paymentNo ?? `#${p.paymentId}`} は支払済みのため予定日（{p.dueOn ?? "—"}）を動かしていません</span>
+      ))}
+    </div>
+  );
+}
+

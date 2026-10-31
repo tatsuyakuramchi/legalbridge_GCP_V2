@@ -453,7 +453,7 @@ export class PayDocsService {
             AND (oc.name || ' ' || COALESCE(oc.spec, '')) ~ '(印刷|製造|増刷|重版|刷)'
             AND lc.kind IN ('license', 'product') AND lc.direction = 'in' AND lc.status = 'active'
             AND (lc.statement_timing = 'event' OR lc.settlement_mode = 'open'
-                 OR (lc.statement_timing IS NULL AND lc.settlement_mode IS NULL AND lc.usage_type = 'pub_print'))
+                 OR (lc.statement_timing IS NULL AND lc.settlement_mode IS NULL AND lc.usage_type IN ('pub_print', 'oem')))
             AND d.issued_at > now() - interval '1 year'
             AND NOT EXISTS (SELECT 1 FROM production_plans pl
                              WHERE pl.condition_id = lc.id AND (pl.source_document_id = d.id

@@ -228,6 +228,8 @@ function foldRun(run: Row[]): Row {
     // 人が入れた値があればそちらを残す（読み取りは当て推量なので上書きしない）。
     ...Object.fromEntries(Object.entries(billingShape(run))
       .filter(([key]) => first[key] === undefined || first[key] === null || first[key] === "")),
+    // 何回分かを 1 行にした行は、回を 1 つに決められない（支払日の書き戻しはしない）。
+    schedule_id: null,
     period_count: n,
     period_interval: intervalLabel(run.map((r) => dateOf(r.delivery_date))),
     period_summary: summary,

@@ -73,7 +73,11 @@ import { MatterCommunicationService, driveIdFromUrl, recordCommunication } from 
 import { config } from "./config.js";
 import { verifySlackSignature } from "./integrations/signature.js";
 import { RoyaltyStatementService } from "./royalty/statement-service.js";
-import { RoyaltyLedgerService } from "./royalty/ledger-service.js";
+import { RoyaltyLedgerService, WORK_LINEAGE_UP_SQL } from "./royalty/ledger-service.js";
+import { RoundOverviewService } from "./royalty/round-overview.js";
+import { RoyaltyReceiptService } from "./royalty/receipts.js";
+import { WorkRightsFlowService } from "./works/rights-flow.js";
+import { ConditionCheckService } from "./conditions/check-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
 import { loadDistribution, loadShares } from "./royalty/shares.js";
@@ -2799,6 +2803,8 @@ export function createRoutes(database: Transactable) {
           AND ($4 = '' OR c.usage_type IS NULL OR c.usage_type NOT IN ('sublicense', 'oem')
                OR c.usage_type = $4)
         ORDER BY (c.work_id IS NOT DISTINCT FROM $2::bigint) DESC,
+                 -- 次に、この作品から派生した作品（言語版など）の許諾。
+                 (COALESCE($2::bigint = ANY(${WORK_LINEAGE_UP_SQL("c.work_id")}), false)) DESC,
                  (c.usage_type IS NOT DISTINCT FROM NULLIF($4, '')) DESC,
                  c.condition_no NULLS LAST, c.id
         LIMIT 50`,
@@ -3142,6 +3148,67 @@ export function createRoutes(database: Transactable) {
   // 作品を許諾している作家の一覧。
   router.get("/works/:id/royalty", asyncRoute(async (req, res) => {
     res.json(await royaltyLedger.forWork(Number(req.params.id)));
+  }));
+  // 回と文書（docs/royalty-ledger.md §9）。条件の行 × 回のマス、回号・計算書・支払・条件書。
+  const roundOverview = new RoundOverviewService(database);
+  // 監査 › 条件の点検（docs/navigation.md §6）。重複・決済の型が空・根拠の文書なし・作者に届かない許諾。
+  router.get("/conditions-check", asyncRoute(async (_req, res) => {
+    res.json(await new ConditionCheckService(database).run());
+  }));
+  // 重複した条件をまとめる（寄せる条件の報告・予定の行・依頼を残す条件へ移し、寄せる条件を無効にする）。
+  router.post("/conditions-check/merge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        keepId: z.coerce.number().int().positive(),
+        dropIds: z.array(z.coerce.number().int().positive()).min(1).max(20)
+      }).parse(req.body ?? {});
+      res.json(await new ConditionCheckService(database).merge(input.keepId, input.dropIds, actor(res)));
+    }));
+  // 作品 › 権利とお金の流れ（docs/navigation.md §5）。作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近 12 か月のお金。
+  router.get("/works/:id/rights-flow", asyncRoute(async (req, res) => {
+    res.json(await new WorkRightsFlowService(database, royaltyReceipts).forWork(Number(req.params.id)));
+  }));
+  router.get("/works/:id/round-overview", asyncRoute(async (req, res) => {
+    res.json(await roundOverview.forWork(Number(req.params.id)));
+  }));
+  // 入金と作者への支払（docs/royalty-ledger.md §10）。取引先からの入金（OUT）から作者（IN）ごとの報告を起こす。
+  const royaltyReceipts = new RoyaltyReceiptService(database, conditionEvents);
+  router.get("/royalty-receipts", asyncRoute(async (req, res) => {
+    const input = z.object({
+      from: z.string().date().optional(), to: z.string().date().optional(),
+      outConditionId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      paymentId: z.coerce.number().int().positive().optional(),
+      state: z.enum(["unreported", "mismatch", "waiting", "issued", "none", "open"]).optional()
+    }).parse(req.query);
+    res.json(await royaltyReceipts.list(input));
+  }));
+  router.post("/royalty-receipts/reports", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        paymentId: z.coerce.number().int().positive(),
+        outConditionId: z.coerce.number().int().positive(),
+        entries: z.array(z.object({
+          conditionId: z.coerce.number().int().positive(),
+          grossAmount: z.coerce.number().int().positive().nullable().optional(),
+          taxIncluded: z.boolean().nullable().optional(),
+          paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
+          languages: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
+          regions: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
+          note: z.string().trim().max(2000).nullable().optional()
+        })).min(1).max(30)
+      }).parse(req.body ?? {});
+      res.status(201).json(await royaltyReceipts.createReports(input, actor(res)));
+    }));
+  router.get("/royalty-rounds", asyncRoute(async (req, res) => {
+    const input = z.object({
+      from: z.string().date().optional(), to: z.string().date().optional(),
+      partyId: z.coerce.number().int().positive().optional(),
+      workId: z.coerce.number().int().positive().optional(),
+      kind: z.enum(["period", "event"]).optional(),
+      openOnly: z.enum(["1", "true", "0", "false"]).optional()
+    }).parse(req.query);
+    res.json(await roundOverview.cross({ ...input, openOnly: input.openOnly === "1" || input.openOnly === "true" }));
   }));
   // 台帳。workId を付ければ作家 × その作品、付けなければ作家 × 全作品。
   /** 取引モデル（利用形態）ごとの計算書の出し分け表。運用の画面が見せる。 */

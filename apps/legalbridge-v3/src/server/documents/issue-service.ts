@@ -1,4 +1,5 @@
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
+import { applyWriteBack, type WriteBackResult } from "./write-back.js";
 import { isAutoInLieuTerms } from "../conditions/royalty-in-lieu.js";
 import { ensureAgreementForTerms } from "../agreements/auto.js";
 import { ensureAgreementForOrder } from "../agreements/order-agreement.js";
@@ -79,6 +80,8 @@ export interface IssuedDocument {
   templateVersionId: number;
   issuedAt: string;
   conditionIds: number[];
+  /** 文書で直した支払日・通知先を台帳へ書き戻したもの（documents/write-back.ts）。 */
+  writeBack?: WriteBackResult;
 }
 
 /**
@@ -573,6 +576,13 @@ export class DocumentIssueService {
             }, actor)
           : null;
 
+        // 文書で直した支払日・通知先を、条件明細の予定・支払・取引先の主担当へ書き戻す（決定のときだけ）。
+        const writeBack = await applyWriteBack(client, {
+          documentId, documentNo, templateKey: template.templateKey,
+          manual: (manual as Record<string, unknown>) ?? {}, context: context as Record<string, unknown>,
+          values: frozen as Record<string, unknown>, conditionIds, agreementId: int(row.agreement_id), actor
+        });
+
         await recordAudit(client, {
           actor, action: "document.issue", targetType: "document", targetId: documentId,
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
@@ -593,7 +603,8 @@ export class DocumentIssueService {
           documentNo,
           templateVersionId: template.templateVersionId,
           issuedAt: new Date(String((updated.rows[0] as { issued_at: string }).issued_at)).toISOString(),
-          conditionIds
+          conditionIds,
+          writeBack
         };
       }).then(async (issued) => {
         if (this.afterIssue) await this.afterIssue(issued.id).catch(() => undefined);
