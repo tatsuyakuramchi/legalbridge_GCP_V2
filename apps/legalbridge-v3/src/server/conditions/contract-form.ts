@@ -57,3 +57,19 @@ export function contractFormFor(
   }
   return null;
 }
+
+/**
+ * 業務委託の期日の形（A-121）。
+ *   請負（・売買）… 成果物が前提。期日は「納期」だけ。
+ *   準委任（・委任）… 役務を提供する。期日は「役務提供期間（開始・終了）」。成果物があれば納期も。
+ *   未定 … 契約形式が決まっていない（全部の欄を出す）。
+ */
+export type WorkShape = "ukeoi" | "junin" | "unknown";
+export function workShapeOf(contractForm: string | null | undefined): WorkShape {
+  const s = String(contractForm ?? "").trim().toLowerCase();
+  if (!s) return "unknown";
+  if (s.includes("請負") || s.includes("売買") || s.includes("contract for work") || s === "sale") return "ukeoi";
+  if (s.includes("委任") || s.includes("mandate") || s.includes("派遣") || s.includes("service agreement")
+      || s.includes("consulting") || s.includes("staffing")) return "junin";
+  return "unknown";
+}

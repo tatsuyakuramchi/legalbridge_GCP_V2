@@ -26,6 +26,11 @@ const TOTAL = 1_000_000;
 const num = (s: string) => Number(String(s).replace(/[^0-9.]/g, ""));
 const fmt = (ppm: number) => String(Math.round(ppm / 100) / 100);           // 666667 → "66.67"
 const fmtRate = (ppm: number, wholePpm: number) => String(Math.round(wholePpm * ppm / TOTAL / 100) / 100); // 料率 %
+/** 例の売上（画面の「売上 ¥1,000,000 のとき」）。取り分の意味が数字で読めるように。 */
+const EXAMPLE_SALES = 1_000_000;
+const exampleYen = (sharePpm: number, wholePpm: number | null) =>
+  // 計算書は四捨五入して合計を全体に合わせる。例も四捨五入（切り捨てだと 1/3 が ¥39,999 と出て読み違える）。
+  wholePpm ? `¥${Math.round(EXAMPLE_SALES * wholePpm / TOTAL * sharePpm / TOTAL).toLocaleString("ja-JP")}` : "—";
 
 /** 行の入力 → 百万分率。料率で入れたときは全体率との比。合計が 100% になるように端数は最後の行に寄せる。 */
 function toPpm(rows: Row[], mode: Mode, wholePpm: number | null): number[] {
@@ -122,10 +127,10 @@ export function ConditionShares(
   return (
     <div className="panel">
       <div className="panel-hd">
-        <h2>取り分（共著）</h2>
+        <h2>許諾料の分配（共著・複数の権利者）</h2>
         <span className="faint">
           {!shares.length
-            ? "相手先 1 者が 100%"
+            ? `いまは ${detail.counterparty?.name ?? "相手先"} 1 者に全額（全体 ${whole === null ? "—" : `${whole / 10000}%`}）。複数の権利者で分けるときだけ入れます`
             : detail.distribution === "representative"
             ? `代表（${detail.counterparty?.name ?? "相手先"}）が受け取って分配する。計算書と支払は相手先 1 件で、取り分は契約の記録`
             : "当社から受取人ごとに直接払う。計算書は受取人ごとに 1 枚"}
@@ -146,13 +151,14 @@ export function ConditionShares(
       {!editing && shares.length > 0 && (
         <div className="panel-bd">
           <table>
-            <thead><tr><th>受取人</th><th className="num">料率（全体 {whole === null ? "—" : `${whole / 10000}%`} のうち）</th><th className="num">取り分</th><th>備考</th></tr></thead>
+            <thead><tr><th>受取人</th><th className="num">料率（全体 {whole === null ? "—" : `${whole / 10000}%`} のうち）</th><th className="num">割合</th><th className="num">例：売上 ¥{EXAMPLE_SALES.toLocaleString("ja-JP")} のとき</th><th>備考</th></tr></thead>
             <tbody>
               {shares.map((s) => (
                 <tr key={s.partyId}>
                   <td>{s.partyName}{s.partyKind === "individual" ? <span className="faint">（個人・源泉）</span> : ""}</td>
                   <td className="num">{whole === null ? "—" : `${fmtRate(s.sharePpm, whole)}%`}</td>
                   <td className="num faint">{fmt(s.sharePpm)}%</td>
+                  <td className="num">{exampleYen(s.sharePpm, whole)}</td>
                   <td className="faint">{s.note ?? ""}</td>
                 </tr>
               ))}
@@ -163,31 +169,37 @@ export function ConditionShares(
       {editing && (
         <div className="panel-bd stack">
           {error && <div className="alert">{error}</div>}
-          <div className="row" style={{ gap: 6 }}>
-            <span className="faint">分配するのは</span>
+          <b>① 誰が分けるか</b>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
             <button className="chip" aria-pressed={distribution === "direct"} onClick={() => setDistribution("direct")}
                     title="当社が受取人ごとに直接払う。計算書は受取人ごとに 1 枚、支払も受取人ごと">
-              当社（受取人ごとに計算書）
+              当社が各人に払う
             </button>
             <button className="chip" aria-pressed={distribution === "representative"} onClick={() => setDistribution("representative")}
                     title="代表（条件の相手先）が全額を受け取って自分で分配する。計算書と支払は相手先 1 件。取り分は契約の記録として持つ">
-              代表（{detail.counterparty?.name ?? "相手先"}）が分配
+              代表（{detail.counterparty?.name ?? "相手先"}）が受け取って分ける
             </button>
             {distribution === "representative" && !representativeIn && (
               <span className="bad">代表（{detail.counterparty?.name}）を取り分の中に入れてください</span>
             )}
           </div>
-          <div className="row" style={{ gap: 6 }}>
-            <span className="faint">入れ方</span>
+          <small className="faint">
+            {distribution === "direct"
+              ? "当社が受取人ごとに計算書を出し、受取人ごとに支払います（源泉も受取人ごと）"
+              : `${detail.counterparty?.name ?? "相手先"} が全額を受け取って自分で分けます。当社の計算書と支払は ${detail.counterparty?.name ?? "相手先"} 1 件で、下の取り分は契約の記録として持ちます`}
+          </small>
+          <b>② 誰に・どれだけ</b>
+          <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+            <span className="faint">契約書の書き方で入れる：</span>
             <button className="chip" aria-pressed={mode === "rate"} disabled={!whole} onClick={() => switchMode("rate")}
                     title="契約書の書き方。B 10%・C 5% のように、全体の料率を分けた率で入れる">
-              料率で（全体 {whole === null ? "—" : `${whole / 10000}%`} を分ける）
+              料率（例：B 10%・C 5%。合計＝全体 {whole === null ? "—" : `${whole / 10000}%`}）
             </button>
             <button className="chip" aria-pressed={mode === "share"} onClick={() => switchMode("share")}
-                    title="全体額を何対何で分けるか。75% / 25% のように">比率で（合計 100%）</button>
+                    title="全体額を何対何で分けるか。75% / 25% のように">割合（例：60%・40%。合計 100%）</button>
           </div>
           <table>
-            <thead><tr><th>受取人</th><th className="num">{mode === "rate" ? "料率（%）" : "取り分（%）"}</th><th>備考</th><th></th></tr></thead>
+            <thead><tr><th>受取人</th><th className="num">{mode === "rate" ? "料率（%）" : "割合（%）"}</th><th className="num">例：売上 ¥{EXAMPLE_SALES.toLocaleString("ja-JP")} のとき</th><th>備考</th><th></th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={r.partyId}>
@@ -195,9 +207,10 @@ export function ConditionShares(
                   <td className="num">
                     <input value={r.value} style={{ width: 80, textAlign: "right" }} placeholder={mode === "rate" ? "10" : "60"}
                            onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
-                    {mode === "rate" && ppm[i] > 0 && <small className="faint" style={{ marginLeft: 6 }}>取り分 {fmt(ppm[i])}%</small>}
+                    {mode === "rate" && ppm[i] > 0 && <small className="faint" style={{ marginLeft: 6 }}>割合 {fmt(ppm[i])}%</small>}
                     {mode === "share" && whole !== null && ppm[i] > 0 && <small className="faint" style={{ marginLeft: 6 }}>料率 {fmtRate(ppm[i], whole)}%</small>}
                   </td>
+                  <td className="num">{ppm[i] > 0 ? exampleYen(ppm[i], whole) : "—"}</td>
                   <td>
                     <input value={r.note} placeholder="契約書の条項など"
                            onChange={(e) => setRows(rows.map((x, j) => j === i ? { ...x, note: e.target.value } : x))} />
@@ -210,6 +223,7 @@ export function ConditionShares(
                 <td className={`num ${ok ? "" : "bad"}`}>
                   {mode === "rate" ? `${Math.round(rateSum * 10000) / 10000}%` : `${total / 10000}%`}
                 </td>
+                <td className="num faint">{total === TOTAL ? exampleYen(TOTAL, whole) : ""}</td>
                 <td colSpan={2} className="faint">
                   {ok ? "" : mode === "rate"
                     ? `全体の料率 ${whole === null ? "—" : `${whole / 10000}%`} と同じにしてください`
@@ -219,7 +233,7 @@ export function ConditionShares(
             </tbody>
           </table>
           <div className="row">
-            <ListSearch value={keyword} onChange={setKeyword} placeholder="名称・カナ・別名" label="受取人を足す" />
+            <ListSearch value={keyword} onChange={setKeyword} placeholder="名称・カナ・別名" label="＋ 受取人を足す" />
           </div>
           {keyword.trim() && (
             <div className="picker">
@@ -229,6 +243,7 @@ export function ConditionShares(
               {!parties.length && <span className="faint">見つかりません</span>}
             </div>
           )}
+          {detail.work && <b>③ ほかの条件にも</b>}
           {detail.work && (
             <label className="ledger-check">
               <input type="checkbox" checked={applyToWork} onChange={(e) => setApplyToWork(e.target.checked)} />

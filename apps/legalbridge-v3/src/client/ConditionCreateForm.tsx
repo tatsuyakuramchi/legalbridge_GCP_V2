@@ -4,13 +4,13 @@ import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { CreateForm } from "./CreateForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import type { ServiceLinesCreated } from "./ServiceLinesForm.js";
-import { createCompanionDocument, inLieuCheck, licensePayload, LicenseTermsSection, newLicenseDraft,
+import { createCompanionDocument, inLieuCheck, licensePayload, licensePeriodMissing, LicenseTermsSection, newLicenseDraft,
          type LicenseDeliverable, type LicenseDraft } from "./LicenseTermsSection.js";
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
-import { CONTRACT_FORMS, CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
+import { CONTRACT_FORMS, CONTRACT_FORMS_EN, workShapeOf } from "../server/conditions/contract-form.js";
 import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
@@ -35,6 +35,26 @@ export const SETTLEMENT_CYCLE_OPTIONS = SETTLEMENT_CYCLES.map((value) => ({ valu
  * 小数は保存できないので弾かれるが、何を直せばいいのかは画面から読めない
  * （実際にここで手が止まった）。通貨に合わせて例を出す。
  */
+
+/**
+ * 期日の形（A-121）。業務委託は契約形式で決まる：請負＝納期だけ／準委任＝役務提供期間（成果物があれば納期も）。
+ * 許諾は許諾期間。ほかの種類は契約期間と納期。
+ */
+type PeriodShape = "ukeoi" | "junin" | "service" | "license" | "other";
+function periodShapeOf(v: Record<string, string>): PeriodShape {
+  if (v.kind === "license") return "license";
+  if (v.kind !== "service") return "other";
+  const shape = workShapeOf(v.contractForm);
+  return shape === "unknown" ? "service" : shape;
+}
+/** 準委任で成果物がある（納期・帰属先が要る）か。 */
+const juninWithDeliverable = (v: Record<string, string>) => v.hasDeliverable === "1";
+/** ② の期間（開始・終了）を出すか。請負は納期だけ（期間で回数が決まる決済の型のときだけ期間も）。 */
+const showsTerm = (v: Record<string, string>) => periodShapeOf(v) !== "ukeoi" || v.settlementMode === "term_bound";
+/** ② の納期を出すか。許諾には無く、準委任は成果物があるときだけ。 */
+const showsDelivery = (v: Record<string, string>) =>
+  periodShapeOf(v) !== "license" && (periodShapeOf(v) !== "junin" || juninWithDeliverable(v));
+
 export function minorUnitHint(currency: string): string {
   const per = minorPerMajor(currency || "JPY");
   if (per === 1) return `${currency || "JPY"} は整数で入れる。¥330,000 は 330000`;
@@ -147,7 +167,8 @@ export function ConditionCreateForm(
     !String(cur.workId ?? "").trim() ? "作品（利用許諾条件は作品にぶら下がる）" : null,
     cur.pricingModel !== "fixed" && cur.pricingModel !== "unit_rate"
       ? "計算方式（定額か単価×数量。定期払い・売上連動は『業務委託（発注）』で）" : null,
-    ...(inLieu ? check.missing : [])
+    ...(inLieu ? check.missing : []),
+    licensePeriodMissing(lic)
   ].filter((m): m is string => Boolean(m));
   const licAgreements = (candidates && candidates.length ? candidates : agreements)
     .filter((a) => !partyFor || String(a.counterparty?.id ?? "") === partyFor);
@@ -174,7 +195,7 @@ export function ConditionCreateForm(
     const posted = await api.post<ServiceLinesCreated>("/conditions/service-set", {
       title: text(v.name) ?? "", counterpartyId: int(v.counterpartyId), agreementId: int(v.agreementId) ?? null,
       matterId: int(preset?.matterId) ?? null, workId: int(v.workId) ?? null,
-      termStart: text(v.termStart) ?? null, termEnd: text(v.termEnd) ?? null,
+      termStart: showsTerm(v) ? text(v.termStart) ?? null : null, termEnd: showsTerm(v) ? text(v.termEnd) ?? null : null,
       currency: v.currency || "JPY", taxCategory: v.taxCategory || "taxable", paymentTerms: text(v.paymentTerms) ?? null,
       contractForm: text(v.contractForm) ?? null, deliverableOwnership: "contractor",
       ...(v.timeSettlement ? {
@@ -184,7 +205,7 @@ export function ConditionCreateForm(
       rows: [{
         kind: "service", name: text(v.name) ?? null, pricingModel: "unit_rate",
         unitAmount: unit, quantity: qty, unitLabel: v.pricingModel === "fixed" ? "式" : null,
-        spec: text(v.spec) ?? null, notes: text(v.notes) ?? null, deliveryDue: text(v.deliveryDue) ?? null,
+        spec: text(v.spec) ?? null, notes: text(v.notes) ?? null, deliveryDue: showsDelivery(v) ? text(v.deliveryDue) ?? null : null,
         contractForm: text(v.contractForm) ?? null, deliverableOwnership: "contractor",
         rewardLabel: text(v.rewardLabel) ?? null
       }],
@@ -257,9 +278,21 @@ export function ConditionCreateForm(
             value: k, label: CONDITION_KIND_LABEL[k]
           })),
           hint: "許諾料・製品はライセンスの案件、委託料・実費・手数料は業務委託の案件に繋がる" },
-        // まず権利の帰属先、次に支払の形。ここで分岐してから金額の欄に進む（迷わないように）。
+        // 業務委託は まず契約形式（請負／準委任）、次に成果物の有無と権利の帰属先、次に支払の形。
+        // 契約形式で ② の期日の欄が変わる（請負＝納期／準委任＝役務提供期間）。A-121
+        { name: "contractForm", label: "契約形式", type: "select",
+          visibleWhen: (v) => v.kind === "service",
+          options: [...CONTRACT_FORMS.map((f) => ({ value: f, label: f === "請負" ? "請負（成果物を納める）" : f === "準委任" ? "準委任（役務を提供する）" : f })),
+                    ...CONTRACT_FORMS_EN.map((f) => ({ value: f, label: `${f}（海外版）` }))],
+          hint: (v) => periodShapeOf(v) === "ukeoi" ? "請負：成果物が前提。② は納期だけ"
+            : periodShapeOf(v) === "junin" ? "準委任：② は役務提供期間（開始・終了）。成果物があれば納期も"
+            : "請負なら納期、準委任なら役務提供期間を ② で入れます。発注書・検収書の「契約種別」にも出ます" },
+        { name: "hasDeliverable", label: "成果物", type: "select",
+          visibleWhen: (v) => periodShapeOf(v) === "junin",
+          options: [{ value: "0", label: "なし（役務の提供だけ）" }, { value: "1", label: "あり（報告書・資料などを納める）" }],
+          hint: "ありなら納期と成果物の権利の帰属先を入れます" },
         { name: "deliverableOwnership", label: "成果物の権利の帰属先", type: "select",
-          visibleWhen: (v) => v.kind === "service" || v.kind === "product",
+          visibleWhen: (v) => v.kind === "product" || (v.kind === "service" && (periodShapeOf(v) !== "junin" || juninWithDeliverable(v))),
           options: [{ value: "orderer", label: "発注者（譲渡型）：権利は当社に移る" }, { value: "contractor", label: "受注者（利用許諾型）：権利は相手に残り、当社は許諾を受ける" }],
           hint: (v) => v.kind === "service" && v.deliverableOwnership === "contractor"
             ? "受注者帰属：この画面の下に利用許諾の欄が開きます。登録 1 回で委託料と利用許諾条件を両方作ります"
@@ -291,17 +324,32 @@ export function ConditionCreateForm(
             : candidates.length === 0 ? (noAgreement ? "契約なしで登録します。工程と契約チェックに「契約なし」と出ます"
                                                      : "この相手には締結済みの契約がありません")
             : "計算書の契約名・契約番号はここから出る" },
-        { name: "_s2", type: "section", label: "② 期間・納期", hint: "契約期間（開始・終了）と納期は別。終了日を入れると自動更新の欄が出ます" },
-        { name: "termStart", label: "開始", type: "date" },
-        { name: "termEnd", label: "終了", type: "date" },
-        // 納期は契約期間の終了日とは別。業務委託では同じ日になることが多いが、
-        // 許諾の終了日は許諾がいつまで有効かで、納期ではない。
-        { name: "deliveryDue", label: "納期", type: "date",
-          hint: "いつまでに納めてもらうか。発注書の「納期」に出る。契約期間の終了日とは別" },
+        // 期日（A-121）。請負＝納期だけ／準委任＝役務提供期間（成果物があれば納期も）／許諾＝許諾期間。
+        { name: "_s2", type: "section",
+          label: (v) => ({ ukeoi: "② 納期", junin: juninWithDeliverable(v) ? "② 役務提供期間と納期" : "② 役務提供期間",
+                           license: "② 許諾期間", service: "② 期間・納期", other: "② 期間・納期" } as Record<PeriodShape, string>)[periodShapeOf(v)],
+          hint: (v) => ({
+            ukeoi: "請負は成果物を納める日（納期）だけ。発注書の「納期」に出て、検収の起点になります",
+            junin: juninWithDeliverable(v) ? "いつからいつまで役務を提供するか（開始・終了）と、成果物を納める日（納期）" : "いつからいつまで役務を提供するか（開始・終了）。発注書の役務提供期間に出ます",
+            license: "当社が使える期間。終了が空なら期間の定めなし（無期限）。終了日を入れると自動更新の欄が出ます",
+            service: "① で契約形式を選ぶと、必要な欄だけになります（請負＝納期／準委任＝役務提供期間）",
+            other: "契約期間（開始・終了）と納期は別。終了日を入れると自動更新の欄が出ます"
+          } as Record<PeriodShape, string>)[periodShapeOf(v)] },
+        { name: "termStart", type: "date",
+          label: (v) => periodShapeOf(v) === "junin" ? "役務提供の開始" : periodShapeOf(v) === "license" ? "許諾開始" : "開始",
+          // 請負は納期だけ（期間で回数が決まる決済の型を選んだときだけ期間を出す）。
+          visibleWhen: (v) => periodShapeOf(v) !== "ukeoi" || v.settlementMode === "term_bound" },
+        { name: "termEnd", type: "date",
+          label: (v) => periodShapeOf(v) === "junin" ? "役務提供の終了" : periodShapeOf(v) === "license" ? "許諾終了（空なら無期限）" : "終了",
+          visibleWhen: (v) => periodShapeOf(v) !== "ukeoi" || v.settlementMode === "term_bound" },
+        // 納期は期間の終了日とは別。許諾には無い（許諾の終了日は許諾がいつまで有効か）。
+        { name: "deliveryDue", label: "納期（成果物を納める日）", type: "date",
+          visibleWhen: (v) => periodShapeOf(v) !== "license" && (periodShapeOf(v) !== "junin" || juninWithDeliverable(v)),
+          hint: "いつまでに納めてもらうか。発注書の「納期」に出る。役務提供期間・許諾期間とは別" },
         // 自動更新（A-039）。更新した回数は持たず、終了日・単位・今日から数える。
         { name: "autoRenew", label: "自動更新", type: "select",
           options: [{ value: "", label: "しない" }, { value: "1", label: "する" }],
-          visibleWhen: (v) => String(v.termEnd ?? "").trim() !== "",
+          visibleWhen: (v) => String(v.termEnd ?? "").trim() !== "" && periodShapeOf(v) !== "ukeoi",
           hint: "終了日が来るたびに自動で更新したことにする。条件書には「更新 n 回」と出る" },
         { name: "renewMonths", label: "更新の単位", placeholder: "1年",
           visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
@@ -368,7 +416,7 @@ export function ConditionCreateForm(
           placeholder: String(SETTLEMENT_GRACE_DAYS_DEFAULT),
           visibleWhen: (v) => v.settlementMode === "open" || v.settlementMode === "term_bound",
           hint: `終了日の後いつまで回を立ててよいか。空なら ${SETTLEMENT_GRACE_DAYS_DEFAULT} 日` },
-        { name: "_s5", type: "section", label: "⑤ 成果物・発注書に出るもの", hint: "仕様・契約形式・成果物の帰属先・報酬名。発注書・検収書の明細はここから出ます" },
+        { name: "_s5", type: "section", label: "⑤ 成果物・発注書に出るもの", hint: "仕様・報酬名など。発注書・検収書の明細はここから出ます（契約形式・成果物の帰属先は①で）" },
         // 発注書・検収書の明細はここから出る。備考を仕様代わりにしない。
         { name: "spec", label: "仕様・成果物", type: "textarea",
           placeholder: "カラーイラスト1点（表紙用）、A4 相当 など",
@@ -377,12 +425,6 @@ export function ConditionCreateForm(
         { name: "orderNo", label: "発注番号（外部）",
           placeholder: "ARC-PO-2025-0123",
           hint: "V1・V2 や紙で出した発注書の番号。検収書の発注番号に出る。V3 で発注書を出したらそちらが優先される" },
-        { name: "contractForm", label: "契約形式", type: "select",
-          visibleWhen: (v) => v.kind === "service",
-          options: [{ value: "", label: "（未定）" },
-                    ...CONTRACT_FORMS.map((f) => ({ value: f, label: f })),
-                    ...CONTRACT_FORMS_EN.map((f) => ({ value: f, label: `${f}（海外版）` }))],
-          hint: "発注書・検収書の「契約種別」に出る。支払条件とは別" },
         { name: "rewardLabel", label: "報酬名（上書き）", placeholder: "初版利用許諾料",
           visibleWhen: (v) => v.kind === "service",
           hint: "発注書・検収書の金額欄の小さな行に出る。空なら計算方式と帰属先から導く（A-075）" },
@@ -501,8 +543,10 @@ export function ConditionCreateForm(
           targetPartyId: ruled ? int(v.targetPartyId) : undefined, purpose: ruled ? text(v.purpose) : undefined,
           counterpartyId: int(v.counterpartyId), workId: int(v.workId),
           agreementId: int(v.agreementId),
-          termStart: text(v.termStart), termEnd: text(v.termEnd),
-          autoRenew: v.autoRenew ? true : (text(v.termEnd) ? false : undefined),
+          // 見えていない期日は送らない（契約形式を切り替える前に入れた値が残っていても）。A-121
+          termStart: showsTerm(v) ? text(v.termStart) : undefined, termEnd: showsTerm(v) ? text(v.termEnd) : undefined,
+          deliveryDue: showsDelivery(v) ? text(v.deliveryDue) : undefined,
+          autoRenew: v.autoRenew && showsTerm(v) ? true : (showsTerm(v) && text(v.termEnd) ? false : undefined),
           renewMonths: v.autoRenew ? renewMonths(v.renewMonths) : undefined,
           renewStoppedOn: v.autoRenew ? (text(v.renewStoppedOn) ?? null) : undefined,
           currency: v.currency || "JPY", pricingModel: v.pricingModel,
@@ -517,7 +561,9 @@ export function ConditionCreateForm(
           paymentTerms: text(v.paymentTerms), notes: text(v.notes),
           settlementMode: text(v.settlementMode), settlementCount: int(v.settlementCount),
           settlementCycle: text(v.settlementCycle), settlementGraceDays: int(v.settlementGraceDays),
-          spec: text(v.spec), deliverableOwnership: text(v.deliverableOwnership),
+          spec: text(v.spec),
+          deliverableOwnership: v.kind === "product" || (v.kind === "service" && (periodShapeOf(v) !== "junin" || juninWithDeliverable(v)))
+            ? text(v.deliverableOwnership) : undefined,
           // 編集画面と同じ欄（契約形式・個数・報酬名・時間精算・クレジット・初版の算定の基礎）。
           quantity: v.pricingModel === "unit_rate" && String(v.quantity ?? "").trim() !== "" ? Number(v.quantity) : undefined,
           contractForm: v.kind === "service" ? text(v.contractForm) : undefined,
