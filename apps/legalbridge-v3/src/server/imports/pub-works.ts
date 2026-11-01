@@ -6,6 +6,7 @@ import type { ConditionScope } from "../core/model.js";
 import { SHARE_TOTAL_PPM, loadShares, validateShareInput } from "../royalty/shares.js";
 import { toCsv } from "../exports/csv.js";
 import type { ImportReport, RowOutcome } from "./service.js";
+import { RELATION_LABEL, RELATION_OF, normalizeIsbn, type EditionInput, type EditionRelation } from "../works/editions.js";
 
 /**
  * 出版作品の一括登録（作品＋紙・電子の条件＋共著の取り分＋CID）。
@@ -37,6 +38,8 @@ export interface PubWorkPatch {
 export interface PubConditionPatch {
   ratePpm?: number; exclusivity?: "exclusive" | "non_exclusive";
   termStart?: string | null; termEnd?: string | null; paymentTerms?: string | null; notes?: string | null;
+  /** 2 版目以降の非加算（発行部数の %）。紙の条件だけ。 */
+  royaltyExemptLaterPct?: number | null;
 }
 
 export interface PubWorksDeps {
@@ -60,8 +63,28 @@ export interface PubWorksDeps {
     replaceShares(id: number, shares: Array<{ partyId: number; sharePpm: number; note?: string | null }>, actor: string,
                   distribution: "direct" | "representative" | null, options: { applyToWork?: boolean }): Promise<unknown>;
     replaceScopes(id: number, scopes: ConditionScope[], actor: string): Promise<unknown>;
+    /** 版元との再許諾（OUT）の条件を作る（版元料率の列）。 */
+    create?(input: {
+      name: string; direction: "out"; kind: "license"; usageType: "sublicense"; counterpartyId: number; workId: number;
+      pricingModel: "revenue_rate"; ratePpm: number; priceBasis: "list"; statementTiming: "event"; currency: string;
+      notes?: string | null;
+    }, actor: string): Promise<{ id: number; conditionNo: string | null }>;
   };
+  /** 刊行物（版元・ISBN）。193 の前は無くてよい（列が書いてあれば止める）。 */
+  editions?: { create(workId: number, input: EditionInput, actor: string): Promise<{ id: number }> };
 }
+
+/** 刊行物の列（版元・ISBN・刊行日・本体価格・版元料率）を読んだもの。 */
+export interface PubEditionRow {
+  publisher: { id: number; name: string } | null;
+  relation: EditionRelation;
+  isbn: string | null; publishedOn: string | null; listPrice: number | null;
+  /** 版元から当社への料率（%）。再許諾の条件（OUT）を作るか、既にあれば使う。 */
+  outRatePct: number | null;
+}
+
+/** 刊行物の列の名前。どれか 1 つでも書いてあれば刊行物を作る。 */
+export const PUB_EDITION_COLUMNS = ["版元", "版元コード", "版元との関係", "ISBN", "刊行日", "本体価格", "版元料率"];
 
 const EXCLUSIVITY: Record<string, "exclusive" | "non_exclusive"> = {
   独占: "exclusive", exclusive: "exclusive", 非独占: "non_exclusive", non_exclusive: "non_exclusive"
@@ -91,6 +114,10 @@ export interface PubWorkRow {
   digitalShares: Share[] | null;
   distribution: "direct" | "representative" | null;
   cids: string[];
+  /** 刊行物（版元・ISBN）。列が空なら null。 */
+  edition: PubEditionRow | null;
+  /** 2 版目以降の非加算（%）。「増刷時非加算」の列。 */
+  exemptLaterPct: number | null;
 }
 
 export interface Share { partyId: number; name: string; sharePpm: number }
@@ -190,19 +217,36 @@ export class PubWorksImportService {
       try {
         const parsed = await this.parseRow(line, row);
         const summary = this.describe(parsed);
+        // 同じ作品の 2 冊目の刊行物（版元違い・新装版）は、作者の条件は前の行のものを使い、刊行物だけ足す。
+        const earlier = !parsed.work && madeTitles.has(parsed.title.toLowerCase());
+        const noRates = !parsed.print && !parsed.digital;
+        if (noRates && !parsed.work && !earlier) {
+          throw new DomainError("VALIDATION", "新しい作品には紙料率か電子料率を入れてください（料率の無い行は、既存の作品か前の行の作品に刊行物を足すときだけ）");
+        }
         if (dryRun) {
-          const dup = await this.duplicateOf(parsed);
-          outcomes.push(dup
-            ? { line, status: "duplicate", label, message: dup }
-            : { line, status: "ok", label, message: summary });
+          const dup = earlier ? "前の行の作品" : noRates ? "刊行物だけ" : await this.duplicateOf(parsed);
+          if (dup && parsed.edition) {
+            outcomes.push({ line, status: "ok", label, message: `${earlier ? "前の行で作る作品" : "既存の作品"}に刊行物を足す（作者の条件は既にあるので作らない）・${this.editionLabel(parsed.edition)}` });
+          } else {
+            outcomes.push(dup
+              ? { line, status: "duplicate", label, message: dup }
+              : { line, status: "ok", label, message: summary });
+          }
           madeTitles.add(parsed.title.toLowerCase());
           continue;
         }
-        const dup = await this.duplicateOf(parsed);
+        const dup = noRates ? "刊行物だけ" : await this.duplicateOf(parsed);
+        if (dup && parsed.edition && parsed.work) {
+          const added = await this.writeEdition(parsed.work.id, parsed, actor);
+          outcomes.push({ line, status: "ok", label, id: parsed.work.id, code: parsed.work.code,
+                          message: `既存の作品に刊行物を足しました（作者の条件は既にあるので作らない）・${[this.editionLabel(parsed.edition), added].filter(Boolean).join("／")}` });
+          continue;
+        }
         if (dup) { outcomes.push({ line, status: "duplicate", label, message: dup }); continue; }
         const made = await this.write(parsed, actor);
+        madeTitles.add(parsed.title.toLowerCase());
         outcomes.push({ line, status: "ok", label, id: made.workId, code: made.workCode,
-                        message: `${summary}／条件 ${made.conditionNos.join("・")}` });
+                        message: `${summary}／条件 ${made.conditionNos.join("・")}${made.edition ? `／${made.edition}` : ""}` });
       } catch (error) {
         const e = error as DomainError;
         outcomes.push({ line, status: e?.code === "CONFLICT" ? "duplicate" : "error", label,
@@ -237,7 +281,58 @@ export class PubWorksImportService {
       parts.push(`取り分 ${sharesLabel(p.shares)}${dist}`);
     }
     if (p.cids.length) parts.push(`CID ${p.cids.length} 件`);
+    if (p.exemptLaterPct !== null) parts.push(`増刷時の非加算 ${p.exemptLaterPct}%`);
+    if (p.edition) parts.push(this.editionLabel(p.edition));
     return parts.join("・");
+  }
+
+  /** 刊行物の読み上げ（「刊行物 KADOKAWA（再許諾 12%）ISBN 978…」）。 */
+  private editionLabel(e: PubEditionRow): string {
+    const who = e.publisher ? e.publisher.name : "当社";
+    const rel = e.relation === "sublicense"
+      ? `再許諾${e.outRatePct !== null ? ` ${e.outRatePct}%` : "・版元との条件は付けない（後で）"}`
+      : e.relation === "group" ? "グループ会社・料率なし" : RELATION_LABEL[e.relation];
+    return `刊行物 ${who}（${rel}）${e.isbn ? ` ISBN ${e.isbn}` : " ISBN なし"}${e.publishedOn ? ` ${e.publishedOn} 刊` : ""}`;
+  }
+
+  /**
+   * 刊行物を作る。版元料率があれば、版元との再許諾の条件（OUT、作品 × 版元で 1 本）を既存から使うか作って繋ぐ。
+   * 返すのは読み上げの文。
+   */
+  private async writeEdition(workId: number, p: PubWorkRow, actor: string): Promise<string> {
+    const e = p.edition!;
+    if (!this.deps.editions) throw new DomainError("VALIDATION", "刊行物の台帳がありません（193 を当ててください）");
+    let outConditionId: number | null = null;
+    let outNo: string | null = null;
+    if (e.relation === "sublicense" && e.publisher && e.outRatePct !== null) {
+      const hit = (await this.database.query(
+        `SELECT id, condition_no, rate_ppm FROM conditions
+          WHERE direction = 'out' AND kind = 'license' AND usage_type = 'sublicense' AND status IN ('active', 'scheduled')
+            AND work_id = $1 AND counterparty_id = $2
+          ORDER BY id LIMIT 2`, [workId, e.publisher.id])).rows as Array<{ id: number; condition_no: string | null; rate_ppm: number | null }>;
+      if (hit.length > 1) throw new DomainError("VALIDATION", `${e.publisher.name} との再許諾の条件が 2 本以上あります。条件明細で整理してから入れてください`);
+      if (hit[0]) {
+        if (Number(hit[0].rate_ppm) !== Math.round(e.outRatePct * 10000)) {
+          throw new DomainError("VALIDATION",
+            `${e.publisher.name} との再許諾の条件 ${hit[0].condition_no ?? `#${hit[0].id}`} は料率 ${Number(hit[0].rate_ppm) / 10000}% です（版元料率 ${e.outRatePct}%）。条件明細で直すか、版元料率を合わせてください`);
+        }
+        outConditionId = Number(hit[0].id); outNo = hit[0].condition_no;
+      } else {
+        if (!this.deps.conditions.create) throw new DomainError("VALIDATION", "再許諾の条件を作れません");
+        const made = await this.deps.conditions.create({
+          name: `${p.title}｜出版の再許諾（${e.publisher.name}）`, direction: "out", kind: "license", usageType: "sublicense",
+          counterpartyId: e.publisher.id, workId, pricingModel: "revenue_rate", ratePpm: Math.round(e.outRatePct * 10000),
+          priceBasis: "list", statementTiming: "event", currency: "JPY",
+          notes: "出版作品の取込で作成（版元料率。本体価格に対して）"
+        }, actor);
+        outConditionId = made.id; outNo = made.conditionNo;
+      }
+    }
+    await this.deps.editions.create(workId, {
+      publisherPartyId: e.publisher?.id ?? null, relation: e.relation, isbn: e.isbn, publishedOn: e.publishedOn,
+      listPrice: e.listPrice, outConditionId
+    }, actor);
+    return outNo ? `版元との条件 ${outNo}` : "";
   }
 
   /**
@@ -314,7 +409,7 @@ export class PubWorksImportService {
     return `${p.party.name} の ${hits.map((h) => `${h.usage_type === "pub_print" ? "紙" : "電子"}（${h.condition_no ?? "番号なし"}）`).join("・")}が既にあります。この行は飛ばされます`;
   }
 
-  private async write(p: PubWorkRow, actor: string): Promise<{ workId: number; workCode: string | null; conditionNos: string[] }> {
+  private async write(p: PubWorkRow, actor: string): Promise<{ workId: number; workCode: string | null; conditionNos: string[]; edition: string | null }> {
     let workId: number;
     let workCode: string | null;
     if (p.work) { workId = p.work.id; workCode = p.work.code; }
@@ -333,6 +428,10 @@ export class PubWorksImportService {
     }, actor);
     const conditionNos = [set.print, set.digital].filter(Boolean).map((c) => c!.conditionNo ?? `#${c!.id}`);
     await this.writeShares({ print: set.print, digital: set.digital }, p, actor);
+    if (p.exemptLaterPct !== null && set.print) {
+      await this.deps.conditions.updateEconomics(set.print.id, { royaltyExemptLaterPct: p.exemptLaterPct }, actor, null);
+    }
+    const edition = p.edition ? await this.writeEdition(workId, p, actor) : null;
     for (const cid of p.cids) {
       await this.database.query(
         `INSERT INTO ebook_work_codes (cid, work_id, title, created_by) VALUES ($1, $2, $3, $4)
@@ -342,9 +441,9 @@ export class PubWorksImportService {
     await recordAudit(this.database, {
       actor, action: "pub_works.import", targetType: "work", targetId: workId,
       detail: { newWork: !p.work, conditionNos, shares: p.shares.map((s) => ({ partyId: s.partyId, sharePpm: s.sharePpm })),
-                distribution: p.distribution, cids: p.cids }
+                distribution: p.distribution, cids: p.cids, edition: p.edition, exemptLaterPct: p.exemptLaterPct }
     });
-    return { workId, workCode, conditionNos };
+    return { workId, workCode, conditionNos, edition };
   }
 
   // ---- 既存の作品の一括修正（update） -------------------------------------
@@ -672,7 +771,12 @@ export class PubWorksImportService {
     if (!title) throw new DomainError("VALIDATION", "作品名が空です");
     const print = ratePct(text(row, "紙料率"), "紙料率");
     const digital = ratePct(text(row, "電子料率"), "電子料率");
-    if (print === null && digital === null) throw new DomainError("VALIDATION", "紙料率か電子料率のどちらかは入れてください");
+    const edition = await this.readEdition(row);
+    // 刊行物だけの行（既存の作品・前の行の作品に 2 冊目を足す）は料率が無くてよい。
+    if (print === null && digital === null && !edition) throw new DomainError("VALIDATION", "紙料率か電子料率のどちらかは入れてください");
+    const exemptText = text(row, "増刷時非加算");
+    const exemptLaterPct = ratePct(exemptText, "増刷時非加算");
+    if (exemptLaterPct !== null && print === null) throw new DomainError("VALIDATION", "増刷時非加算を入れるなら紙料率も入れてください");
     const exclText = text(row, "独占");
     if (exclText && !EXCLUSIVITY[exclText]) throw new DomainError("VALIDATION", `独占は「独占」か「非独占」です（"${exclText}"）`);
     const exclusivity = exclText ? EXCLUSIVITY[exclText] : "non_exclusive";
@@ -738,8 +842,47 @@ export class PubWorksImportService {
       digital: digital === null ? null : { ratePct: digital, exclusivity },
       termStart: csvDate(text(row, "開始日")), termEnd: csvDate(text(row, "終了日")),
       paymentTerms: text(row, "支払条件") || null, notes: text(row, "備考") || null,
-      scopes, shares, printShares, digitalShares, distribution, cids
+      scopes, shares, printShares, digitalShares, distribution, cids, edition, exemptLaterPct
     };
+  }
+
+  /**
+   * 刊行物の列を読む（どれも空なら null）。
+   * 版元との関係が空なら：版元料率があれば再許諾、版元が空なら自社刊行。版元があって料率が無いときは
+   * どちらか分からないので止める（グループ会社なら「グループ会社」、条件を後で入れる再許諾なら「再許諾」と書く）。
+   */
+  private async readEdition(row: Record<string, string>): Promise<PubEditionRow | null> {
+    if (!PUB_EDITION_COLUMNS.some((h) => text(row, h))) return null;
+    const pubName = text(row, "版元");
+    const pubCode = text(row, "版元コード");
+    const publisher = pubName || pubCode ? await this.findParty(pubCode, pubName, "版元") : null;
+    const relText = text(row, "版元との関係");
+    if (relText && !RELATION_OF[relText]) throw new DomainError("VALIDATION", `版元との関係は「自社刊行」「グループ会社」「再許諾」のどれかです（"${relText}"）`);
+    const outRatePct = ratePct(text(row, "版元料率"), "版元料率");
+    let relation: EditionRelation;
+    if (relText) relation = RELATION_OF[relText];
+    else if (outRatePct !== null) relation = "sublicense";
+    else if (!publisher) relation = "own";
+    else throw new DomainError("VALIDATION", `版元 ${publisher.name} との関係を「版元との関係」に入れてください（料率の取り決めが無いなら「グループ会社」）`);
+    if (relation !== "own" && !publisher) throw new DomainError("VALIDATION", "版元を入れてください（自社刊行なら版元は空でよい）");
+    if (outRatePct !== null && relation !== "sublicense") {
+      throw new DomainError("VALIDATION", `版元料率は再許諾のときだけです（${RELATION_LABEL[relation]}は料率を持たない）`);
+    }
+    const priceText = text(row, "本体価格").replace(/[,，円¥￥\s]/g, "");
+    const listPrice = priceText ? Number(priceText) : null;
+    if (listPrice !== null && (!Number.isInteger(listPrice) || listPrice < 0)) throw new DomainError("VALIDATION", `本体価格は円の整数で入れてください（"${text(row, "本体価格")}"）`);
+    const isbn = normalizeIsbn(text(row, "ISBN"));
+    if (isbn) {
+      // 作品・条件を作ってから刊行物で止まらないよう、ISBN の重なりは先に見る。193 の前の DB では刊行物の台帳が無いと言う。
+      const hit = await this.database.query(
+        `SELECT w.title FROM work_editions e JOIN works w ON w.id = e.work_id WHERE e.isbn = $1 AND e.status = 'active' LIMIT 1`, [isbn])
+        .catch((error: { code?: string }) => {
+          if (error?.code === "42P01") throw new DomainError("VALIDATION", "刊行物の台帳がまだありません（infra/v3/193 を当ててください）");
+          throw error;
+        });
+      if (hit.rows[0]) throw new DomainError("CONFLICT", `ISBN ${isbn} は「${(hit.rows[0] as { title: string }).title}」の刊行物に登録済みです。この行は飛ばされます`);
+    }
+    return { publisher, relation, isbn, publishedOn: csvDate(text(row, "刊行日")), listPrice, outRatePct };
   }
 
   /**

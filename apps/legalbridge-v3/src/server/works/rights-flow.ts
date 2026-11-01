@@ -1,6 +1,7 @@
 import { int, str, type Queryable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
+import { editionOutConditionIds, usageCovers } from "./editions.js";
 import { timingOf, type Timing } from "../royalty/ledger-service.js";
 import { ppmToPct } from "../royalty/economics.js";
 import type { RoyaltyReceiptService } from "../royalty/receipts.js";
@@ -58,11 +59,13 @@ export interface RightsFlow {
  * 同じ利用形態・IN の作品が OUT の作品かその祖先・許諾先専用の条件はその許諾先だけで、ある作者に専用の条件が
  * あれば、その作者の一律の条件は外す（royalty/receipts.ts の coveringIns と同じ）。
  */
-export function coversOf(out: Pick<FlowOut, "usageType" | "workId" | "partyId">, ins: FlowIn[],
-                         lineageOf: (workId: number) => number[]): number[] {
+export function coversOf(out: Pick<FlowOut, "usageType" | "workId" | "partyId"> & { id?: number }, ins: FlowIn[],
+                         lineageOf: (workId: number) => number[], editionOuts: Set<number> = new Set()): number[] {
   if (!out.workId) return [];
   const up = lineageOf(out.workId);
-  const candidates = ins.filter((c) => c.usageType === out.usageType && c.workId !== null && up.includes(c.workId));
+  // 刊行物の根拠になっている再許諾には、作者の紙・電子の条件も効く（works/editions.ts usageCovers）。
+  const backs = out.id !== undefined && editionOuts.has(out.id);
+  const candidates = ins.filter((c) => usageCovers(c.usageType, out.usageType, backs) && c.workId !== null && up.includes(c.workId));
   return candidates.filter((c) => {
     if (c.targetPartyId) return c.targetPartyId === out.partyId;
     return !candidates.some((x) => x !== c && x.targetPartyId === out.partyId && x.partyId === c.partyId && x.workId === c.workId);
@@ -185,6 +188,7 @@ export class WorkRightsFlowService {
         return [...seen];
       };
       const strip = (xs: unknown, all: string) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== all);
+      const editionOuts = await editionOutConditionIds(q, downIds);
       const outs: FlowOut[] = outRows.map((o) => {
         const base = {
           id: Number(o.id), conditionNo: str(o.condition_no), name: String(o.name ?? ""),
@@ -193,7 +197,7 @@ export class WorkRightsFlowService {
           usageType: str(o.usage_type), usageLabel: conditionUsageLabel(o.usage_type),
           languages: strip(o.languages, "全言語"), regions: strip(o.regions, "全世界"), agreementNo: str(o.agreement_no)
         };
-        return { ...base, covers: coversOf(base, ins, lineageOf) };
+        return { ...base, covers: coversOf(base, ins, lineageOf, editionOuts) };
       });
 
       // 直近 12 か月のお金。入金は OUT 条件（改訂の全版）に割り当てた入金済みの額、作者への額はその許諾先からの報告の許諾料。

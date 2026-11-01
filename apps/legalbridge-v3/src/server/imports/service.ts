@@ -17,7 +17,8 @@ import { CYCLE_CSV, DIGITAL_CYCLE_DEFAULTS, cycleFromCsv, digitalPaymentTerms, p
 import { PartyAgreementMapService } from "../agreements/party-map.js";
 import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_UPDATE_COLUMNS,
          agreementCsvPatch } from "../agreements/csv.js";
-import { PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from "./pub-works.js";
+import { PUB_EDITION_COLUMNS, PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from "./pub-works.js";
+import { WorkEditionService } from "../works/editions.js";
 import { EXISTING_CONTRACTS_SAMPLE, ExistingContractsImportService } from "./existing-contracts.js";
 import { AgreementService } from "../agreements/service.js";
 
@@ -110,7 +111,8 @@ export const IMPORT_SPECS: ImportSpec[] = [
     kind: "pub_works", label: "出版作品（作品＋紙・電子の条件＋共著の取り分＋CID を 1 行で）",
     required: ["作品名", "相手先"],
     optional: ["作品コード", "カナ", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
-               "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"],
+               "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分",
+               "増刷時非加算", ...PUB_EDITION_COLUMNS],
     sample: PUB_WORKS_SAMPLE,
     updatable: true,
     updateHint: "当てる先は 作品コード（無ければ 作品名）。相手先を書けばその相手先の条件だけ。" +
@@ -302,7 +304,8 @@ export class ImportService {
     this.parties = new PartyWriteService(database);
     this.works = new WorkWriteService(database);
     this.conditions = new ConditionWriteService(database);
-    this.pubWorks = new PubWorksImportService(database, { works: this.works, conditions: this.conditions });
+    this.pubWorks = new PubWorksImportService(database, { works: this.works, conditions: this.conditions,
+                                                         editions: new WorkEditionService(database) });
     this.existingContracts = new ExistingContractsImportService(database, { agreements: new AgreementService(database) });
   }
 
