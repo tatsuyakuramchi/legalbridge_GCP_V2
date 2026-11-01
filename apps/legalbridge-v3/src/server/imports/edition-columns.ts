@@ -173,6 +173,24 @@ export async function writeEditionRow(
 ): Promise<string> {
   if (e.reuse) return "";
   if (!deps.editions) throw new DomainError("VALIDATION", `${n.thing}の台帳がありません（193 を当ててください）`);
+  const { outConditionId, made } = await ensurePartnerOuts(q, deps, workId, title, e, n, actor);
+  await deps.editions.create(workId, {
+    publisherPartyId: e.publisher?.id ?? null, relation: e.relation, isbn: e.isbn, publishedOn: e.publishedOn,
+    listPrice: e.listPrice, outConditionId
+  }, actor);
+  return made.join("・");
+}
+
+/**
+ * 相手（版元・販売元）との条件（OUT）を、既存から使うか作る。刊行物・製品そのものは作らない
+ * （登録済みの刊行物に、あとから版元料率・版元電子料率を足すときにも使う）。
+ *   再許諾 … 料率があれば、媒体ごと（出版）または 1 本（ゲーム）。料率が違えば止める。
+ *   他社販売（OEM）… OEM の条件が 1 本だけあれば繋ぐ（料率では作らない）。
+ * 返すのは刊行物が指す条件（紙、無ければ電子）と読み上げ。
+ */
+export async function ensurePartnerOuts(
+  q: Queryable, deps: EditionWriteDeps, workId: number, title: string, e: EditionRow, n: EditionColumnNames, actor: string
+): Promise<{ outConditionId: number | null; made: string[] }> {
   const made: string[] = [];
   let outConditionId: number | null = null;
   const pub = e.publisher;
@@ -218,11 +236,7 @@ export async function writeEditionRow(
       made.push(`${n.partner}との${w.label ? `${w.label}の` : ""}条件 ${no ?? `#${id}`}`);
     }
   }
-  await deps.editions.create(workId, {
-    publisherPartyId: pub?.id ?? null, relation: e.relation, isbn: e.isbn, publishedOn: e.publishedOn,
-    listPrice: e.listPrice, outConditionId
-  }, actor);
-  return made.join("・");
+  return { outConditionId, made };
 }
 
 /**

@@ -69,10 +69,10 @@ export function CsvImport({ initialKind, initialMode, lockKind, onApplied }: {
   // 試算が済んで、入れられる行があるときだけ本番に進める。
   const canApply = report !== null && report.dryRun && report.ok > 0;
 
-  async function run(dryRun: boolean) {
+  async function run(dryRun: boolean, as: Mode = mode) {
     setBusy(true); setError(null);
     try {
-      setReport(await api.post<Report>("/imports", { kind, csv, dryRun, mode }));
+      setReport(await api.post<Report>("/imports", { kind, csv, dryRun, mode: as }));
       if (!dryRun) onApplied?.();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); setReport(null); }
     finally { setBusy(false); }
@@ -200,6 +200,20 @@ export function CsvImport({ initialKind, initialMode, lockKind, onApplied }: {
               </div>
             )}
 
+            {/* 新しく登録しようとして登録済みの行があった：二重にはならないが直りもしない。同じ CSV を修正として試す口。 */}
+            {report.dryRun && report.mode === "create" && report.duplicate > 0 && spec?.updatable && (
+              <div className="note" style={{ marginTop: 10 }}>
+                <b>{report.duplicate} 行は登録済みです。</b>
+                新しく登録すると、この行は飛ばされます（二重には登録されませんが、値も直りません）。
+                登録済みの行の料率・期間・地域などを直すなら、同じ CSV を「登録済みに当てる（修正）」で試してください。
+                {!readOnly && (
+                  <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={busy}
+                          onClick={() => { setMode("update"); void run(true, "update"); }}>
+                    この CSV を修正として試す
+                  </button>
+                )}
+              </div>
+            )}
             {report.dryRun && report.error > 0 && (
               <p className="faint">
                 エラーの行は{report.mode === "update" ? "更新されない" : "登録されない"}。直してから

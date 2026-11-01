@@ -4,6 +4,7 @@ import { recordAudit } from "../core/audit.js";
 import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
 import type { EditionInput } from "../works/editions.js";
+import { refuseSimilarWork } from "./similar-work.js";
 import type { ImportReport, RowOutcome } from "./service.js";
 import {
   GAME_EDITION_NAMES, editionColumns, editionRowLabel, readEditionColumns, writeEditionRow, type EditionRow
@@ -222,6 +223,8 @@ export class GameWorksImportService {
     if (!title) throw new DomainError("VALIDATION", "作品名が空です");
     const code = text(row, "作品コード");
     const work = await this.findWork(code, title);
+    // 新しく作る作品名が、登録済みの作品と表記だけ違うなら止める（二重に作らない）。
+    if (!work && !code) await refuseSimilarWork(this.database, title);
     const rates = GAME_RATE_COLUMNS
       .map((c) => ({ usage: c.usage, label: c.label, ratePct: ratePct(text(row, c.header), c.header) }))
       .filter((r): r is { usage: "in_house" | "oem" | "sublicense"; label: string; ratePct: number } => r.ratePct !== null);

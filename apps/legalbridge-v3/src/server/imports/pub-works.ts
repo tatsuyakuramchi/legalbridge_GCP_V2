@@ -8,8 +8,9 @@ import { toCsv } from "../exports/csv.js";
 import type { ImportReport, RowOutcome } from "./service.js";
 import type { EditionInput } from "../works/editions.js";
 import { renewalLabel } from "../conditions/renewal.js";
+import { refuseSimilarWork } from "./similar-work.js";
 import { AUTO_RENEW, parseRenewMonths } from "./renew-columns.js";
-import { PUB_EDITION_NAMES, editionColumns, editionRowLabel, readEditionColumns, writeEditionRow, type EditionRow } from "./edition-columns.js";
+import { PUB_EDITION_NAMES, editionColumns, editionRowLabel, ensurePartnerOuts, readEditionColumns, writeEditionRow, type EditionRow } from "./edition-columns.js";
 
 /**
  * 出版作品の一括登録（作品＋紙・電子の条件＋共著の取り分＋CID）。
@@ -521,6 +522,7 @@ export class PubWorksImportService {
     ];
 
     const { printTerms: updPrintTerms, digitalTerms: updDigitalTerms } = mediaTerms(row, null, null);
+    const updExempt = ratePct(text(row, "増刷時非加算"), "増刷時非加算");
     type Plan = { cond: PubCondition; patch: PubConditionPatch; what: string[] };
     const plans: Plan[] = [];
     const creates: Array<{ usage: "pub_print" | "pub_digital"; ratePct: number }> = [];
@@ -531,6 +533,7 @@ export class PubWorksImportService {
       }
       const patch: PubConditionPatch = { ...common };
       const what = [...commonChanged];
+      if (usage === "pub_print" && updExempt !== null) { patch.royaltyExemptLaterPct = updExempt; what.push(`増刷時の非加算 ${updExempt}%`); }
       const own = usage === "pub_print" ? updPrintTerms : updDigitalTerms;
       if (own) {
         patch.paymentTerms = own;
@@ -609,6 +612,13 @@ export class PubWorksImportService {
       parts.push(shares.length ? `取り分 ${sharesLabel(shares)}${dist}` : "取り分を消す");
     }
     if (cids.length) parts.push(`CID ${cids.length} 件`);
+    // 刊行物（版元・ISBN）。この作品に無い ISBN なら足す。登録済みなら、版元料率・版元電子料率の条件だけ足す（無いときだけ）。
+    const edition = await readEditionColumns(this.database, row, PUB_EDITION_NAMES, (c, nm, w) => this.findParty(c, nm, w), work.id);
+    const editionAdds = Boolean(edition && !edition.reuse);
+    const outsWanted = Boolean(edition && edition.relation === "sublicense" && edition.publisher
+                               && (edition.outRatePct !== null || edition.outDigitalRatePct != null));
+    if (edition && editionAdds) parts.push(`${this.editionLabel(edition)}を足す`);
+    else if (edition && outsWanted) parts.push(`刊行物 ${edition.isbn ?? ""} は登録済み・版元との条件を確かめる（無ければ作る）`.replace("  ", " "));
     if (!parts.length) {
       return { status: "skip", id: work.id, code: work.code, message: `${who}：当てる項目がありません（空欄の列は触りません）` };
     }
@@ -634,6 +644,9 @@ export class PubWorksImportService {
         digital: wantDigital ? { ratePct: wantDigital.ratePct, exclusivity: common.exclusivity ?? "non_exclusive", ...(updDigitalTerms ? { paymentTerms: updDigitalTerms } : {}) } : null
       }, actor);
       madePrint = set.print; madeDigital = set.digital;
+      if (updExempt !== null && set.print) {
+        await this.deps.conditions.updateEconomics(set.print.id, { royaltyExemptLaterPct: updExempt }, actor, null);
+      }
     }
     if (scopes.length) {
       for (const cond of [printCond, digitalCond]) {
@@ -656,13 +669,21 @@ export class PubWorksImportService {
          ON CONFLICT (cid) DO UPDATE SET work_id = EXCLUDED.work_id, title = EXCLUDED.title, created_by = EXCLUDED.created_by`,
         [cid, work.id, work.title, actor]);
     }
+    let editionSaid = "";
+    if (edition) {
+      const editionDeps = { createOut: this.deps.conditions.create ? (i: any, by: string) => this.deps.conditions.create!(i, by) : undefined,
+                            editions: this.deps.editions };
+      editionSaid = editionAdds
+        ? await writeEditionRow(this.database, editionDeps, work.id, work.title, edition, PUB_EDITION_NAMES, actor)
+        : outsWanted ? (await ensurePartnerOuts(this.database, editionDeps, work.id, work.title, edition, PUB_EDITION_NAMES, actor)).made.join("・") : "";
+    }
     await recordAudit(this.database, {
       actor, action: "pub_works.update", targetType: "work", targetId: work.id,
       detail: { summary, shares: shares?.map((s) => ({ partyId: s.partyId, sharePpm: s.sharePpm })) ?? null,
                 printShares: perMedia?.print ?? null, digitalShares: perMedia?.digital ?? null,
                 distribution, cids }
     });
-    return { status: "ok", id: work.id, code: work.code, message: `${who} の ${summary} を更新しました` };
+    return { status: "ok", id: work.id, code: work.code, message: `${who} の ${summary} を更新しました${editionSaid ? `（${editionSaid}）` : ""}` };
   }
 
   // ---- 書き出し ----------------------------------------------------------
@@ -784,6 +805,8 @@ export class PubWorksImportService {
         LIMIT 3`, [code, title])).rows as Array<{ id: number; work_code: string | null; title: string }>;
     if (hits.length > 1) throw new DomainError("VALIDATION", `作品「${code || title}」が複数当たります。作品コードで指定してください`);
     const work = hits[0] ? { id: Number(hits[0].id), code: hits[0].work_code, title: String(hits[0].title) } : null;
+    // 新しく作る作品名が、登録済みの作品と表記だけ違うなら止める（二重に作らない）。
+    if (!work && !code) await refuseSimilarWork(this.database, title);
 
     const party = await this.findParty(text(row, "相手先コード"), text(row, "相手先"), "相手先");
     let agreementId: number | null = null;
