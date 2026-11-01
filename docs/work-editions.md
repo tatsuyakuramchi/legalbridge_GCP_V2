@@ -1,7 +1,8 @@
 # 作品の刊行物・製品（版元／販売元・ISBN／JAN）
 
 対象: `apps/legalbridge-v3`（`server/works/editions.ts`・`client/WorkEditions.tsx`・`server/imports/pub-works.ts`）
-DB: `infra/v3/193_work_editions.sql`・`194_work_editions_oem.sql`（それぞれ戻しは `_rollback`。194 は 193 の後）。当てる前の DB でも、ほかの画面は動く（刊行物の欄に「台帳がまだありません」と出る）。
+DB: `infra/v3/193_work_editions.sql`・`194_work_editions_oem.sql`・`195_work_editions_grant.sql`（193・194 の戻しは `_rollback`。194・195 は 193 の後）。
+195 は実行ロール（legalbridge_v3_runtime）の権限。193 で付け忘れていて、無いと作品台帳の取引先での検索・刊行物の欄・入金と作者への支払などが「権限が付与されていません」で止まる。当てる前の DB でも、ほかの画面は動く（刊行物の欄に「台帳がまだありません」と出る）。
 
 ## 1. なぜ作品ではなく刊行物に持つか
 
