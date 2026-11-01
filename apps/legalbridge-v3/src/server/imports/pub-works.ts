@@ -7,6 +7,8 @@ import { SHARE_TOTAL_PPM, loadShares, validateShareInput } from "../royalty/shar
 import { toCsv } from "../exports/csv.js";
 import type { ImportReport, RowOutcome } from "./service.js";
 import type { EditionInput } from "../works/editions.js";
+import { renewalLabel } from "../conditions/renewal.js";
+import { AUTO_RENEW, parseRenewMonths } from "./renew-columns.js";
 import { PUB_EDITION_NAMES, editionColumns, editionRowLabel, readEditionColumns, writeEditionRow, type EditionRow } from "./edition-columns.js";
 
 /**
@@ -41,6 +43,9 @@ export interface PubConditionPatch {
   termStart?: string | null; termEnd?: string | null; paymentTerms?: string | null; notes?: string | null;
   /** 2 版目以降の非加算（発行部数の %）。紙の条件だけ。 */
   royaltyExemptLaterPct?: number | null;
+  /** 自動更新（A-039）と更新の単位（月）。 */
+  autoRenew?: boolean | null;
+  renewMonths?: number | null;
 }
 
 export interface PubWorksDeps {
@@ -56,6 +61,7 @@ export interface PubWorksDeps {
     createPublishingSet(input: {
       counterpartyId: number; workId: number; agreementId?: number | null;
       termStart?: string | null; termEnd?: string | null; paymentTerms?: string | null; notes?: string | null;
+      autoRenew?: boolean | null; renewMonths?: number | null;
       scopes?: ConditionScope[];
       print?: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
       digital?: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
@@ -102,6 +108,8 @@ export interface PubWorkRow {
   print: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
   digital: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
   termStart: string | null; termEnd: string | null;
+  /** 自動更新（A-039）。「自動更新」「更新の単位」の列。 */
+  autoRenew: boolean | null; renewMonths: number | null;
   paymentTerms: string | null; notes: string | null;
   scopes: ConditionScope[];
   /** 紙・電子に同じ按分（「取り分」）。媒体で違えば printShares / digitalShares。 */
@@ -278,6 +286,10 @@ export class PubWorksImportService {
     }
     if (p.cids.length) parts.push(`CID ${p.cids.length} 件`);
     if (p.exemptLaterPct !== null) parts.push(`増刷時の非加算 ${p.exemptLaterPct}%`);
+    if (p.termStart || p.termEnd) {
+      parts.push(`許諾期間 ${renewalLabel({ termStart: p.termStart, termEnd: p.termEnd, autoRenew: p.autoRenew,
+                                            renewMonths: p.renewMonths, renewStoppedOn: null })}`);
+    }
     if (p.edition) parts.push(this.editionLabel(p.edition));
     return parts.join("・");
   }
@@ -380,7 +392,8 @@ export class PubWorksImportService {
     }
     const set = await this.deps.conditions.createPublishingSet({
       counterpartyId: p.party.id, workId, agreementId: p.agreementId,
-      termStart: p.termStart, termEnd: p.termEnd, paymentTerms: p.paymentTerms, notes: p.notes,
+      termStart: p.termStart, termEnd: p.termEnd, autoRenew: p.autoRenew, renewMonths: p.renewMonths,
+      paymentTerms: p.paymentTerms, notes: p.notes,
       scopes: p.scopes, print: p.print, digital: p.digital
     }, actor);
     const conditionNos = [set.print, set.digital].filter(Boolean).map((c) => c!.conditionNo ?? `#${c!.id}`);
@@ -498,6 +511,9 @@ export class PubWorksImportService {
     if (text(row, "開始日")) { common.termStart = csvDate(text(row, "開始日")); commonChanged.push("開始日"); }
     if (text(row, "終了日")) { common.termEnd = csvDate(text(row, "終了日")); commonChanged.push("終了日"); }
     if (text(row, "支払条件")) { common.paymentTerms = text(row, "支払条件"); commonChanged.push("支払条件"); }
+    const updRenew = renewColumns(row);
+    if (updRenew.autoRenew !== null) { common.autoRenew = updRenew.autoRenew; commonChanged.push("自動更新"); }
+    if (updRenew.renewMonths !== null) { common.renewMonths = updRenew.renewMonths; commonChanged.push("更新の単位"); }
     if (text(row, "備考")) { common.notes = text(row, "備考"); commonChanged.push("備考"); }
     const scopes: ConditionScope[] = [
       ...parseRegions(text(row, "地域")).map((s) => ({ scopeType: "region" as const, label: s.name, code: s.code || null })),
@@ -612,6 +628,7 @@ export class PubWorksImportService {
       const set = await this.deps.conditions.createPublishingSet({
         counterpartyId: createParty!.id, workId: work.id,
         termStart: common.termStart ?? null, termEnd: common.termEnd ?? null,
+        autoRenew: common.autoRenew ?? null, renewMonths: common.renewMonths ?? null,
         paymentTerms: common.paymentTerms ?? null, notes: common.notes ?? null, scopes,
         print: wantPrint ? { ratePct: wantPrint.ratePct, exclusivity: common.exclusivity ?? "non_exclusive", ...(updPrintTerms ? { paymentTerms: updPrintTerms } : {}) } : null,
         digital: wantDigital ? { ratePct: wantDigital.ratePct, exclusivity: common.exclusivity ?? "non_exclusive", ...(updDigitalTerms ? { paymentTerms: updDigitalTerms } : {}) } : null
@@ -660,7 +677,7 @@ export class PubWorksImportService {
               to_jsonb(w) ->> 'copyright_notice' AS copyright_notice, to_jsonb(w) ->> 'third_party_rights' AS third_party_rights,
               c.id, c.usage_type, c.rate_ppm, c.exclusivity, c.counterparty_id, p.name AS party_name,
               to_jsonb(p) ->> 'party_code' AS party_code,
-              ag.agreement_no, c.term_start, c.term_end, c.payment_terms, c.notes,
+              ag.agreement_no, c.term_start, c.term_end, c.auto_renew, c.renew_months, c.payment_terms, c.notes,
               to_jsonb(c) ->> 'distribution' AS distribution
          FROM conditions c
          JOIN works w ON w.id = c.work_id
@@ -719,6 +736,8 @@ export class PubWorksImportService {
         "分配": shares.length ? (main.distribution === "representative" ? "代表" : "当社") : "",
         "CID": (cidsOf.get(String(main.work_id)) ?? []).map((c) => String(c.cid)).join("／"),
         "契約番号": main.agreement_no ?? "", "開始日": date(main.term_start), "終了日": date(main.term_end),
+        "自動更新": main.auto_renew === true ? "する" : main.auto_renew === false ? "しない" : "",
+        "更新の単位": main.renew_months ? (Number(main.renew_months) % 12 === 0 ? `${Number(main.renew_months) / 12}年` : `${main.renew_months}か月`) : "",
         // 支払条件は媒体ごとに出す（紙と電子で違うことがある）。共通の列は空。
         "支払条件": "",
         "紙支払条件": printC?.payment_terms ?? "", "電子支払条件": digitalC?.payment_terms ?? "",
@@ -737,6 +756,12 @@ export class PubWorksImportService {
     const print = ratePct(text(row, "紙料率"), "紙料率");
     const digital = ratePct(text(row, "電子料率"), "電子料率");
     const edition = await this.readEdition(row);
+    const termStart = csvDate(text(row, "開始日"));
+    const termEnd = csvDate(text(row, "終了日"));
+    const renew = renewColumns(row);
+    if (renew.autoRenew && !termEnd) {
+      throw new DomainError("VALIDATION", "自動更新するなら終了日（最初の期間の満了日）を入れてください。更新の回数は終了日から数えます");
+    }
     // 刊行物だけの行（既存の作品・前の行の作品に 2 冊目を足す）は料率が無くてよい。
     if (print === null && digital === null && !edition) throw new DomainError("VALIDATION", "紙料率か電子料率のどちらかは入れてください");
     // 媒体ごとの支払条件（共通の「支払条件」より優先）。
@@ -807,7 +832,7 @@ export class PubWorksImportService {
       party, agreementId,
       print: print === null ? null : { ratePct: print, exclusivity, ...(printTerms ? { paymentTerms: printTerms } : {}) },
       digital: digital === null ? null : { ratePct: digital, exclusivity, ...(digitalTerms ? { paymentTerms: digitalTerms } : {}) },
-      termStart: csvDate(text(row, "開始日")), termEnd: csvDate(text(row, "終了日")),
+      termStart, termEnd, ...renew,
       paymentTerms: text(row, "支払条件") || null, notes: text(row, "備考") || null,
       scopes, shares, printShares, digitalShares, distribution, cids, edition, exemptLaterPct
     };
@@ -860,9 +885,19 @@ export class PubWorksImportService {
   }
 }
 
+/** 「自動更新」「更新の単位」の列（A-039）。空は null（触らない・既定）。読めない値は止める。 */
+function renewColumns(row: Record<string, string>): { autoRenew: boolean | null; renewMonths: number | null } {
+  const renewText = text(row, "自動更新");
+  if (renewText && !(renewText in AUTO_RENEW)) throw new DomainError("VALIDATION", `自動更新は「する」か「しない」です（"${renewText}"）`);
+  const monthsText = text(row, "更新の単位");
+  const renewMonths = monthsText ? parseRenewMonths(monthsText) : null;
+  if (monthsText && renewMonths === null) throw new DomainError("VALIDATION", `更新の単位は「3年」「12か月」のように入れてください（"${monthsText}"）`);
+  return { autoRenew: renewText ? AUTO_RENEW[renewText] : null, renewMonths };
+}
+
 export const PUB_WORKS_HEADERS = [
   "作品名", "作品コード", "カナ", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
-  "契約番号", "開始日", "終了日", "支払条件", "紙支払条件", "電子支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
+  "契約番号", "開始日", "終了日", "自動更新", "更新の単位", "支払条件", "紙支払条件", "電子支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
 ];
 
 /**

@@ -19,6 +19,7 @@ import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_U
          agreementCsvPatch } from "../agreements/csv.js";
 import { PUB_EDITION_COLUMNS, PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from "./pub-works.js";
 import { WorkEditionService } from "../works/editions.js";
+import { AUTO_RENEW, parseRenewMonths } from "./renew-columns.js";
 import { GAME_WORKS_HEADERS, GAME_WORKS_SAMPLE, GameWorksImportService } from "./game-works.js";
 import { EXISTING_CONTRACTS_SAMPLE, ExistingContractsImportService } from "./existing-contracts.js";
 import { AgreementService } from "../agreements/service.js";
@@ -113,7 +114,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
     required: ["作品名", "相手先"],
     optional: ["作品コード", "カナ", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
                "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分",
-               "紙支払条件", "電子支払条件", "増刷時非加算", ...PUB_EDITION_COLUMNS],
+               "紙支払条件", "電子支払条件", "増刷時非加算", "自動更新", "更新の単位", ...PUB_EDITION_COLUMNS],
     sample: PUB_WORKS_SAMPLE,
     updatable: true,
     updateHint: "当てる先は 作品コード（無ければ 作品名）。相手先を書けばその相手先の条件だけ。" +
@@ -123,7 +124,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
                 "支払条件は「紙支払条件」「電子支払条件」で媒体ごとに書けます（共通の「支払条件」より優先）。" +
                 "支払条件が空なら、紙は「都度払い（刊行日を含む月の翌月末日払い）」、電子は「毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。」が入ります。" +
                 "「登録済みの出版作品」を書き出して直すのが早道です",
-    updateColumns: ["紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID", "開始日", "終了日", "支払条件", "紙支払条件", "電子支払条件", "備考", "地域", "言語",
+    updateColumns: ["紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID", "開始日", "終了日", "自動更新", "更新の単位", "支払条件", "紙支払条件", "電子支払条件", "備考", "地域", "言語",
                     "カナ", "著作権表示", "第三者権利", "作品備考", "事業区分"],
     updateSample: PUB_WORKS_UPDATE_SAMPLE,
     exportPath: "/imports/pub-works/export.csv", exportLabel: "登録済みの出版作品（作品 × 相手先で 1 行）"
@@ -265,26 +266,7 @@ const EXCLUSIVITY: Record<string, "exclusive" | "non_exclusive"> = {
   独占: "exclusive", exclusive: "exclusive", 非独占: "non_exclusive", non_exclusive: "non_exclusive"
 };
 
-/**
- * 更新の単位（A-039）。「1年」「12か月」「6か月」のような書き方を月に直す。
- * 読めなければ null（行ごとに止める）。
- */
-export function parseRenewMonths(text: unknown): number | null {
-  const s = String(text ?? "").trim().replace(/\s+/g, "");
-  if (!s) return null;
-  const m = s.match(/^(\d+(?:\.\d+)?)(年|か月|ヶ月|ケ月|カ月|months?|month|m)?$/i);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  const months = /年/.test(m[2] ?? "") ? n * 12 : n;
-  return Number.isInteger(months) && months >= 1 && months <= 120 ? months : null;
-}
-
-/** 自動更新の言い方（A-039）。 */
-const AUTO_RENEW: Record<string, boolean> = {
-  する: true, 有: true, あり: true, 自動更新: true, true: true, yes: true,
-  しない: false, 無: false, なし: false, false: false, no: false
-};
+export { parseRenewMonths } from "./renew-columns.js";
 
 /** 再許諾ごとの別途合意（A-033）。翻訳版再許諾の行だけが持つ。 */
 const CONSENT: Record<string, "covered" | "required"> = {
