@@ -1942,7 +1942,8 @@ export function createRoutes(database: Transactable) {
     workCode: z.string().trim().max(40).nullable().optional(),
     parentWorkId: z.coerce.number().int().positive().nullable().optional(),
     copyrightNotice: z.string().trim().max(300).nullable().optional(),
-    thirdPartyRights: z.string().trim().max(600).nullable().optional()
+    thirdPartyRights: z.string().trim().max(600).nullable().optional(),
+    sourceTitle: z.string().trim().max(300).nullable().optional()
   });
   router.post("/works", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

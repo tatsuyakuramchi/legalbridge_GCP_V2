@@ -21,10 +21,13 @@ export function WorkCreateForm(
       initial={{ kind: "own", status: "planning" }}
       fields={[
         { name: "title", label: "作品名", required: true },
+        { name: "sourceTitle", label: "原作名（原著作物名）",
+          hint: "作品名と違うときだけ（海外原題・旧題など）。空なら作品名と同じ。利用許諾計算書の原著作物名に出る" },
         { name: "titleKana", label: "カナ" },
+        // 原作は作品の「原作名」で持つ（docs/work-editions.md §8）。原作を作品として立てるのは
+        // 1 つの原作を複数の作品に使うときだけで、それは作品画面の「原作を共有する」から作る。
         { name: "kind", label: "種別", type: "select", required: true,
-          options: [{ value: "own", label: "自社作品" }, { value: "source_ip", label: "原作IP" },
-                    { value: "derivative", label: "派生作品" }] },
+          options: [{ value: "own", label: "自社作品" }, { value: "derivative", label: "派生作品" }] },
         { name: "status", label: "状態", type: "select", required: true,
           options: [{ value: "planning", label: "企画中" }, { value: "in_production", label: "制作中" },
                     { value: "released", label: "発売済" }, { value: "archived", label: "終了" }] },
@@ -36,6 +39,7 @@ export function WorkCreateForm(
       ]}
       toPayload={(v) => ({
         title: text(v.title), titleKana: text(v.titleKana), kind: v.kind, status: v.status,
+        sourceTitle: text(v.sourceTitle),
         businessLine: text(v.businessLine), parentWorkId: int(v.parentWorkId), remarks: text(v.remarks)
       })}
       onDone={onDone}

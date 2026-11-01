@@ -20,6 +20,8 @@ export interface WorkInput {
   /** 著作権表示・第三者権利（A-027）。出版条件書の一覧に出る。 */
   copyrightNotice?: string | null;
   thirdPartyRights?: string | null;
+  /** 原作名（原著作物名。196）。空なら作品名と同じ。 */
+  sourceTitle?: string | null;
 }
 
 export interface WorkPartInput {
@@ -99,6 +101,9 @@ export class WorkWriteService {
            input.copyrightNotice ?? null, input.thirdPartyRights ?? null]);
         const row = inserted.rows[0] as { id: number; work_code: string | null };
         const id = Number(row.id);
+        // 原作名（196）。入っているときだけ書く（196 の前の DB で、原作名なしの登録を止めない）。
+        const sourceTitle = String(input.sourceTitle ?? "").trim();
+        if (sourceTitle) await client.query("UPDATE works SET source_title = $2 WHERE id = $1", [id, sourceTitle]);
 
         if (input.parentWorkId) {
           await client.query(

@@ -42,7 +42,7 @@ export type { DocBack } from "./RoyaltyLedger.js";
 interface TreeWork {
   id: number; workCode: string | null; title: string; titleKana: string | null;
   kind: string; status: string; businessLine: string | null; legacy: boolean;
-  mergedIntoId: number | null;
+  mergedIntoId: number | null; sourceTitle?: string | null;
   conditions: number; parts: number;
 }
 interface Tree { works: TreeWork[]; lineage: Array<{ parentId: number; childId: number }> }
@@ -193,7 +193,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "source" | "part" | "condition" | null>(null);
+  const [creating, setCreating] = useState<"work" | "part" | "condition" | null>(null);
   /** クレジット表記の履歴（A-031）。重版で変わる著作権表示を適用開始日つきで持つ。 */
   const [credits, setCredits] = useState<Credit[]>([]);
   const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
@@ -572,7 +572,7 @@ export function WorksWorkspace(
         {w.kind !== "source_ip" && depth === 0 && w.conditions > 0 && !tree.lineage.some((l) => l.childId === w.id) && (
           <span className="tag" title="原作が別に無く、この作品自身に条件が付いている（原作と同じ名前の自社作品）">原作を兼ねる</span>
         )}
-        <span className="grow">{w.title}</span>
+        <span className="grow">{w.title}{w.sourceTitle && <span className="faint">（原作 {w.sourceTitle}）</span>}</span>
         {w.legacy && <span className="faint" title="V2 から移した作品">移行</span>}
         {w.mergedIntoId ? <span className="faint">統合済</span> : w.status === "archived" && <span className="faint">終了</span>}
         <PayBadge c={payCounts.get(w.id)} />
@@ -586,7 +586,7 @@ export function WorksWorkspace(
     <section className={`workspace${selected ? " picked" : ""}`}>
       <header className="workspace-head">
         <h1>作品台帳</h1>
-        <p>作品・原作（Core Logic）・条件（利用形態ごとに1本）をここで直す。原作 N に対して作品 N。条件の中身（予定・実績・計算書）は条件明細で扱う。</p>
+        <p>作品と条件（利用形態ごとに1本）をここで直す。原作は作品の「原作名」で持つ（利用許諾計算書の原著作物名に出る）。条件の中身（予定・実績・計算書）は条件明細で扱う。</p>
       </header>
 
       {error && <div className="alert" style={{ whiteSpace: "pre-wrap" }}>{error}</div>}
@@ -595,7 +595,6 @@ export function WorksWorkspace(
       <div className="row">
         {editable && creating === null && (<>
           <button className="btn primary btn-sm" onClick={() => setCreating("work")}>作品を登録</button>
-          <button className="btn btn-sm" onClick={() => setCreating("source")}>原作を登録</button>
           {/* CSV の一括登録は 一括処理 › まとめて登録・更新する へ（取込の入口は 1 つ。docs/navigation.md）。 */}
           {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "works" })}
                   title="作品を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 作品を一括登録</button>}
@@ -612,23 +611,6 @@ export function WorksWorkspace(
         <WorkCreateForm onDone={(r) => { setCreating(null); void reloadTree(r.id); }}
                         onCancel={() => setCreating(null)} />
       )}
-      {creating === "source" && (
-        <CreateForm title="原作（Core Logic）の登録" path="/works"
-          initial={{ kind: "source_ip", status: "released" }}
-          fields={[
-            { name: "title", label: "原作名", required: true },
-            { name: "titleKana", label: "カナ" },
-            { name: "businessLine", label: "事業区分" },
-            { name: "remarks", label: "備考", type: "textarea" }
-          ]}
-          toPayload={(v) => ({ title: text(v.title), titleKana: text(v.titleKana), kind: "source_ip",
-                               status: "released", businessLine: text(v.businessLine), remarks: text(v.remarks) })}
-          onDone={(r: { id: number }) => { setCreating(null); void reloadTree(r.id); }}
-          onCancel={() => setCreating(null)}>
-          <p className="faint">原作は許諾の対象そのもの。作品は原作にぶら下がる（1つの原作に複数の作品、1つの作品に複数の原作）。</p>
-        </CreateForm>
-      )}
-
       {cleanupOpen && (
         <div className="panel">
           <div className="panel-hd">
@@ -847,10 +829,9 @@ export function WorksWorkspace(
               <div className="panel-bd ledger-form">
                 <label className="field"><span>題名</span>
                   <input value={form.title ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
-                <label className="field"><span>原作名（原著作物名）</span>
-                  <input value={form.sourceTitle ?? ""} disabled={!editable} placeholder={`空なら作品名と同じ（${form.title ?? ""}）`}
-                         onChange={(e) => setForm({ ...form, sourceTitle: e.target.value })} />
-                  <small className="faint">利用許諾計算書の原著作物名（件名）に出ます。明細の製品名は作品名のまま</small></label>
+                <label className="field" title="利用許諾計算書の原著作物名（件名）に出ます。明細の製品名は作品名のまま"><span>原作名</span>
+                  <input value={form.sourceTitle ?? ""} disabled={!editable} placeholder="空なら作品名と同じ"
+                         onChange={(e) => setForm({ ...form, sourceTitle: e.target.value })} /></label>
                 <label className="field"><span>カナ</span>
                   <input value={form.titleKana ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, titleKana: e.target.value })} /></label>
                 <label className="field"><span>種別</span>
@@ -978,9 +959,11 @@ export function WorksWorkspace(
             {/* 原作。作品の側から付け替える。原作の側からは、使っている作品が見える。 */}
             <div className="panel">
               <div className="panel-hd">
-                <h2>{work.kind === "source_ip" ? "この原作を使う作品" : "原作（Core Logic）"}</h2>
+                <h2>{work.kind === "source_ip" ? "この原作を共有する作品" : "原作を共有する作品"}</h2>
                 <span className="faint">
-                  {work.kind === "source_ip" ? "作品の側で付け替える" : "複数付けられる。検索して足す"}
+                  {work.kind === "source_ip"
+                    ? "作品の側で付け替える。作品が 1 つだけなら、監査 › 条件の点検 › 原作の整理で作品の原作名に畳める"
+                    : "1 つの原作を複数の作品に使うときだけ繋ぐ（原作に付けた作者の条件が、繋いだ全作品の分に効く）。原作名だけなら上の「原作名」で足りる"}
                 </span>
               </div>
               <div className="panel-bd stack" style={{ gap: 8 }}>
@@ -1006,7 +989,7 @@ export function WorksWorkspace(
                       conditions.some((c) => c.direction === "in" && c.kind === "license" && c.status !== "void")
                         ? <span className="tag accent" title="原作と同じ名前の自社作品。許諾の条件はこの作品自身に付いている">原作を兼ねる作品</span>
                         : <span className="faint">
-                            原作が付いていません。原作と同じ名前の自社作品なら、別に原作を登録せず、この作品自身に許諾の条件を付けてください（原作を兼ねる）
+                            繋いでいる原作はありません。作者との許諾の条件はこの作品に付け、原作名が違うなら上の「原作名」に入れてください
                           </span>
                     )}
                   </div>
@@ -1020,14 +1003,15 @@ export function WorksWorkspace(
                       {!newSource && (
                         <button className="btn btn-sm" disabled={busy}
                                 onClick={() => setNewSource({ title: keyword.trim(), titleKana: "" })}>
-                          無ければ登録して付ける
+                          共有する原作を新しく作る
                         </button>
                       )}
                     </div>
                   )}
                   {editable && newSource && (
                     <div className="note stack" style={{ gap: 8 }}>
-                      <b>原作（Core Logic）を新しく登録して、この作品に付ける</b>
+                      <b>複数の作品で共有する原作を作って、この作品に繋ぐ</b>
+                      <span className="faint">この作品だけの原作なら作らずに、上の「原作名」に入れてください</span>
                       <div className="ledger-form">
                         <label className="field"><span>原作名</span>
                           <input autoFocus value={newSource.title}
