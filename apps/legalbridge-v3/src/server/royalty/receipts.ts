@@ -1,3 +1,4 @@
+import { PUB_IN_USAGES, backsEdition } from "../works/editions.js";
 import { dateStr, inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
@@ -202,10 +203,13 @@ export class RoyaltyReceiptService {
          LEFT JOIN works w ON w.id = c.work_id
         WHERE c.direction = 'in' AND c.kind = 'license' AND c.status IN ('active', 'scheduled')
           AND c.pricing_model IN ('revenue_rate', 'unit_rate')
-          AND c.usage_type = oc.usage_type
+          AND (c.usage_type = oc.usage_type
+               OR ($2::boolean AND oc.usage_type = 'sublicense' AND c.usage_type = ANY($3::text[])))
           AND oc.work_id IS NOT NULL
           AND c.work_id = ANY(${WORK_LINEAGE_UP_SQL("oc.work_id")})
-        ORDER BY p.name, c.condition_no NULLS LAST, c.id`, [outConditionId])).rows as any[];
+        ORDER BY p.name, c.condition_no NULLS LAST, c.id`,
+      // 刊行物の根拠になっている再許諾には、作者の紙・電子の条件も効く（works/editions.ts usageCovers）。
+      [outConditionId, await backsEdition(q, outConditionId), PUB_IN_USAGES])).rows as any[];
     const licensee = Number(((await q.query("SELECT counterparty_id FROM conditions WHERE id = $1", [outConditionId])).rows[0] as any)?.counterparty_id ?? 0);
     return coveringIns(rows.map((c) => ({
       conditionId: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),

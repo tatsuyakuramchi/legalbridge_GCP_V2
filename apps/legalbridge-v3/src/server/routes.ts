@@ -77,6 +77,7 @@ import { RoyaltyLedgerService, WORK_LINEAGE_UP_SQL } from "./royalty/ledger-serv
 import { RoundOverviewService } from "./royalty/round-overview.js";
 import { RoyaltyReceiptService } from "./royalty/receipts.js";
 import { WorkRightsFlowService } from "./works/rights-flow.js";
+import { EDITION_RELATIONS, WorkEditionService, type EditionRelation } from "./works/editions.js";
 import { ConditionCheckService } from "./conditions/check-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
 import { bundleLinesFor, bundleTotals } from "./royalty/bundle.js";
@@ -3167,6 +3168,30 @@ export function createRoutes(database: Transactable) {
   // 作品 › 権利とお金の流れ（docs/navigation.md §5）。作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近 12 か月のお金。
   router.get("/works/:id/rights-flow", asyncRoute(async (req, res) => {
     res.json(await new WorkRightsFlowService(database, royaltyReceipts).forWork(Number(req.params.id)));
+  }));
+  // 作品の刊行物（版元・ISBN・刊行日・本体価格。docs/work-editions.md、infra/v3/193）。
+  const workEditions = new WorkEditionService(database);
+  const editionBody = z.object({
+    publisherPartyId: z.coerce.number().int().positive().nullable().optional(),
+    relation: z.enum(EDITION_RELATIONS as [EditionRelation, ...EditionRelation[]]).optional(),
+    isbn: z.string().max(40).nullable().optional(),
+    editionTitle: z.string().max(500).nullable().optional(),
+    publishedOn: z.string().max(10).nullable().optional(),
+    listPrice: z.coerce.number().int().min(0).nullable().optional(),
+    outConditionId: z.coerce.number().int().positive().nullable().optional(),
+    notes: z.string().max(2000).nullable().optional()
+  });
+  router.get("/works/:id/editions", asyncRoute(async (req, res) => {
+    res.json(await workEditions.list(Number(req.params.id)));
+  }));
+  router.post("/works/:id/editions", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    res.status(201).json(await workEditions.create(Number(req.params.id), editionBody.parse(req.body ?? {}), actor(res)));
+  }));
+  router.put("/work-editions/:id", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    res.json(await workEditions.update(Number(req.params.id), editionBody.parse(req.body ?? {}), actor(res)));
+  }));
+  router.delete("/work-editions/:id", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    res.json(await workEditions.remove(Number(req.params.id), actor(res)));
   }));
   router.get("/works/:id/round-overview", asyncRoute(async (req, res) => {
     res.json(await roundOverview.forWork(Number(req.params.id)));

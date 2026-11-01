@@ -4,6 +4,7 @@ import { recordAudit } from "../core/audit.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
 import { WORK_LINEAGE_UP_SQL, timingOf, type Timing } from "../royalty/ledger-service.js";
 import { ppmToPct } from "../royalty/economics.js";
+import { PUB_IN_USAGES, editionOutConditionIds, editionsWithoutOut } from "../works/editions.js";
 
 /**
  * 監査 › 条件の点検（docs/navigation.md §6）。
@@ -31,6 +32,8 @@ export interface ConditionCheck {
   noMode: CheckCondition[];
   noBasis: CheckCondition[];
   uncovered: CheckCondition[];
+  /** 再許諾の刊行物で、版元との条件（OUT）が無いもの（193）。 */
+  editionsNoOut: Array<{ id: number; workId: number; workTitle: string; publisherName: string | null; isbn: string | null; publishedOn: string | null }>;
 }
 
 const SELECT = `
@@ -167,15 +170,19 @@ export class ConditionCheckService {
             AND c.usage_type IN ('sublicense', 'oem') AND c.work_id IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM conditions i
                              WHERE i.direction = 'in' AND i.kind = 'license' AND i.status IN ('active', 'scheduled')
-                               AND i.usage_type = c.usage_type
+                               AND (i.usage_type = c.usage_type
+                                    OR (c.id = ANY($1::bigint[]) AND c.usage_type = 'sublicense' AND i.usage_type = ANY($2::text[])))
                                AND i.work_id = ANY(${WORK_LINEAGE_UP_SQL("c.work_id")})
                                AND (i.target_party_id IS NULL OR i.target_party_id = c.counterparty_id))
-          ORDER BY p.name, w.title, c.id`)).rows as Array<Record<string, any>>;
+          ORDER BY p.name, w.title, c.id`, [[...await editionOutConditionIds(q)], PUB_IN_USAGES])).rows as Array<Record<string, any>>;
+      const editionsNoOut = await editionsWithoutOut(q);
       return {
         duplicates: duplicateGroups(live),
         noMode: noMode.map(toCondition),
         noBasis: noBasis.map(toCondition),
-        uncovered: uncovered.map(toCondition)
+        uncovered: uncovered.map(toCondition),
+        editionsNoOut: editionsNoOut.map((e) => ({ id: e.id, workId: e.workId, workTitle: e.workTitle, publisherName: e.publisherName,
+                                                   isbn: e.isbn, publishedOn: e.publishedOn }))
       };
     } catch (error) { throw translate(error); }
   }

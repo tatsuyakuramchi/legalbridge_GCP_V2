@@ -12,6 +12,7 @@ import type { DocBack } from "./RoyaltyLedger.js";
 import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { WorkRounds } from "./RoundsOverview.js";
 import { WorkRightsFlow } from "./WorkRightsFlow.js";
+import { WorkEditions } from "./WorkEditions.js";
 import type { ImportPreset } from "./BulkRegister.js";
 import { ConditionShares } from "./ConditionShares.js";
 import { conditionUsageLabel } from "../server/core/condition-usage.js";
@@ -931,6 +932,9 @@ export function WorksWorkspace(
                 )}
               </div>
             </div>
+
+            {/* 刊行物（版元・ISBN。docs/work-editions.md）。版元は作品ではなく刊行物に持つ。 */}
+            <WorkEditions workId={work.id} editable={editable} conditions={conditions} onOpenCondition={onOpenCondition} />
 
             {/* 電子書籍の配信コード（CID。A-069）。売上の取込はこれで作品を当てる。
                 版や判型で CID が分かれるので複数持てる。 */}

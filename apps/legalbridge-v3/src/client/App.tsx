@@ -601,7 +601,7 @@ export function App() {
             onOpenMatter={(id) => openEntity("matter", id)} />
         )}
         {view === "flows" && <FlowMonitorWorkspace onOpenCondition={openCondition} />}
-        {view === "condition-check" && <ConditionCheck onOpenCondition={openCondition} />}
+        {view === "condition-check" && <ConditionCheck onOpenCondition={openCondition} onOpenWork={(id) => openEntity("work", id)} />}
         {view === "ops" && <OpsWorkspace key={`${opsTab ?? "quality"}:${importPreset?.kind ?? ""}:${importPreset?.mode ?? ""}`}
                                          initialTab={opsTab} onTabChange={setOpsTab} importPreset={importPreset}
                                          embedded={hubNow ? { title: hubNow.label, hint: hubNow.hint ?? null } : undefined} />}

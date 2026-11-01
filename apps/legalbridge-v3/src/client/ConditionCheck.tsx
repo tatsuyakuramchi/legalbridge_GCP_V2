@@ -20,16 +20,18 @@ interface CheckCondition {
 interface ConditionCheckData {
   duplicates: Array<{ key: string; conditions: CheckCondition[] }>;
   noMode: CheckCondition[]; noBasis: CheckCondition[]; uncovered: CheckCondition[];
+  editionsNoOut?: Array<{ id: number; workId: number; workTitle: string; publisherName: string | null; isbn: string | null; publishedOn: string | null }>;
 }
-type Card = "duplicates" | "noMode" | "noBasis" | "uncovered";
+type Card = "duplicates" | "noMode" | "noBasis" | "uncovered" | "editionsNoOut";
 const CARDS: Array<{ key: Card; label: string; sub: string }> = [
   { key: "duplicates", label: "重複", sub: "同じ作者 × 作品 × 利用形態に 2 本以上" },
   { key: "noMode", label: "決済の型が空", sub: "時限式／イベント式が推測のまま" },
   { key: "noBasis", label: "根拠の文書なし", sub: "契約にも決定済みの文書にも繋がっていない" },
-  { key: "uncovered", label: "作者に届かない許諾", sub: "OUT 条件に効く作者の条件が無い" }
+  { key: "uncovered", label: "作者に届かない許諾", sub: "OUT 条件に効く作者の条件が無い" },
+  { key: "editionsNoOut", label: "版元の条件なし", sub: "再許諾の刊行物に版元との条件（OUT）が無い" }
 ];
 
-export function ConditionCheck({ onOpenCondition }: { onOpenCondition: (id: number) => void }) {
+export function ConditionCheck({ onOpenCondition, onOpenWork }: { onOpenCondition: (id: number) => void; onOpenWork?: (id: number) => void }) {
   const readOnly = useReadOnly();
   const [data, setData] = useState<ConditionCheckData | null>(null);
   const [card, setCard] = useState<Card>("duplicates");
@@ -42,7 +44,7 @@ export function ConditionCheck({ onOpenCondition }: { onOpenCondition: (id: numb
   useEffect(() => {
     api.get<ConditionCheckData>("/conditions-check").then(setData).catch((e: ApiError) => setError(e.message));
   }, [version]);
-  const count = (k: Card) => !data ? 0 : k === "duplicates" ? data.duplicates.length : data[k].length;
+  const count = (k: Card) => !data ? 0 : k === "duplicates" ? data.duplicates.length : (data[k] ?? []).length;
   const open = (c: CheckCondition) => (
     <button className="linky code" onClick={() => onOpenCondition(c.id)}>{c.conditionNo ?? `#${c.id}`}</button>
   );
@@ -161,6 +163,20 @@ export function ConditionCheck({ onOpenCondition }: { onOpenCondition: (id: numb
               <tr key={c.id}>{head(c)}<td>{c.agreementNo ? <span className="code">{c.agreementNo}</span> : "—"}</td></tr>
             ))}</tbody>
           </table></div> : <div className="panel-bd faint">作者に届かない許諾はありません</div>}
+        </div>
+      )}
+      {data && card === "editionsNoOut" && (
+        <div className="panel">
+          <div className="panel-hd"><h2>版元の条件なし</h2><span className="faint">再許諾の刊行物なのに版元との条件（OUT）がありません。入金の突き合わせと作者への払いに繋がりません。作品の「刊行物」で条件を選ぶか、料率の取り決めが無いなら関係を「グループ会社」に直してください</span></div>
+          {(data.editionsNoOut ?? []).length ? <div className="tablewrap"><table>
+            <thead><tr><th>作品</th><th>版元</th><th>ISBN</th><th>刊行日</th></tr></thead>
+            <tbody>{(data.editionsNoOut ?? []).map((e) => (
+              <tr key={e.id}>
+                <td>{onOpenWork ? <button className="linky" onClick={() => onOpenWork(e.workId)}>{e.workTitle}</button> : e.workTitle}</td>
+                <td>{e.publisherName ?? "—"}</td><td className="code">{e.isbn ?? "—"}</td><td>{e.publishedOn ?? "—"}</td>
+              </tr>
+            ))}</tbody>
+          </table></div> : <div className="panel-bd faint">版元の条件の無い再許諾の刊行物はありません</div>}
         </div>
       )}
     </section>
