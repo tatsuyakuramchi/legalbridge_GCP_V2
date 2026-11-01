@@ -118,7 +118,11 @@ const mergeRows = (
 test("統合は条件・パート・系譜を先へ付け替え、元は終了にして統合先を記録する", async () => {
   const db = new FakeDatabase(mergeRows());
   const result = await new WorkWriteService(db).merge(1, 2, "t");
-  assert.deepEqual(result.moved, { conditions: 3, parts: 1, lineage: 2 });
+  assert.deepEqual({ conditions: result.moved.conditions, parts: result.moved.parts, lineage: result.moved.lineage },
+                   { conditions: 3, parts: 1, lineage: 2 });
+  for (const t of ["work_editions", "ebook_work_codes", "work_credits", "condition_events", "matters"]) {
+    assert.deepEqual(db.find(`UPDATE ${t} SET work_id`)?.params, [1, 2], `${t} も先へ（刊行物の ISBN・CID・クレジット・実績・案件）`);
+  }
   assert.deepEqual(db.find("UPDATE conditions SET work_id")!.params, [1, 2], "条件は全部先へ");
   assert.ok(db.find("UPDATE work_parts SET work_id"), "パートは番号を振り直して先へ");
   assert.ok(db.find("DELETE FROM work_lineage WHERE parent_work_id = $1 OR child_work_id = $1"), "元の系譜は消す");

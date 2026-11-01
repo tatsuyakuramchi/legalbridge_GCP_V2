@@ -101,6 +101,7 @@ export class WorkRepository {
     try {
       const works = await withEditionsFallback((ed) => this.database.query(
         `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line,
+                to_jsonb(w) ->> 'source_title' AS source_title,
                 (w.legacy_id IS NOT NULL) AS legacy, w.merged_into_id,
                 (SELECT count(*)::int FROM conditions c
                   WHERE c.work_id = w.id AND c.status <> 'void') AS conditions,
@@ -109,6 +110,7 @@ export class WorkRepository {
           WHERE ($1 = '' OR w.title ILIKE '%' || $1 || '%'
                  OR COALESCE(w.work_code,'') ILIKE '%' || $1 || '%'
                  OR COALESCE(w.title_kana,'') ILIKE '%' || $1 || '%'
+                 OR COALESCE(to_jsonb(w) ->> 'source_title', '') ILIKE '%' || $1 || '%'
                  -- 取引先（作者・許諾先・共著の権利者・版元・販売元）の名前・カナ・コード・別名でも引く。
                  OR ${partyMatchSql("w", ed)})
             AND ($2 OR w.status <> 'archived')
@@ -123,7 +125,7 @@ export class WorkRepository {
         works: works.rows.map((w) => ({
           id: Number(w.id), workCode: str(w.work_code), title: String(w.title),
           titleKana: str(w.title_kana), kind: String(w.kind), status: String(w.status),
-          businessLine: str(w.business_line), legacy: w.legacy === true,
+          businessLine: str(w.business_line), legacy: w.legacy === true, sourceTitle: str(w.source_title),
           mergedIntoId: w.merged_into_id === null || w.merged_into_id === undefined ? null : Number(w.merged_into_id),
           conditions: Number(w.conditions ?? 0), parts: Number(w.parts ?? 0)
         })),
@@ -139,7 +141,7 @@ export class WorkRepository {
     try {
       const r = await this.database.query(
         `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line, w.remarks,
-                w.copyright_notice, w.third_party_rights,
+                w.copyright_notice, w.third_party_rights, to_jsonb(w) ->> 'source_title' AS source_title,
                 (w.legacy_id IS NOT NULL) AS legacy, w.merged_into_id,
                 m.work_code AS merged_into_code, m.title AS merged_into_title
            FROM works w LEFT JOIN works m ON m.id = w.merged_into_id
@@ -166,6 +168,8 @@ export class WorkRepository {
         titleKana: str(w.title_kana), kind: String(w.kind), status: String(w.status),
         businessLine: str(w.business_line), remarks: str(w.remarks), legacy: w.legacy === true,
         copyrightNotice: str(w.copyright_notice), thirdPartyRights: str(w.third_party_rights),
+        /** 原作名（196）。空なら作品名と同じ。 */
+        sourceTitle: str(w.source_title),
         mergedInto: w.merged_into_id === null || w.merged_into_id === undefined ? null
           : { id: Number(w.merged_into_id), workCode: str(w.merged_into_code), title: String(w.merged_into_title ?? "") },
         sources: (sources.rows as Array<Record<string, any>>).map(ref),

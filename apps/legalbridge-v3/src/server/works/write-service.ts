@@ -1,4 +1,4 @@
-import { inTransaction, type Transactable } from "../core/db.js";
+import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { upsertCredit } from "./credits.js";
@@ -44,6 +44,8 @@ export interface WorkPatch {
   remarks?: string | null;
   copyrightNotice?: string | null;
   thirdPartyRights?: string | null;
+  /** 原作名（原著作物名。196）。空なら作品名と同じ。利用許諾計算書の件名に出る。 */
+  sourceTitle?: string | null;
 }
 
 export interface WorkPartPatch {
@@ -58,7 +60,8 @@ export interface WorkPartPatch {
 const WORK_COLUMNS: Record<keyof WorkPatch, string> = {
   title: "title", titleKana: "title_kana", kind: "kind", businessLine: "business_line",
   status: "status", remarks: "remarks",
-  copyrightNotice: "copyright_notice", thirdPartyRights: "third_party_rights"
+  copyrightNotice: "copyright_notice", thirdPartyRights: "third_party_rights",
+  sourceTitle: "source_title"
 };
 const PART_COLUMNS: Record<keyof WorkPartPatch, string> = {
   partRole: "part_role",
@@ -335,17 +338,79 @@ export class WorkWriteService {
    *   条件      work_id を先へ（無効化・旧版も含めて全部。指す先を失わせない）
    *   パート    先の末尾に番号を振り直して移す。条件の work_part_id はそのまま生きる
    *   系譜      こちらの親は先の親に、こちらの子は先の子に。自分自身への輪は落とす
+   *   ほか      刊行物・製品（ISBN／JAN）、電子書籍の CID、クレジット表記、実績の作品、案件の作品
    *
    * 系譜で繋がっている2つ（親と子）はまとめない。子を親にまとめると、子の
    * 子が親の子になるだけで済むように見えるが、親の親がこちらだった場合に輪に
    * なる。関係のある2つは、先に系譜を外してからまとめてもらう。
    */
   async merge(id: number, intoId: number, actor: string): Promise<{
-    id: number; intoId: number; moved: { conditions: number; parts: number; lineage: number };
+    id: number; intoId: number; moved: { conditions: number; parts: number; lineage: number } & Record<string, number>;
   }> {
     if (id === intoId) throw new DomainError("VALIDATION", "同じ作品にはまとめられません");
     try {
+      return await inTransaction(this.database, (client) => this.mergeWithin(client, id, intoId, actor));
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 原作を作品に畳む（docs/work-editions.md §8）。原作名は作品の項目の 1 つにする。
+   * 子の作品が 1 つだけの原作を、その作品にまとめる：作品の原作名に原作の名前を入れ（空のときだけ）、
+   * 原作と作品の系譜を外してから統合する（原作の条件・刊行物・パート・ほかの親子は作品へ）。
+   * 子が 2 つ以上の原作は畳まない（原作の条件がどの作品の分か決まらない）。原作名を写すだけにする。
+   */
+  async foldSource(sourceId: number, actor: string): Promise<{ sourceId: number; intoId: number; sourceTitle: string }> {
+    try {
       return await inTransaction(this.database, async (client) => {
+        const src = await this.requireWork(client, sourceId);
+        if (src.kind !== "source_ip") throw new DomainError("VALIDATION", "原作（種別 原作）だけ畳めます");
+        if (src.merged_into_id || src.status === "archived") throw new DomainError("VALIDATION", "終了・統合済みの原作は畳めません");
+        const kids = (await client.query(
+          `SELECT DISTINCT w.id, w.title FROM work_lineage l JOIN works w ON w.id = l.child_work_id
+            WHERE l.parent_work_id = $1 AND w.status <> 'archived' AND w.merged_into_id IS NULL`, [sourceId])).rows as Array<{ id: number; title: string }>;
+        if (kids.length !== 1) {
+          throw new DomainError("VALIDATION", kids.length
+            ? `この原作には作品が ${kids.length} つあります。畳めるのは作品が 1 つの原作だけです（原作名を作品に写すことはできます）`
+            : "この原作には作品がありません。作品を繋ぐか、種別を作品に直してください");
+        }
+        const intoId = Number(kids[0].id);
+        await client.query(
+          "UPDATE works SET source_title = COALESCE(NULLIF(btrim(source_title), ''), $2), updated_at = now() WHERE id = $1",
+          [intoId, String(src.title)]);
+        await client.query(
+          "DELETE FROM work_lineage WHERE parent_work_id = $1 AND child_work_id = $2", [sourceId, intoId]);
+        await this.mergeWithin(client, sourceId, intoId, actor);
+        await recordAudit(client, { actor, action: "work.fold_source", targetType: "work", targetId: intoId,
+                                    detail: { sourceId, sourceTitle: src.title } });
+        return { sourceId, intoId, sourceTitle: String(src.title) };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 原作の名前を、その下の作品の原作名に写す（原作名が空の作品だけ）。原作はそのまま残す。 */
+  async copySourceTitle(sourceId: number, actor: string): Promise<{ sourceId: number; updated: number }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const src = await this.requireWork(client, sourceId);
+        const r = await client.query(
+          `UPDATE works w SET source_title = $2, updated_at = now()
+            FROM work_lineage l
+           WHERE l.parent_work_id = $1 AND l.child_work_id = w.id AND w.status <> 'archived'
+             AND COALESCE(btrim(w.source_title), '') = ''`, [sourceId, String(src.title)]);
+        await recordAudit(client, { actor, action: "work.copy_source_title", targetType: "work", targetId: sourceId,
+                                    detail: { updated: r.rowCount ?? 0 } });
+        return { sourceId, updated: r.rowCount ?? 0 };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 統合の本体（同じトランザクションの中で）。 */
+  private async mergeWithin(client: Queryable, id: number, intoId: number, actor: string): Promise<{
+    id: number; intoId: number; moved: { conditions: number; parts: number; lineage: number } & Record<string, number>;
+  }> {
+    if (id === intoId) throw new DomainError("VALIDATION", "同じ作品にはまとめられません");
+    {
+      {
         const source = await this.requireWork(client, id);
         const target = await this.requireWork(client, intoId);
         if (source.merged_into_id) {
@@ -380,6 +445,28 @@ export class WorkWriteService {
 
         const conditions = await client.query(
           "UPDATE conditions SET work_id = $2, updated_at = now() WHERE work_id = $1", [id, intoId]);
+        // 作品を指すほかの行も先へ。残すと、終了した作品にぶら下がったまま見えなくなる
+        // （刊行物の ISBN は一意なので、残すと統合先に同じ ISBN を足せない）。
+        // 表がまだ無い DB（193 の前など）は飛ばす。SAVEPOINT で、1 つ無くても統合は続ける。
+        const others: Record<string, number> = {};
+        for (const [table, sql] of [
+          ["work_editions", "UPDATE work_editions SET work_id = $2, updated_at = now() WHERE work_id = $1"],
+          ["ebook_work_codes", "UPDATE ebook_work_codes SET work_id = $2 WHERE work_id = $1"],
+          ["work_credits", "UPDATE work_credits SET work_id = $2 WHERE work_id = $1"],
+          ["condition_events", "UPDATE condition_events SET work_id = $2 WHERE work_id = $1"],
+          ["matters", "UPDATE matters SET work_id = $2, updated_at = now() WHERE work_id = $1"]
+        ] as const) {
+          await client.query("SAVEPOINT merge_other");
+          try {
+            const r = await client.query(sql, [id, intoId]);
+            others[table] = r.rowCount ?? 0;
+            await client.query("RELEASE SAVEPOINT merge_other");
+          } catch (error) {
+            await client.query("ROLLBACK TO SAVEPOINT merge_other");
+            const code = (error as { code?: string })?.code;
+            if (code !== "42P01" && code !== "42703") throw error;   // 表・列が無い DB だけ飛ばす
+          }
+        }
         const parts = await client.query(
           `UPDATE work_parts SET work_id = $2,
                   part_no = part_no + (SELECT COALESCE(max(part_no), 0) FROM work_parts WHERE work_id = $2)
@@ -408,7 +495,7 @@ export class WorkWriteService {
 
         const moved = {
           conditions: conditions.rowCount ?? 0, parts: parts.rowCount ?? 0,
-          lineage: (parents.rowCount ?? 0) + (children.rowCount ?? 0)
+          lineage: (parents.rowCount ?? 0) + (children.rowCount ?? 0), ...others
         };
         await recordAudit(client, {
           actor, action: "work.merge", targetType: "work", targetId: id,
@@ -419,14 +506,14 @@ export class WorkWriteService {
           detail: { fromId: id, fromCode: source.work_code, moved }
         });
         return { id, intoId, moved };
-      });
-    } catch (error) { throw translate(error); }
+      }
+    }
   }
 
   private async requireWork(client: { query: (t: string, p?: unknown[]) => Promise<{ rows: unknown[] }> }, id: number) {
     const r = await client.query(
-      "SELECT id, work_code, title, status, merged_into_id FROM works WHERE id = $1 FOR UPDATE", [id]);
-    const row = r.rows[0] as { id: number; work_code: string | null; title: string; status: string;
+      "SELECT id, work_code, title, kind, status, merged_into_id FROM works WHERE id = $1 FOR UPDATE", [id]);
+    const row = r.rows[0] as { id: number; work_code: string | null; title: string; kind: string; status: string;
                                merged_into_id: number | null } | undefined;
     if (!row) throw new DomainError("NOT_FOUND", `作品 ${id} が見つかりません`);
     return row;

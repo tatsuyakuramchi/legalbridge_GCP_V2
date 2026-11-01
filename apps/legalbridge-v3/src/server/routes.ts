@@ -77,6 +77,7 @@ import { RoyaltyLedgerService, WORK_LINEAGE_UP_SQL } from "./royalty/ledger-serv
 import { RoundOverviewService } from "./royalty/round-overview.js";
 import { RoyaltyReceiptService } from "./royalty/receipts.js";
 import { WorkRightsFlowService } from "./works/rights-flow.js";
+import { WorkStructureCheckService } from "./works/structure-check.js";
 import { EDITION_RELATIONS, WorkEditionService, type EditionRelation } from "./works/editions.js";
 import { ConditionCheckService } from "./conditions/check-service.js";
 import { PAYMENT_STAGES, USAGE_TYPES } from "./royalty/usage-type.js";
@@ -3455,7 +3456,9 @@ export function createRoutes(database: Transactable) {
     status: z.enum(["planning", "in_production", "released", "archived"]).optional(),
     remarks: z.string().trim().max(2000).nullable().optional(),
     copyrightNotice: z.string().trim().max(300).nullable().optional(),
-    thirdPartyRights: z.string().trim().max(600).nullable().optional()
+    thirdPartyRights: z.string().trim().max(600).nullable().optional(),
+    // 原作名（196）。空は「作品名と同じ」に戻す。
+    sourceTitle: z.string().trim().max(300).nullable().optional().transform((v) => (v === "" ? null : v))
   });
   router.patch("/works/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -3526,6 +3529,17 @@ export function createRoutes(database: Transactable) {
     }));
 
   // 作品の統合。条件・パート・系譜を先へ付け替え、こちらは終了にして統合先を記録する。
+  // 監査 › 条件の点検 › 作品の重複・原作の整理（docs/work-editions.md §8）。
+  router.get("/works-check", asyncRoute(async (_req, res) => {
+    res.json(await new WorkStructureCheckService(database).run());
+  }));
+  // 原作を作品に畳む（子の作品が 1 つの原作）・原作名を作品に写す（docs/work-editions.md §8）。
+  router.post("/works/:id/fold-source", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    res.json(await workWrites.foldSource(Number(req.params.id), actor(res)));
+  }));
+  router.post("/works/:id/copy-source-title", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    res.json(await workWrites.copySourceTitle(Number(req.params.id), actor(res)));
+  }));
   router.post("/works/:id/merge", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const { intoId } = z.object({ intoId: z.coerce.number().int().positive() }).parse(req.body ?? {});
