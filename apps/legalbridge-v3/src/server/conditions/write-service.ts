@@ -60,6 +60,9 @@ export interface PublishingSetInput {
   workId?: number | null;
   termStart?: string | null;
   termEnd?: string | null;
+  /** 自動更新（A-039）。期間は紙・電子で 1 つなので、更新も束で決める。 */
+  autoRenew?: boolean | null;
+  renewMonths?: number | null;
   currency?: string;
   taxCategory?: "taxable" | "reduced" | "exempt" | "included";
   paymentTerms?: string | null;

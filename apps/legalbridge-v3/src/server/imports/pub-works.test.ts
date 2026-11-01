@@ -224,8 +224,8 @@ test("書き出し：作品 × 相手先で 1 行。取り分は電子の料率�
   });
   const csv = await new PubWorksImportService(fake, deps()).exportCsv();
   const lines = csv.split("\r\n");
-  assert.equal(lines[0], "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,紙支払条件,電子支払条件,地域,言語,著作権表示,第三者権利,備考,作品備考,事業区分");
-  assert.equal(lines[1], "光砕のリヴァルチャー,WRK-7,,瀧里フユ,P-11,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ 25,瀧里フユ（V-0102） 75／宝井ロメロ 25,当社,BT0001,,2025-07-01,,,,,,日本語,,,,,出版",
+  assert.equal(lines[0], "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,自動更新,更新の単位,支払条件,紙支払条件,電子支払条件,地域,言語,著作権表示,第三者権利,備考,作品備考,事業区分");
+  assert.equal(lines[1], "光砕のリヴァルチャー,WRK-7,,瀧里フユ,P-11,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ 25,瀧里フユ（V-0102） 75／宝井ロメロ 25,当社,BT0001,,2025-07-01,,,,,,,,日本語,,,,,出版",
     "取り分は紙・電子の 2 列、比率（合計 100）で出す。実値で出すと全体率を改訂したときに読み直せない");
   // 書き出した取り分はそのまま読める。コードの無い権利者は取り込むときに止まる（先に取引先にコードを付ける）。
   assert.deepEqual(parseShareText("瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25", 15).map((s) => s.ppm), [750000, 250000]);
@@ -317,4 +317,24 @@ test("更新：電子支払条件だけ直す（紙は触らない）", async ()
   assert.equal(r.ok, 1, JSON.stringify(r.rows));
   assert.deepEqual(d.calls.map((c) => c.what), ["economics"]);
   assert.deepEqual(d.calls[0].args.slice(0, 2), [602, { paymentTerms: "半年ごとに集計し翌々月末払い" }]);
+});
+
+// ---- 自動更新（A-039） -----------------------------------------------------
+
+test("自動更新・更新の単位：出版セットに入り、試算は許諾期間と更新の回数を読み上げる。終了日が無ければ止める", async () => {
+  const row = { "作品名": "新しい作品", "相手先": "冒険支援株式会社", "紙料率": "7", "開始日": "2004-09-10", "終了日": "2007-09-09",
+                "自動更新": "する", "更新の単位": "3年" };
+  const dry = await new PubWorksImportService(db({ parties: PARTIES }), deps()).run([row], true, "tester");
+  assert.match(dry.rows[0].message ?? "", /許諾期間 2004\.9\.10〜\d{4}\.9\.9（更新 \d+回）/);
+  const d = deps();
+  const r = await new PubWorksImportService(db({ parties: PARTIES }), d).run([row], false, "tester");
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  const set = d.calls.find((c) => c.what === "set")!.args[0] as Record<string, any>;
+  assert.deepEqual([set.termStart, set.termEnd, set.autoRenew, set.renewMonths], ["2004-09-10", "2007-09-09", true, 36]);
+  const bad = await new PubWorksImportService(db({ parties: PARTIES }), deps())
+    .run([{ ...row, "終了日": "" }], true, "tester");
+  assert.match(bad.rows[0].message ?? "", /自動更新するなら終了日/);
+  const bad2 = await new PubWorksImportService(db({ parties: PARTIES }), deps())
+    .run([{ ...row, "更新の単位": "三年" }], true, "tester");
+  assert.match(bad2.rows[0].message ?? "", /更新の単位は/);
 });
