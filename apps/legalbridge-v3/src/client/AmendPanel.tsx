@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PaymentBlock, blockingPaymentsOf, type BlockingPayment } from "./PaymentBlock.js";
 import { api, ApiError } from "./api.js";
 
 /**
@@ -74,6 +75,8 @@ export function AmendPanel(
     Object.fromEntries(fields.map((f) => [f.name, f.value])));
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** 支払が立っていて止まったとき、どの支払か（取り消して続ける）。 */
+  const [blocked, setBlocked] = useState<BlockingPayment[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<AuditRow[]>([]);
   const [version, setVersion] = useState(0);
@@ -94,7 +97,7 @@ export function AmendPanel(
 
   /** 直した欄だけ送る。触っていない欄は送らない（意図しない上書きを防ぐ）。 */
   async function save() {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setBlocked(null);
     try {
       const patch: Record<string, unknown> = { reason: reason.trim() };
       for (const f of fields) {
@@ -108,7 +111,7 @@ export function AmendPanel(
       const r = await api.patch<{ changed: string[] }>(path, patch);
       setVersion((v) => v + 1);
       onDone((r.changed ?? []).map((k) => labels[k] ?? k));
-    } catch (e) { setError((e as ApiError).message); }
+    } catch (e) { setError((e as ApiError).message); setBlocked(blockingPaymentsOf(e)); }
     finally { setBusy(false); }
   }
 
@@ -120,7 +123,10 @@ export function AmendPanel(
       </div>
       <div className="panel-bd stack" style={{ gap: 8 }}>
         {note && <div className="note">{note}</div>}
-        {error && <div className="alert">{error}</div>}
+        {blocked
+          ? <PaymentBlock payments={blocked} message={error} defaultReason={reason.trim() || undefined}
+                          onCanceled={() => save()} />
+          : error && <div className="alert">{error}</div>}
         <div className="form-grid">
           {fields.map((f) => (
             <label key={f.name} className="field">

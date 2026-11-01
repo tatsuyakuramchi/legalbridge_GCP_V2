@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PaymentBlock, blockingPaymentsOf, type BlockingPayment } from "./PaymentBlock.js";
 import { ServiceEntry } from "./EventEntryForm.js";
 import { OutConditionForm } from "./OutConditionForm.js";
 import { AmendPanel } from "./AmendPanel.js";
@@ -148,6 +149,8 @@ export function ConditionEvents(
   const [outReload, setOutReload] = useState(0);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 支払が立っていて止まった操作（取り消して続ける）。 */
+  const [blocked, setBlocked] = useState<{ payments: BlockingPayment[]; retry: () => Promise<void> } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [v, setV] = useState<Record<string, string>>({});
@@ -616,23 +619,35 @@ export function ConditionEvents(
       : `文書 ${row.documentNo ?? `#${row.documentId}`} との結びつけを外します。文書は変わりません。`
         + "\n外すと、この実績で別の文書を作れるようになります（二重発行の防止が効かなくなります）。";
     if (!confirm(why)) return;
-    setBusy(true); setError(null);
-    try {
-      await api.post(`/conditions/${conditionId}/events/unlink-document`, { eventIds: [row.id], documentId: row.documentId });
-      load(); onChanged();
-    } catch (e) { setError((e as ApiError).message); }
-    finally { setBusy(false); }
+    const run = async () => {
+      setBusy(true); setError(null); setBlocked(null);
+      try {
+        await api.post(`/conditions/${conditionId}/events/unlink-document`, { eventIds: [row.id], documentId: row.documentId });
+        load(); onChanged();
+      } catch (e) {
+        setError((e as ApiError).message);
+        const b = blockingPaymentsOf(e);
+        if (b) setBlocked({ payments: b, retry: run });
+      } finally { setBusy(false); }
+    };
+    await run();
   }
 
   async function voidEvent(row: EventRow) {
     const reason = prompt(`実績 #${row.id}（${money(row.amount, currency)}）を取り消します。理由を書いてください。`);
     if (!reason?.trim()) return;
-    setBusy(true); setError(null);
-    try {
-      await api.post(`/conditions/${conditionId}/events/${row.id}/void`, { reason: reason.trim() });
-      load(); onChanged();
-    } catch (e) { setError((e as ApiError).message); }
-    finally { setBusy(false); }
+    const run = async () => {
+      setBusy(true); setError(null); setBlocked(null);
+      try {
+        await api.post(`/conditions/${conditionId}/events/${row.id}/void`, { reason: reason.trim() });
+        load(); onChanged();
+      } catch (e) {
+        setError((e as ApiError).message);
+        const b = blockingPaymentsOf(e);
+        if (b) setBlocked({ payments: b, retry: run });
+      } finally { setBusy(false); }
+    };
+    await run();
   }
 
   /**
@@ -1080,7 +1095,9 @@ export function ConditionEvents(
               )}
             </label>
           </div>
-          {error && <div className="alert">{error}</div>}
+          {blocked
+            ? <PaymentBlock payments={blocked.payments} message={error} onCanceled={() => blocked.retry()} />
+            : error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}
           <div className="row">
             {/*
