@@ -2967,6 +2967,10 @@ export function createRoutes(database: Transactable) {
     condition: economicsSchema.optional(),
     schedules: z.array(scheduleLine).max(200).optional(),
     event: z.object({ id: z.coerce.number().int() }).and(eventAmendSchema.omit({ reason: true })).optional(),
+    // 実績を何件でも（検収の数量・金額を回ごとに）。
+    events: z.array(z.object({ id: z.coerce.number().int() }).and(eventAmendSchema.omit({ reason: true }))).max(50).optional(),
+    // 実績の金額を直す前に取り消す支払（支払済みは断る）。
+    cancelPayment: z.object({ id: z.coerce.number().int() }).optional(),
     payment: z.object({
       id: z.coerce.number().int(),
       dueOn: z.string().date().nullable().optional(),
@@ -2977,6 +2981,25 @@ export function createRoutes(database: Transactable) {
     // 訂正版を作る決定済みの文書。作るのは下書きまで（決定も送信もしない）。
     reissue: z.array(z.coerce.number().int()).max(10).optional()
   });
+  // 試算。保存と同じ段を 1 トランザクションの中で流して前後を読み、最後に取り消す（何も残らない）。
+  router.post("/conditions/:id/bundle/preview",
+    requireRole("admin"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason, schedules, ...rest } = conditionBundleSchema.extend({ reason: z.string().trim().max(500).optional() })
+        .parse(req.body ?? {});
+      const parts = (db: Transactable) => ({
+        conditions: new ConditionWriteService(db), schedules: new ConditionScheduleService(db),
+        events: new ConditionEventService(db), payments: new PaymentService(db), documents: new DocumentIssueService(db)
+      });
+      res.json(await new ConditionBundleService(database, parts(database)).preview(Number(req.params.id), {
+        ...rest,
+        schedules: schedules?.map((l) => ({
+          ...l, label: l.label ?? null, dueOn: l.dueOn ?? null, payOn: l.payOn ?? null,
+          contractForm: l.contractForm ?? null,
+          serviceFrom: l.serviceFrom ?? null, serviceTo: l.serviceTo ?? null
+        }))
+      }, reason ?? "", actor(res), parts));
+    }));
   router.patch("/conditions/:id/bundle",
     requireRole("admin"), requireWritable,
     asyncRoute(async (req, res) => {

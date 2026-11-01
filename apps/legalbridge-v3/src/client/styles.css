@@ -966,3 +966,41 @@ table.report tr.work td .row .btn { margin-left: auto; }
 .spec-editor{border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;background:var(--sunken)}
 .spec-editor textarea{width:100%;min-height:280px;resize:vertical;border:1px solid var(--line-strong);border-radius:5px;
   padding:8px 10px;font:inherit;font-size:13px;line-height:1.6;background:var(--surface)}
+
+/* ---- まとめて直す：左に直す値、右に段ごとの前後（GridRowEdit・ConditionEdit） ---- */
+.fix{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:900px){.fix{grid-template-columns:1fr}}
+.fix-in{display:grid;gap:10px}
+.fix-in > .field,.fix-in > .stack > .field{grid-template-columns:96px minmax(0,1fr)}
+.fix-in h4{margin:6px 0 0;font-size:11.5px;letter-spacing:.06em;color:var(--muted)}
+.fix-in > .field input.edited,.fix-in > .stack > .field input.edited,.fix-in .field select.edited{border-color:var(--warn);background:var(--warn-soft)}
+.fix-calc{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+.fix-out{border:1px solid var(--line);border-radius:7px;background:var(--surface)}
+.fix-tier{display:grid;grid-template-columns:104px minmax(0,1fr);border-top:1px solid var(--line)}
+.fix-tier:first-child{border-top:0}
+.fix-tname{padding:9px 11px;font-weight:700;font-size:12.5px;border-right:1px solid var(--line)}
+.fix-tname small{display:block;font-weight:400;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.fix-tbody{padding:8px 11px;display:grid;gap:5px;min-width:0;font-size:12.5px}
+.fix-row{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.chip{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.chip.chg{color:var(--warn);background:var(--warn-soft)}
+.chip.new{color:var(--ok);background:var(--ok-soft)}
+.chip.stop{color:var(--out);background:var(--out-soft)}
+.chip.man{color:var(--accent);background:var(--accent-soft)}
+.chip.same{color:var(--faint);border:1px solid var(--line)}
+.ba{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.ba .was{color:var(--faint);text-decoration:line-through}
+.ba .arrow{color:var(--faint);margin:0 3px}
+.ba .now{font-weight:700}
+.ba .d{font-size:11px;margin-left:5px}
+.ba .d.minus{color:var(--out)} .ba .d.plus{color:var(--ok)}
+.fix-steps{margin:4px 0 0;padding-left:20px;display:grid;gap:2px;font-size:12.5px}
+/* 条件の編集：節の見出しで開け閉め（ConditionEdit） */
+.cedit .form-grid .form-section{cursor:pointer;user-select:none}
+.cedit .form-grid .form-section > b::before{content:"▼ ";font-size:10px;color:var(--faint)}
+.cedit .form-grid .form-section.collapsed > b::before{content:"▶ "}
+.cedit .form-grid .form-section.collapsed{opacity:.85}
+.cedit .field.edited input,.cedit .field.edited select,.cedit .field.edited textarea{border-color:var(--warn);background:var(--warn-soft)}
+.fix.cedit{grid-template-columns:minmax(0,1fr) minmax(0,380px)}
+@media (max-width:1100px){.fix.cedit{grid-template-columns:1fr}}
+.cedit .form-grid > [hidden]{display:none !important}

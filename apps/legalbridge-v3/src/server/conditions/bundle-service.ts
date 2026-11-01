@@ -1,5 +1,6 @@
-import type { Transactable } from "../core/db.js";
-import { dateStr } from "../core/db.js";
+import type { Queryable, Transactable } from "../core/db.js";
+import { dateStr, int, str } from "../core/db.js";
+import { PinnedDatabase } from "../core/pinned-db.js";
 import { DomainError, translate } from "../core/errors.js";
 import type { ConditionWriteService } from "./write-service.js";
 import type { ConditionScheduleService, ScheduleLine } from "./schedule-service.js";
@@ -36,6 +37,13 @@ export interface BundlePatch {
   schedules?: ScheduleLine[];
   /** 実績1件。直近のものを想定。 */
   event?: { id: number } & Record<string, unknown>;
+  /** 実績（何件でも）。検収の数量・金額を回ごとに直すとき。 */
+  events?: Array<{ id: number } & Record<string, unknown>>;
+  /**
+   * 取り消す支払。支払の金額は割当の合計で直接は直せないので、実績の金額を直すときは
+   * 先に取り消す（作り直しは、検収書の訂正版を決定したあと文書の画面で）。支払済みは取り消せない。
+   */
+  cancelPayment?: { id: number };
   /** 支払1件。 */
   payment?: { id: number } & Record<string, unknown>;
   /**
@@ -48,10 +56,10 @@ export interface BundlePatch {
   reissue?: number[];
 }
 
-export type BundleSection = "condition" | "schedules" | "event" | "payment" | "reissue";
+export type BundleSection = "condition" | "schedules" | "cancelPayment" | "event" | "payment" | "reissue";
 
 export const SECTION_LABEL: Record<BundleSection, string> = {
-  condition: "条件", schedules: "予定", event: "実績", payment: "支払", reissue: "訂正版"
+  condition: "条件", schedules: "予定", cancelPayment: "支払の取消", event: "実績", payment: "支払", reissue: "訂正版"
 };
 
 export interface ReissuedDraft {
@@ -125,21 +133,36 @@ export class ConditionBundleService {
       throw new DomainError("CONFLICT", "無効にした条件はまとめて直せません");
     }
 
-    if (patch.event) {
+    if (patch.cancelPayment) {
+      const pay = await this.database.query(
+        "SELECT status, payment_no FROM payments WHERE id = $1", [patch.cancelPayment.id]);
+      const p = pay.rows[0] as { status?: string; payment_no?: string | null } | undefined;
+      if (!p) throw new DomainError("NOT_FOUND", `支払 ${patch.cancelPayment.id} が見つかりません`);
+      if (p.status === "paid") {
+        throw new DomainError("CONFLICT",
+          `支払 ${p.payment_no ?? `#${patch.cancelPayment.id}`} は支払済みなので取り消せません。差額は調整として別に立ててください`);
+      }
+    }
+    for (const event of [...(patch.event ? [patch.event] : []), ...(patch.events ?? [])]) {
       const ev = await this.database.query(
         `SELECT e.status,
+                (SELECT p.id FROM payment_allocations a
+                   JOIN payments p ON p.id = a.payment_id
+                  WHERE a.event_id = e.id AND p.status <> 'canceled' LIMIT 1) AS blocking_id,
                 (SELECT p.payment_no FROM payment_allocations a
                    JOIN payments p ON p.id = a.payment_id
                   WHERE a.event_id = e.id AND p.status <> 'canceled' LIMIT 1) AS blocking_no
            FROM condition_events e WHERE e.id = $1 AND e.condition_id = $2`,
-        [patch.event.id, conditionId]);
-      const row = ev.rows[0] as { status?: string; blocking_no?: string | null } | undefined;
-      if (!row) throw new DomainError("NOT_FOUND", `実績 ${patch.event.id} が見つかりません`);
+        [event.id, conditionId]);
+      const row = ev.rows[0] as { status?: string; blocking_id?: number | null; blocking_no?: string | null } | undefined;
+      if (!row) throw new DomainError("NOT_FOUND", `実績 ${event.id} が見つかりません`);
       if (row.status === "void") {
         throw new DomainError("CONFLICT", "無効にした実績は直せません。実績の欄を空にしてください");
       }
-      const touchesMoney = EVENT_MONEY.some((k) => patch.event![k] !== undefined);
-      if (touchesMoney && row.blocking_no !== null && row.blocking_no !== undefined) {
+      const touchesMoney = EVENT_MONEY.some((k) => event[k] !== undefined);
+      // 同じ束で取り消す支払なら通す（取消が実績より先に走る）。
+      const cancels = patch.cancelPayment && Number(row.blocking_id) === patch.cancelPayment.id;
+      if (touchesMoney && row.blocking_no !== null && row.blocking_no !== undefined && !cancels) {
         throw new DomainError("CONFLICT",
           `この実績には支払 ${row.blocking_no} が立っています。`
           + "金額・数量を直すには、先にその支払を取り消してください");
@@ -216,13 +239,27 @@ export class ConditionBundleService {
         }
       });
     }
-    if (patch.event) {
+    if (patch.cancelPayment) {
+      steps.push({
+        section: "cancelPayment",
+        run: async () => {
+          await this.parts.payments.cancel(patch.cancelPayment!.id, why, actor);
+          return [`#${patch.cancelPayment!.id}`];
+        }
+      });
+    }
+    const events = [...(patch.event ? [patch.event] : []), ...(patch.events ?? [])];
+    if (events.length) {
       steps.push({
         section: "event",
         run: async () => {
-          const { id, ...fields } = patch.event!;
-          const r = await this.parts.events.amend(conditionId, id, fields, why, actor);
-          return r.changed;
+          const changed: string[] = [];
+          for (const ev of events) {
+            const { id, ...fields } = ev;
+            const r = await this.parts.events.amend(conditionId, id, fields, why, actor);
+            changed.push(...r.changed);
+          }
+          return [...new Set(changed)];
         }
       });
     }
@@ -260,6 +297,36 @@ export class ConditionBundleService {
     }
 
     return { conditionId, applied, stoppedAt, revisedTo, reissued };
+  }
+
+  /**
+   * 試算。apply を 1 本の接続の外側トランザクションの中で流し、前後の状態を読んで、最後に必ず
+   * ROLLBACK する（何も残らない）。各段の書込は本物のサービスなので、試算と保存の結果がずれない。
+   * makeParts は、その接続に乗せたサービスを作る（routes.ts）。
+   */
+  async preview(
+    conditionId: number, patch: BundlePatch, reason: string, actor: string,
+    makeParts: (db: Transactable) => ConstructorParameters<typeof ConditionBundleService>[1]
+  ): Promise<BundlePreview> {
+    const client = await this.database.connect();
+    try {
+      await client.query("BEGIN");
+      const pinned = new PinnedDatabase(client);
+      const before = await bundleSnapshot(pinned, conditionId);
+      const svc = new ConditionBundleService(pinned, makeParts(pinned));
+      let result: BundleResult | null = null;
+      let refused: string | null = null;
+      try {
+        result = await svc.apply(conditionId, patch, String(reason ?? "").trim() || "（試算）", actor);
+      } catch (error) { refused = (error as Error).message; }
+      const after = await bundleSnapshot(pinned, result?.revisedTo ?? conditionId);
+      return { before, after, result, refused };
+    } catch (error) {
+      throw translate(error);
+    } finally {
+      try { await client.query("ROLLBACK"); } catch { /* 握る */ }
+      client.release();
+    }
   }
 
   /**
@@ -401,4 +468,76 @@ export function hasManualAmounts(manual: unknown): boolean {
         /amount|金額|単価|price/i.test(k) && String(cell[k] ?? "").trim() !== "");
     });
   });
+}
+
+/** 試算の前後で読む、条件の系列の状態（工程表の「まとめて直す」の右の欄）。 */
+export interface BundleSnapshot {
+  condition: {
+    id: number; conditionNo: string | null; status: string; pricingModel: string | null;
+    unitAmount: number | null; quantity: number | null; flatAmount: number | null; unitLabel: string | null; currency: string;
+  } | null;
+  schedules: Array<{ id: number; seq: number; plannedAmount: number; dueOn: string | null; payOn: string | null }>;
+  events: Array<{ id: number; conditionId: number; eventType: string; occurredOn: string | null;
+                  quantity: number | null; amount: number; documentNo: string | null }>;
+  payments: Array<{ id: number; paymentNo: string | null; status: string; amount: number; taxAmount: number;
+                    dueOn: string | null; paidOn: string | null; eventIds: number[] }>;
+  documents: Array<{ id: number; documentNo: string | null; status: string; supersedesId: number | null; templateKey: string | null }>;
+}
+export interface BundlePreview {
+  before: BundleSnapshot;
+  after: BundleSnapshot;
+  /** 書いた段・止まった段・改訂の版・作った訂正版の下書き（引き直した明細つき）。 */
+  result: BundleResult | null;
+  /** 下見で断られたとき（何も書いていない）。 */
+  refused: string | null;
+}
+
+export async function bundleSnapshot(q: Queryable, conditionId: number): Promise<BundleSnapshot> {
+  const series = `(SELECT COALESCE(c0.series_id, c0.id) FROM conditions c0 WHERE c0.id = $1)`;
+  const c = (await q.query(
+    `SELECT id, condition_no, status, pricing_model, unit_amount, quantity, flat_amount, unit_label, currency
+       FROM conditions WHERE id = $1`, [conditionId])).rows[0] as Record<string, any> | undefined;
+  const sch = (await q.query(
+    `SELECT id, seq, planned_amount, due_on, pay_on FROM condition_schedules WHERE condition_id = $1 ORDER BY seq, id`,
+    [conditionId])).rows as Array<Record<string, any>>;
+  const ev = (await q.query(
+    `SELECT e.id, e.condition_id, e.event_type, e.occurred_on, e.quantity, e.amount, d.document_no
+       FROM condition_events e JOIN conditions c ON c.id = e.condition_id
+       LEFT JOIN documents d ON d.id = e.document_id
+      WHERE COALESCE(c.series_id, c.id) = ${series} AND e.status = 'active'
+      ORDER BY e.occurred_on NULLS LAST, e.id`, [conditionId])).rows as Array<Record<string, any>>;
+  const pay = (await q.query(
+    `SELECT p.id, p.payment_no, p.status, p.amount, p.tax_amount, p.due_on, p.paid_on,
+            array_agg(DISTINCT a.event_id) AS event_ids
+       FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+       JOIN condition_events e ON e.id = a.event_id JOIN conditions c ON c.id = e.condition_id
+      WHERE COALESCE(c.series_id, c.id) = ${series}
+      GROUP BY p.id ORDER BY p.id`, [conditionId])).rows as Array<Record<string, any>>;
+  const docs = (await q.query(
+    `SELECT DISTINCT d.id, d.document_no, d.status, d.supersedes_id, t.template_key
+       FROM document_conditions dc JOIN documents d ON d.id = dc.document_id
+       JOIN conditions c ON c.id = dc.condition_id
+       LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+       LEFT JOIN document_templates t ON t.id = tv.template_id
+      WHERE COALESCE(c.series_id, c.id) = ${series} AND d.status IN ('issued', 'draft', 'superseded')
+      ORDER BY d.id`, [conditionId])).rows as Array<Record<string, any>>;
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return {
+    condition: c ? {
+      id: Number(c.id), conditionNo: str(c.condition_no), status: String(c.status), pricingModel: str(c.pricing_model),
+      unitAmount: n(c.unit_amount), quantity: n(c.quantity), flatAmount: n(c.flat_amount), unitLabel: str(c.unit_label),
+      currency: String(c.currency ?? "JPY")
+    } : null,
+    schedules: sch.map((x) => ({ id: Number(x.id), seq: Number(x.seq), plannedAmount: Number(x.planned_amount ?? 0),
+                                 dueOn: dateStr(x.due_on), payOn: dateStr(x.pay_on) })),
+    events: ev.map((x) => ({ id: Number(x.id), conditionId: Number(x.condition_id), eventType: String(x.event_type),
+                             occurredOn: dateStr(x.occurred_on), quantity: n(x.quantity), amount: Number(x.amount ?? 0),
+                             documentNo: str(x.document_no) })),
+    payments: pay.map((x) => ({ id: Number(x.id), paymentNo: str(x.payment_no), status: String(x.status),
+                                amount: Number(x.amount ?? 0), taxAmount: Number(x.tax_amount ?? 0),
+                                dueOn: dateStr(x.due_on), paidOn: dateStr(x.paid_on),
+                                eventIds: (Array.isArray(x.event_ids) ? x.event_ids : []).map(Number) })),
+    documents: docs.map((x) => ({ id: Number(x.id), documentNo: str(x.document_no), status: String(x.status),
+                                  supersedesId: int(x.supersedes_id), templateKey: str(x.template_key) }))
+  };
 }

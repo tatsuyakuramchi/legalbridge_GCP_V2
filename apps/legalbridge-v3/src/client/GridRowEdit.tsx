@@ -1,21 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
-import { StatusTag } from "./labels.js";
-import { SECTION_LABEL, type BundleSection, type ReissuedDraft }
+import { SECTION_LABEL, type BundlePreview, type BundleSection, type ReissuedDraft }
   from "../server/conditions/bundle-service.js";
-import { DRIFT_LABEL, FIELD_LABEL, driftOf, driftSummary, hasDateDrift }
+import { DRIFT_LABEL, FIELD_LABEL, driftOf, driftSummary }
   from "../server/matters/drift.js";
 import type { GridRow } from "../server/matters/grid.js";
+import { BundleImpact } from "./BundleImpact.js";
 
 /**
- * 工程表の1行を、段をまたいでまとめて直す。
+ * 工程表の1行を、段をまたいでまとめて直す（docs/document-write-back.md §まとめて直す）。
  *
- * 条件・予定・実績・支払はそれぞれ別の画面で保存していた。「納品数を減らした
- * ので金額も予定も実績も支払も直す」が4画面4回の保存になり、どれかを直し
- * 忘れると数字が食い違ったまま残る。ここは1回の保存で揃える。
+ * 左に直す値（その条件で意味のある欄だけ）、右に 発注書 → 条件明細 → 実績 → 支払 → 検収書 の
+ * 前後を出す。右は保存前の試算で、サーバが本物の保存処理を 1 トランザクションで流して取り消したもの
+ * （POST /conditions/:id/bundle/preview）。数量を直すと実績・支払・訂正版がどう動くかが、保存する前に見える。
  *
- * 直せない欄は隠さずに、理由ごと出す。押せないだけだと「なぜ押せないのか」が
- * 分からず、結局どこかで詰まる。
+ * 決まり：
+ *   - 単価 × 数量の条件は単価と数量、定額は金額。実績の金額は 単価 × 検収数量 で引き直す（打てば打った額）。
+ *   - 実績の金額を直すとき、支払がまだなら先に取り消す（作り直しは検収書の訂正版を決定したあと）。
+ *     支払済みなら実績の金額は直さず、差額を「人が直す」に出す。
+ *   - 金額・数量を直したら、決定済みの発注書・検収書の訂正版（下書き）を作る（外せる）。
  */
 
 interface ScheduleLine {
@@ -29,15 +32,18 @@ interface EventLine {
   quantity: number | null; amount: number;
 }
 interface ConditionHead {
-  flatAmount: number | null; termStart: string | null; termEnd: string | null;
+  pricingModel: string; unitAmount: number | null; quantity: number | null; unitLabel: string | null;
+  flatAmount: number | null; termStart: string | null; termEnd: string | null; currency?: string;
 }
 
 const text = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
-/** 金額は ¥ を付け、日付はそのまま。行の欄で出し分ける。 */
-const shown = (v: number | string) => (typeof v === "number" ? yen(v) : v);
+const yen = (n: number) => `¥${Math.round(n).toLocaleString("ja-JP")}`;
 /** 空欄は「変えない」ではなく「空にする」。日付と備考はそれでよい。 */
 const orNull = (v: string) => (v.trim() === "" ? null : v.trim());
+const num = (v: string | undefined) => {
+  const s = String(v ?? "").replace(/[,，¥￥\s]/g, "");
+  return s === "" ? null : Number(s);
+};
 
 export function GridRowEdit(
   { row, onDone, onCancel, onOpenDocument }: {
@@ -49,412 +55,279 @@ export function GridRowEdit(
 ) {
   const [head, setHead] = useState<ConditionHead | null>(null);
   const [lines, setLines] = useState<ScheduleLine[] | null>(null);
-  const [event, setEvent] = useState<EventLine | null>(null);
+  const [events, setEvents] = useState<EventLine[]>([]);
   const [v, setV] = useState<Record<string, string>>({});
+  /** 実績の金額を人が打ったか（打っていなければ 単価 × 検収数量 で引き直す）。 */
+  const [typedAmount, setTypedAmount] = useState<Set<number>>(new Set());
   const [reason, setReason] = useState("");
-  /** 訂正版を作る決定済みの文書。下書きを作るところまでで、決定も送信もしない。 */
-  const [reissue, setReissue] = useState<Set<number>>(new Set());
+  /** 訂正版を作る文書。金額・数量を直すと既定で印が付く。外したものは覚えておく。 */
+  const [reissueOff, setReissueOff] = useState<Set<number>>(new Set());
+  const [showMore, setShowMore] = useState(false);
+  const [preview, setPreview] = useState<BundlePreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setError(null);
     Promise.all([
-      // 条件の詳細は入れ子にせず、そのまま返ってくる。
       api.get<ConditionHead>(`/conditions/${row.conditionId}`).catch(() => null),
       api.get<{ lines: ScheduleLine[] }>(`/conditions/${row.conditionId}/schedules`).catch(() => null),
-      row.events.latestId
-        ? api.get<{ events: EventLine[] }>(`/conditions/${row.conditionId}/events`).catch(() => null)
-        : Promise.resolve(null)
+      api.get<{ events: EventLine[] }>(`/conditions/${row.conditionId}/events`).catch(() => null)
     ]).then(([c, s, e]) => {
-      const condition = c ?? null;
-      const ev = e?.events.find((x) => x.id === row.events.latestId) ?? null;
-      setHead(condition);
+      const evs = (e?.events ?? []).filter((x) => x.status !== "void");
+      setHead(c ?? null);
       setLines(s?.lines ?? []);
-      setEvent(ev);
+      setEvents(evs);
       setV({
-        flatAmount: text(condition?.flatAmount),
-        termStart: text(condition?.termStart),
-        termEnd: text(condition?.termEnd),
-        eventOccurredOn: text(ev?.occurredOn),
-        eventInspectedOn: text(ev?.inspectedOn),
-        eventQuantity: text(ev?.quantity),
-        eventAmount: text(ev?.amount),
-        paymentDueOn: text(row.payment?.dueOn),
-        paymentNote: text(row.payment?.note),
+        unitAmount: text(c?.unitAmount), quantity: text(c?.quantity), flatAmount: text(c?.flatAmount),
+        termStart: text(c?.termStart), termEnd: text(c?.termEnd),
+        paymentDueOn: text(row.payment?.dueOn), paymentNote: text(row.payment?.note),
+        ...Object.fromEntries(evs.flatMap((x) => [
+          [`evq${x.id}`, text(x.quantity)], [`eva${x.id}`, text(x.amount)],
+          [`evo${x.id}`, text(x.occurredOn)], [`evi${x.id}`, text(x.inspectedOn)]
+        ])),
         ...Object.fromEntries((s?.lines ?? []).flatMap((l) => [
-          [`sch${l.id}`, String(l.plannedAmount)],
-          [`schDue${l.id}`, text(l.dueOn)],
-          [`schPay${l.id}`, text(l.payOn)]
+          [`sch${l.id}`, String(l.plannedAmount)], [`schDue${l.id}`, text(l.dueOn)], [`schPay${l.id}`, text(l.payOn)]
         ]))
       });
     });
-  }, [row.conditionId, row.events.latestId]);
+  }, [row.conditionId]);
 
-  // 金額に関わる欄は、支払が立っていると直せない（サーバが断る）。
-  const moneyLocked = Boolean(row.payment);
+  const unitRate = head?.pricingModel === "unit_rate";
+  const paid = row.payment?.status === "paid";
+  const set = (k: string, value: string) => setV((cur) => ({ ...cur, [k]: value }));
 
-  /** 条件と、焼き付いた文書・実績・支払の金額のずれ。 */
-  const drift = driftOf(row);
-  const toggleReissue = (id: number, on: boolean) => setReissue((prev) => {
-    const next = new Set(prev);
-    if (on) next.add(id); else next.delete(id);
-    return next;
-  });
+  /** 実績の金額。打っていなければ、単価 × 検収数量。 */
+  const eventAmount = (e: EventLine): number | null => {
+    if (typedAmount.has(e.id) || !unitRate) return num(v[`eva${e.id}`]);
+    const u = num(v.unitAmount), q = num(v[`evq${e.id}`]);
+    return u !== null && q !== null ? Math.round(u * q) : num(v[`eva${e.id}`]);
+  };
+  const eventMoneyChanged = (e: EventLine) =>
+    num(v[`evq${e.id}`]) !== e.quantity || eventAmount(e) !== e.amount;
 
-  /**
-   * いまの条件・予定・実績に、直せる段を全部そろえる。
-   *
-   * 直せるのは生きている値（条件・予定・実績・支払）だけ。決定済みの文書は
-   * 書き換えられないので、訂正版を作るほうに印を付ける（訂正版の中身は
-   * サーバが新しい値で引き直す）。押しただけでは保存しない。
-   */
-  function alignAll() {
-    if (!drift) return;
-    const t = drift.targets;
-    const next = { ...v };
-    if (t.amount !== null && event && !moneyLocked) next.eventAmount = String(t.amount);
-    // 回が1つだけなら、その回＝条件の総額。分納は回ごとの配分が要るので触らない。
-    if (t.amount !== null && lines?.length === 1) next[`sch${lines[0].id}`] = String(t.amount);
-    // 支払の期日は、検収書に書いた支払期日（無ければ予定の支払日）に寄せる。
-    if (t.paymentDueOn && row.payment) next.paymentDueOn = t.paymentDueOn;
-    setV(next);
-    const docs = drift.flagged
-      .filter((e) => e.part === "order" || e.part === "settlementDoc")
-      .map((e) => (e.part === "order" ? row.order?.id : row.settlementDoc?.id))
-      .filter((id): id is number => Boolean(id));
-    setReissue(new Set([...reissue, ...docs]));
-  }
+  /** 保存・試算に送る中身。直した欄だけ。 */
+  const body = useMemo(() => {
+    if (!head || !lines) return null;
+    const out: Record<string, unknown> = {};
+    const condition: Record<string, unknown> = {};
+    if (unitRate) {
+      if (num(v.unitAmount) !== head.unitAmount) condition.unitAmount = num(v.unitAmount);
+      if (num(v.quantity) !== head.quantity) condition.quantity = num(v.quantity);
+    } else if (num(v.flatAmount) !== head.flatAmount) condition.flatAmount = num(v.flatAmount);
+    if (v.termStart !== text(head.termStart)) condition.termStart = orNull(v.termStart ?? "");
+    if (v.termEnd !== text(head.termEnd)) condition.termEnd = orNull(v.termEnd ?? "");
+    if (Object.keys(condition).length) out.condition = condition;
 
-  /** 決定済みの文書に「訂正版を作る」を出す。下書きは直接直せるので出さない。 */
-  const reissuable = (doc: GridRow["order"]) =>
-    Boolean(doc && doc.phase !== "draft");
+    // 予定：回が 1 つで実績が付いていなければ、新しい総額に揃える。ほかは欄で直したときだけ。
+    const total = unitRate ? (num(v.unitAmount) ?? 0) * (num(v.quantity) ?? 0) : num(v.flatAmount);
+    const planned = (l: ScheduleLine) =>
+      lines.length === 1 && !l.eventId && condition && (condition.unitAmount !== undefined || condition.quantity !== undefined || condition.flatAmount !== undefined)
+      && v[`sch${l.id}`] === String(l.plannedAmount) && total !== null ? Math.round(total) : Number(v[`sch${l.id}`] || 0);
+    const scheduleChanged = lines.some((l) => planned(l) !== l.plannedAmount
+      || v[`schDue${l.id}`] !== text(l.dueOn) || v[`schPay${l.id}`] !== text(l.payOn));
+    if (lines.length && scheduleChanged) {
+      out.schedules = lines.map((l) => ({
+        seq: l.seq, label: l.label, triggerKind: l.triggerKind, plannedAmount: planned(l),
+        dueOn: orNull(v[`schDue${l.id}`] ?? ""), payOn: orNull(v[`schPay${l.id}`] ?? ""),
+        contractForm: l.contractForm, serviceFrom: l.serviceFrom, serviceTo: l.serviceTo
+      }));
+    }
+
+    // 実績。支払済みなら金額は直さない（差額は人が直す）。
+    const evs: Array<Record<string, unknown>> = [];
+    let moneyOnEvents = false;
+    for (const e of events) {
+      const x: Record<string, unknown> = { id: e.id };
+      if (v[`evo${e.id}`] !== text(e.occurredOn)) x.occurredOn = orNull(v[`evo${e.id}`] ?? "");
+      if (v[`evi${e.id}`] !== text(e.inspectedOn)) x.inspectedOn = orNull(v[`evi${e.id}`] ?? "");
+      if (!paid && eventMoneyChanged(e)) {
+        if (num(v[`evq${e.id}`]) !== e.quantity) x.quantity = num(v[`evq${e.id}`]);
+        if (eventAmount(e) !== e.amount) x.amount = eventAmount(e);
+        moneyOnEvents = true;
+      }
+      if (Object.keys(x).length > 1) evs.push(x);
+    }
+    if (evs.length) out.events = evs;
+    // 実績の金額を直すなら、先に支払を取り消す（支払がまだのとき）。
+    if (moneyOnEvents && row.payment && row.payment.status !== "canceled") out.cancelPayment = { id: row.payment.id };
+    else if (row.payment && !paid) {
+      const p: Record<string, unknown> = { id: row.payment.id };
+      if (v.paymentDueOn !== text(row.payment.dueOn)) p.dueOn = orNull(v.paymentDueOn ?? "");
+      if (v.paymentNote !== text(row.payment.note)) p.note = orNull(v.paymentNote ?? "");
+      if (Object.keys(p).length > 1) out.payment = p;
+    }
+
+    // 訂正版：金額・数量・期日を直したら、決定済みの発注書・検収書（外したものを除く）。
+    const reissue: number[] = [];
+    const orderTouched = Boolean(out.condition || out.schedules);
+    const settleTouched = moneyOnEvents || evs.length > 0;
+    if (orderTouched && row.order && row.order.phase !== "draft" && !reissueOff.has(row.order.id)) reissue.push(row.order.id);
+    if (settleTouched && row.settlementDoc && row.settlementDoc.phase !== "draft" && !reissueOff.has(row.settlementDoc.id)) reissue.push(row.settlementDoc.id);
+    if (reissue.length) out.reissue = reissue;
+    return out;
+  }, [head, lines, events, v, typedAmount, reissueOff, row]);
+
+  /** 支払済みで実績の金額を直そうとしている：差額（税抜）を「人が直す」に出す。 */
+  const paidBlocked = useMemo(() => {
+    if (!paid || !row.payment) return null;
+    const diff = events.reduce((s, e) => s + ((eventAmount(e) ?? e.amount) - e.amount), 0);
+    return diff !== 0 ? { paymentNo: row.payment.paymentNo, diff } : null;
+  }, [paid, events, v, typedAmount, row]);
+
+  // 試算。入力が止まってから 400ms。直した欄が無ければ出さない。
+  const seq = useRef(0);
+  useEffect(() => {
+    if (!body || !Object.keys(body).length) { setPreview(null); return; }
+    const my = ++seq.current;
+    setPreviewing(true);
+    const t = setTimeout(() => {
+      api.post<BundlePreview>(`/conditions/${row.conditionId}/bundle/preview`, { ...body, reason })
+        .then((p) => { if (my === seq.current) setPreview(p); })
+        .catch((e: ApiError) => { if (my === seq.current) { setPreview(null); setError(e.message); } })
+        .finally(() => { if (my === seq.current) setPreviewing(false); });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [JSON.stringify(body)]);
 
   async function save() {
+    if (!body || !Object.keys(body).length) { setError("直した欄がありません"); return; }
     setBusy(true); setError(null);
     try {
-      const body: Record<string, unknown> = { reason: reason.trim() };
-
-      const condition: Record<string, unknown> = {};
-      if (head) {
-        if (v.flatAmount !== text(head.flatAmount)) condition.flatAmount = orNull(v.flatAmount);
-        if (v.termStart !== text(head.termStart)) condition.termStart = orNull(v.termStart);
-        if (v.termEnd !== text(head.termEnd)) condition.termEnd = orNull(v.termEnd);
-      }
-      if (Object.keys(condition).length) body.condition = condition;
-
-      // 予定は入れ替えなので、1行でも直したら全部の行を送る。
-      const scheduleChanged = lines?.some((l) =>
-        v[`sch${l.id}`] !== String(l.plannedAmount)
-        || v[`schDue${l.id}`] !== text(l.dueOn)
-        || v[`schPay${l.id}`] !== text(l.payOn));
-      if (lines?.length && scheduleChanged) {
-        body.schedules = lines.map((l) => ({
-          seq: l.seq, label: l.label, triggerKind: l.triggerKind,
-          plannedAmount: Number(v[`sch${l.id}`] || 0),
-          dueOn: orNull(v[`schDue${l.id}`] ?? ""), payOn: orNull(v[`schPay${l.id}`] ?? ""),
-          contractForm: l.contractForm,
-          serviceFrom: l.serviceFrom, serviceTo: l.serviceTo
-        }));
-      }
-
-      if (event) {
-        const e: Record<string, unknown> = { id: event.id };
-        if (v.eventOccurredOn !== text(event.occurredOn)) e.occurredOn = orNull(v.eventOccurredOn);
-        if (v.eventInspectedOn !== text(event.inspectedOn)) e.inspectedOn = orNull(v.eventInspectedOn);
-        if (!moneyLocked) {
-          if (v.eventQuantity !== text(event.quantity)) e.quantity = orNull(v.eventQuantity);
-          if (v.eventAmount !== text(event.amount)) e.amount = orNull(v.eventAmount);
-        }
-        if (Object.keys(e).length > 1) body.event = e;
-      }
-
-      if (row.payment) {
-        const p: Record<string, unknown> = { id: row.payment.id };
-        if (v.paymentDueOn !== text(row.payment.dueOn)) p.dueOn = orNull(v.paymentDueOn);
-        if (v.paymentNote !== text(row.payment.note)) p.note = orNull(v.paymentNote);
-        if (Object.keys(p).length > 1) body.payment = p;
-      }
-
-      if (reissue.size) body.reissue = [...reissue];
-
-      if (Object.keys(body).length <= 1) { setError("直した欄がありません"); setBusy(false); return; }
-
       const r = await api.patch<{
         applied: Array<{ section: BundleSection; changed: string[] }>;
         stoppedAt: { section: BundleSection; message: string } | null;
         revisedTo: number | null;
         reissued: ReissuedDraft[];
-      }>(`/conditions/${row.conditionId}/bundle`, body);
-
+      }>(`/conditions/${row.conditionId}/bundle`, { ...body, reason: reason.trim() });
       const done = r.applied.map((a) => SECTION_LABEL[a.section]).join("・");
       if (r.stoppedAt) {
-        // 半端に書けたことを黙らない。どこまで書けて、どこで止まったかを出す。
-        setError(`${SECTION_LABEL[r.stoppedAt.section]}で止まりました：${r.stoppedAt.message}`
-          + (done ? `（${done} は直しました）` : ""));
-        setBusy(false);
+        setError(`${SECTION_LABEL[r.stoppedAt.section]}で止まりました：${r.stoppedAt.message}` + (done ? `（${done} は直しました）` : ""));
         return;
       }
-      // 訂正版は下書きなので、作っただけでは相手に何も出ていない。
-      // 「作った」で終わらせず、次に何をするかまで言う。
-      const drafts = (r.reissued ?? []);
-      const repriced = drafts.flatMap((d) => d.repriced);
+      const drafts = r.reissued ?? [];
       const manual = drafts.filter((d) => d.pending.length);
       onDone(`${row.conditionNo ?? `#${row.conditionId}`} を直しました（${done}）`
-        // 版が増えたことを黙らない。工程表の行も新しい版に入れ替わる。
         + (r.revisedTo ? "。実績があるので条件は改訂になり、新しい版に切り替わりました" : "")
-        + (drafts.length
-            ? `。${drafts.map((d) => `${d.documentNo ?? `#${d.documentId}`}（下書き #${d.draftId}）`).join("・")}`
-              + " の訂正版を作りました。文書の画面で中身を確かめてから決定してください"
-            : "")
-        // 引き直したことも黙らない（人の打った明細を機械が書き換えている）。
-        + (repriced.length ? `。明細も引き直しました：${repriced.join("／")}` : "")
-        + (manual.length
-            ? `。${manual.map((d) => `${d.documentNo ?? `#${d.documentId}`}（${d.pending.join("・")}）`).join("／")}`
-              + " は引き直せませんでした。そのままだと古い値で出るので、下書きを開いて明細を直してください"
-            : ""));
+        + (drafts.length ? `。${drafts.map((d) => `${d.documentNo ?? `#${d.documentId}`}（下書き #${d.draftId}）`).join("・")} の訂正版を作りました。文書の画面で中身を確かめてから決定してください` : "")
+        + (body.cancelPayment ? "。支払を取り消しました。検収書の訂正版を決定したら、文書の画面で支払を作り直してください" : "")
+        + (manual.length ? `。${manual.map((d) => `${d.documentNo ?? `#${d.documentId}`}（${d.pending.join("・")}）`).join("／")} は引き直せませんでした。下書きを開いて直してください` : ""));
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
 
+  const drift = driftOf(row);
+  const edited = (k: string, was: unknown) => (text(was) !== (v[k] ?? "") ? "edited" : undefined);
+  const docBox = (doc: GridRow["order"], label: string) => doc && doc.phase !== "draft" && (
+    <label className="revise" style={{ marginTop: 0 }}>
+      <input type="checkbox" checked={!reissueOff.has(doc.id)}
+             onChange={(e) => setReissueOff((cur) => { const n = new Set(cur); if (e.target.checked) n.delete(doc.id); else n.add(doc.id); return n; })} />
+      <span>{doc.documentNo ?? `#${doc.id}`}（{label}）の訂正版を作る<div className="faint">直したときだけ。下書きまでで、決定・送信はしない</div></span>
+      {onOpenDocument && <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={(ev) => { ev.preventDefault(); onOpenDocument(doc.id); }}>開く</button>}
+    </label>
+  );
+
   return (
     <td colSpan={8}>
-      <div className="row" style={{ marginBottom: 10 }}>
+      <div className="row" style={{ marginBottom: 10, flexWrap: "wrap" }}>
         <b>{row.conditionNo ?? `#${row.conditionId}`} をまとめて直す</b>
-        <span className="faint">直した欄だけを送ります。1回の保存で段ぶんが揃います</span>
+        <span className="faint">左を直すと、右に 発注書・条件明細・実績・支払・検収書 の変わり方が出ます（保存前の試算。まだ何も書きません）</span>
       </div>
       {error && <div className="alert">{error}</div>}
-
       {drift && drift.flagged.length > 0 && (
-        <div className="drift">
-          <div className="row">
-            <b>{driftSummary(drift.flagged)}が食い違っています</b>
-            <span className="faint">
-              条件や予定を直しても、決定済みの文書は出したときの値のまま残ります
-            </span>
-          </div>
-          <table>
-            <tbody>
-              {drift.bases.map((b) => (
-                <tr key={b.key} className="now">
-                  <td>{b.label}</td>
-                  <td className="right"><b>{shown(b.value)}</b></td>
-                  <td className="faint">{b.hint}</td>
-                </tr>
-              ))}
-              {drift.entries.map((e) => (
-                <tr key={`${e.part}${e.field}${e.ref ?? ""}`} className={e.flagged ? "out" : undefined}>
-                  <td>
-                    {DRIFT_LABEL[e.part]} <span className="faint">{FIELD_LABEL[e.field]}</span>
-                    {e.ref ? <span className="faint code">　{e.ref}</span> : null}
-                  </td>
-                  <td className="right">{shown(e.value)}</td>
-                  <td className={e.flagged ? "diff" : "faint"}>
-                    {e.note ?? (e.value === e.basis ? `${e.basisLabel}と一致`
-                      : e.diff !== null
-                        ? `${e.basisLabel}より ${e.diff > 0 ? "＋" : "−"}${yen(Math.abs(e.diff))}`
-                        : `${e.basisLabel}は ${shown(e.basis)}`)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {hasDateDrift(drift.flagged) && (
-            <div className="locked" style={{ marginTop: 6 }}>
-              日付は、どちらが正しいかを機械では決められません。相手に出した文書の日で
-              進めるなら、<b>予定・実績の欄をその日に直して</b>ください（訂正版は要りません）。
-            </div>
-          )}
-          <div className="row" style={{ marginTop: 6 }}>
-            <button className="btn btn-sm" onClick={alignAll}>
-              いまの条件・予定・実績に全部そろえる
-            </button>
-            <span className="faint">
-              欄に入れるだけです。保存は下のボタンで、文書は訂正版の下書きになります
-            </span>
-          </div>
+        <div className="note" style={{ marginBottom: 10 }}>
+          <b>{driftSummary(drift.flagged)}が食い違っています：</b>
+          {drift.flagged.map((e) => `${DRIFT_LABEL[e.part]}の${FIELD_LABEL[e.field]}`).join("・")}
         </div>
       )}
 
-      {!lines ? <div className="faint">読み込んでいます…</div> : (
-        <>
-          <div className="editgrid">
-            <div className="editsec">
-              <h4>条件</h4>
-              <label className="field"><span>金額</span>
-                <input value={v.flatAmount ?? ""} disabled={moneyLocked}
-                       onChange={(e) => setV({ ...v, flatAmount: e.target.value })} /></label>
-              <label className="field"><span>開始</span>
-                <input type="date" value={v.termStart ?? ""}
-                       onChange={(e) => setV({ ...v, termStart: e.target.value })} /></label>
-              <label className="field"><span>終了</span>
-                <input type="date" value={v.termEnd ?? ""}
-                       onChange={(e) => setV({ ...v, termEnd: e.target.value })} /></label>
-              {moneyLocked && (
-                <div className="locked">
-                  支払 {row.payment?.paymentNo} が立っているので金額は直せません。
-                  先にその支払を取り消してください。
-                </div>
-              )}
-              {!moneyLocked && row.events.count > 0 && (
-                <div className="locked">
-                  実績があるので、金額を直すと<b>改訂</b>（新しい版）になります。
-                  旧版は残り、実績と支払の割当もそのままです。
-                </div>
-              )}
-            </div>
+      {!lines || !head ? <div className="faint">読み込んでいます…</div> : (
+        <div className="fix">
+          <div className="fix-in">
+            <h4>条件明細</h4>
+            {unitRate ? (<>
+              <label className="field"><span>単価（税抜）</span>
+                <input className={edited("unitAmount", head.unitAmount)} inputMode="numeric" value={v.unitAmount ?? ""} onChange={(e) => set("unitAmount", e.target.value)} /></label>
+              <label className="field"><span>発注数量</span>
+                <input className={edited("quantity", head.quantity)} inputMode="decimal" value={v.quantity ?? ""} onChange={(e) => set("quantity", e.target.value)} /></label>
+              <div className="fix-calc">金額 {yen((num(v.unitAmount) ?? 0) * (num(v.quantity) ?? 0))}{head.unitLabel ? `（${head.unitLabel}）` : ""}　発注時 {yen((head.unitAmount ?? 0) * (head.quantity ?? 0))}</div>
+            </>) : (
+              <label className="field"><span>金額（税抜）</span>
+                <input className={edited("flatAmount", head.flatAmount)} inputMode="numeric" value={v.flatAmount ?? ""} onChange={(e) => set("flatAmount", e.target.value)} /></label>
+            )}
 
-            <div className="editsec">
-              <h4>予定（{lines.length} 回）</h4>
-              {lines.length === 0 && <div className="locked">回がありません。条件の画面で作ります。</div>}
+            {events.length > 0 && <h4>実績（検収）{paid ? "　支払済みのため金額は直せません" : ""}</h4>}
+            {events.map((e) => (
+              <div key={e.id} className="stack" style={{ gap: 4 }}>
+                <span className="faint">{e.occurredOn ?? "日付なし"} の実績</span>
+                <label className="field"><span>検収数量</span>
+                  <input className={edited(`evq${e.id}`, e.quantity)} inputMode="decimal" disabled={paid} value={v[`evq${e.id}`] ?? ""}
+                         onChange={(ev) => set(`evq${e.id}`, ev.target.value)} /></label>
+                <label className="field"><span>金額（税抜）</span>
+                  <input className={eventAmount(e) !== e.amount ? "edited" : undefined} inputMode="numeric" disabled={paid}
+                         value={typedAmount.has(e.id) || !unitRate ? v[`eva${e.id}`] ?? "" : text(eventAmount(e))}
+                         onChange={(ev) => { setTypedAmount((cur) => new Set(cur).add(e.id)); set(`eva${e.id}`, ev.target.value); }} /></label>
+                {unitRate && !typedAmount.has(e.id) && <div className="fix-calc">単価 × 検収数量で引き直す（打てば打った額）</div>}
+              </div>
+            ))}
+
+            {row.payment && !paid && !body?.cancelPayment && (<>
+              <h4>支払</h4>
+              <label className="field"><span>支払日</span>
+                <input type="date" className={edited("paymentDueOn", row.payment.dueOn)} value={v.paymentDueOn ?? ""} onChange={(e) => set("paymentDueOn", e.target.value)} /></label>
+            </>)}
+
+            <button className="linky" style={{ justifySelf: "start" }} onClick={() => setShowMore((x) => !x)}>
+              {showMore ? "▲ 期日・期間・予定をしまう" : "▼ 期日・期間・予定も直す"}
+            </button>
+            {showMore && (<>
+              <label className="field"><span>開始</span>
+                <input type="date" className={edited("termStart", head.termStart)} value={v.termStart ?? ""} onChange={(e) => set("termStart", e.target.value)} /></label>
+              <label className="field"><span>終了</span>
+                <input type="date" className={edited("termEnd", head.termEnd)} value={v.termEnd ?? ""} onChange={(e) => set("termEnd", e.target.value)} /></label>
               {lines.map((l) => (
-                <div key={l.id} className="schline">
-                  <label className="field">
-                    <span>第{l.seq}回 金額</span>
-                    <input value={v[`sch${l.id}`] ?? ""}
-                           onChange={(e) => setV({ ...v, [`sch${l.id}`]: e.target.value })} />
-                  </label>
-                  <label className="field">
-                    <span>　期日</span>
-                    <input type="date" value={v[`schDue${l.id}`] ?? ""}
-                           onChange={(e) => setV({ ...v, [`schDue${l.id}`]: e.target.value })} />
-                  </label>
-                  <label className="field">
-                    <span>　支払日</span>
-                    <input type="date" value={v[`schPay${l.id}`] ?? ""}
-                           onChange={(e) => setV({ ...v, [`schPay${l.id}`]: e.target.value })} />
-                  </label>
+                <div key={l.id} className="stack" style={{ gap: 4 }}>
+                  <span className="faint">予定 第{l.seq}回{l.eventId ? "（実績あり）" : ""}</span>
+                  <label className="field"><span>金額</span>
+                    <input className={edited(`sch${l.id}`, l.plannedAmount)} value={v[`sch${l.id}`] ?? ""} onChange={(e) => set(`sch${l.id}`, e.target.value)} /></label>
+                  <label className="field"><span>納期</span>
+                    <input type="date" className={edited(`schDue${l.id}`, l.dueOn)} value={v[`schDue${l.id}`] ?? ""} onChange={(e) => set(`schDue${l.id}`, e.target.value)} /></label>
+                  <label className="field"><span>支払日</span>
+                    <input type="date" className={edited(`schPay${l.id}`, l.payOn)} value={v[`schPay${l.id}`] ?? ""} onChange={(e) => set(`schPay${l.id}`, e.target.value)} /></label>
                 </div>
               ))}
-              {lines.length > 0 && (
-                <div className="locked">
-                  発注書の納品予定日・支払期日はここから出ます。決定済みの発注書は
-                  出したときの日付のままなので、直したら訂正版を作ります。
-                </div>
-              )}
-              {lines.some((l) => l.eventId) && (
-                <div className="locked">実績の付いた回があります。金額を直すと実績との差分が出ます。</div>
-              )}
-            </div>
-
-            <div className="editsec">
-              <h4>発注書</h4>
-              {row.order ? (
-                <>
-                  <div className="locked">
-                    {row.order.documentNo ?? `#${row.order.id}`} は
-                    <StatusTag kind="document" value={row.order.phase} />です。
-                    {row.order.phase !== "draft" && <>中身は直せません。直すなら訂正版を作ります。</>}
-                  </div>
-                  <div className="row" style={{ marginTop: 6 }}>
-                    {onOpenDocument && (
-                      <button className="btn btn-sm" onClick={() => onOpenDocument(row.order!.id)}>開く</button>
-                    )}
-                  </div>
-                  {reissuable(row.order) && (
-                    <label className="revise">
-                      <input type="checkbox" checked={reissue.has(row.order.id)}
-                             onChange={(e) => toggleReissue(row.order!.id, e.target.checked)} />
-                      <span>
-                        {row.order.documentNo ?? `#${row.order.id}`} の<b>訂正版</b>を作る
-                        <div className="faint">
-                          下書きで作ります。決定も送信もここではしません
-                        </div>
-                      </span>
-                    </label>
-                  )}
-                </>
-              ) : <div className="locked">まだありません。</div>}
-            </div>
-
-            <div className="editsec">
-              <h4>実績{event ? `（直近 1 件／全 ${row.events.count} 件）` : ""}</h4>
-              {event ? (
-                <>
+              {events.map((e) => (
+                <div key={e.id} className="stack" style={{ gap: 4 }}>
+                  <span className="faint">実績 {e.occurredOn ?? ""} の日付</span>
                   <label className="field"><span>納品日</span>
-                    <input type="date" value={v.eventOccurredOn ?? ""}
-                           onChange={(e) => setV({ ...v, eventOccurredOn: e.target.value })} /></label>
+                    <input type="date" className={edited(`evo${e.id}`, e.occurredOn)} value={v[`evo${e.id}`] ?? ""} onChange={(ev) => set(`evo${e.id}`, ev.target.value)} /></label>
                   <label className="field"><span>検収日</span>
-                    <input type="date" value={v.eventInspectedOn ?? ""}
-                           onChange={(e) => setV({ ...v, eventInspectedOn: e.target.value })} /></label>
-                  <label className="field"><span>数量</span>
-                    <input value={v.eventQuantity ?? ""} disabled={moneyLocked}
-                           onChange={(e) => setV({ ...v, eventQuantity: e.target.value })} /></label>
-                  <label className="field"><span>実額</span>
-                    <input value={v.eventAmount ?? ""} disabled={moneyLocked}
-                           onChange={(e) => setV({ ...v, eventAmount: e.target.value })} /></label>
-                  {moneyLocked && (
-                    <div className="locked">
-                      支払 {row.payment?.paymentNo} が立っているので金額・数量は直せません。
-                    </div>
-                  )}
-                </>
-              ) : <div className="locked">まだありません。実績タブで記録します。</div>}
-            </div>
+                    <input type="date" className={edited(`evi${e.id}`, e.inspectedOn)} value={v[`evi${e.id}`] ?? ""} onChange={(ev) => set(`evi${e.id}`, ev.target.value)} /></label>
+                </div>
+              ))}
+            </>)}
 
-            <div className="editsec">
-              <h4>検収書・計算書</h4>
-              {row.settlementDoc ? (
-                <>
-                  <div className="locked">
-                    {row.settlementDoc.documentNo ?? `#${row.settlementDoc.id}`} は
-                    <StatusTag kind="document" value={row.settlementDoc.phase} />です。
-                  </div>
-                  <div className="row" style={{ marginTop: 6 }}>
-                    {onOpenDocument && (
-                      <button className="btn btn-sm"
-                              onClick={() => onOpenDocument(row.settlementDoc!.id)}>開く</button>
-                    )}
-                  </div>
-                  {reissuable(row.settlementDoc) && (
-                    <label className="revise">
-                      <input type="checkbox" checked={reissue.has(row.settlementDoc.id)}
-                             onChange={(e) => toggleReissue(row.settlementDoc!.id, e.target.checked)} />
-                      <span>
-                        {row.settlementDoc.documentNo ?? `#${row.settlementDoc.id}`} の<b>訂正版</b>を作る
-                        <div className="faint">
-                          下書きで作ります。決定も送信もここではしません
-                        </div>
-                      </span>
-                    </label>
-                  )}
-                </>
-              ) : <div className="locked">まだありません。実績から作ります。</div>}
-            </div>
+            {(row.order || row.settlementDoc) && <h4>訂正版</h4>}
+            {docBox(row.order, "発注書")}
+            {docBox(row.settlementDoc, "検収書")}
 
-            <div className="editsec">
-              <h4>支払</h4>
-              {row.payment ? (
-                <>
-                  <label className="field"><span>期日</span>
-                    <input type="date" value={v.paymentDueOn ?? ""}
-                           onChange={(e) => setV({ ...v, paymentDueOn: e.target.value })} /></label>
-                  <label className="field"><span>備考</span>
-                    <input value={v.paymentNote ?? ""}
-                           onChange={(e) => setV({ ...v, paymentNote: e.target.value })} /></label>
-                  <div className="locked">
-                    金額は割当の合計です。ここでは直せません。
-                    期日は検収書に書いた支払期日（無ければ予定の支払日）に合わせます。
-                  </div>
-                </>
-              ) : <div className="locked">まだありません。支払タブで起こします。</div>}
-            </div>
+            <label className="field"><span>直す理由<em className="req"> 必須</em></span>
+              <input value={reason} placeholder="先方と納品数を再調整したため" onChange={(e) => setReason(e.target.value)} /></label>
           </div>
 
-          <label className="field" style={{ marginTop: 10, gridTemplateColumns: "110px minmax(0,1fr)" }}>
-            <span>直す理由<em className="req"> 必須</em></span>
-            <input value={reason} placeholder="先方と納品数を再調整したため"
-                   onChange={(e) => setReason(e.target.value)} />
-          </label>
-          <div className="row" style={{ marginTop: 8 }}>
-            <button className="btn primary" disabled={busy || !reason.trim()} onClick={() => void save()}>
-              この行をまとめて保存する{reissue.size ? `（訂正版 ${reissue.size} 枚も作る）` : ""}
-            </button>
-            <button className="btn" disabled={busy} onClick={onCancel}>やめる</button>
-            <span className="faint">前後の値と理由は監査に残ります</span>
-          </div>
-        </>
+          <BundleImpact preview={preview} busy={previewing} paidBlocked={paidBlocked} />
+        </div>
       )}
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <button className="btn primary" disabled={busy || !reason.trim() || !body || !Object.keys(body).length || Boolean(preview?.refused)}
+                onClick={() => void save()}>
+          この内容で直す{body?.reissue ? "（訂正版は下書きまで）" : ""}
+        </button>
+        <button className="btn" disabled={busy} onClick={onCancel}>やめる</button>
+        <span className="faint">前後の値と理由は監査に残ります</span>
+      </div>
     </td>
   );
 }
