@@ -22,13 +22,27 @@ interface ConditionCheckData {
   noMode: CheckCondition[]; noBasis: CheckCondition[]; uncovered: CheckCondition[];
   editionsNoOut?: Array<{ id: number; workId: number; workTitle: string; publisherName: string | null; isbn: string | null; publishedOn: string | null }>;
 }
-type Card = "duplicates" | "noMode" | "noBasis" | "uncovered" | "editionsNoOut";
+type Card = "duplicates" | "noMode" | "noBasis" | "uncovered" | "editionsNoOut" | "workDups" | "sources";
+
+/** 作品の重複・原作の整理（server/works/structure-check.ts）。 */
+interface WorkCheck {
+  id: number; code: string | null; title: string; kind: string; legacy: boolean; sourceTitle: string | null;
+  inConditions: number; outConditions: number; otherConditions: number; documents: number; editions: number;
+  parentIds: number[]; childIds: number[];
+}
+interface WorkStructure {
+  duplicates: Array<{ key: string; works: WorkCheck[]; keepId: number; linked: boolean }>;
+  sources: Array<{ work: WorkCheck; children: Array<{ id: number; code: string | null; title: string; sourceTitle: string | null }> }>;
+}
+const WORK_KIND: Record<string, string> = { own: "作品", source_ip: "原作", derivative: "派生作品" };
 const CARDS: Array<{ key: Card; label: string; sub: string }> = [
   { key: "duplicates", label: "重複", sub: "同じ作者 × 作品 × 利用形態に 2 本以上" },
   { key: "noMode", label: "決済の型が空", sub: "時限式／イベント式が推測のまま" },
   { key: "noBasis", label: "根拠の文書なし", sub: "契約にも決定済みの文書にも繋がっていない" },
   { key: "uncovered", label: "作者に届かない許諾", sub: "OUT 条件に効く作者の条件が無い" },
-  { key: "editionsNoOut", label: "版元・販売元の条件なし", sub: "再許諾・他社販売の刊行物・製品に相手との条件（OUT）が無い" }
+  { key: "editionsNoOut", label: "版元・販売元の条件なし", sub: "再許諾・他社販売の刊行物・製品に相手との条件（OUT）が無い" },
+  { key: "workDups", label: "作品の重複", sub: "同じ名前の作品が 2 つ以上（表記ゆれを含む）" },
+  { key: "sources", label: "原作の整理", sub: "原作は作品の原作名に。作品が 1 つの原作は畳む" }
 ];
 
 export function ConditionCheck({ onOpenCondition, onOpenWork }: { onOpenCondition: (id: number) => void; onOpenWork?: (id: number) => void }) {
@@ -41,10 +55,49 @@ export function ConditionCheck({ onOpenCondition, onOpenWork }: { onOpenConditio
   const [pick, setPick] = useState<Record<number, "periodic" | "event">>({});
   /** 重複のまとまりごとに、残す条件。 */
   const [keep, setKeep] = useState<Record<string, number>>({});
+  const [works, setWorks] = useState<WorkStructure | null>(null);
+  const [workKeep, setWorkKeep] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     api.get<ConditionCheckData>("/conditions-check").then(setData).catch((e: ApiError) => setError(e.message));
+    api.get<WorkStructure>("/works-check").then(setWorks).catch((e: ApiError) => setError(e.message));
   }, [version]);
-  const count = (k: Card) => !data ? 0 : k === "duplicates" ? data.duplicates.length : (data[k] ?? []).length;
+  const count = (k: Card) => k === "workDups" ? works?.duplicates.length ?? 0
+    : k === "sources" ? works?.sources.length ?? 0
+    : !data ? 0 : k === "duplicates" ? data.duplicates.length : (data[k] ?? []).length;
+  /** 作品の重複をまとめる：残す側以外を残す側へ統合する（条件・刊行物・CID・系譜などを移す）。 */
+  async function mergeWorks(g: WorkStructure["duplicates"][number]) {
+    const keepId = workKeep[g.key] ?? g.keepId;
+    const kept = g.works.find((w) => w.id === keepId)!;
+    const drops = g.works.filter((w) => w.id !== keepId);
+    if (!window.confirm(`${drops.map((w) => w.code ?? `#${w.id}`).join("・")} を ${kept.code ?? `#${keepId}`}「${kept.title}」にまとめます。条件・刊行物・CID・系譜は残す側へ移り、まとめた側は終了になります。よろしいですか？`)) return;
+    setBusy(true); setError(null);
+    try {
+      for (const w of drops) await api.post(`/works/${w.id}/merge`, { intoId: keepId });
+      setNotice(`${kept.code ?? `#${keepId}`}「${kept.title}」に ${drops.length} 件をまとめました`);
+      setVersion((v) => v + 1);
+    } catch (e) { setError((e as ApiError).message); setVersion((v) => v + 1); } finally { setBusy(false); }
+  }
+  async function foldSource(s: WorkStructure["sources"][number]) {
+    const child = s.children[0];
+    if (!window.confirm(`原作「${s.work.title}」を作品「${child.title}」に畳みます。作品の原作名が「${child.sourceTitle || s.work.title}」になり、原作の条件・刊行物は作品へ移ります。よろしいですか？`)) return;
+    setBusy(true); setError(null);
+    try {
+      await api.post(`/works/${s.work.id}/fold-source`, {});
+      setNotice(`原作「${s.work.title}」を作品「${child.title}」に畳みました`);
+      setVersion((v) => v + 1);
+    } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
+  }
+  async function copySource(s: WorkStructure["sources"][number]) {
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ updated: number }>(`/works/${s.work.id}/copy-source-title`, {});
+      setNotice(`原作名「${s.work.title}」を作品 ${r.updated} 件に写しました（原作名が空の作品だけ）`);
+      setVersion((v) => v + 1);
+    } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
+  }
+  const workLink = (w: { id: number; title: string; code: string | null }) => onOpenWork
+    ? <button className="linky" onClick={() => onOpenWork(w.id)}>{w.title}</button> : <span>{w.title}</span>;
   const open = (c: CheckCondition) => (
     <button className="linky code" onClick={() => onOpenCondition(c.id)}>{c.conditionNo ?? `#${c.id}`}</button>
   );
@@ -92,7 +145,7 @@ export function ConditionCheck({ onOpenCondition, onOpenWork }: { onOpenConditio
           <button key={c.key} className={`btn${card === c.key ? " primary" : ""}`} aria-pressed={card === c.key}
                   style={{ textAlign: "left", display: "block", whiteSpace: "normal" }} onClick={() => setCard(c.key)}>
             <span style={{ display: "block" }}>{c.label}</span>
-            <b style={{ fontSize: 22 }}>{data ? count(c.key) : "…"}</b>
+            <b style={{ fontSize: 22 }}>{(c.key === "workDups" || c.key === "sources" ? works : data) ? count(c.key) : "…"}</b>
             <span style={{ display: "block", fontWeight: 400, opacity: 0.85, fontSize: 12 }}>{c.sub}</span>
           </button>
         ))}
@@ -177,6 +230,63 @@ export function ConditionCheck({ onOpenCondition, onOpenWork }: { onOpenConditio
               </tr>
             ))}</tbody>
           </table></div> : <div className="panel-bd faint">相手との条件の無い刊行物・製品はありません</div>}
+        </div>
+      )}
+      {works && card === "workDups" && (works.duplicates.length ? works.duplicates.map((g) => {
+        const keepId = workKeep[g.key] ?? g.keepId;
+        return (
+          <div key={g.key} className="panel">
+            <div className="panel-hd">
+              <h2>{g.works[0].title}</h2>
+              <span className="faint">{g.linked
+                ? "原作と作品として系譜で繋がっています。「原作の整理」で原作を作品に畳んでください"
+                : `同じ名前の作品が ${g.works.length} 件。残す側を選んでまとめてください（条件・刊行物・CID・系譜を移し、ほかは終了にします）`}</span>
+              {!readOnly && !g.linked && (
+                <button className="btn btn-sm" style={{ marginLeft: "auto" }} disabled={busy} onClick={() => void mergeWorks(g)}>選んだ作品にまとめる</button>
+              )}
+            </div>
+            <div className="tablewrap"><table>
+              <thead><tr><th>残す</th><th>作品</th><th>種別</th><th className="num">作者の条件</th><th className="num">取引先の条件</th>
+                <th className="num">ほかの条件</th><th className="num">決定した文書</th><th className="num">刊行物</th><th>原作名</th></tr></thead>
+              <tbody>{g.works.map((w) => (
+                <tr key={w.id}>
+                  <td><input type="radio" name={`wkeep-${g.key}`} aria-label={`${w.code ?? w.id} を残す`} disabled={g.linked}
+                             checked={keepId === w.id} onChange={() => setWorkKeep((k) => ({ ...k, [g.key]: w.id }))} /></td>
+                  <td>{workLink(w)}<div className="faint code">{w.code ?? `#${w.id}`}{w.legacy ? "・移行" : ""}</div></td>
+                  <td>{WORK_KIND[w.kind] ?? w.kind}</td>
+                  <td className="num">{w.inConditions}</td><td className="num">{w.outConditions}</td><td className="num">{w.otherConditions}</td>
+                  <td className="num">{w.documents}</td><td className="num">{w.editions}</td>
+                  <td>{w.sourceTitle ?? <span className="faint">—</span>}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          </div>
+        );
+      }) : <div className="panel"><div className="panel-bd faint">同じ名前の作品はありません</div></div>)}
+
+      {works && card === "sources" && (
+        <div className="panel">
+          <div className="panel-hd"><h2>原作の整理</h2>
+            <span className="faint">原作名は作品の項目（原作名）で持ちます。利用許諾計算書の原著作物名は作品の原作名、明細は作品名です。
+              作品が 1 つの原作は作品に畳み（原作名に入れて、原作の条件・刊行物を作品へ）、2 つ以上の原作は原作名を各作品に写します（原作の条件はどの作品の分にも効くので、原作は残します）</span>
+          </div>
+          {works.sources.length ? <div className="tablewrap"><table>
+            <thead><tr><th>原作</th><th className="num">作者の条件</th><th className="num">決定した文書</th><th>作品</th><th /></tr></thead>
+            <tbody>{works.sources.map((s) => (
+              <tr key={s.work.id}>
+                <td>{workLink(s.work)}<div className="faint code">{s.work.code ?? `#${s.work.id}`}</div></td>
+                <td className="num">{s.work.inConditions}</td><td className="num">{s.work.documents}</td>
+                <td>{s.children.length ? s.children.map((c) => (
+                  <div key={c.id}>{workLink(c)}{c.sourceTitle ? <span className="faint">（原作名 {c.sourceTitle}）</span> : null}</div>
+                )) : <span className="tag warn">作品なし</span>}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{!readOnly && (s.children.length === 1
+                  ? <button className="btn btn-sm" disabled={busy} onClick={() => void foldSource(s)}>作品に畳む</button>
+                  : s.children.length > 1
+                    ? <button className="btn btn-sm" disabled={busy || s.children.every((c) => c.sourceTitle)} onClick={() => void copySource(s)}>原作名を作品に写す</button>
+                    : <span className="faint">作品を繋ぐか、種別を作品に直す</span>)}</td>
+              </tr>
+            ))}</tbody>
+          </table></div> : <div className="panel-bd faint">原作（種別 原作）の作品はありません</div>}
         </div>
       )}
     </section>

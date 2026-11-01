@@ -495,8 +495,8 @@ test("作品の書き出し：取込と同じ語で 1 作品 1 行。種別・�
   const csv = await new ImportService(db).exportWorks();
   const lines = csv.split("\r\n");
   assert.equal(lines[0], WORKS_EXPORT_HEADERS.join(","));
-  assert.equal(lines[1], "WRK-1,原作小説,ゲンサクショウセツ,原作IP,発売済,出版,,© 2026 著者名,,");
-  assert.equal(lines[2], ',"新作, ボードゲーム",,派生作品,企画中,ゲーム,WRK-1,,挿絵：〇〇,重版分は別途協議',
+  assert.equal(lines[1], "WRK-1,原作小説,ゲンサクショウセツ,,原作IP,発売済,出版,,© 2026 著者名,,");
+  assert.equal(lines[2], ',"新作, ボードゲーム",,,派生作品,企画中,ゲーム,WRK-1,,挿絵：〇〇,重版分は別途協議',
     "半角カンマを含む作品名は囲む。親作品は取込が当てる語（コード）");
   // 書き出した語はそのまま取込（update）が読める
   const back = new FakeDatabase((text, params) => {

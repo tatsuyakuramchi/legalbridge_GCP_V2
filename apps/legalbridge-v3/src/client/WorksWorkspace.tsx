@@ -54,6 +54,8 @@ interface Part { id: number; partNo: number; name: string; partType: string; roy
 interface WorkDetail {
   id: number; workCode: string | null; title: string; titleKana: string | null; kind: string;
   status: string; businessLine: string | null; remarks: string | null; legacy: boolean;
+  /** 原作名（原著作物名）。空なら作品名と同じ。 */
+  sourceTitle?: string | null;
   copyrightNotice: string | null; thirdPartyRights: string | null;
   mergedInto: { id: number; workCode: string | null; title: string } | null;
   sources: WorkRefRow[]; children: WorkRefRow[]; parts: Part[];
@@ -284,7 +286,7 @@ export function WorksWorkspace(
       setWork(w); setEnvelope(e.envelope); setConditions(c.conditions); setActivity(a);
       setForm({
         title: w.title, titleKana: w.titleKana ?? "", kind: w.kind, status: w.status,
-        businessLine: w.businessLine ?? "", remarks: w.remarks ?? ""
+        businessLine: w.businessLine ?? "", remarks: w.remarks ?? "", sourceTitle: w.sourceTitle ?? ""
       });
       void reloadCredits(w.id);
       void reloadCodes(w.id);
@@ -335,7 +337,8 @@ export function WorksWorkspace(
   const dirty = work && (
     form.title !== work.title || form.titleKana !== (work.titleKana ?? "") ||
     form.kind !== work.kind || form.status !== work.status ||
-    form.businessLine !== (work.businessLine ?? "") || form.remarks !== (work.remarks ?? ""));
+    form.businessLine !== (work.businessLine ?? "") || form.remarks !== (work.remarks ?? "") ||
+    (form.sourceTitle ?? "") !== (work.sourceTitle ?? ""));
 
   async function saveWork() {
     if (!work) return;
@@ -344,7 +347,9 @@ export function WorksWorkspace(
       await api.patch(`/works/${work.id}`, {
         title: form.title.trim(), titleKana: form.titleKana.trim() || null,
         kind: form.kind, status: form.status,
-        businessLine: form.businessLine.trim() || null, remarks: form.remarks.trim() || null
+        businessLine: form.businessLine.trim() || null, remarks: form.remarks.trim() || null,
+        // 原作名は変えたときだけ送る（196 の前の DB で、触っていない人の保存を止めない）。
+        ...((form.sourceTitle ?? "") !== (work.sourceTitle ?? "") ? { sourceTitle: (form.sourceTitle ?? "").trim() || null } : {})
       });
       setNotice("作品を保存しました");
       await Promise.all([reloadTree(), reloadWork()]);
@@ -842,6 +847,10 @@ export function WorksWorkspace(
               <div className="panel-bd ledger-form">
                 <label className="field"><span>題名</span>
                   <input value={form.title ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
+                <label className="field"><span>原作名（原著作物名）</span>
+                  <input value={form.sourceTitle ?? ""} disabled={!editable} placeholder={`空なら作品名と同じ（${form.title ?? ""}）`}
+                         onChange={(e) => setForm({ ...form, sourceTitle: e.target.value })} />
+                  <small className="faint">利用許諾計算書の原著作物名（件名）に出ます。明細の製品名は作品名のまま</small></label>
                 <label className="field"><span>カナ</span>
                   <input value={form.titleKana ?? ""} disabled={!editable} onChange={(e) => setForm({ ...form, titleKana: e.target.value })} /></label>
                 <label className="field"><span>種別</span>

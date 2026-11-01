@@ -645,6 +645,7 @@ export class DocumentContextRepository {
               -- 落ちないよう、列を名指しせず行ごと受けて読む。
               to_jsonb(p) AS party_row,
               w.title AS work_title, w.work_code, w.kind AS work_kind,
+              to_jsonb(w) ->> 'source_title' AS work_source_title,
               -- クレジット表記は決定日時点の行（A-031）。無ければ作品の列。
               COALESCE(wc.copyright_notice, w.copyright_notice) AS work_copyright,
               COALESCE(wc.third_party_rights, w.third_party_rights) AS work_third_party,
@@ -762,7 +763,8 @@ export class DocumentContextRepository {
                  */
                 sourceTitle: originalWorkTitle({
                   inWorkTitle: str(row.work_title), inWorkKind: str(row.work_kind),
-                  sourceTitles: Array.isArray(row.source_titles) ? row.source_titles : null
+                  sourceTitles: Array.isArray(row.source_titles) ? row.source_titles : null,
+                  ownSourceTitle: str(row.work_source_title)
                 }) || null,
                 /** 素材の種別（game_design / illustration …）。構成上の役割を決めるのに使う。 */
                 partType: str(row.part_type) },

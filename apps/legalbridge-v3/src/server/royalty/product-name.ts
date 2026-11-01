@@ -82,13 +82,20 @@ function baseProductName(s: ProductNameSource): string {
 }
 
 /**
- * 件名の原作名。イン条件の作品が原作ならその名前、作品（当社製品）に
- * ぶら下がっているなら系譜の親の原作名。原作が無ければ作品名のまま。
+ * 件名の原作名（原著作物名）。
+ *   1. 作品に原作名（works.source_title。196）があればそれ。原作と作品は表裏一体で名前だけ違うことがある
+ *   2. イン条件の作品が原作ならその名前
+ *   3. 作品（当社製品）が系譜で原作にぶら下がっているなら、その原作名
+ *   4. どれも無ければ作品名のまま（原作を兼ねる）
+ * 明細の製品名は作品名のまま（statementProductName）。
  */
 export function originalWorkTitle(s: {
   inWorkTitle?: string | null; inWorkKind?: string | null;
   sourceTitles?: Array<string | null> | null;
+  /** 作品の原作名（works.source_title）。 */
+  ownSourceTitle?: string | null;
 }): string {
+  if (text(s.ownSourceTitle)) return text(s.ownSourceTitle);
   if (text(s.inWorkKind) === "source_ip") return text(s.inWorkTitle);
   const sources = titles(s.sourceTitles);
   return sources.length ? sources.join("・") : text(s.inWorkTitle);

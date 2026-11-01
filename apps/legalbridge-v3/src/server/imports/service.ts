@@ -58,7 +58,7 @@ export const SERVICE_CONDITION_UPDATE_COLUMNS = [
  * 「登録済みに当てる」で戻せるように、当てる手がかりの作品コードを先頭に置く。
  */
 export const WORKS_EXPORT_HEADERS = [
-  "作品コード", "作品名", "カナ", "種別", "状態", "事業区分", "親作品", "著作権表示", "第三者権利", "備考"
+  "作品コード", "作品名", "カナ", "原作名", "種別", "状態", "事業区分", "親作品", "著作権表示", "第三者権利", "備考"
 ] as const;
 
 export interface ImportSpec {
@@ -97,13 +97,13 @@ export const IMPORT_SPECS: ImportSpec[] = [
   {
     kind: "works", label: "作品",
     required: ["作品名"],
-    optional: ["カナ", "種別", "状態", "事業区分", "作品コード", "親作品", "著作権表示", "第三者権利", "備考"],
+    optional: ["カナ", "原作名", "種別", "状態", "事業区分", "作品コード", "親作品", "著作権表示", "第三者権利", "備考"],
     sample: "作品名,カナ,種別,状態,事業区分,作品コード,親作品,著作権表示,第三者権利,備考\n" +
             "原作小説,ゲンサクショウセツ,原作IP,発売済,出版,,,© 2026 著者名,,\n" +
             "新作ボードゲーム,シンサクボードゲーム,派生作品,企画中,ゲーム,,原作小説,© 2026 著者名 / Arclight,挿絵：〇〇,",
     updatable: true,
     updateHint: "当てる先は 作品コード（無ければ 作品名）。親作品はここでは付け替えません（系譜は作品画面で）",
-    updateColumns: ["カナ", "種別", "状態", "事業区分", "著作権表示", "第三者権利", "備考", "作品名"],
+    updateColumns: ["カナ", "原作名", "種別", "状態", "事業区分", "著作権表示", "第三者権利", "備考", "作品名"],
     updateSample: "作品コード,備考\n" +
                   "WRK-2026-0001,初版1000部。奥付の表記は別紙のとおり\n" +
                   "WRK-2026-0002,重版分は別途協議",
@@ -114,7 +114,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
     required: ["作品名", "相手先"],
     optional: ["作品コード", "カナ", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
                "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分",
-               "紙支払条件", "電子支払条件", "増刷時非加算", "自動更新", "更新の単位", ...PUB_EDITION_COLUMNS],
+               "紙支払条件", "電子支払条件", "増刷時非加算", "自動更新", "更新の単位", "原作名", ...PUB_EDITION_COLUMNS],
     sample: PUB_WORKS_SAMPLE,
     updatable: true,
     updateHint: "当てる先は 作品コード（無ければ 作品名）。相手先を書けばその相手先の条件だけ。" +
@@ -127,7 +127,7 @@ export const IMPORT_SPECS: ImportSpec[] = [
                 "新しく登録するときと同じ CSV をそのまま流せます（登録済みの行は直り、二重にはなりません）。" +
                 "「登録済みの出版作品」を書き出して直すのが早道です",
     updateColumns: ["紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID", "開始日", "終了日", "自動更新", "更新の単位", "支払条件", "紙支払条件", "電子支払条件", "増刷時非加算", "備考", "地域", "言語",
-                    "カナ", "著作権表示", "第三者権利", "作品備考", "事業区分", ...PUB_EDITION_COLUMNS],
+                    "カナ", "原作名", "著作権表示", "第三者権利", "作品備考", "事業区分", ...PUB_EDITION_COLUMNS],
     updateSample: PUB_WORKS_UPDATE_SAMPLE,
     exportPath: "/imports/pub-works/export.csv", exportLabel: "登録済みの出版作品（作品 × 相手先で 1 行）"
   },
@@ -322,6 +322,7 @@ export class ImportService {
       `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line, w.remarks,
               to_jsonb(w) ->> 'copyright_notice' AS copyright_notice,
               to_jsonb(w) ->> 'third_party_rights' AS third_party_rights,
+              to_jsonb(w) ->> 'source_title' AS source_title,
               (SELECT string_agg(COALESCE(NULLIF(btrim(pw.work_code), ''), pw.title), '／' ORDER BY pw.title)
                  FROM work_lineage l JOIN works pw ON pw.id = l.parent_work_id
                 WHERE l.child_work_id = w.id) AS parents
@@ -330,7 +331,7 @@ export class ImportService {
     const kindLabel = (v: unknown) => Object.entries(WORK_KIND).find(([k, val]) => val === v && /[^\x00-\x7f]/.test(k))?.[0] ?? String(v ?? "");
     const statusLabel = (v: unknown) => Object.entries(WORK_STATUS).find(([k, val]) => val === v && /[^\x00-\x7f]/.test(k))?.[0] ?? String(v ?? "");
     const rows = (r.rows as Array<Record<string, any>>).map((w) => ({
-      "作品コード": w.work_code ?? "", "作品名": String(w.title ?? ""), "カナ": w.title_kana ?? "",
+      "作品コード": w.work_code ?? "", "作品名": String(w.title ?? ""), "カナ": w.title_kana ?? "", "原作名": w.source_title ?? "",
       "種別": kindLabel(w.kind), "状態": statusLabel(w.status), "事業区分": w.business_line ?? "",
       "親作品": w.parents ?? "", "著作権表示": w.copyright_notice ?? "", "第三者権利": w.third_party_rights ?? "",
       "備考": w.remarks ?? ""
@@ -505,6 +506,8 @@ export class ImportService {
     if (thirdParty) put("第三者権利", "thirdPartyRights", thirdParty);
     const remarks = text("備考");
     if (remarks) put("備考", "remarks", remarks);
+    const sourceTitle = text("原作名");
+    if (sourceTitle) put("原作名", "sourceTitle", sourceTitle);
     // コードで当てた行に別の作品名が書いてあれば改名。名前で当てた行は改名できない
     // （当てる手がかりそのものなので）。
     if (code && title && title !== String(work.title)) put("作品名", "title", title);
@@ -701,6 +704,9 @@ export class ImportService {
       copyrightNotice: row["著作権表示"] || null,
       thirdPartyRights: row["第三者権利"] || null
     }, actor);
+    // 原作名（196）は作品を作ってから入れる（作るときの列には無い）。
+    const sourceTitle = String(row["原作名"] ?? "").trim();
+    if (sourceTitle) await this.works.update(created.id, { sourceTitle }, actor);
     return { status: "ok", label: title, id: created.id, code: created.workCode };
   }
 

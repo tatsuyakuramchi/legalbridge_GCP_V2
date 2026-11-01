@@ -60,6 +60,7 @@
 
 - `GET /api/v3/conditions-check`（`server/conditions/check-service.ts`・`client/ConditionCheck.tsx`）。5 つの札：
   - 重複：同じ作者 × 作品 × 構成要素 × 利用形態 × 対象の許諾先に生きた IN の条件が 2 本以上。残す条件を選んで「まとめる」（`POST /conditions-check/merge`）：寄せる条件の報告（回から外し、発生日で残す条件の回へ）・予定の行・依頼の繋がりを移し、寄せる条件を無効にする。決定した文書・支払・計算書・共著の取り分のある条件、料率・単価・通貨の違う条件は寄せない。
+  - 作品の重複・原作の整理：同じ名前の作品をまとめる／原作を作品の原作名に畳む（docs/work-editions.md §8）。
   - 版元・販売元の条件なし：再許諾・他社販売の刊行物・製品で相手との条件（OUT）が無いもの（docs/work-editions.md）。
   - 決済の型が空：許諾料の条件で settlement_mode が無いもの。いまの推測を出し、その場で 時限式／イベント式 を決められる（`PUT /royalty-ledger/timing`）。
   - 根拠の文書なし：IN の条件で、契約に載っておらず決定済みの文書にも繋がっていないもの。

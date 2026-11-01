@@ -38,6 +38,8 @@ import { PUB_EDITION_NAMES, editionColumns, editionRowLabel, ensurePartnerOuts, 
 export interface PubWorkPatch {
   titleKana?: string | null; businessLine?: string | null; remarks?: string | null;
   copyrightNotice?: string | null; thirdPartyRights?: string | null;
+  /** 原作名（196）。 */
+  sourceTitle?: string | null;
 }
 export interface PubConditionPatch {
   ratePpm?: number; exclusivity?: "exclusive" | "non_exclusive";
@@ -123,6 +125,8 @@ export interface PubWorkRow {
   edition: PubEditionRow | null;
   /** 2 版目以降の非加算（%）。「増刷時非加算」の列。 */
   exemptLaterPct: number | null;
+  /** 原作名（196）。新しく作る作品にだけ入れる。 */
+  sourceTitle?: string | null;
 }
 
 export interface Share { partyId: number; name: string; sharePpm: number }
@@ -390,6 +394,8 @@ export class PubWorksImportService {
         copyrightNotice: p.newWork!.copyrightNotice, thirdPartyRights: p.newWork!.thirdPartyRights
       }, actor);
       workId = made.id; workCode = made.workCode;
+      // 原作名（196）は作品を作ってから入れる。
+      if (p.sourceTitle) await this.deps.works.update(workId, { sourceTitle: p.sourceTitle }, actor);
     }
     const set = await this.deps.conditions.createPublishingSet({
       counterpartyId: p.party.id, workId, agreementId: p.agreementId,
@@ -499,7 +505,7 @@ export class PubWorksImportService {
       if (v) { workPatch[key] = v; workChanged.push(header); }
     };
     putWork("カナ", "titleKana"); putWork("著作権表示", "copyrightNotice"); putWork("第三者権利", "thirdPartyRights");
-    putWork("作品備考", "remarks"); putWork("事業区分", "businessLine");
+    putWork("作品備考", "remarks"); putWork("事業区分", "businessLine"); putWork("原作名", "sourceTitle");
 
     // 条件の列（紙・電子に同じものを当てる）。
     const print = ratePct(text(row, "紙料率"), "紙料率");
@@ -698,6 +704,7 @@ export class PubWorksImportService {
               to_jsonb(w) ->> 'copyright_notice' AS copyright_notice, to_jsonb(w) ->> 'third_party_rights' AS third_party_rights,
               c.id, c.usage_type, c.rate_ppm, c.exclusivity, c.counterparty_id, p.name AS party_name,
               to_jsonb(p) ->> 'party_code' AS party_code,
+              to_jsonb(w) ->> 'source_title' AS source_title,
               ag.agreement_no, c.term_start, c.term_end, c.auto_renew, c.renew_months, c.payment_terms, c.notes,
               to_jsonb(c) ->> 'distribution' AS distribution
          FROM conditions c
@@ -748,6 +755,7 @@ export class PubWorksImportService {
       const scopes = scopesOf.get(String(main.id)) ?? [];
       return {
         "作品名": String(main.title ?? ""), "作品コード": main.work_code ?? "", "カナ": main.title_kana ?? "",
+        "原作名": main.source_title ?? "",
         "相手先": main.party_name ?? "", "相手先コード": main.party_code ?? "",
         "紙料率": printC ? pct(printC.rate_ppm) : "", "電子料率": digitalC ? pct(digitalC.rate_ppm) : "",
         "独占": main.exclusivity === "exclusive" ? "独占" : main.exclusivity === "non_exclusive" ? "非独占" : "",
@@ -855,7 +863,7 @@ export class PubWorksImportService {
       party, agreementId,
       print: print === null ? null : { ratePct: print, exclusivity, ...(printTerms ? { paymentTerms: printTerms } : {}) },
       digital: digital === null ? null : { ratePct: digital, exclusivity, ...(digitalTerms ? { paymentTerms: digitalTerms } : {}) },
-      termStart, termEnd, ...renew,
+      termStart, termEnd, ...renew, sourceTitle: text(row, "原作名") || null,
       paymentTerms: text(row, "支払条件") || null, notes: text(row, "備考") || null,
       scopes, shares, printShares, digitalShares, distribution, cids, edition, exemptLaterPct
     };
@@ -919,7 +927,7 @@ function renewColumns(row: Record<string, string>): { autoRenew: boolean | null;
 }
 
 export const PUB_WORKS_HEADERS = [
-  "作品名", "作品コード", "カナ", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
+  "作品名", "作品コード", "カナ", "原作名", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
   "契約番号", "開始日", "終了日", "自動更新", "更新の単位", "支払条件", "紙支払条件", "電子支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
 ];
 
