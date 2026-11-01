@@ -1,5 +1,7 @@
 import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react";
+import { BundleImpact } from "./BundleImpact.js";
+import type { BundlePreview } from "../server/conditions/bundle-service.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { RightsScopePicker } from "./RightsScopePicker.js";
 import { api, ApiError, money, rate } from "./api.js";
@@ -131,6 +133,10 @@ export function ConditionEdit(
     languages: joinScopes(detail, "language"),
     notes: detail.notes ?? ""
   });
+  /** 開いたときの値。直した欄に印を付け、右の欄に前→後を出すのに使う。 */
+  const initial = useRef<Values>(v);
+  /** 欄の名前（field() が覚える）。右の欄の見出しに使う。 */
+  const labels = useRef<Record<string, string>>({});
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -280,6 +286,97 @@ export function ConditionEdit(
   const changedCount = Object.keys(patch).length + (counterpartyChanged ? 1 : 0) + (scopesChanged ? 1 : 0);
 
   /**
+   * 節（① 〜 ⑦）の開け閉め。よく直す ② 期間・③ 金額は開いておき、ほかは見出しだけにする
+   * （直した欄がある節は開いたまま）。節は form-grid の中で見出しと欄が平らに並んでいるので、
+   * 描いたあとに見出しから次の見出しまでを隠す。
+   */
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [openSecs, setOpenSecs] = useState<Set<string>>(new Set(["②", "③"]));
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const kids = [...grid.children] as HTMLElement[];
+    const groups: Array<{ head: HTMLElement; body: HTMLElement[] }> = [];
+    for (const el of kids) {
+      if (el.classList.contains("form-section")) groups.push({ head: el, body: [] });
+      else if (groups.length) groups[groups.length - 1].body.push(el);
+    }
+    for (const g of groups) {
+      const key = (g.head.textContent ?? "").trim().charAt(0);
+      g.head.dataset.sec = key;
+      const hasEdited = g.body.some((el) => el.classList.contains("edited") || el.querySelector(".edited"));
+      const open = openSecs.has(key) || hasEdited;
+      g.head.classList.toggle("collapsed", !open);
+      g.head.setAttribute("role", "button");
+      g.head.setAttribute("aria-expanded", String(open));
+      g.head.tabIndex = 0;
+      for (const el of g.body) el.hidden = !open;
+    }
+  });
+  const toggleSec = (target: EventTarget | null) => {
+    const head = (target as HTMLElement | null)?.closest?.(".form-section") as HTMLElement | null;
+    const key = head?.dataset.sec;
+    if (!key) return;
+    setOpenSecs((cur) => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+  };
+
+  /** 右の欄：直した欄の前→後。 */
+  const VALUE_KEY: Record<string, string> = { ratePpm: "ratePct", firstEditionRatePpm: "firstEditionRatePct" };
+  const LABEL_EXTRA: Record<string, string> = {
+    ratePpm: "料率（%）", kind: "種類", pricingModel: "計算方式", taxCategory: "税区分", autoRenew: "自動更新",
+    renewMonths: "更新の単位（月）", settlementMode: "決済の型", settlementCount: "回数", settlementCycle: "周期",
+    settlementGraceDays: "猶予日数", timeSettlement: "時間精算", hoursIncluded: "時間枠", overageUnitAmount: "超過単価",
+    shortfallUnitAmount: "控除単価", creditFromWork: "クレジット表記を作品から", workId: "作品", targetPartyId: "対象の許諾先",
+    usageType: "利用形態", exclusivity: "独占性", licenseFeeBasis: "許諾料の扱い", sublicenseConsent: "再許諾の別途合意",
+    deliverableOwnership: "成果物の帰属先", contractForm: "契約形式", currency: "通貨", firstEditionRatePpm: "初版料率（%）"
+  };
+  const shownValue = (key: string, raw: string) => {
+    if (raw === "") return "（空）";
+    if (key === "workId") return works.find((w) => String(w.id) === raw)?.title ?? raw;
+    if (key === "autoRenew" || key === "creditFromWork" || key === "timeSettlement") return raw === "1" ? "する" : "しない";
+    return raw;
+  };
+  const changes = [
+    ...Object.keys(patch).filter((k) => !["settlementCount", "settlementCycle", "settlementGraceDays", "hoursIncluded",
+      "overageUnitAmount", "shortfallUnitAmount"].includes(k) || (initial.current[VALUE_KEY[k] ?? k] ?? "") !== (v[VALUE_KEY[k] ?? k] ?? ""))
+      .map((k) => {
+        const vk = VALUE_KEY[k] ?? k;
+        return { key: k, label: labels.current[vk] ?? LABEL_EXTRA[k] ?? k,
+                 was: shownValue(k, initial.current[vk] ?? ""), now: shownValue(k, v[vk] ?? "") };
+      }),
+    ...(counterpartyChanged ? [{ key: "counterparty", label: "相手先", was: detail.counterparty?.name ?? "（空）", now: "（選んだ相手先）" }] : []),
+    ...(scopesChanged ? [{ key: "scopes", label: "地域・言語",
+      was: [joinScopes(detail, "region"), joinScopes(detail, "language")].filter(Boolean).join("／") || "（空）",
+      now: [v.regions, v.languages].filter(Boolean).join("／") || "（空）" }] : [])
+  ];
+
+  /**
+   * 金額（定額・単価・数量・料率）を直したときは、まとめて直すと同じ試算で、実績・支払・決定済みの文書への
+   * 響き方を出す（POST /conditions/:id/bundle/preview。管理者だけ。ほかの人には出さない）。
+   */
+  const moneyPatch = Object.fromEntries(Object.entries(patch).filter(([k]) => ["flatAmount", "unitAmount", "quantity", "ratePpm"].includes(k)));
+  const [impact, setImpact] = useState<BundlePreview | null>(null);
+  const [impactBusy, setImpactBusy] = useState(false);
+  const impactSeq = useRef(0);
+  const moneyKey = JSON.stringify(moneyPatch);
+  /** 改訂になるか。金額の試算があれば、それ（本物の保存処理の結果）に従う。 */
+  const revises = impact?.result ? Boolean(impact.result.revisedTo) : (willRevise && Object.keys(patch).length > 0);
+  /** 上の注意書き。直した欄があって試算が済んでいれば、その結果に合わせる。 */
+  const noteRevise = Object.keys(patch).length && impact?.result ? Boolean(impact.result.revisedTo) : willRevise;
+  useEffect(() => {
+    if (!Object.keys(moneyPatch).length || inPlace) { setImpact(null); return; }
+    const my = ++impactSeq.current;
+    setImpactBusy(true);
+    const t = setTimeout(() => {
+      api.post<BundlePreview>(`/conditions/${detail.id}/bundle/preview`, { condition: moneyPatch })
+        .then((p) => { if (my === impactSeq.current) setImpact(p); })
+        .catch(() => { if (my === impactSeq.current) setImpact(null); })
+        .finally(() => { if (my === impactSeq.current) setImpactBusy(false); });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [moneyKey, inPlace]);
+
+  /**
    * 保存の順は 相手先 → 範囲 → 金額。金額は改訂で新しい版を作ることがあり、
    * 新しい版は相手先も範囲も元から写すので、先に元を直しておく。
    */
@@ -332,8 +429,11 @@ export function ConditionEdit(
     );
   }
 
-  const field = (name: string, label: string, extra?: { type?: string; hint?: string; wide?: boolean; placeholder?: string }) => (
-    <label className={extra?.wide ? "field wide" : "field"} key={name} id={`f-${name}`}>
+  const field = (name: string, label: string, extra?: { type?: string; hint?: string; wide?: boolean; placeholder?: string }) => {
+    labels.current[name] = label;
+    const edited = (v[name] ?? "") !== (initial.current[name] ?? "");
+    return (
+    <label className={`${extra?.wide ? "field wide" : "field"}${edited ? " edited" : ""}`} key={name} id={`f-${name}`}>
       <span>{label}</span>
       {extra?.type === "regions" || extra?.type === "languages"
         ? <RightsScopePicker kind={extra.type === "regions" ? "region" : "language"}
@@ -345,7 +445,8 @@ export function ConditionEdit(
                  onChange={(e) => set(name, e.target.value)} />}
       {extra?.hint && <small className="faint">{extra.hint}</small>}
     </label>
-  );
+    );
+  };
   /** 変えられない項目。登録と同じ場所に出し、なぜ変えられないかを添える。 */
   const fixed = (label: string, value: string, why: string) => (
     <label className="field" key={label}>
@@ -377,7 +478,8 @@ export function ConditionEdit(
         </span>
       </div>
 
-      <div className="panel-bd">
+      <div className="panel-bd fix cedit">
+       <div className="fix-in" style={{ minWidth: 0 }}>
         <label className="row" style={{ gap: 8, marginBottom: 8, alignItems: "flex-start" }}>
           <input type="checkbox" checked={inPlace} disabled={hasPayment}
                  onChange={(e) => setInPlace(e.target.checked)} style={{ marginTop: 3 }} />
@@ -390,7 +492,7 @@ export function ConditionEdit(
             </small>
           </span>
         </label>
-        <div className={willRevise || later ? "note warn" : "note"} style={{ marginBottom: 12 }}>
+        <div className={noteRevise || later ? "note warn" : "note"} style={{ marginBottom: 12 }}>
           {inPlace
             ? <>直接編集です。実績が {detail.events.length} 件あっても<b>改訂にせず、この条件をその場で書き換えます</b>。
                 条件番号は変わりません。</>
@@ -398,7 +500,7 @@ export function ConditionEdit(
             ? <>適用開始日が先なので、保存すると<b>{effectiveFrom} から効く改訂として予約します</b>。
                 いまの版はその日まで生きたままで、集計にも計算書にも今までどおり使われます。
                 当日になると自動で切り替わります（人が押す必要はありません）。</>
-            : willRevise
+            : noteRevise
             ? <>この条件には実績が {detail.events.length} 件あります。保存すると
                 <b>旧版を残したまま新版を作ります（改訂）</b>。条件番号が新しくなり、
                 いまの版は「差し替え済み」になります。過去の計算書は旧版を指したままです。</>
@@ -411,8 +513,10 @@ export function ConditionEdit(
           <InLieuGuide detail={detail} v={v} set={set} pm={pm} hasPayment={hasPayment} chooseInLieu={chooseInLieu} onOpenCondition={onOpenCondition} />
         )}
 
-        {/* 並びは登録のフォームと同じ。 */}
-        <div className="form-grid">
+        {/* 並びは登録のフォームと同じ。見出しを押すと節を開け閉めする。 */}
+        <div className="form-grid" ref={gridRef}
+             onClick={(e) => toggleSec(e.target)}
+             onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && (e.target as HTMLElement).classList.contains("form-section")) { e.preventDefault(); toggleSec(e.target); } }}>
           <div className="form-section"><b>① 何の条件か</b><small>条件名・種類・相手先・作品。向きは変えられません</small></div>
           {field("name", "条件名")}
           {fixed("向き", detail.direction === "in" ? "IN 取得（費用側）" : "OUT 許諾（収入側）",
@@ -876,6 +980,43 @@ export function ConditionEdit(
           <button className="btn" onClick={onCancel} disabled={busy}>やめる</button>
           {!changedCount && <span className="faint">変更された項目がありません</span>}
         </div>
+       </div>
+
+       {/* 右：直した欄の前→後と、保存の意味。金額を直したら実績・支払・文書への響き方。 */}
+       <div className="stack" style={{ gap: 10, position: "sticky", top: 8, minWidth: 0 }}>
+        <div className="fix-out">
+          <div className="fix-tier">
+            <div className="fix-tname">変わる欄<small>{changes.length} 項目</small></div>
+            <div className="fix-tbody">
+              {!changes.length && <span className="faint">左の欄を直すと、ここに前→後が出ます</span>}
+              {changes.map((c) => (
+                <div key={c.key} className="fix-row">
+                  <span>{c.label}</span>
+                  <span className="ba"><span className="was">{c.was}</span><span className="arrow">→</span><span className="now">{c.now}</span></span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="fix-tier">
+            <div className="fix-tname">保存すると</div>
+            <div className="fix-tbody">
+              <div className="fix-row">
+                {inPlace ? <span className="chip stop">直接書き換え</span>
+                  : later ? <span className="chip new">改訂を予約（{effectiveFrom}）</span>
+                  : revises ? <span className="chip chg">改訂（新しい版）</span>
+                  : <span className="chip same">その場で直す</span>}
+                <span className="faint">{inPlace ? "番号は変わらない。決定済みの文書は元の値のまま"
+                  : later ? "その日までいまの版が生きる" : revises ? "実績は元の版に残る" : "番号は変わらない"}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        {Object.keys(moneyPatch).length > 0 && !inPlace && (<>
+          <b style={{ fontSize: 12.5 }}>金額の響き方（試算）</b>
+          <BundleImpact preview={impact} busy={impactBusy} />
+          <span className="faint" style={{ fontSize: 12 }}>実績・支払を直して訂正版を作るのは、案件の工程表の「まとめて直す」で（ここでは条件明細だけを直します）</span>
+        </>)}
+       </div>
       </div>
     </div>
   );
