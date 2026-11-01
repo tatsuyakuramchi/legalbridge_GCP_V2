@@ -335,13 +335,14 @@ export class WorkWriteService {
    *   条件      work_id を先へ（無効化・旧版も含めて全部。指す先を失わせない）
    *   パート    先の末尾に番号を振り直して移す。条件の work_part_id はそのまま生きる
    *   系譜      こちらの親は先の親に、こちらの子は先の子に。自分自身への輪は落とす
+   *   ほか      刊行物・製品（ISBN／JAN）、電子書籍の CID、クレジット表記、実績の作品、案件の作品
    *
    * 系譜で繋がっている2つ（親と子）はまとめない。子を親にまとめると、子の
    * 子が親の子になるだけで済むように見えるが、親の親がこちらだった場合に輪に
    * なる。関係のある2つは、先に系譜を外してからまとめてもらう。
    */
   async merge(id: number, intoId: number, actor: string): Promise<{
-    id: number; intoId: number; moved: { conditions: number; parts: number; lineage: number };
+    id: number; intoId: number; moved: { conditions: number; parts: number; lineage: number } & Record<string, number>;
   }> {
     if (id === intoId) throw new DomainError("VALIDATION", "同じ作品にはまとめられません");
     try {
@@ -380,6 +381,28 @@ export class WorkWriteService {
 
         const conditions = await client.query(
           "UPDATE conditions SET work_id = $2, updated_at = now() WHERE work_id = $1", [id, intoId]);
+        // 作品を指すほかの行も先へ。残すと、終了した作品にぶら下がったまま見えなくなる
+        // （刊行物の ISBN は一意なので、残すと統合先に同じ ISBN を足せない）。
+        // 表がまだ無い DB（193 の前など）は飛ばす。SAVEPOINT で、1 つ無くても統合は続ける。
+        const others: Record<string, number> = {};
+        for (const [table, sql] of [
+          ["work_editions", "UPDATE work_editions SET work_id = $2, updated_at = now() WHERE work_id = $1"],
+          ["ebook_work_codes", "UPDATE ebook_work_codes SET work_id = $2 WHERE work_id = $1"],
+          ["work_credits", "UPDATE work_credits SET work_id = $2 WHERE work_id = $1"],
+          ["condition_events", "UPDATE condition_events SET work_id = $2 WHERE work_id = $1"],
+          ["matters", "UPDATE matters SET work_id = $2, updated_at = now() WHERE work_id = $1"]
+        ] as const) {
+          await client.query("SAVEPOINT merge_other");
+          try {
+            const r = await client.query(sql, [id, intoId]);
+            others[table] = r.rowCount ?? 0;
+            await client.query("RELEASE SAVEPOINT merge_other");
+          } catch (error) {
+            await client.query("ROLLBACK TO SAVEPOINT merge_other");
+            const code = (error as { code?: string })?.code;
+            if (code !== "42P01" && code !== "42703") throw error;   // 表・列が無い DB だけ飛ばす
+          }
+        }
         const parts = await client.query(
           `UPDATE work_parts SET work_id = $2,
                   part_no = part_no + (SELECT COALESCE(max(part_no), 0) FROM work_parts WHERE work_id = $2)
@@ -408,7 +431,7 @@ export class WorkWriteService {
 
         const moved = {
           conditions: conditions.rowCount ?? 0, parts: parts.rowCount ?? 0,
-          lineage: (parents.rowCount ?? 0) + (children.rowCount ?? 0)
+          lineage: (parents.rowCount ?? 0) + (children.rowCount ?? 0), ...others
         };
         await recordAudit(client, {
           actor, action: "work.merge", targetType: "work", targetId: id,
