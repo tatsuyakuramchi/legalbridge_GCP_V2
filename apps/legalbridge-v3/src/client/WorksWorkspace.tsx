@@ -729,7 +729,7 @@ export function WorksWorkspace(
           </div>
           <div className="panel-bd stack" style={{ gap: 8 }}>
             <ListSearch value={keyword} onChange={setKeyword}
-              placeholder="作品名・コード・カナ" label="作品を絞り込む" />
+              placeholder="作品名・コード・カナ・取引先" label="作品を絞り込む" />
             <div className="row" style={{ gap: 6 }}>
               {([["all", "すべて"], ["source", "原作"], ["work", "作品"]] as const).map(([v, l]) => (
                 <button key={v} className="chip" aria-pressed={kindFilter === v} onClick={() => setKindFilter(v)}>{l}</button>

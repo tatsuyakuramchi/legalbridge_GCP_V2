@@ -5,18 +5,45 @@ import { translate } from "../core/errors.js";
 import type { RightsEnvelope, ScopeType } from "../core/model.js";
 import { renewalOf } from "../conditions/renewal.js";
 
+/**
+ * 取引先で作品を引く条件（作品台帳の検索キー）。作品に付いた生きた条件の相手先（作者・許諾先）、
+ * 共著の取り分の権利者、刊行物・製品の版元・販売元のどれかが、名前・カナ・取引先コード・別名に当たる作品。
+ * withEditions = false は刊行物の台帳（193）の無い DB 用。
+ */
+const partyMatchSql = (w: string, withEditions: boolean) => `EXISTS (
+    SELECT 1 FROM parties pm
+     WHERE pm.status <> 'merged'
+       AND (pm.name ILIKE '%' || $1 || '%' OR COALESCE(pm.name_kana, '') ILIKE '%' || $1 || '%'
+            OR COALESCE(pm.party_code, '') ILIKE '%' || $1 || '%'
+            OR EXISTS (SELECT 1 FROM unnest(COALESCE(pm.aliases, '{}'::text[])) a WHERE a ILIKE '%' || $1 || '%'))
+       AND (EXISTS (SELECT 1 FROM conditions cm WHERE cm.work_id = ${w}.id AND cm.status <> 'void' AND cm.counterparty_id = pm.id)
+            OR EXISTS (SELECT 1 FROM condition_shares sm JOIN conditions cs ON cs.id = sm.condition_id
+                        WHERE cs.work_id = ${w}.id AND cs.status <> 'void' AND sm.party_id = pm.id)
+            ${withEditions ? `OR EXISTS (SELECT 1 FROM work_editions em
+                        WHERE em.work_id = ${w}.id AND em.status = 'active' AND em.publisher_party_id = pm.id)` : ""}))`;
+
+/** 刊行物の台帳（193）の無い DB では、刊行物の版元を除いて引き直す。 */
+async function withEditionsFallback<T>(run: (withEditions: boolean) => Promise<T>): Promise<T> {
+  try { return await run(true); }
+  catch (error) {
+    if ((error as { code?: string })?.code === "42P01" && /work_editions/.test(String((error as Error).message))) return run(false);
+    throw error;
+  }
+}
+
 export class WorkRepository {
   constructor(private readonly database: Transactable) {}
 
   async list(keyword = "", limit = 200) {
     try {
-      const r = await this.database.query(
-        `SELECT id, work_code, title, kind, status FROM works
-          WHERE ($1 = '' OR title ILIKE '%' || $1 || '%' OR COALESCE(work_code,'') ILIKE '%' || $1 || '%')
+      const r = await withEditionsFallback((ed) => this.database.query(
+        `SELECT id, work_code, title, kind, status FROM works w
+          WHERE ($1 = '' OR title ILIKE '%' || $1 || '%' OR COALESCE(work_code,'') ILIKE '%' || $1 || '%'
+                 OR ${partyMatchSql("w", ed)})
           ORDER BY work_code NULLS LAST, id
           LIMIT $2`,
         [keyword.trim(), Math.min(Math.max(limit, 1), 500)]
-      );
+      ));
       return r.rows.map((w) => ({
         id: Number(w.id), workCode: str(w.work_code), title: String(w.title),
         kind: String(w.kind), status: String(w.status)
@@ -72,7 +99,7 @@ export class WorkRepository {
    */
   async tree(keyword = "", includeArchived = false) {
     try {
-      const works = await this.database.query(
+      const works = await withEditionsFallback((ed) => this.database.query(
         `SELECT w.id, w.work_code, w.title, w.title_kana, w.kind, w.status, w.business_line,
                 (w.legacy_id IS NOT NULL) AS legacy, w.merged_into_id,
                 (SELECT count(*)::int FROM conditions c
@@ -81,11 +108,13 @@ export class WorkRepository {
            FROM works w
           WHERE ($1 = '' OR w.title ILIKE '%' || $1 || '%'
                  OR COALESCE(w.work_code,'') ILIKE '%' || $1 || '%'
-                 OR COALESCE(w.title_kana,'') ILIKE '%' || $1 || '%')
+                 OR COALESCE(w.title_kana,'') ILIKE '%' || $1 || '%'
+                 -- 取引先（作者・許諾先・共著の権利者・版元・販売元）の名前・カナ・コード・別名でも引く。
+                 OR ${partyMatchSql("w", ed)})
             AND ($2 OR w.status <> 'archived')
           ORDER BY w.kind = 'source_ip' DESC, w.title
           LIMIT 3000`,
-        [keyword.trim(), includeArchived]);
+        [keyword.trim(), includeArchived]));
       // 同じ親子が関係の種類違いで2行あることがある（移行元の表が2つ）。
       // 画面は親子だけを見るので1つにまとめる。
       const lineage = await this.database.query(
