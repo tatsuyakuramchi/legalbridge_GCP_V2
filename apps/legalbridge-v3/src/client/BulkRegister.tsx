@@ -25,6 +25,7 @@ const GROUPS: Array<{ label: string; targets: Target[] }> = [
   { label: "作品", targets: [
     { kind: "works", title: "作品", what: "作品を登録（親作品を書けば派生作品）" },
     { kind: "pub_works", title: "出版作品", what: "作品＋紙・電子の条件＋共著の取り分＋CID＋刊行物（版元・ISBN）を 1 行で" },
+    { kind: "pub_works", mode: "update", title: "出版作品を直す", what: "登録済みの出版作品の料率・期間・自動更新・地域・言語・刊行物を直す（登録と同じ CSV を流せる）" },
     { kind: "game_works", title: "ゲーム作品", what: "作品＋作者ごとの取引モデルの条件＋製品（販売元・JAN）を 1 行で" }
   ] },
   { label: "契約", targets: [
@@ -39,7 +40,10 @@ const GROUPS: Array<{ label: string; targets: Target[] }> = [
 
 export function BulkRegister({ preset }: { preset?: ImportPreset | null }) {
   const [picked, setPicked] = useState<ImportPreset | null>(preset ?? null);
-  const target = GROUPS.flatMap((g) => g.targets).find((t) => t.kind === picked?.kind) ?? null;
+  // 同じ種類に「登録」と「直す」のカードがあるので、取り込み方も合わせて当てる。
+  const same = (t: Target) => t.kind === picked?.kind && (t.mode ?? null) === (picked?.mode ?? null);
+  const target = GROUPS.flatMap((g) => g.targets).find(same)
+    ?? GROUPS.flatMap((g) => g.targets).find((t) => t.kind === picked?.kind) ?? null;
   return (
     <div className="stack">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
@@ -48,14 +52,14 @@ export function BulkRegister({ preset }: { preset?: ImportPreset | null }) {
             <div className="panel-hd"><h2>{g.label}</h2></div>
             <div className="panel-bd stack" style={{ gap: 6 }}>
               {g.targets.map((t) => (
-                <button key={t.kind} className={`btn${picked?.kind === t.kind ? " primary" : ""}`}
+                <button key={`${t.kind}:${t.mode ?? ""}`} className={`btn${same(t) ? " primary" : ""}`}
                         style={{ textAlign: "left", display: "block", whiteSpace: "normal" }}
-                        aria-pressed={picked?.kind === t.kind}
+                        aria-pressed={same(t)}
                         onClick={() => setPicked({ kind: t.kind, mode: t.mode ?? null })}>
                   <b>{t.title}</b>
                   {/* 選んだカードは地が濃いので、説明は薄い灰色ではなく地の文字色のまま少しだけ落とす。 */}
-                  <span className={picked?.kind === t.kind ? undefined : "faint"}
-                        style={{ display: "block", fontWeight: 400, ...(picked?.kind === t.kind ? { opacity: 0.9 } : {}) }}>{t.what}</span>
+                  <span className={same(t) ? undefined : "faint"}
+                        style={{ display: "block", fontWeight: 400, ...(same(t) ? { opacity: 0.9 } : {}) }}>{t.what}</span>
                 </button>
               ))}
             </div>
