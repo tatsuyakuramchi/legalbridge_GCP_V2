@@ -20,6 +20,11 @@ export interface EditionColumnNames {
   dateSuffix: string; // 刊／発売
   price: string;     // 本体価格／希望小売価格
   rate: string;      // 版元料率／販売元料率
+  /**
+   * 出版だけ：電子の料率の列（版元電子料率）。あれば版元との条件を紙・電子の 2 本に分ける（媒体の許諾範囲つき）。
+   * 版元は紙と電子を別々に報告して払うので、1 本にまとめると入金から作者の紙・電子を取り違える。
+   */
+  rateDigital?: string;
   /** 自社の言い方（自社刊行／自社製造・自社販売）。 */
   ownLabel: string;
   /** 再許諾の条件を作るときの名前（作品名｜○○（相手））と備考・価格の基準・計算書の出し方。 */
@@ -31,7 +36,7 @@ export interface EditionColumnNames {
 
 export const PUB_EDITION_NAMES: EditionColumnNames = {
   thing: "刊行物", partner: "版元", partnerCode: "版元コード", relation: "版元との関係", code: "ISBN",
-  date: "刊行日", dateSuffix: "刊", price: "本体価格", rate: "版元料率", ownLabel: "自社刊行",
+  date: "刊行日", dateSuffix: "刊", price: "本体価格", rate: "版元料率", rateDigital: "版元電子料率", ownLabel: "自社刊行",
   outName: "出版の再許諾", outNotes: "出版作品の取込で作成（版元料率。本体価格に対して）", outPriceBasis: "list", outTiming: "event"
 };
 
@@ -41,7 +46,8 @@ export const GAME_EDITION_NAMES: EditionColumnNames = {
   outName: "再許諾", outNotes: "ゲーム作品の取込で作成（販売元料率。受領額に対して）", outPriceBasis: "receipts", outTiming: "periodic"
 };
 
-export const editionColumns = (n: EditionColumnNames) => [n.partner, n.partnerCode, n.relation, n.code, n.date, n.price, n.rate];
+export const editionColumns = (n: EditionColumnNames) =>
+  [n.partner, n.partnerCode, n.relation, n.code, n.date, n.price, n.rate, ...(n.rateDigital ? [n.rateDigital] : [])];
 
 export interface EditionRow {
   publisher: { id: number; name: string } | null;
@@ -50,6 +56,8 @@ export interface EditionRow {
   isbn: string | null; publishedOn: string | null; listPrice: number | null;
   /** 相手から当社への料率（%）。再許諾の条件（OUT）を作るか、既にあれば使う。 */
   outRatePct: number | null;
+  /** 出版だけ：電子の料率（%）。版元との電子の再許諾の条件を作るか使う。 */
+  outDigitalRatePct?: number | null;
 }
 
 const text = (row: Record<string, string>, header: string) => String(row[header] ?? "").trim();
@@ -90,13 +98,14 @@ export async function readEditionColumns(
     throw new DomainError("VALIDATION", `${n.relation}は「${n.ownLabel}」「グループ会社」「再許諾」${n === GAME_EDITION_NAMES ? "「他社販売」" : ""}のどれかです（"${relText}"）`);
   }
   const outRatePct = pct(text(row, n.rate), n.rate);
+  const outDigitalRatePct = n.rateDigital ? pct(text(row, n.rateDigital), n.rateDigital) : null;
   let relation: EditionRelation;
   if (relText) relation = RELATION_OF[relText];
-  else if (outRatePct !== null) relation = "sublicense";
+  else if (outRatePct !== null || outDigitalRatePct !== null) relation = "sublicense";
   else if (!publisher) relation = "own";
   else throw new DomainError("VALIDATION", `${n.partner} ${publisher.name} との関係を「${n.relation}」に入れてください（料率の取り決めが無いなら「グループ会社」）`);
   if (relation !== "own" && !publisher) throw new DomainError("VALIDATION", `${n.partner}を入れてください（${n.ownLabel}なら空でよい）`);
-  if (outRatePct !== null && relation !== "sublicense") {
+  if ((outRatePct !== null || outDigitalRatePct !== null) && relation !== "sublicense") {
     throw new DomainError("VALIDATION", `${n.rate}は再許諾のときだけです（${RELATION_LABEL[relation]}は料率で条件を作らない）`);
   }
   const priceText = text(row, n.price).replace(/[,，円¥￥\s]/g, "");
@@ -126,14 +135,16 @@ export async function readEditionColumns(
       [sameWorkId, relation, publisher?.id ?? null, publishedOn]).catch(() => ({ rows: [] }));
     if (same.rows[0]) reuse = true;
   }
-  return { publisher, relation, isbn, publishedOn, listPrice, outRatePct, reuse };
+  return { publisher, relation, isbn, publishedOn, listPrice, outRatePct, outDigitalRatePct, reuse };
 }
 
 /** 読み上げ（「刊行物 KADOKAWA（再許諾 12%） ISBN 978… 2004-09-10 刊」）。 */
 export function editionRowLabel(e: EditionRow, n: EditionColumnNames): string {
   const who = e.publisher ? e.publisher.name : "当社";
   const rel = e.relation === "sublicense"
-    ? `再許諾${e.outRatePct !== null ? ` ${e.outRatePct}%` : `・${n.partner}との条件は付けない（後で）`}`
+    ? `再許諾${n.rateDigital
+        ? [e.outRatePct !== null ? ` 紙 ${e.outRatePct}%` : "", e.outDigitalRatePct != null ? ` 電子 ${e.outDigitalRatePct}%` : ""].join("") || `・${n.partner}との条件は付けない（後で）`
+        : e.outRatePct !== null ? ` ${e.outRatePct}%` : `・${n.partner}との条件は付けない（後で）`}`
     : e.relation === "group" ? "グループ会社・料率なし"
     : e.relation === "own" ? n.ownLabel
     : `他社販売・${n.partner}との条件は既存の OEM を使う`;
@@ -145,6 +156,7 @@ export interface EditionWriteDeps {
     name: string; direction: "out"; kind: "license"; usageType: "sublicense"; counterpartyId: number; workId: number;
     pricingModel: "revenue_rate"; ratePpm: number; priceBasis: "list" | "receipts" | null; statementTiming: "event" | "periodic";
     currency: string; notes?: string | null;
+    scopes?: Array<{ scopeType: "media"; label: string; code: string }>;
   }, actor: string): Promise<{ id: number; conditionNo: string | null }>;
   editions?: { create(workId: number, input: EditionInput, actor: string): Promise<{ id: number }> };
 }
@@ -161,36 +173,71 @@ export async function writeEditionRow(
 ): Promise<string> {
   if (e.reuse) return "";
   if (!deps.editions) throw new DomainError("VALIDATION", `${n.thing}の台帳がありません（193 を当ててください）`);
+  const made: string[] = [];
   let outConditionId: number | null = null;
-  let outNo: string | null = null;
-  const usage = e.relation === "oem" ? "oem" : "sublicense";
-  if ((e.relation === "sublicense" && e.outRatePct !== null || e.relation === "oem") && e.publisher) {
-    const hit = (await q.query(
-      `SELECT id, condition_no, rate_ppm FROM conditions
-        WHERE direction = 'out' AND kind = 'license' AND usage_type = $3 AND status IN ('active', 'scheduled')
-          AND work_id = $1 AND counterparty_id = $2
-        ORDER BY id LIMIT 2`, [workId, e.publisher.id, usage])).rows as Array<{ id: number; condition_no: string | null; rate_ppm: number | null }>;
-    const what = usage === "oem" ? "他社販売（OEM）" : "再許諾";
-    if (hit.length > 1) throw new DomainError("VALIDATION", `${e.publisher.name} との${what}の条件が 2 本以上あります。条件明細で整理してから入れてください`);
-    if (hit[0]) {
-      if (usage === "sublicense" && Number(hit[0].rate_ppm) !== Math.round(e.outRatePct! * 10000)) {
-        throw new DomainError("VALIDATION",
-          `${e.publisher.name} との再許諾の条件 ${hit[0].condition_no ?? `#${hit[0].id}`} は料率 ${Number(hit[0].rate_ppm) / 10000}% です（${n.rate} ${e.outRatePct}%）。条件明細で直すか、${n.rate}を合わせてください`);
+  const pub = e.publisher;
+  if (pub && e.relation === "oem") {
+    const hit = await findOut(q, workId, pub.id, "oem", null);
+    if (hit.length > 1) throw new DomainError("VALIDATION", `${pub.name} との他社販売（OEM）の条件が 2 本以上あります。条件明細で整理してから入れてください`);
+    if (hit[0]) { outConditionId = hit[0].id; made.push(`${n.partner}との条件 ${hit[0].no}`); }
+  } else if (pub && e.relation === "sublicense") {
+    // 出版は紙・電子で条件を分ける（媒体の許諾範囲つき）。ゲームは媒体なしの 1 本。
+    const wants: Array<{ media: "print" | "digital" | null; ratePct: number; label: string; priceBasis: "list" | "receipts" | null;
+                         timing: "event" | "periodic"; column: string }> = [];
+    if (e.outRatePct !== null) {
+      wants.push({ media: n.rateDigital ? "print" : null, ratePct: e.outRatePct, label: n.rateDigital ? "紙" : "",
+                   priceBasis: n.outPriceBasis, timing: n.outTiming, column: n.rate });
+    }
+    if (n.rateDigital && e.outDigitalRatePct != null) {
+      wants.push({ media: "digital", ratePct: e.outDigitalRatePct, label: "電子", priceBasis: null, timing: "periodic", column: n.rateDigital });
+    }
+    for (const w of wants) {
+      const hit = await findOut(q, workId, pub.id, "sublicense", w.media);
+      const what = `${pub.name} との${w.label ? `${w.label}の` : ""}再許諾の条件`;
+      if (hit.length > 1) throw new DomainError("VALIDATION", `${what}が 2 本以上あります。条件明細で整理してから入れてください`);
+      let id: number; let no: string | null;
+      if (hit[0]) {
+        if (hit[0].ratePpm !== Math.round(w.ratePct * 10000)) {
+          throw new DomainError("VALIDATION",
+            `${what} ${hit[0].no ?? `#${hit[0].id}`} は料率 ${Number(hit[0].ratePpm) / 10000}% です（${w.column} ${w.ratePct}%）。条件明細で直すか、${w.column}を合わせてください`);
+        }
+        id = hit[0].id; no = hit[0].no;
+      } else {
+        if (!deps.createOut) throw new DomainError("VALIDATION", "再許諾の条件を作れません");
+        const c = await deps.createOut({
+          name: `${title}｜${n.outName}${w.label ? `・${w.label}` : ""}（${pub.name}）`, direction: "out", kind: "license", usageType: "sublicense",
+          counterpartyId: pub.id, workId, pricingModel: "revenue_rate", ratePpm: Math.round(w.ratePct * 10000),
+          priceBasis: w.priceBasis, statementTiming: w.timing, currency: "JPY",
+          notes: w.media === "digital" ? "出版作品の取込で作成（版元電子料率）" : n.outNotes,
+          ...(w.media ? { scopes: [{ scopeType: "media" as const, label: w.media === "print" ? "紙" : "電子", code: w.media }] } : {})
+        }, actor);
+        id = c.id; no = c.conditionNo;
       }
-      outConditionId = Number(hit[0].id); outNo = hit[0].condition_no;
-    } else if (usage === "sublicense") {
-      if (!deps.createOut) throw new DomainError("VALIDATION", "再許諾の条件を作れません");
-      const made = await deps.createOut({
-        name: `${title}｜${n.outName}（${e.publisher.name}）`, direction: "out", kind: "license", usageType: "sublicense",
-        counterpartyId: e.publisher.id, workId, pricingModel: "revenue_rate", ratePpm: Math.round(e.outRatePct! * 10000),
-        priceBasis: n.outPriceBasis, statementTiming: n.outTiming, currency: "JPY", notes: n.outNotes
-      }, actor);
-      outConditionId = made.id; outNo = made.conditionNo;
+      // 刊行物（本）が指すのは紙の条件。電子だけなら電子の条件。
+      if (outConditionId === null || w.media === "print") outConditionId = id;
+      made.push(`${n.partner}との${w.label ? `${w.label}の` : ""}条件 ${no ?? `#${id}`}`);
     }
   }
   await deps.editions.create(workId, {
-    publisherPartyId: e.publisher?.id ?? null, relation: e.relation, isbn: e.isbn, publishedOn: e.publishedOn,
+    publisherPartyId: pub?.id ?? null, relation: e.relation, isbn: e.isbn, publishedOn: e.publishedOn,
     listPrice: e.listPrice, outConditionId
   }, actor);
-  return outNo ? `${n.partner}との条件 ${outNo}` : "";
+  return made.join("・");
+}
+
+/**
+ * 作品 × 相手の生きた OUT 条件。media を渡すと媒体で絞る：紙は媒体が紙か媒体なし（193 の取込で作った条件）、電子は電子だけ。
+ */
+async function findOut(q: Queryable, workId: number, partyId: number, usage: string, media: "print" | "digital" | null):
+  Promise<Array<{ id: number; no: string | null; ratePpm: number | null }>> {
+  const rows = (await q.query(
+    `SELECT c.id, c.condition_no, c.rate_ppm,
+            (SELECT sc.code FROM condition_scopes sc WHERE sc.condition_id = c.id AND sc.scope_type = 'media' LIMIT 1) AS media
+       FROM conditions c
+      WHERE c.direction = 'out' AND c.kind = 'license' AND c.usage_type = $3 AND c.status IN ('active', 'scheduled')
+        AND c.work_id = $1 AND c.counterparty_id = $2
+      ORDER BY c.id`, [workId, partyId, usage])).rows as Array<{ id: number; condition_no: string | null; rate_ppm: number | null; media: string | null }>;
+  return rows
+    .filter((r) => !media || (media === "digital" ? r.media === "digital" : r.media !== "digital"))
+    .map((r) => ({ id: Number(r.id), no: r.condition_no, ratePpm: r.rate_ppm === null ? null : Number(r.rate_ppm) }));
 }

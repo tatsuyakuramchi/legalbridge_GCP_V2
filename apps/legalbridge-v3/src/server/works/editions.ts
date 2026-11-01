@@ -260,22 +260,56 @@ export async function editionOutConditionIds(q: Queryable, workIds?: number[]): 
   }
 }
 
-/** 作者の紙・電子の条件。刊行物の根拠になっている再許諾（OUT）にも効く。 */
+/** 作者の紙・電子の条件。 */
 export const PUB_IN_USAGES = ["pub_print", "pub_digital"];
 
 /**
- * IN 条件の利用形態が OUT 条件に効くか（純粋関数）。ふつうは同じ利用形態だけ。
- * 刊行物の根拠になっている再許諾（版元に出版させる OUT）には、作者の紙・電子の条件も効く
- * （作者との取り決めは「紙は本体価格の 7%・電子は入金額の 85%」のように媒体で書かれている）。
+ * 出版の再許諾（版元に出させる OUT）の媒体。紙と電子で条件を分ける（版元は紙・電子を別々に報告し、別々に払う）。
+ * null は出版の再許諾ではない（翻訳・ゲームなどのふつうの再許諾）。
  */
-export function usageCovers(inUsage: string | null, outUsage: string | null, outBacksEdition: boolean): boolean {
+export type PublicationMedia = "print" | "digital";
+
+/**
+ * IN 条件の利用形態が OUT 条件に効くか（純粋関数）。ふつうは同じ利用形態だけ。
+ * 出版の再許諾には、その媒体の作者の条件が効く：紙の再許諾 → 作者の紙（pub_print）、電子 → 作者の電子（pub_digital）。
+ * 紙と電子を 1 本の OUT にまとめない（入金からどちらの作者の条件に払うか、取り違えるので）。
+ */
+export function usageCovers(inUsage: string | null, outUsage: string | null, media: PublicationMedia | null): boolean {
   if (inUsage === outUsage) return true;
-  return outBacksEdition && outUsage === "sublicense" && PUB_IN_USAGES.includes(String(inUsage));
+  if (outUsage !== "sublicense" || !media) return false;
+  return inUsage === (media === "print" ? "pub_print" : "pub_digital");
 }
 
-/** 刊行物の根拠になっている OUT 条件か（1 本だけ）。193 の前の DB では false。 */
-export async function backsEdition(q: Queryable, outConditionId: number): Promise<boolean> {
-  return (await editionOutConditionIds(q)).has(outConditionId);
+/**
+ * 出版の再許諾（OUT）と、その媒体。刊行物（関係が再許諾）の根拠の条件か、刊行物と同じ作品 × 版元の再許諾の条件。
+ * 媒体は条件の許諾範囲（media）。媒体の無い条件（193 の取込で作った、版元料率＝紙の率のもの）は紙と読む。
+ * 193 の前の DB では空。
+ */
+export async function publicationOuts(q: Queryable, workIds?: number[]): Promise<Map<number, PublicationMedia>> {
+  try {
+    const r = await q.query(
+      `SELECT oc.id,
+              (SELECT sc.code FROM condition_scopes sc WHERE sc.condition_id = oc.id AND sc.scope_type = 'media'
+                ORDER BY sc.sort_order LIMIT 1) AS media
+         FROM conditions oc
+        WHERE oc.direction = 'out' AND oc.usage_type = 'sublicense'
+          ${workIds ? "AND oc.work_id = ANY($1::bigint[])" : ""}
+          AND EXISTS (SELECT 1 FROM work_editions e
+                       WHERE e.status = 'active' AND e.relation = 'sublicense'
+                         AND (e.out_condition_id = oc.id
+                              OR (e.work_id = oc.work_id AND e.publisher_party_id = oc.counterparty_id)))`,
+      workIds ? [workIds] : []);
+    return new Map((r.rows as Array<{ id: number; media: string | null }>)
+      .map((x) => [Number(x.id), x.media === "digital" ? "digital" : "print"] as [number, PublicationMedia]));
+  } catch (error) {
+    if (isMissingTable(error)) return new Map();
+    throw error;
+  }
+}
+
+/** 出版の再許諾なら媒体、そうでなければ null（1 本だけ）。 */
+export async function publicationMediaOf(q: Queryable, outConditionId: number): Promise<PublicationMedia | null> {
+  return (await publicationOuts(q)).get(outConditionId) ?? null;
 }
 
 /** 監査：再許諾の刊行物で、版元との条件（OUT）が無いもの。193 の前の DB では空。 */
