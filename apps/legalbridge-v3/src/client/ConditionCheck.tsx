@@ -28,7 +28,7 @@ const CARDS: Array<{ key: Card; label: string; sub: string }> = [
   { key: "noMode", label: "決済の型が空", sub: "時限式／イベント式が推測のまま" },
   { key: "noBasis", label: "根拠の文書なし", sub: "契約にも決定済みの文書にも繋がっていない" },
   { key: "uncovered", label: "作者に届かない許諾", sub: "OUT 条件に効く作者の条件が無い" },
-  { key: "editionsNoOut", label: "版元の条件なし", sub: "再許諾の刊行物に版元との条件（OUT）が無い" }
+  { key: "editionsNoOut", label: "版元・販売元の条件なし", sub: "再許諾・他社販売の刊行物・製品に相手との条件（OUT）が無い" }
 ];
 
 export function ConditionCheck({ onOpenCondition, onOpenWork }: { onOpenCondition: (id: number) => void; onOpenWork?: (id: number) => void }) {
@@ -167,16 +167,16 @@ export function ConditionCheck({ onOpenCondition, onOpenWork }: { onOpenConditio
       )}
       {data && card === "editionsNoOut" && (
         <div className="panel">
-          <div className="panel-hd"><h2>版元の条件なし</h2><span className="faint">再許諾の刊行物なのに版元との条件（OUT）がありません。入金の突き合わせと作者への払いに繋がりません。作品の「刊行物」で条件を選ぶか、料率の取り決めが無いなら関係を「グループ会社」に直してください</span></div>
+          <div className="panel-hd"><h2>版元・販売元の条件なし</h2><span className="faint">再許諾・他社販売の刊行物・製品なのに相手との条件（OUT）がありません。入金の突き合わせと作者への払いに繋がりません。作品の「刊行物・製品」で条件を選ぶか、料率の取り決めが無いなら関係を「グループ会社」に直してください</span></div>
           {(data.editionsNoOut ?? []).length ? <div className="tablewrap"><table>
-            <thead><tr><th>作品</th><th>版元</th><th>ISBN</th><th>刊行日</th></tr></thead>
+            <thead><tr><th>作品</th><th>版元・販売元</th><th>ISBN／JAN</th><th>刊行日・発売日</th></tr></thead>
             <tbody>{(data.editionsNoOut ?? []).map((e) => (
               <tr key={e.id}>
                 <td>{onOpenWork ? <button className="linky" onClick={() => onOpenWork(e.workId)}>{e.workTitle}</button> : e.workTitle}</td>
                 <td>{e.publisherName ?? "—"}</td><td className="code">{e.isbn ?? "—"}</td><td>{e.publishedOn ?? "—"}</td>
               </tr>
             ))}</tbody>
-          </table></div> : <div className="panel-bd faint">版元の条件の無い再許諾の刊行物はありません</div>}
+          </table></div> : <div className="panel-bd faint">相手との条件の無い刊行物・製品はありません</div>}
         </div>
       )}
     </section>
