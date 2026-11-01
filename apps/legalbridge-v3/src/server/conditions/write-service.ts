@@ -775,8 +775,11 @@ export class ConditionWriteService {
     // 支払条件が空なら媒体ごとの既定（紙は刷部数確定の都度、電子は年 1 回の集計）。
     const terms = String(input.paymentTerms ?? "").trim();
     if (input.print) {
+      // 決済の型：紙は刷部数の確定ごと＝イベント式（open）。
+      // 空のままだと推測（timingOf）で同じ出し方になるが、条件の点検に「決済の型が空」で残り続ける。
       rows.push({ usageType: "pub_print", ratePct: input.print.ratePct, exclusivity: input.print.exclusivity ?? null,
-                  paymentTerms: String(input.print.paymentTerms ?? "").trim() || terms || PUB_PRINT_PAYMENT_TERMS });
+                  paymentTerms: String(input.print.paymentTerms ?? "").trim() || terms || PUB_PRINT_PAYMENT_TERMS,
+                  settlementMode: "open" as const });
     }
     if (input.digital) {
       // 集計のしかた（年 1 回・年 2 回・年 4 回）を選んでいれば、支払条件の文と決済の型をそこから作る。
@@ -790,7 +793,9 @@ export class ConditionWriteService {
       rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
                   paymentTerms: String(input.digital.paymentTerms ?? "").trim() || terms
                     || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS),
-                  ...(spec ? { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(spec.cycle) } : {}) });
+                  // 電子は集計期間ごと＝時限式（term_bound）。集計のしかたが無ければ既定の支払条件どおり年 1 回。
+                  ...(spec ? { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(spec.cycle) }
+                    : { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf("year") }) });
     }
     if (input.sublicense) {
       rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,
