@@ -224,8 +224,8 @@ test("書き出し：作品 × 相手先で 1 行。取り分は電子の料率�
   });
   const csv = await new PubWorksImportService(fake, deps()).exportCsv();
   const lines = csv.split("\r\n");
-  assert.equal(lines[0], "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考,作品備考,事業区分");
-  assert.equal(lines[1], "光砕のリヴァルチャー,WRK-7,,瀧里フユ,P-11,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ 25,瀧里フユ（V-0102） 75／宝井ロメロ 25,当社,BT0001,,2025-07-01,,,,日本語,,,,,出版",
+  assert.equal(lines[0], "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,紙支払条件,電子支払条件,地域,言語,著作権表示,第三者権利,備考,作品備考,事業区分");
+  assert.equal(lines[1], "光砕のリヴァルチャー,WRK-7,,瀧里フユ,P-11,10,15,非独占,瀧里フユ（V-0102） 75／宝井ロメロ 25,瀧里フユ（V-0102） 75／宝井ロメロ 25,当社,BT0001,,2025-07-01,,,,,,日本語,,,,,出版",
     "取り分は紙・電子の 2 列、比率（合計 100）で出す。実値で出すと全体率を改訂したときに読み直せない");
   // 書き出した取り分はそのまま読める。コードの無い権利者は取り込むときに止まる（先に取引先にコードを付ける）。
   assert.deepEqual(parseShareText("瀧里フユ（V-0102） 75／宝井ロメロ（V-0188） 25", 15).map((s) => s.ppm), [750000, 250000]);
@@ -289,4 +289,32 @@ test("更新：電子取り分だけ直す（紙は触らない）。書き出�
   const csv = await new PubWorksImportService(fake, deps()).exportCsv();
   const cells = csv.split("\r\n")[1].split(",");
   assert.deepEqual(cells.slice(8, 11), ["番棚葵（V-0301） 30／佐々宮智志（V-0302） 70", "番棚葵（V-0301） 40／佐々宮智志（V-0302） 60", "当社"]);
+});
+
+// ---- 紙と電子で支払条件が違う契約 -----------------------------------------
+
+test("紙支払条件・電子支払条件：その媒体だけに入り、共通の支払条件より優先する", async () => {
+  const fake = db({ parties: PARTIES });
+  const d = deps();
+  const row = { "作品名": "新しい作品", "相手先": "冒険支援株式会社", "紙料率": "7", "電子料率": "85",
+                "支払条件": "共通の払い方", "電子支払条件": "版元からの入金の翌月末日払い" };
+  const r = await new PubWorksImportService(fake, d).run([row], false, "tester");
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  const set = d.calls.find((c) => c.what === "set")!.args[0] as Record<string, any>;
+  assert.equal(set.paymentTerms, "共通の払い方", "紙は共通の支払条件");
+  assert.equal(set.print.paymentTerms, undefined);
+  assert.equal(set.digital.paymentTerms, "版元からの入金の翌月末日払い");
+
+  const bad = await new PubWorksImportService(db({ parties: PARTIES }), deps())
+    .run([{ "作品名": "電子なし", "相手先": "冒険支援株式会社", "紙料率": "7", "電子支払条件": "翌月末" }], true, "tester");
+  assert.match(bad.rows[0].message ?? "", /電子支払条件を入れるなら電子料率も/);
+});
+
+test("更新：電子支払条件だけ直す（紙は触らない）", async () => {
+  const d = deps();
+  const fake = db({ parties: PARTIES, works: WORKS, pub: PUB });
+  const r = await new PubWorksImportService(fake, d).run([{ "作品コード": "WRK-7", "電子支払条件": "半年ごとに集計し翌々月末払い" }], false, "tester", "update");
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  assert.deepEqual(d.calls.map((c) => c.what), ["economics"]);
+  assert.deepEqual(d.calls[0].args.slice(0, 2), [602, { paymentTerms: "半年ごとに集計し翌々月末払い" }]);
 });
