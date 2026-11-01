@@ -19,6 +19,7 @@ import { AGREEMENT_CSV_HEADERS, AGREEMENT_CSV_REFERENCE_COLUMNS, AGREEMENT_CSV_U
          agreementCsvPatch } from "../agreements/csv.js";
 import { PUB_EDITION_COLUMNS, PUB_WORKS_SAMPLE, PUB_WORKS_UPDATE_SAMPLE, PubWorksImportService } from "./pub-works.js";
 import { WorkEditionService } from "../works/editions.js";
+import { GAME_WORKS_HEADERS, GAME_WORKS_SAMPLE, GameWorksImportService } from "./game-works.js";
 import { EXISTING_CONTRACTS_SAMPLE, ExistingContractsImportService } from "./existing-contracts.js";
 import { AgreementService } from "../agreements/service.js";
 
@@ -33,7 +34,7 @@ import { AgreementService } from "../agreements/service.js";
  * 画面から入れた行と取り込んだ行で品質が変わる。
  */
 
-export type ImportKind = "parties" | "works" | "license_conditions" | "service_conditions" | "agreements" | "pub_works" | "existing_contracts";
+export type ImportKind = "parties" | "works" | "license_conditions" | "service_conditions" | "agreements" | "pub_works" | "game_works" | "existing_contracts";
 
 /**
  * 取り込み方。
@@ -126,6 +127,13 @@ export const IMPORT_SPECS: ImportSpec[] = [
                     "カナ", "著作権表示", "第三者権利", "作品備考", "事業区分"],
     updateSample: PUB_WORKS_UPDATE_SAMPLE,
     exportPath: "/imports/pub-works/export.csv", exportLabel: "登録済みの出版作品（作品 × 相手先で 1 行）"
+  },
+  {
+    kind: "game_works", label: "ゲーム作品（作品＋取引モデルごとの条件＋製品（販売元・JAN）を 1 行で）",
+    required: ["作品名"],
+    optional: GAME_WORKS_HEADERS.filter((h) => h !== "作品名"),
+    sample: GAME_WORKS_SAMPLE,
+    updatable: false
   },
   {
     kind: "existing_contracts", label: "既存契約（移行前に紙で結んだ基本契約＋条件書を、外部番号のまま作品の条件に繋ぐ）",
@@ -298,6 +306,7 @@ export class ImportService {
   private readonly conditions: ConditionWriteService;
   private readonly agreements: PartyAgreementMapService;
   private readonly pubWorks: PubWorksImportService;
+  private readonly gameWorks: GameWorksImportService;
   private readonly existingContracts: ExistingContractsImportService;
 
   constructor(private readonly database: Transactable) {
@@ -307,6 +316,8 @@ export class ImportService {
     this.conditions = new ConditionWriteService(database);
     this.pubWorks = new PubWorksImportService(database, { works: this.works, conditions: this.conditions,
                                                          editions: new WorkEditionService(database) });
+    this.gameWorks = new GameWorksImportService(database, { works: this.works, conditions: this.conditions,
+                                                           editions: new WorkEditionService(database) });
     this.existingContracts = new ExistingContractsImportService(database, { agreements: new AgreementService(database) });
   }
 
@@ -391,6 +402,10 @@ export class ImportService {
     if (input.kind === "pub_works") {
       // 出版作品の一括登録。作品が無ければ作り、紙・電子の条件と取り分、CID を 1 行で入れる。
       return this.pubWorks.run(parsed.rows, input.dryRun, input.actor, mode);
+    }
+    if (input.kind === "game_works") {
+      // ゲーム作品の一括登録。作品 × 作者で 1 行。取引モデルごとの条件と、製品（販売元・JAN）を入れる。
+      return this.gameWorks.run(parsed.rows, input.dryRun, input.actor);
     }
     if (input.kind === "existing_contracts") {
       // 移行前の紙の契約を外部番号のまま登録し、作品の条件に繋ぐ。

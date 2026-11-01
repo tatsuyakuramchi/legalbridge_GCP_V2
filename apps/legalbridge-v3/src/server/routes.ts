@@ -1739,7 +1739,7 @@ export function createRoutes(database: Transactable) {
        .send(withBom(csv));
   }));
   const importSchema = z.object({
-    kind: z.enum(["parties", "works", "license_conditions", "service_conditions", "agreements", "pub_works", "existing_contracts"]),
+    kind: z.enum(["parties", "works", "license_conditions", "service_conditions", "agreements", "pub_works", "game_works", "existing_contracts"]),
     csv: z.string().min(1).max(2_000_000),
     dryRun: z.boolean(),
     // create（新しく作る）か update（既存に当てる）か。既定は create。

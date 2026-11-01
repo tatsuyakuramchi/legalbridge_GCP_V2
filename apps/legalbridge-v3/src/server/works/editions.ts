@@ -14,16 +14,20 @@ import { ppmToPct } from "../royalty/economics.js";
  * 作者への払いは作者の IN 条件（紙・電子）で決まる。刊行物はその「どの本の分か」を ISBN で当てるための台帳。
  */
 
-export type EditionRelation = "own" | "group" | "sublicense";
-export const EDITION_RELATIONS: EditionRelation[] = ["own", "group", "sublicense"];
+export type EditionRelation = "own" | "group" | "sublicense" | "oem";
+export const EDITION_RELATIONS: EditionRelation[] = ["own", "group", "sublicense", "oem"];
 export const RELATION_LABEL: Record<EditionRelation, string> = {
-  own: "自社刊行", group: "グループ会社（料率なし）", sublicense: "再許諾"
+  own: "自社", group: "グループ会社（料率なし）", sublicense: "再許諾", oem: "他社販売（OEM）"
 };
+/** 版元・販売元との条件（OUT）を持つ関係と、その条件の利用形態。 */
+export const OUT_USAGE_OF: Partial<Record<EditionRelation, string>> = { sublicense: "sublicense", oem: "oem" };
 /** CSV・画面の言い方から関係へ。 */
 export const RELATION_OF: Record<string, EditionRelation> = {
   自社: "own", 自社刊行: "own", 当社: "own", own: "own",
   グループ: "group", グループ会社: "group", "グループ会社（料率なし）": "group", 子会社: "group", 料率なし: "group", group: "group",
-  再許諾: "sublicense", ライセンス: "sublicense", ライセンスアウト: "sublicense", sublicense: "sublicense"
+  自社製造: "own", 自社販売: "own", "自社製造・自社販売": "own",
+  再許諾: "sublicense", ライセンス: "sublicense", ライセンスアウト: "sublicense", sublicense: "sublicense",
+  他社販売: "oem", "自社製造・他社販売": "oem", OEM: "oem", oem: "oem"
 };
 
 export interface Edition {
@@ -54,27 +58,37 @@ export interface EditionInput {
  * 13 桁（978／979）か 10 桁でチェックディジットが合うものだけ通す。
  */
 export function normalizeIsbn(value: string | null | undefined): string | null {
+  return normalizeProductCode(value, "ISBN");
+}
+
+/**
+ * ISBN・JAN（EAN）を数字だけにして確かめる（純粋関数）。13 桁（ISBN-13・JAN）と 8 桁（短縮 JAN）は
+ * 同じ重み（1・3 の交互、末尾から）、10 桁は ISBN-10。what は止めるときの言い方（ISBN／JAN）。
+ */
+export function normalizeProductCode(value: string | null | undefined, what = "ISBN／JAN"): string | null {
   const raw = String(value ?? "").normalize("NFKC").replace(/[^0-9Xx]/g, "").toUpperCase();
   if (!raw) return null;
-  if (raw.length === 13 && /^\d{13}$/.test(raw)) {
-    const sum = [...raw.slice(0, 12)].reduce((a, d, i) => a + Number(d) * (i % 2 ? 3 : 1), 0);
-    if ((10 - (sum % 10)) % 10 !== Number(raw[12])) throw new DomainError("VALIDATION", `ISBN ${raw} のチェックディジットが合いません`);
+  if ((raw.length === 13 || raw.length === 8) && /^\d+$/.test(raw)) {
+    const body = [...raw.slice(0, -1)].reverse();
+    const sum = body.reduce((a, d, i) => a + Number(d) * (i % 2 ? 1 : 3), 0);
+    if ((10 - (sum % 10)) % 10 !== Number(raw[raw.length - 1])) throw new DomainError("VALIDATION", `${what} ${raw} のチェックディジットが合いません`);
     return raw;
   }
   if (raw.length === 10 && /^\d{9}[\dX]$/.test(raw)) {
     const sum = [...raw].reduce((a, d, i) => a + (d === "X" ? 10 : Number(d)) * (10 - i), 0);
-    if (sum % 11 !== 0) throw new DomainError("VALIDATION", `ISBN ${raw} のチェックディジットが合いません`);
+    if (sum % 11 !== 0) throw new DomainError("VALIDATION", `${what} ${raw} のチェックディジットが合いません`);
     return raw;
   }
-  throw new DomainError("VALIDATION", `ISBN は 13 桁（または 10 桁）で入れてください（"${String(value).trim()}"）`);
+  throw new DomainError("VALIDATION", `${what} は 13 桁（ISBN-10・短縮 JAN の 10・8 桁も可）で入れてください（"${String(value).trim()}"）`);
 }
 
 /** 刊行物の確かめてほしいこと（純粋関数）。 */
 export function editionWarnings(e: Pick<Edition, "relation" | "publisherPartyId" | "outConditionId" | "isbn">): string[] {
   const out: string[] = [];
-  if (e.relation === "sublicense" && !e.outConditionId) out.push("再許諾なのに版元との条件（OUT）がありません。入金があっても作者への払いに繋がりません");
+  if (e.relation === "sublicense" && !e.outConditionId) out.push("再許諾なのに版元・販売元との条件（OUT）がありません。入金があっても作者への払いに繋がりません");
+  if (e.relation === "oem" && !e.outConditionId) out.push("他社販売なのに販売元との OEM の条件（OUT）がありません。入金があっても作者への払いに繋がりません");
   if (e.relation !== "own" && !e.publisherPartyId) out.push("版元（取引先）が空です");
-  if (!e.isbn) out.push("ISBN がありません（売上・製造の報告を ISBN で当てられません）");
+  if (!e.isbn) out.push("ISBN／JAN がありません（売上・製造の報告をコードで当てられません）");
   return out;
 }
 
@@ -154,8 +168,8 @@ export class WorkEditionService {
           publishedOn: cur.publishedOn, listPrice: cur.listPrice, outConditionId: cur.outConditionId, notes: cur.notes,
           ...Object.fromEntries(Object.entries(patch).filter(([, x]) => x !== undefined))
         };
-        // 関係を再許諾から外したら、根拠の条件は外す（自社・グループ会社は条件を持たない）。
-        if (merged.relation !== "sublicense") merged.outConditionId = null;
+        // 条件を持たない関係（自社・グループ会社）にしたら、根拠の条件は外す。
+        if (!OUT_USAGE_OF[merged.relation!]) merged.outConditionId = null;
         const v = await this.validate(client, cur.workId, merged, id);
         await client.query(
           `UPDATE work_editions SET publisher_party_id = $2, relation = $3, isbn = $4, edition_title = $5, published_on = $6,
@@ -187,8 +201,8 @@ export class WorkEditionService {
 
   private async validate(q: Queryable, workId: number, input: EditionInput, selfId: number | null) {
     const relation = input.relation ?? (input.publisherPartyId ? "sublicense" : "own");
-    if (!EDITION_RELATIONS.includes(relation)) throw new DomainError("VALIDATION", "版元との関係は 自社刊行／グループ会社／再許諾 のどれかです");
-    const isbn = normalizeIsbn(input.isbn);
+    if (!EDITION_RELATIONS.includes(relation)) throw new DomainError("VALIDATION", "関係は 自社／グループ会社／再許諾／他社販売 のどれかです");
+    const isbn = normalizeProductCode(input.isbn);
     const publisherPartyId = input.publisherPartyId ?? null;
     if (relation !== "own" && !publisherPartyId) throw new DomainError("VALIDATION", "版元（取引先）を選んでください");
     const w = await q.query("SELECT id FROM works WHERE id = $1", [workId]);
@@ -197,15 +211,19 @@ export class WorkEditionService {
       const p = await q.query("SELECT id FROM parties WHERE id = $1", [publisherPartyId]);
       if (!p.rows[0]) throw new DomainError("NOT_FOUND", `版元（取引先 ${publisherPartyId}）が見つかりません`);
     }
-    const outConditionId = relation === "sublicense" ? input.outConditionId ?? null : null;
-    if (input.outConditionId && relation !== "sublicense") {
-      throw new DomainError("VALIDATION", "版元との条件（OUT）を付けられるのは再許諾の刊行物だけです");
+    const outUsage = OUT_USAGE_OF[relation] ?? null;
+    const outConditionId = outUsage ? input.outConditionId ?? null : null;
+    if (input.outConditionId && !outUsage) {
+      throw new DomainError("VALIDATION", "相手との条件（OUT）を付けられるのは再許諾・他社販売だけです");
     }
     if (outConditionId) {
       const c = (await q.query(
-        "SELECT direction, work_id, counterparty_id, status, condition_no FROM conditions WHERE id = $1", [outConditionId])).rows[0] as any;
+        "SELECT direction, work_id, counterparty_id, status, condition_no, usage_type FROM conditions WHERE id = $1", [outConditionId])).rows[0] as any;
       if (!c) throw new DomainError("NOT_FOUND", `条件 ${outConditionId} が見つかりません`);
       if (c.direction !== "out") throw new DomainError("VALIDATION", `${c.condition_no ?? `#${outConditionId}`} は許諾（OUT）の条件ではありません`);
+      if (c.usage_type !== outUsage) {
+        throw new DomainError("VALIDATION", `${c.condition_no ?? `#${outConditionId}`} は${RELATION_LABEL[relation]}の条件ではありません（利用形態が違います）`);
+      }
       if (Number(c.work_id) !== workId) throw new DomainError("VALIDATION", `${c.condition_no ?? `#${outConditionId}`} はこの作品の条件ではありません`);
       if (publisherPartyId && Number(c.counterparty_id) !== publisherPartyId) {
         throw new DomainError("VALIDATION", `${c.condition_no ?? `#${outConditionId}`} は版元との条件ではありません（相手先が違います）`);
@@ -215,7 +233,7 @@ export class WorkEditionService {
       const d = (await q.query(
         `SELECT e.id, w.title FROM work_editions e JOIN works w ON w.id = e.work_id
           WHERE e.isbn = $1 AND e.status = 'active' AND ($2::bigint IS NULL OR e.id <> $2) LIMIT 1`, [isbn, selfId])).rows[0] as any;
-      if (d) throw new DomainError("CONFLICT", `ISBN ${isbn} は「${d.title}」の刊行物に登録済みです`);
+      if (d) throw new DomainError("CONFLICT", `${isbn} は「${d.title}」の刊行物に登録済みです`);
     }
     const listPrice = input.listPrice ?? null;
     if (listPrice !== null && (!Number.isInteger(listPrice) || listPrice < 0)) throw new DomainError("VALIDATION", "本体価格は 0 以上の整数（円）で入れてください");
@@ -265,7 +283,7 @@ export async function editionsWithoutOut(q: Queryable): Promise<Array<Edition & 
   try {
     const r = await q.query(
       `${SELECT.replace("SELECT e.id", "SELECT w.title AS work_title, e.id")} JOIN works w ON w.id = e.work_id
-        WHERE e.status = 'active' AND e.relation = 'sublicense' AND e.out_condition_id IS NULL
+        WHERE e.status = 'active' AND e.relation IN ('sublicense', 'oem') AND e.out_condition_id IS NULL
         ORDER BY p.name NULLS LAST, w.title, e.published_on NULLS LAST, e.id`);
     return (r.rows as Array<Record<string, any>>).map((x) => ({ ...toEdition(x), workTitle: String(x.work_title ?? "") }));
   } catch (error) {

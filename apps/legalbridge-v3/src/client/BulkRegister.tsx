@@ -24,7 +24,8 @@ const GROUPS: Array<{ label: string; targets: Target[] }> = [
   ] },
   { label: "作品", targets: [
     { kind: "works", title: "作品", what: "作品を登録（親作品を書けば派生作品）" },
-    { kind: "pub_works", title: "出版作品", what: "作品＋紙・電子の条件＋共著の取り分＋CID を 1 行で" }
+    { kind: "pub_works", title: "出版作品", what: "作品＋紙・電子の条件＋共著の取り分＋CID＋刊行物（版元・ISBN）を 1 行で" },
+    { kind: "game_works", title: "ゲーム作品", what: "作品＋作者ごとの取引モデルの条件＋製品（販売元・JAN）を 1 行で" }
   ] },
   { label: "契約", targets: [
     { kind: "agreements", mode: "update", title: "基本契約を直す", what: "書き出した契約の件名・期間・親契約・相手方番号を直して戻す" },
