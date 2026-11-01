@@ -24,6 +24,8 @@ export interface PublishingTerms {
   /** 料率（%）。11 は 11%。 */
   ratePct: number;
   exclusivity?: "exclusive" | "non_exclusive" | null;
+  /** この媒体だけの支払条件。共通の paymentTerms より優先する（紙と電子で払い方が違うとき）。 */
+  paymentTerms?: string | null;
   /**
    * 電子の集計のしかた（年 1 回・年 2 回・年 4 回）。pub-digital-cycle.ts。
    * 入っていれば支払条件の文と決済の型（期間で決まる・周期）をここから作る。
@@ -774,7 +776,7 @@ export class ConditionWriteService {
     const terms = String(input.paymentTerms ?? "").trim();
     if (input.print) {
       rows.push({ usageType: "pub_print", ratePct: input.print.ratePct, exclusivity: input.print.exclusivity ?? null,
-                  paymentTerms: terms || PUB_PRINT_PAYMENT_TERMS });
+                  paymentTerms: String(input.print.paymentTerms ?? "").trim() || terms || PUB_PRINT_PAYMENT_TERMS });
     }
     if (input.digital) {
       // 集計のしかた（年 1 回・年 2 回・年 4 回）を選んでいれば、支払条件の文と決済の型をそこから作る。
@@ -786,7 +788,8 @@ export class ConditionWriteService {
         payDay: input.digital.payDay ?? DIGITAL_CYCLE_DEFAULTS[cycle].payDay
       } : null;
       rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
-                  paymentTerms: terms || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS),
+                  paymentTerms: String(input.digital.paymentTerms ?? "").trim() || terms
+                    || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS),
                   ...(spec ? { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(spec.cycle) } : {}) });
     }
     if (input.sublicense) {

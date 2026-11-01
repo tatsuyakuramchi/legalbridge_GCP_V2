@@ -56,8 +56,8 @@ export interface PubWorksDeps {
       counterpartyId: number; workId: number; agreementId?: number | null;
       termStart?: string | null; termEnd?: string | null; paymentTerms?: string | null; notes?: string | null;
       scopes?: ConditionScope[];
-      print?: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null } | null;
-      digital?: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null } | null;
+      print?: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
+      digital?: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
     }, actor: string): Promise<{ print: { id: number; conditionNo: string | null } | null;
                                  digital: { id: number; conditionNo: string | null } | null }>;
     replaceShares(id: number, shares: Array<{ partyId: number; sharePpm: number; note?: string | null }>, actor: string,
@@ -103,8 +103,9 @@ export interface PubWorkRow {
              copyrightNotice: string | null; thirdPartyRights: string | null; businessLine: string | null } | null;
   party: { id: number; name: string };
   agreementId: number | null;
-  print: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null } | null;
-  digital: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null } | null;
+  /** paymentTerms は「紙支払条件」「電子支払条件」（その媒体だけ。共通の「支払条件」より優先）。 */
+  print: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
+  digital: { ratePct: number; exclusivity: "exclusive" | "non_exclusive" | null; paymentTerms?: string | null } | null;
   termStart: string | null; termEnd: string | null;
   paymentTerms: string | null; notes: string | null;
   scopes: ConditionScope[];
@@ -547,6 +548,7 @@ export class PubWorksImportService {
       ...parseLanguages(text(row, "言語")).map((s) => ({ scopeType: "language" as const, label: s.name, code: s.code || null }))
     ];
 
+    const { printTerms: updPrintTerms, digitalTerms: updDigitalTerms } = mediaTerms(row, null, null);
     type Plan = { cond: PubCondition; patch: PubConditionPatch; what: string[] };
     const plans: Plan[] = [];
     const creates: Array<{ usage: "pub_print" | "pub_digital"; ratePct: number }> = [];
@@ -557,6 +559,11 @@ export class PubWorksImportService {
       }
       const patch: PubConditionPatch = { ...common };
       const what = [...commonChanged];
+      const own = usage === "pub_print" ? updPrintTerms : updDigitalTerms;
+      if (own) {
+        patch.paymentTerms = own;
+        if (!what.includes("支払条件")) what.push("支払条件");
+      }
       if (rate !== null) {
         const ppm = Math.round(rate * 10000);
         if (ppm !== cond.ratePpm) { patch.ratePpm = ppm; what.push(`料率 ${rate}%`); }
@@ -650,8 +657,8 @@ export class PubWorksImportService {
         counterpartyId: createParty!.id, workId: work.id,
         termStart: common.termStart ?? null, termEnd: common.termEnd ?? null,
         paymentTerms: common.paymentTerms ?? null, notes: common.notes ?? null, scopes,
-        print: wantPrint ? { ratePct: wantPrint.ratePct, exclusivity: common.exclusivity ?? "non_exclusive" } : null,
-        digital: wantDigital ? { ratePct: wantDigital.ratePct, exclusivity: common.exclusivity ?? "non_exclusive" } : null
+        print: wantPrint ? { ratePct: wantPrint.ratePct, exclusivity: common.exclusivity ?? "non_exclusive", ...(updPrintTerms ? { paymentTerms: updPrintTerms } : {}) } : null,
+        digital: wantDigital ? { ratePct: wantDigital.ratePct, exclusivity: common.exclusivity ?? "non_exclusive", ...(updDigitalTerms ? { paymentTerms: updDigitalTerms } : {}) } : null
       }, actor);
       madePrint = set.print; madeDigital = set.digital;
     }
@@ -756,7 +763,9 @@ export class PubWorksImportService {
         "分配": shares.length ? (main.distribution === "representative" ? "代表" : "当社") : "",
         "CID": (cidsOf.get(String(main.work_id)) ?? []).map((c) => String(c.cid)).join("／"),
         "契約番号": main.agreement_no ?? "", "開始日": date(main.term_start), "終了日": date(main.term_end),
-        "支払条件": main.payment_terms ?? "",
+        // 支払条件は媒体ごとに出す（紙と電子で違うことがある）。共通の列は空。
+        "支払条件": "",
+        "紙支払条件": printC?.payment_terms ?? "", "電子支払条件": digitalC?.payment_terms ?? "",
         "地域": scopes.filter((s) => s.scope_type === "region").map((s) => String(s.label)).join("、"),
         "言語": scopes.filter((s) => s.scope_type === "language").map((s) => String(s.label)).join("、"),
         "著作権表示": main.copyright_notice ?? "", "第三者権利": main.third_party_rights ?? "",
@@ -774,6 +783,8 @@ export class PubWorksImportService {
     const edition = await this.readEdition(row);
     // 刊行物だけの行（既存の作品・前の行の作品に 2 冊目を足す）は料率が無くてよい。
     if (print === null && digital === null && !edition) throw new DomainError("VALIDATION", "紙料率か電子料率のどちらかは入れてください");
+    // 媒体ごとの支払条件（共通の「支払条件」より優先）。
+    const { printTerms, digitalTerms } = mediaTerms(row, print, digital);
     const exemptText = text(row, "増刷時非加算");
     const exemptLaterPct = ratePct(exemptText, "増刷時非加算");
     if (exemptLaterPct !== null && print === null) throw new DomainError("VALIDATION", "増刷時非加算を入れるなら紙料率も入れてください");
@@ -838,8 +849,8 @@ export class PubWorksImportService {
         businessLine: text(row, "事業区分") || "出版"
       },
       party, agreementId,
-      print: print === null ? null : { ratePct: print, exclusivity },
-      digital: digital === null ? null : { ratePct: digital, exclusivity },
+      print: print === null ? null : { ratePct: print, exclusivity, ...(printTerms ? { paymentTerms: printTerms } : {}) },
+      digital: digital === null ? null : { ratePct: digital, exclusivity, ...(digitalTerms ? { paymentTerms: digitalTerms } : {}) },
       termStart: csvDate(text(row, "開始日")), termEnd: csvDate(text(row, "終了日")),
       paymentTerms: text(row, "支払条件") || null, notes: text(row, "備考") || null,
       scopes, shares, printShares, digitalShares, distribution, cids, edition, exemptLaterPct
@@ -929,8 +940,22 @@ export class PubWorksImportService {
 
 export const PUB_WORKS_HEADERS = [
   "作品名", "作品コード", "カナ", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
-  "契約番号", "開始日", "終了日", "支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
+  "契約番号", "開始日", "終了日", "支払条件", "紙支払条件", "電子支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
 ];
+
+/**
+ * 媒体ごとの支払条件の列（純粋関数）。「紙支払条件」「電子支払条件」はその媒体だけで、共通の「支払条件」より優先する。
+ * 料率の分かっている行（新しく作る）では、料率の無い媒体に支払条件だけ書いてあれば止める（書き間違いに気づけるように）。
+ * 一括修正では料率を渡さない（既存の条件に当てる）。
+ */
+export function mediaTerms(row: Record<string, string>, printRate: number | null, digitalRate: number | null,
+                           creating = printRate !== null || digitalRate !== null): { printTerms: string | null; digitalTerms: string | null } {
+  const printTerms = text(row, "紙支払条件") || null;
+  const digitalTerms = text(row, "電子支払条件") || null;
+  if (creating && printTerms && printRate === null) throw new DomainError("VALIDATION", "紙支払条件を入れるなら紙料率も入れてください");
+  if (creating && digitalTerms && digitalRate === null) throw new DomainError("VALIDATION", "電子支払条件を入れるなら電子料率も入れてください");
+  return { printTerms, digitalTerms };
+}
 
 export const PUB_WORKS_SAMPLE =
   "作品名,作品コード,カナ,相手先,相手先コード,紙料率,電子料率,独占,紙取り分,電子取り分,分配,CID,契約番号,開始日,終了日,支払条件,地域,言語,著作権表示,第三者権利,備考\n" +
