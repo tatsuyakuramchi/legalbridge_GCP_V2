@@ -42,6 +42,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS work_editions_isbn_uq
 CREATE INDEX IF NOT EXISTS work_editions_work_idx ON v3.work_editions (work_id);
 CREATE INDEX IF NOT EXISTS work_editions_out_idx
   ON v3.work_editions (out_condition_id) WHERE out_condition_id IS NOT NULL;
+-- アプリの実行ロールの権限（当初付け忘れ。既に 193 を流した DB は 195 で付ける）。
+GRANT SELECT, INSERT, UPDATE, DELETE ON v3.work_editions TO legalbridge_v3_runtime;
+GRANT USAGE, SELECT ON SEQUENCE v3.work_editions_id_seq TO legalbridge_v3_runtime;
 COMMENT ON TABLE v3.work_editions IS
   '作品の刊行物（版元・ISBN・刊行日・本体価格）。relation：own=自社刊行／group=グループ会社（料率なし）／sublicense=再許諾（out_condition_id が根拠の OUT 条件）。';
 
