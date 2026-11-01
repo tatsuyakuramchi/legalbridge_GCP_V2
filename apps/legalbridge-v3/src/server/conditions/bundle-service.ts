@@ -1,6 +1,7 @@
 import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { PinnedDatabase } from "../core/pinned-db.js";
+import { blockingPayments } from "../payments/blocking.js";
 import { DomainError, translate } from "../core/errors.js";
 import type { ConditionWriteService } from "./write-service.js";
 import type { ConditionScheduleService, ScheduleLine } from "./schedule-service.js";
@@ -165,7 +166,8 @@ export class ConditionBundleService {
       if (touchesMoney && row.blocking_no !== null && row.blocking_no !== undefined && !cancels) {
         throw new DomainError("CONFLICT",
           `この実績には支払 ${row.blocking_no} が立っています。`
-          + "金額・数量を直すには、先にその支払を取り消してください");
+          + "金額・数量を直すには、先にその支払を取り消してください",
+          { blockingPayments: await blockingPayments(this.database, { eventIds: [event.id] }) });
       }
     }
 
@@ -316,11 +318,12 @@ export class ConditionBundleService {
       const svc = new ConditionBundleService(pinned, makeParts(pinned));
       let result: BundleResult | null = null;
       let refused: string | null = null;
+      let refusedDetail: unknown = null;
       try {
         result = await svc.apply(conditionId, patch, String(reason ?? "").trim() || "（試算）", actor);
-      } catch (error) { refused = (error as Error).message; }
+      } catch (error) { refused = (error as Error).message; refusedDetail = (error as { detail?: unknown }).detail ?? null; }
       const after = await bundleSnapshot(pinned, result?.revisedTo ?? conditionId);
-      return { before, after, result, refused };
+      return { before, after, result, refused, refusedDetail };
     } catch (error) {
       throw translate(error);
     } finally {
@@ -490,6 +493,8 @@ export interface BundlePreview {
   result: BundleResult | null;
   /** 下見で断られたとき（何も書いていない）。 */
   refused: string | null;
+  /** 断られた理由の中身（支払が立っているなら blockingPayments）。 */
+  refusedDetail?: unknown;
 }
 
 export async function bundleSnapshot(q: Queryable, conditionId: number): Promise<BundleSnapshot> {

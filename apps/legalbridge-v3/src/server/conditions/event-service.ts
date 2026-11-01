@@ -1,4 +1,5 @@
 import { inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { blockingPayments } from "../payments/blocking.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
@@ -636,7 +637,8 @@ export class ConditionEventService {
           if (p) {
             throw new DomainError("CONFLICT",
               `この実績には支払 ${p.payment_no ?? `#${p.id}`} が立っています。`
-              + "金額を直すには、先にその支払を取り消してください（日付・備考はそのまま直せます）");
+              + "金額を直すには、先にその支払を取り消してください（日付・備考はそのまま直せます）",
+              { blockingPayments: await blockingPayments(client, { eventIds: [eventId] }) });
           }
         }
 
@@ -811,7 +813,8 @@ export class ConditionEventService {
           throw new DomainError("CONFLICT",
             `この実績には支払（${blockers.map((b) => b.name).join("・")}）が立っています。`
             + "外すと検収書は実績ゼロになり、支払は裏付けを失います。"
-            + "先にお金の画面でその支払を取り消してください");
+            + "先にその支払を取り消してください",
+            { blockingPayments: await blockingPayments(client, { eventIds: ids }) });
         }
 
         // いま見ている文書に結びついているものだけ外す。番号を取り違えたまま

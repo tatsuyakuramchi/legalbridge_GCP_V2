@@ -6,6 +6,7 @@ import { DRIFT_LABEL, FIELD_LABEL, driftOf, driftSummary }
   from "../server/matters/drift.js";
 import type { GridRow } from "../server/matters/grid.js";
 import { BundleImpact } from "./BundleImpact.js";
+import { PaymentBlock, blockingPaymentsOf } from "./PaymentBlock.js";
 
 /**
  * 工程表の1行を、段をまたいでまとめて直す（docs/document-write-back.md §まとめて直す）。
@@ -65,6 +66,8 @@ export function GridRowEdit(
   const [showMore, setShowMore] = useState(false);
   const [preview, setPreview] = useState<BundlePreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  /** 支払を取り消したあと、試算をやり直す。 */
+  const [nonce, setNonce] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -189,7 +192,7 @@ export function GridRowEdit(
         .finally(() => { if (my === seq.current) setPreviewing(false); });
     }, 400);
     return () => clearTimeout(t);
-  }, [JSON.stringify(body)]);
+  }, [JSON.stringify(body), nonce]);
 
   async function save() {
     if (!body || !Object.keys(body).length) { setError("直した欄がありません"); return; }
@@ -316,7 +319,14 @@ export function GridRowEdit(
               <input value={reason} placeholder="先方と納品数を再調整したため" onChange={(e) => setReason(e.target.value)} /></label>
           </div>
 
-          <BundleImpact preview={preview} busy={previewing} paidBlocked={paidBlocked} />
+          <div className="stack" style={{ gap: 8, minWidth: 0 }}>
+            {/* 別の支払が立っていて止まるとき：その場で取り消して試算をやり直す。 */}
+            {blockingPaymentsOf(preview?.refusedDetail) && (
+              <PaymentBlock payments={blockingPaymentsOf(preview?.refusedDetail)!} message={preview?.refused}
+                            defaultReason={reason.trim() || undefined} onCanceled={() => setNonce((n) => n + 1)} />
+            )}
+            <BundleImpact preview={preview} busy={previewing} paidBlocked={paidBlocked} />
+          </div>
         </div>
       )}
 

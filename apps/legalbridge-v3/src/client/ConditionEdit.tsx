@@ -1,4 +1,5 @@
 import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
+import { PaymentBlock, blockingPaymentsOf, type BlockingPayment } from "./PaymentBlock.js";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react";
 import { BundleImpact } from "./BundleImpact.js";
 import type { BundlePreview } from "../server/conditions/bundle-service.js";
@@ -139,6 +140,8 @@ export function ConditionEdit(
   const labels = useRef<Record<string, string>>({});
   const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
   const [error, setError] = useState<string | null>(null);
+  /** 支払が立っていて止まったとき（直接編集など）。取り消して続ける。 */
+  const [blocked, setBlocked] = useState<BlockingPayment[] | null>(null);
   const [busy, setBusy] = useState(false);
   // 適用開始日。未来を入れると「予約された改訂」になり、いまの版は生きたまま残る。
   const [effectiveFrom, setEffectiveFrom] = useState("");
@@ -381,7 +384,7 @@ export function ConditionEdit(
    * 新しい版は相手先も範囲も元から写すので、先に元を直しておく。
    */
   async function save() {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setBlocked(null);
     try {
       if (counterpartyChanged) {
         await api.patch(`/conditions/${detail.id}/counterparty`, { partyId: Number(v.counterpartyId) });
@@ -409,7 +412,7 @@ export function ConditionEdit(
           ...(scopesChanged ? [{ target: "condition_scopes", rows: 1 }] : [])
         ], resolvesThrough: [] });
       }
-    } catch (e) { setError((e as ApiError).message); }
+    } catch (e) { setError((e as ApiError).message); setBlocked(blockingPaymentsOf(e)); }
     finally { setBusy(false); }
   }
 
@@ -968,7 +971,9 @@ export function ConditionEdit(
           </label>
         </div>
 
-        {error && <div className="alert">{error}</div>}
+        {blocked
+          ? <PaymentBlock payments={blocked} message={error} onCanceled={() => save()} />
+          : error && <div className="alert">{error}</div>}
 
         <div className="row">
           <button className="btn primary" disabled={busy || !changedCount}

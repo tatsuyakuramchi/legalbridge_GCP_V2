@@ -1,4 +1,5 @@
 import { dateStr, inTransaction, type Queryable, type Transactable } from "../core/db.js";
+import { blockingPayments } from "../payments/blocking.js";
 import { DomainError, translate } from "../core/errors.js";
 import { ConditionScheduleService, type ScheduleLine } from "./schedule-service.js";
 import { CONDITION_KINDS_BY_MATTER } from "../matters/link-service.js";
@@ -1412,7 +1413,8 @@ export class ConditionWriteService {
           const row = paid.rows[0] as { nos: string | null; n: number } | undefined;
           if (row && Number(row.n) > 0) {
             throw new DomainError("CONFLICT",
-              `支払が立っているので直接編集できません（${row.nos ?? ""}）。支払を取り消すか、改訂で直してください`);
+              `支払が立っているので直接編集できません（${row.nos ?? ""}）。支払を取り消すか、改訂で直してください`,
+              { blockingPayments: await blockingPayments(client, { conditionSeriesOf: id }) });
           }
           if (patch.kind !== undefined) await this.assertKindAllowed(client, id, patch.kind);
           const result = await this.updateInPlace(client, id, entries, actor,
