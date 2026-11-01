@@ -1,4 +1,4 @@
-import { PUB_IN_USAGES, backsEdition } from "../works/editions.js";
+import { publicationOuts, type PublicationMedia } from "../works/editions.js";
 import { dateStr, inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
@@ -58,8 +58,19 @@ export interface Receipt {
   /** 許諾言語・地域（「全言語」「全世界」を除く）。報告の言語の候補。 */
   languages: string[]; regions: string[];
   ins: ReceiptIn[];
-  /** 全体：作者のいない入金（IN 条件が見つからない）は none。 */
-  state: ReceiptInState | "none";
+  /**
+   * 全体：作者のいない入金（IN 条件が見つからない）は none。
+   * 出版の紙の再許諾の入金は by_report：作者（紙）への払いは版元の刷部数の報告（製造）から計算書で出し、
+   * 入金からは起こさない（紙の料率は本体価格 × 部数に掛けるもので、入金額に掛けると桁が違う）。
+   */
+  state: ReceiptInState | "none" | "by_report";
+  /** 出版の再許諾の媒体（紙／電子）。ふつうの再許諾は null。 */
+  media?: PublicationMedia | null;
+  /** 紙の再許諾の入金：突き合わせ用に、この作品の作者（紙）の刷部数の報告（直近）と、版元の料率での見込み額。 */
+  printReports?: Array<{ eventId: number; conditionId: number; conditionNo: string | null; partyName: string;
+                         occurredOn: string | null; quantity: number | null; grossAmount: number | null; expected: number | null }>;
+  /** 版元（OUT）の料率（%）。見込み額の掛け率。 */
+  outRatePct?: number | null;
 }
 
 /** 入金に対する作者 1 人（IN 条件 1 本）の状態（純粋関数）。 */
@@ -132,7 +143,9 @@ export class RoyaltyReceiptService {
         [OUT_USAGES, input.from ?? null, input.to ?? null, input.outConditionId ?? null, input.workId ?? null,
          input.paymentId ?? null])).rows as any[];
       const receipts: Receipt[] = [];
-      for (const r of rows) receipts.push(await this.assemble(this.database, r));
+      const pubOuts = await publicationOuts(this.database);
+      for (const r of rows) receipts.push(await this.assemble(this.database, r, pubOuts));
+      // 紙の再許諾（by_report）は入金からは何もしないので、要対応に入れない。
       const open = new Set(["unreported", "mismatch", "waiting", "none"]);
       return {
         receipts: receipts.filter((x) => !input.state || (input.state === "open" ? open.has(x.state) : x.state === input.state))
@@ -141,8 +154,9 @@ export class RoyaltyReceiptService {
   }
 
   /** 入金 1 件（割り当て 1 本）を、作者ごとの状態つきで組み立てる。 */
-  private async assemble(q: Queryable, r: any): Promise<Receipt> {
-    const ins = await this.insFor(q, Number(r.out_id));
+  private async assemble(q: Queryable, r: any, pubOuts?: Map<number, PublicationMedia>): Promise<Receipt> {
+    const media = (pubOuts ?? await publicationOuts(q)).get(Number(r.out_id)) ?? null;
+    const ins = await this.insFor(q, Number(r.out_id), media);
     const reports = ins.length ? (await q.query(
       `SELECT e.id, e.condition_id, COALESCE(c.series_id, c.id) AS series, e.gross_amount, e.amount, e.occurred_on,
               e.scope_languages, d.id AS document_id, d.document_no
@@ -188,12 +202,41 @@ export class RoyaltyReceiptService {
       licenseePartyId: Number(r.licensee_id), licenseeName: String(r.licensee_name ?? ""),
       workId: int(r.work_id), workTitle: str(r.work_title),
       languages: strip(r.languages, "全言語"), regions: strip(r.regions, "全世界"),
-      ins: list, state: receiptState(list)
+      ins: list, state: media === "print" && !list.length ? "by_report" : receiptState(list),
+      media,
+      ...(media === "print" ? await this.printReports(q, r) : {})
+    };
+  }
+
+  /**
+   * 紙の再許諾の入金の突き合わせ材料：この作品の作者の紙（pub_print）の刷部数の報告（入金日までの直近 10 件）と、
+   * 報告額（本体価格 × 部数）× 版元の料率 の見込み額。どの報告の分の入金かは版元の明細で確かめる（ここでは決めない）。
+   */
+  private async printReports(q: Queryable, r: any): Promise<Pick<Receipt, "printReports" | "outRatePct">> {
+    const out = (await q.query("SELECT rate_ppm FROM conditions WHERE id = $1", [r.out_id])).rows[0] as { rate_ppm: number | null } | undefined;
+    const ratePpm = out?.rate_ppm === null || out?.rate_ppm === undefined ? null : Number(out.rate_ppm);
+    const rows = (await q.query(
+      `SELECT e.id, e.condition_id, c.condition_no, p.name AS party_name, e.occurred_on, e.quantity, e.gross_amount
+         FROM condition_events e
+         JOIN conditions c ON c.id = e.condition_id
+         LEFT JOIN parties p ON p.id = c.counterparty_id
+        WHERE c.direction = 'in' AND c.kind = 'license' AND c.usage_type = 'pub_print' AND c.status <> 'void'
+          AND c.work_id = $1 AND e.status = 'active' AND e.event_type = 'manufacturing'
+          AND ($2::date IS NULL OR e.occurred_on <= $2::date)
+        ORDER BY e.occurred_on DESC, e.id DESC
+        LIMIT 10`, [r.work_id, r.paid_on ?? null])).rows as any[];
+    return {
+      outRatePct: ratePpm === null ? null : ppmToPct(ratePpm),
+      printReports: rows.map((e) => ({
+        eventId: Number(e.id), conditionId: Number(e.condition_id), conditionNo: str(e.condition_no), partyName: String(e.party_name ?? ""),
+        occurredOn: dateStr(e.occurred_on), quantity: e.quantity === null ? null : Number(e.quantity), grossAmount: int(e.gross_amount),
+        expected: ratePpm === null || e.gross_amount === null ? null : Math.floor((Number(e.gross_amount) * ratePpm) / 1_000_000)
+      }))
     };
   }
 
   /** OUT 条件に効く IN 条件（作者）。 */
-  private async insFor(q: Queryable, outConditionId: number) {
+  private async insFor(q: Queryable, outConditionId: number, media: PublicationMedia | null) {
     const rows = (await q.query(
       `SELECT c.id, c.condition_no, c.name, c.counterparty_id, p.name AS party_name, c.work_id, w.title AS work_title,
               c.usage_type, c.rate_ppm, c.target_party_id, COALESCE(c.series_id, c.id) AS series
@@ -204,12 +247,12 @@ export class RoyaltyReceiptService {
         WHERE c.direction = 'in' AND c.kind = 'license' AND c.status IN ('active', 'scheduled')
           AND c.pricing_model IN ('revenue_rate', 'unit_rate')
           AND (c.usage_type = oc.usage_type
-               OR ($2::boolean AND oc.usage_type = 'sublicense' AND c.usage_type = ANY($3::text[])))
+               -- 出版の電子の再許諾には作者の電子の条件が効く（入金額 × 料率）。紙は入金からは起こさない（printReports）。
+               OR ($2::text = 'digital' AND oc.usage_type = 'sublicense' AND c.usage_type = 'pub_digital'))
           AND oc.work_id IS NOT NULL
           AND c.work_id = ANY(${WORK_LINEAGE_UP_SQL("oc.work_id")})
         ORDER BY p.name, c.condition_no NULLS LAST, c.id`,
-      // 刊行物の根拠になっている再許諾には、作者の紙・電子の条件も効く（works/editions.ts usageCovers）。
-      [outConditionId, await backsEdition(q, outConditionId), PUB_IN_USAGES])).rows as any[];
+      [outConditionId, media])).rows as any[];
     const licensee = Number(((await q.query("SELECT counterparty_id FROM conditions WHERE id = $1", [outConditionId])).rows[0] as any)?.counterparty_id ?? 0);
     return coveringIns(rows.map((c) => ({
       conditionId: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),

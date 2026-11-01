@@ -4,7 +4,11 @@ import { recordAudit } from "../core/audit.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
 import { WORK_LINEAGE_UP_SQL, timingOf, type Timing } from "../royalty/ledger-service.js";
 import { ppmToPct } from "../royalty/economics.js";
-import { PUB_IN_USAGES, editionOutConditionIds, editionsWithoutOut } from "../works/editions.js";
+import { editionsWithoutOut, publicationOuts, type PublicationMedia } from "../works/editions.js";
+
+/** 出版の再許諾を 紙・電子 の id の配列に（SQL の引数）。 */
+const mediaArrays = (m: Map<number, PublicationMedia>): [number[], number[]] =>
+  [[...m].filter(([, v]) => v === "print").map(([k]) => k), [...m].filter(([, v]) => v === "digital").map(([k]) => k)];
 
 /**
  * 監査 › 条件の点検（docs/navigation.md §6）。
@@ -171,10 +175,11 @@ export class ConditionCheckService {
             AND NOT EXISTS (SELECT 1 FROM conditions i
                              WHERE i.direction = 'in' AND i.kind = 'license' AND i.status IN ('active', 'scheduled')
                                AND (i.usage_type = c.usage_type
-                                    OR (c.id = ANY($1::bigint[]) AND c.usage_type = 'sublicense' AND i.usage_type = ANY($2::text[])))
+                                    OR (c.id = ANY($1::bigint[]) AND i.usage_type = 'pub_print')
+                                    OR (c.id = ANY($2::bigint[]) AND i.usage_type = 'pub_digital'))
                                AND i.work_id = ANY(${WORK_LINEAGE_UP_SQL("c.work_id")})
                                AND (i.target_party_id IS NULL OR i.target_party_id = c.counterparty_id))
-          ORDER BY p.name, w.title, c.id`, [[...await editionOutConditionIds(q)], PUB_IN_USAGES])).rows as Array<Record<string, any>>;
+          ORDER BY p.name, w.title, c.id`, mediaArrays(await publicationOuts(q)))).rows as Array<Record<string, any>>;
       const editionsNoOut = await editionsWithoutOut(q);
       return {
         duplicates: duplicateGroups(live),

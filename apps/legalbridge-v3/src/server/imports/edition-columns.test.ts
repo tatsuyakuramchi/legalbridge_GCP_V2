@@ -1,0 +1,55 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { FakeDatabase } from "../core/fake-db.js";
+import { GAME_EDITION_NAMES, PUB_EDITION_NAMES, writeEditionRow } from "./edition-columns.js";
+
+const deps = () => {
+  const calls: Array<{ what: string; args: any[] }> = [];
+  let seq = 500;
+  return {
+    calls,
+    createOut: async (input: any) => { calls.push({ what: "out", args: [input] }); return { id: ++seq, conditionNo: `CL-${seq}` }; },
+    editions: { create: async (workId: number, input: any) => { calls.push({ what: "edition", args: [workId, input] }); return { id: 1 }; } }
+  };
+};
+const KADOKAWA = { id: 7, name: "KADOKAWA" };
+
+test("出版：版元料率と版元電子料率で、版元との条件を紙・電子の 2 本に分ける（媒体の許諾範囲つき）。刊行物は紙を指す", async () => {
+  const d = deps();
+  const said = await writeEditionRow(new FakeDatabase(() => []), d, 3, "るるいえばけーしょん",
+    { publisher: KADOKAWA, relation: "sublicense", isbn: "9784047276703", publishedOn: "2011-11-30", listPrice: null,
+      outRatePct: 8, outDigitalRatePct: 25 }, PUB_EDITION_NAMES, "tester");
+  const outs = d.calls.filter((c) => c.what === "out").map((c) => c.args[0]);
+  assert.deepEqual(outs.map((o) => [o.name, o.ratePpm, o.priceBasis, o.statementTiming, o.scopes?.[0]?.code]), [
+    ["るるいえばけーしょん｜出版の再許諾・紙（KADOKAWA）", 80000, "list", "event", "print"],
+    ["るるいえばけーしょん｜出版の再許諾・電子（KADOKAWA）", 250000, null, "periodic", "digital"]
+  ]);
+  assert.equal(d.calls.find((c) => c.what === "edition")!.args[1].outConditionId, 501, "刊行物（本）は紙の条件");
+  assert.equal(said, "版元との紙の条件 CL-501・版元との電子の条件 CL-502");
+});
+
+test("出版：既存の条件は媒体で当てる（媒体なしの古い条件は紙）。料率が違えば止める", async () => {
+  const db = new FakeDatabase((text, params) => {
+    if (text.includes("FROM conditions c") && params[2] === "sublicense") {
+      return [{ id: 40, condition_no: "CL-40", rate_ppm: 80000, media: null }, { id: 41, condition_no: "CL-41", rate_ppm: 250000, media: "digital" }];
+    }
+    return [];
+  });
+  const d = deps();
+  await writeEditionRow(db, d, 3, "作品", { publisher: KADOKAWA, relation: "sublicense", isbn: null, publishedOn: null, listPrice: null,
+    outRatePct: 8, outDigitalRatePct: 25 }, PUB_EDITION_NAMES, "tester");
+  assert.equal(d.calls.filter((c) => c.what === "out").length, 0, "どちらも既存を使う");
+  assert.equal(d.calls[0].args[1].outConditionId, 40);
+  await assert.rejects(writeEditionRow(db, deps(), 3, "作品", { publisher: KADOKAWA, relation: "sublicense", isbn: null, publishedOn: null,
+    listPrice: null, outRatePct: 8, outDigitalRatePct: 30 }, PUB_EDITION_NAMES, "tester"), /電子の再許諾の条件 CL-41 は料率 25%/);
+});
+
+test("ゲーム：販売元料率は媒体なしの 1 本", async () => {
+  const d = deps();
+  await writeEditionRow(new FakeDatabase(() => []), d, 3, "新作", { publisher: { id: 9, name: "Alpha Games" }, relation: "sublicense",
+    isbn: null, publishedOn: null, listPrice: null, outRatePct: 30 }, GAME_EDITION_NAMES, "tester");
+  const outs = d.calls.filter((c) => c.what === "out").map((c) => c.args[0]);
+  assert.equal(outs.length, 1);
+  assert.equal(outs[0].scopes, undefined);
+  assert.equal(outs[0].name, "新作｜再許諾（Alpha Games）");
+});

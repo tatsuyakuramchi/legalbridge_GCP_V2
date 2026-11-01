@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { api, ApiError } from "./api.js";
 import { useReadOnly } from "./read-only.js";
 
@@ -28,10 +28,16 @@ interface Receipt {
   key: string; paymentId: number; paymentNo: string | null; paidOn: string | null; amount: number; currency: string;
   outConditionId: number; outConditionNo: string | null; outName: string; usageLabel: string;
   licenseeName: string; workId: number | null; workTitle: string | null; languages: string[]; regions: string[];
-  ins: ReceiptIn[]; state: InState | "none";
+  ins: ReceiptIn[]; state: InState | "none" | "by_report";
+  /** 出版の再許諾の媒体。紙は入金から作者の報告を起こさず、刷部数の報告から計算書を出す。 */
+  media?: "print" | "digital" | null;
+  printReports?: Array<{ eventId: number; conditionId: number; conditionNo: string | null; partyName: string;
+                         occurredOn: string | null; quantity: number | null; grossAmount: number | null; expected: number | null }>;
+  outRatePct?: number | null;
 }
 
-const STATE: Record<InState | "none", { label: string; tag: string }> = {
+const STATE: Record<InState | "none" | "by_report", { label: string; tag: string }> = {
+  by_report: { label: "紙：刷部数の報告から", tag: "accent" },
   unreported: { label: "未報告", tag: "warn" },
   mismatch: { label: "金額が違う", tag: "danger" },
   waiting: { label: "計算書待ち", tag: "accent" },
@@ -40,7 +46,7 @@ const STATE: Record<InState | "none", { label: string; tag: string }> = {
 };
 const FILTERS: Array<[string, string]> = [
   ["open", "要対応"], ["unreported", "未報告"], ["mismatch", "金額が違う"], ["waiting", "計算書待ち"],
-  ["issued", "計算書済"], ["none", "作者の条件なし"], ["", "すべて"]
+  ["issued", "計算書済"], ["none", "作者の条件なし"], ["by_report", "紙（刷部数の報告から）"], ["", "すべて"]
 ];
 const money = (n: number | null | undefined, currency = "JPY") =>
   n === null || n === undefined ? "—" : currency === "JPY"
@@ -155,7 +161,13 @@ function ReceiptCard({ r, canWrite, onOpenCondition, onOpenDocument, onError, on
         </span>
       </div>
       <div className="panel-bd stack" style={{ gap: 8 }}>
-        {r.ins.length ? (
+        {r.media && (
+          <span className="faint">出版の再許諾（{r.media === "print" ? "紙" : "電子"}）。{r.media === "digital"
+            ? "作者の電子の条件だけが候補です（入金額 × 料率）。"
+            : "作者の紙の払いは、版元の刷部数の報告（本体価格 × 部数）を作者の紙の条件に「製造」の報告として入れ、計算書から出します。この入金からは作者の報告を起こしません。"}</span>
+        )}
+        {r.media === "print" && <PrintReports r={r} link={link} />}
+        {r.media === "print" && !r.ins.length ? null : r.ins.length ? (
           <table className="table">
             <thead>
               <tr><th></th><th>作者</th><th>IN 条件</th><th>料率</th><th>状態</th><th>報告の受領額</th><th>作者への額</th><th>計算書</th></tr>
@@ -232,6 +244,31 @@ function ReceiptCard({ r, canWrite, onOpenCondition, onOpenDocument, onError, on
   );
 }
 
+/** 紙の再許諾の入金の突き合わせ：作者の紙の刷部数の報告（直近）と、版元の料率での見込み額。 */
+function PrintReports({ r, link }: { r: Receipt; link: (id: number, text: string) => ReactElement }) {
+  const list = r.printReports ?? [];
+  if (!list.length) {
+    return <div className="note">この作品の作者の紙の条件に、刷部数の報告（製造）がまだありません。版元の報告（重版ごとの部数・本体価格）を作者の紙の条件に入れてください。</div>;
+  }
+  return (
+    <div className="tablewrap"><table className="table">
+      <thead><tr><th>刷部数の報告</th><th>作者の紙の条件</th><th className="num">部数</th><th className="num">報告額（本体価格 × 部数）</th>
+        <th className="num">版元からの見込み{r.outRatePct !== null && r.outRatePct !== undefined ? `（× ${r.outRatePct}%）` : ""}</th></tr></thead>
+      <tbody>{list.map((e) => (
+        <tr key={e.eventId}>
+          <td>{e.occurredOn ?? "—"}</td>
+          <td>{link(e.conditionId, e.conditionNo ?? `#${e.conditionId}`)} {e.partyName}</td>
+          <td className="num">{e.quantity === null ? "—" : e.quantity.toLocaleString("ja-JP")}</td>
+          <td className="num">{money(e.grossAmount, r.currency)}</td>
+          <td className="num">{money(e.expected, r.currency)}</td>
+        </tr>
+      ))}</tbody>
+    </table>
+    <span className="faint">入金 {money(r.amount, r.currency)} と、版元の明細の刷の見込み額を突き合わせてください（増刷時の非加算は計算書で引きます）。</span>
+    </div>
+  );
+}
+
 /**
  * 入金 1 件から払うべき作者（取引管理で「入金を確認した」直後・入金済みの行から）。
  * 再許諾・他社販売の許諾先の入金でなければ（作者のいない入金）何も出さない。
@@ -257,7 +294,8 @@ export function ReceiptsForPayment({ paymentId, onOpenCondition, onOpenDocument,
       .then((r) => setReceipts(r.receipts)).catch((e: ApiError) => setError(e.message));
   }, [paymentId, version]);
   if (error) return <div className="alert">{error}</div>;
-  const withAuthors = (receipts ?? []).filter((r) => r.ins.length > 0);
+  // 紙の再許諾の入金も出す（作者の報告は起こさず、刷部数の報告との突き合わせだけ）。
+  const withAuthors = (receipts ?? []).filter((r) => r.ins.length > 0 || r.media === "print");
   if (!withAuthors.length) return null;
   const pending = withAuthors.flatMap((r) => r.ins).filter((x) => x.state === "unreported").length;
   return (
