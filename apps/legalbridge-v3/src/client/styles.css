@@ -1041,7 +1041,7 @@ tr.ledger-editing > td{background:var(--accent-soft)}
 /* ポップアップ（ネイティブ dialog）。 */
 .lb-modal{border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);padding:0;
   width:min(720px,calc(100vw - 32px));max-height:calc(100vh - 48px);box-shadow:0 18px 48px rgba(0,0,0,.25)}
-.lb-modal.wide{width:min(1180px,calc(100vw - 32px))}
+.lb-modal.wide{width:min(1540px,calc(100vw - 32px))}
 .lb-modal::backdrop{background:rgba(10,14,18,.45)}
 .lb-modal-hd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:1}
 .lb-modal-hd b{flex:1;min-width:0;font-size:13.5px}
@@ -1058,3 +1058,32 @@ tr.ledger-editing > td{background:var(--accent-soft)}
 .fix-round-bd{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .fix-round-bd .field{grid-template-columns:72px minmax(0,1fr)}
 .fix-round-bd .field input.edited{border-color:var(--warn);background:var(--warn-soft)}
+
+/* 食い違いの一括修正（DriftMatrix.tsx）：行＝条件 × 列＝段。緑＝正（直せる）、灰＝焼き付いた値。 */
+.dm-common{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px 14px;align-items:end;
+  padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--sunken)}
+.dm-common .field{grid-template-columns:1fr;gap:3px;margin:0}
+.dm-common .seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:6px;overflow:hidden;background:var(--surface)}
+.dm-common .seg button{all:unset;cursor:pointer;padding:4px 10px;font-size:12px}
+.dm-common .seg button[aria-pressed="true"]{background:var(--ink);color:var(--ground);font-weight:600}
+.dm-common .seg button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+table.dm{min-width:1240px;font-size:12px}
+table.dm th,table.dm td{vertical-align:top}
+table.dm thead tr.grp th{text-align:center;font-weight:700;color:var(--ink);border-bottom:0;padding-bottom:2px}
+table.dm thead tr.grp th.live{background:var(--ok-soft);color:var(--ok)}
+table.dm thead tr.grp th.frozen{background:var(--sunken)}
+table.dm th.sep,table.dm td.sep{border-left:2px solid var(--line)}
+table.dm input{font-size:12px;padding:3px 6px}
+table.dm input.num{font-family:var(--mono);text-align:right;width:104px}
+table.dm input.num.short{width:64px}
+table.dm input[type=date]{width:128px;font-family:var(--mono)}
+table.dm input.edited{border-color:var(--warn);background:var(--warn-soft)}
+.dm-stack{display:grid;gap:3px}
+.dm-line{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.dm-line + .dm-line{margin-top:3px}
+.dm-name{font-weight:600}
+td.dm-frozen{background:var(--sunken);font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td.dm-frozen.bad{background:var(--out-soft);color:var(--out);font-weight:700}
+td.dm-frozen .was{text-decoration:line-through;color:var(--faint);font-weight:400;margin-right:4px}
+td.dm-docno{font-family:inherit;white-space:normal}
+td.dm-docno td{padding:0;border:0;background:transparent}

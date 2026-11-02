@@ -123,23 +123,31 @@ test("検収書の納品日・検収日は、実績と比べる", () => {
   assert.deepEqual(seen(r), [["settlementDoc", "delivery", "2026-09-01", "2026-09-20"]]);
 });
 
-test("支払の期日は、検収書に書いた支払期日と比べる", () => {
+test("支払期日の正は支払。検収書に焼き付いた支払期日を支払と比べる", () => {
+  // 作る順番は 実績 → 支払 → 検収書。検収書は支払の期日を印字するので、違えば検収書の側が取り残し。
   const withDoc = delivered(95000, {
     settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
-    settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2026-10-31" }),
-    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null, amount: null, paidOn: null }
+    settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2029-07-31" }),
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-11-20", note: null, amount: null, paidOn: null }
   });
-  assert.deepEqual(seen(withDoc), [["payment", "payment", "2026-09-30", "2026-10-31"]]);
-  assert.equal(driftOf(withDoc)!.flagged[0].basisLabel, "検収書");
+  assert.deepEqual(seen(withDoc), [["settlementDoc", "payment", "2029-07-31", "2026-11-20"]]);
+  assert.equal(driftOf(withDoc)!.flagged[0].basisLabel, "支払");
+  assert.equal(driftOf(withDoc)!.targets.paymentDueOn, "2026-11-20");
 
-  // 検収書が支払期日を持たなければ、予定明細の支払日と比べる。
-  const withSchedule = delivered(95000, {
-    schedules: { total: 1, done: 1, dueOn: null, payOn: "2026-10-31",
-                 dueVaries: false, payVaries: false },
+  // 支払が無ければ、検収書の支払期日は比べる相手が無い（支払を立てるときに引き継ぐ）。
+  const noPayment = delivered(95000, {
+    schedules: { total: 1, done: 1, dueOn: null, payOn: "2026-10-31", dueVaries: false, payVaries: false },
+    settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
+    settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2029-07-31" })
+  });
+  assert.deepEqual(seen(noPayment), []);
+  // 支払が正なので、支払そのものは鳴らさない。
+  const payOnly = delivered(95000, {
+    schedules: { total: 1, done: 1, dueOn: null, payOn: "2026-10-31", dueVaries: false, payVaries: false },
     settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
     payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null, amount: null, paidOn: null }
   });
-  assert.equal(driftOf(withSchedule)!.flagged[0].basisLabel, "予定");
+  assert.deepEqual(seen(payOnly), []);
 });
 
 test("回ごとに日付が違う発注書は、1日とは比べない", () => {
@@ -271,16 +279,15 @@ test("支払の金額は人に渡す（割当の合計なのでここでは直�
   assert.deepEqual(plan.reissue, []);
 });
 
-test("支払の期日は保存で直せる（人は要らない）", () => {
+test("検収書の支払期日が支払と違えば、検収書の訂正版を作る（支払は触らない）", () => {
   const r = delivered(95000, {
     settlement: settlement({ deliveredAmount: 95000, plannedAmount: 95000 }),
-    settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2026-10-31" }),
-    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-09-30", note: null, amount: null, paidOn: null }
+    settlementDoc: doc({ documentNo: "ARC-INS-1", amountExTax: 95000, paymentOn: "2029-07-31" }),
+    payment: { id: 4, paymentNo: "PY-1", status: "planned", dueOn: "2026-11-20", note: null, amount: null, paidOn: null }
   });
   const plan = repairPlan(r, driftOf(r)!);
-  assert.deepEqual(plan.steps.map((s) => s.kind), ["auto"]);
-  assert.equal(plan.paymentDueOn, "2026-10-31");
-  assert.match(plan.steps[0].text, /期日を 2026-10-31 に/);
+  assert.deepEqual(plan.reissue.map((d) => d.documentNo), ["ARC-INS-1"]);
+  assert.equal(plan.paymentDueOn, null);
 });
 
 test("食い違いが無ければ手順も無い", () => {

@@ -516,7 +516,11 @@ export class DocumentContextRepository {
               s.service_from AS schedule_service_from, s.service_to AS schedule_service_to,
               c.currency, s.label AS schedule_label, s.seq AS schedule_seq,
               s.due_on AS schedule_due_on, s.pay_on AS schedule_pay_on,
-              s.planned_amount AS schedule_planned
+              s.planned_amount AS schedule_planned,
+              -- この実績に立っている支払の期日（取り消したものは除く）。検収書の支払期日はこれを先に採る。
+              (SELECT y.due_on FROM payment_allocations al JOIN payments y ON y.id = al.payment_id
+                WHERE al.event_id = e.id AND y.status <> 'canceled'
+                ORDER BY (y.status = 'paid') DESC, y.id DESC LIMIT 1) AS payment_due_on
          FROM condition_events e
          JOIN conditions c ON c.id = e.condition_id
          LEFT JOIN condition_schedules s ON s.id = e.schedule_id
@@ -593,6 +597,8 @@ export class DocumentContextRepository {
         /** 検収書がそのまま使う項目。実績に入っていれば文書側で人が入れずに済む。 */
         deliverable: str(row.deliverable),
         inspectedOn: dateStr(row.inspected_on),
+        /** この実績に立っている支払の期日。支払 → 検収書 の順で作るとき、検収書の支払期日はこれ。 */
+        paymentDueOn: dateStr(row.payment_due_on),
         inspectorDept: str(row.inspector_dept),
         inspectorName: str(row.inspector_name),
         /** その回の予定。支払期日は支払通知書に要る。 */

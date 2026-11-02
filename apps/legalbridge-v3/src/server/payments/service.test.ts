@@ -618,3 +618,15 @@ test("支払の修正：支払済みの源泉と、支払額を超える源泉�
   await assert.rejects(new PaymentService(amendDb({ tax_amount: 0 }))
     .amend(900, { withholdingAmount: 330001 }, "x", "admin"), /支払額（税込）を超えています/);
 });
+
+test("実績から支払を立てる（検収書はまだ無くてよい）。期日は納品日から、指定があればその日", async () => {
+  const db = inspectionDb({ occurred_on: "2026-10-05", inspected_on: "2026-10-06" });
+  const made = await new PaymentService(db).createFromEvents([700], "kuramochi");
+  assert.equal(made.dueOn, "2026-11-20", "個人：10/5 納品 → 11/20");
+  const q = db.find("FROM condition_events e")!;
+  assert.match(q.text, /e\.id = ANY\(\$1::bigint\[\]\)/);
+  assert.deepEqual(q.params, [[700]]);
+  const fixed = await new PaymentService(inspectionDb({ occurred_on: "2026-10-05" })).createFromEvents([700], "k", { dueOn: "2026-11-30" });
+  assert.equal(fixed.dueOn, "2026-11-30");
+  await assert.rejects(() => new PaymentService(inspectionDb()).createFromEvents([], "k"), /実績を選んで/);
+});

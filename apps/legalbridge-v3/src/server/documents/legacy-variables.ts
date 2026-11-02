@@ -440,8 +440,12 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
     get: (c) => latestLineDate(c, "inspection_date") ?? latestDate(c, (e) => e.inspectedOn ?? e.occurredOn) },
   // 予定（支払日）が無い実績は、納品日からの既定（翌月末。個人は所定日）で出す（A-113）。
   // 予定を立てていない委託料の行の検収書で「お支払予定日」が空のまま出ていた。
+  // 支払期日の正は支払（作る順番は 実績 → 支払 → 検収書）。明細の行の支払日（支払の期日から出る）→ 実績に立つ
+  // 支払の期日 → 予定の回の支払日 → 納品日からの既定、の順。頭書きと明細の行で日が違う紙を出さない。
   { names: ["PAYMENT_DATE", "paymentDueDate", "支払期日", "summaryPaymentDate"],
-    get: (c) => latestDate(c, (e) => e.schedule?.payOn, c.schedule?.payOn)
+    get: (c) => latestLineDate(c, "payment_date")
+      ?? latestDate(c, (e) => e.paymentDueOn)
+      ?? latestDate(c, (e) => e.schedule?.payOn, c.schedule?.payOn)
       ?? latestDate(c, (e) => payDateFromDelivery(e.occurredOn, c.condition?.counterparty?.kind)) },
   { names: ["PERIOD", "対象期間", "対象月"], get: (c) => c.event?.period },
 

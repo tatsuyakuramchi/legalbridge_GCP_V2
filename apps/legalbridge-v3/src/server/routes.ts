@@ -2415,6 +2415,15 @@ export function createRoutes(database: Transactable) {
     dueOn: z.string().date().nullable().optional(),
     note: z.string().trim().max(2000).nullable().optional()
   });
+  // 実績から支払を立てる（検収書はまだ無くてよい。支払の期日が先に決まり、検収書はそれを印字する）。
+  router.post("/payments/from-events", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        eventIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+        dueOn: z.string().date().nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await payments.createFromEvents(input.eventIds, actor(res), { dueOn: input.dueOn ?? undefined }));
+    }));
   router.post("/payments", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.status(201).json(await payments.create(paymentSchema.parse(req.body ?? {}), actor(res)));
