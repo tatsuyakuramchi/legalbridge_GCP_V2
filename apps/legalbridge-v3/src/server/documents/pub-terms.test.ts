@@ -426,3 +426,35 @@ test("A-111：第５条の枠の分岐：載っている媒体だけ true", () =
   const both = pubTermsPatch(context, {});
   assert.equal(both.hasDigitalMedia, true);
 });
+
+test("アーカム条件書の読み合わせ：増刷時の非加算は備考に、第３条の終期は更新後の最も遅い日、電子の受領額基準の印", () => {
+  const ctx = { ...context, conditions: [
+    { ...context.conditions[0], termStart: "2018-04-01", termEnd: "2021-03-31", autoRenew: true, renewMonths: 36, royaltyExemptLaterPct: 1 },
+    { ...context.conditions[1], termStart: "2018-04-01", termEnd: "2021-03-31", autoRenew: true, renewMonths: 36, priceBasis: "receipts" },
+    { ...context.conditions[2], termStart: "2016-10-01", termEnd: "2019-09-30", autoRenew: true, renewMonths: 36 }
+  ] };
+  const patch = pubTermsPatch(ctx, { "締結日": "2026-11-02" });
+  const titles = patch.titles as Array<{ note: string; term: string }>;
+  // 紙の 2 版目以降の非加算 1% → 備考「増刷時の印税対象部数は刷部数の99%（非加算 1%）」。電子の入金額基準も備考に。
+  assert.match(titles[0]!.note, /増刷時の印税対象部数は刷部数の99%（非加算 1%）/);
+  assert.match(titles[0]!.note, /電子の料率は乙の入金額に対する率/);
+  // 終期は更新前の終了日の最大（2021-03-31）ではなく、更新を数えたいまの期間の終わりの最大
+  //（3 本目：2019-09-30 → 2022 → 2025 → 2028-09-30）。
+  assert.equal(patch.termEnd, "2028-09-30");
+  assert.equal(pubTermsSuggestions(ctx)["許諾終了日"] >= "2028-09-30", true);
+  // 電子の条件が全部「入金額」基準なら第４条は受領額 × 料率。
+  assert.equal(patch.digitalReceiptBasis, true);
+  assert.equal(patch.digitalBasisMixed, false);
+  // 行を直していても非加算の 1 文は台帳から引き直す（人の備考は残る）。
+  const edited = pubTermsPatch(ctx, { "締結日": "2026-11-02",
+    pub_titles: [{ title: "星降る夜のはなし", print_condition_id: 1, digital_condition_id: 2, condition_ids: [1, 2],
+                   note: "増刷時の印税対象部数は刷部数の90%（非加算 10%）／人が書いた備考" }] });
+  assert.equal((edited.titles as Array<{ note: string }>)[0]!.note,
+    "増刷時の印税対象部数は刷部数の99%（非加算 1%）／電子の料率は乙の入金額に対する率／人が書いた備考");
+});
+
+test("乙（当社）の通知先：案件の担当者が無ければ自社の設定から（空のまま出さない）", () => {
+  const ctx = { ...context, owner: null, company: { ...context.company, department: "出版事業部", contactName: "編集 花子", email: "pub@example.test", tel: "03-2222-2222" } };
+  const patch = pubTermsPatch(ctx, {});
+  assert.equal(patch.licenseeContact, "出版事業部 ／ 編集 花子 ／ pub@example.test ／ 03-2222-2222");
+});

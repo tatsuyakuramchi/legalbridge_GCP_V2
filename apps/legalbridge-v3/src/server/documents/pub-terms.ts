@@ -23,7 +23,7 @@ import type { TemplateVariable } from "./binding.js";
 import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
 import { isSublicensingUsage, pubMediaOfUsage } from "../core/condition-usage.js";
-import { renewalLabel } from "../conditions/renewal.js";
+import { renewalLabel, renewalOf } from "../conditions/renewal.js";
 import { contextMasterAgreement } from "./legacy-variables.js";
 
 export const PUB_TERMS_KEY = "pub_license_terms_v3";
@@ -292,6 +292,36 @@ export function rowBlockerOf(condition: Data): string | null {
 /** 今日（YYYY-MM-DD）。更新の回数を数える既定の基準日。 */
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * 増刷時の非加算（2 版目以降の非加算。紙の条件の royalty_exempt_later_pct）の備考の 1 文。
+ * 第４条は「印税対象部数は刷部数」としか言わないので、係数のある作品は一覧の備考で言う（旧契約の係数の引き継ぎ）。
+ */
+export const EXEMPT_NOTE_HEAD = "増刷時の印税対象部数は";
+export function exemptLaterNote(pct: number | null | undefined): string {
+  if (pct === null || pct === undefined || !(pct > 0)) return "";
+  const rate = Number((100 - pct).toFixed(4));
+  return `${EXEMPT_NOTE_HEAD}刷部数の${rate}%（非加算 ${Number(pct.toFixed(4))}%）`;
+}
+
+/** 電子の料率の基準が乙の入金額（受領額）の作品に添える備考の 1 文（第４条がこれを指す）。 */
+export const RECEIPTS_NOTE = "電子の料率は乙の入金額に対する率";
+
+/**
+ * 条件の許諾期間の終期（自動更新を基準日まで数えた、いまの期間の終わり）の最大。
+ * 第３条の「許諾期間 … 〜 終期」は作品ごとの期間の外包みなので、更新前の終了日の最大では
+ * 一覧の終期（更新後）より早い日が出る。
+ */
+export function latestRenewedEnd(conditions: Data[], asOf: string): string {
+  return conditions.map((c) => {
+    if (!text(c.termEnd)) return "";
+    return renewalOf({
+      termStart: text(c.termStart) || null, termEnd: text(c.termEnd) || null,
+      autoRenew: c.autoRenew === true, renewMonths: number(c.renewMonths),
+      renewStoppedOn: text(c.renewStoppedOn) || null
+    }, asOf).currentEnd ?? "";
+  }).filter(Boolean).sort().at(-1) ?? "";
+}
+
 /** 百万分率を %（小数 4 桁まで、末尾の 0 なし）に。 */
 const ppmPct = (ppm: number) => String(Number((ppm / 10000).toFixed(4)));
 
@@ -401,7 +431,9 @@ export function pubTitleSeeds(context: Data): Data[] {
     const paid = [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu");
     const paidNote = paid ? inLieuPaidNote({ price: paid.firstEditionPrice, copies: paid.firstEditionCopies,
                                              ratePct: paid.firstEditionRatePct, exemptCopies: paid.royaltyExemptFirstCopies }) : "";
-    const notes = [...new Set([paidNote, ...group.map((c) => text(c.notes))].filter(Boolean))].join("／");
+    const exemptNote = exemptLaterNote(number(print?.royaltyExemptLaterPct));
+    const receiptsNote = digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
+    const notes = [...new Set([paidNote, exemptNote, receiptsNote, ...group.map((c) => text(c.notes))].filter(Boolean))].join("／");
     return {
       item_name: title,
       title,
@@ -523,7 +555,8 @@ export function pubTermsSuggestions(context: Data, _bound: Data = {}): Data {
   const out: Data = {};
   const conditions = list(context.conditions);
   const start = minDate(conditions.map((c) => text(c.termStart)));
-  const end = maxDate(conditions.map((c) => text(c.termEnd)));
+  // 終期は自動更新を今日まで数えた、いまの期間の終わりの最大（一覧の終期と揃える）。
+  const end = latestRenewedEnd(conditions, todayStr()) || maxDate(conditions.map((c) => text(c.termEnd)));
   if (start) out["許諾開始日"] = start;
   if (end) out["許諾終了日"] = end;
   const region = scopeLabels(context, "region");
@@ -588,6 +621,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   // 載っている媒体。無い媒体の支払の行は「—」にする（A-107）。
   const hasPrintMedia = conditions.some((c) => mediaOfCondition(c) === "print");
   const hasDigitalMedia = conditions.some((c) => mediaOfCondition(c) === "digital");
+  const digitalConds = conditions.filter((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c));
   const byId = new Map(conditions.map((c) => [Number(c.id), c]));
   const seeds = pubTitleSeeds(context);
   const rows = list(manual[PUB_TITLES_FIELD]).length ? list(manual[PUB_TITLES_FIELD]) : seeds;
@@ -633,12 +667,15 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     // 人が備考に書いた残りはそのまま。料率・独占区分と同じく、台帳の写しは台帳が正。
     const note = (() => {
       const typed = text(row.note).split("／").map((s) => s.trim()).filter(Boolean)
-        .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は"));
+        .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は") && !s.startsWith(EXEMPT_NOTE_HEAD) && s !== RECEIPTS_NOTE);
       const paidCond = fromLedger ? [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu") : null;
       const fresh = paidCond ? inLieuPaidNote({ price: paidCond.firstEditionPrice, copies: paidCond.firstEditionCopies,
                                                ratePct: paidCond.firstEditionRatePct, exemptCopies: paidCond.royaltyExemptFirstCopies,
                                                priceBasis: paidCond.priceBasis, partyName: paidCond.targetPartyName }) : "";
-      return [fresh, ...typed].filter(Boolean).join("／");
+      // 増刷時の非加算と電子の料率の基準も台帳から引き直す（行を直していてもそちらが正）。
+      const exempt = fromLedger ? exemptLaterNote(number(print?.royaltyExemptLaterPct)) : "";
+      const receipts = fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
+      return [fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
     })();
     return {
       no: index + 1,
@@ -708,12 +745,15 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     licenseeAddress: pick("被許諾者住所") || text(context.company?.address),
     licenseeRep: pick("被許諾者代表者名") || text(context.company?.rep ?? context.company?.representative),
     licenseeInvoiceNo: pick("被許諾者登録番号") || text(context.company?.invoiceNo),
+    // 乙（当社）の通知先：欄 → 案件の担当者 → 自社の設定（担当部署・代表メール・電話）。空のまま出さない。
     licenseeContact: pick("被許諾者連絡先")
-      || joinContact([context.owner?.department, context.owner?.name, context.owner?.email, context.owner?.phone]),
+      || joinContact([context.owner?.department, context.owner?.name, context.owner?.email, context.owner?.phone])
+      || joinContact([context.company?.department ?? context.company?.contactDepartment, context.company?.contactName ?? context.company?.contact,
+                      context.company?.email ?? context.company?.contactEmail, context.company?.tel ?? context.company?.phone]),
 
     // 欄が空なら条件明細の期間の外包み（文案と同じ規則）。空の期間を紙に出さない。
     termStart: pick("許諾開始日") || minDate(conditions.map((c) => text(c.termStart))),
-    termEnd: pick("許諾終了日") || maxDate(conditions.map((c) => text(c.termEnd))),
+    termEnd: pick("許諾終了日") || latestRenewedEnd(conditions, asOf) || maxDate(conditions.map((c) => text(c.termEnd))),
     autoRenew,
     renewPeriod: pick("更新期間") || renewUnitOf(conditions) || "1年",
     noticeBefore: pick("終了通知期限") || noticeOf(context) || "1か月",
@@ -733,6 +773,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     hasTranslation: translationShare != null || transTitles.length > 0,
     // 第５条の支払の行の枠。載っていない媒体は本文（188 以降のひな形）が行ごと「—」にする（A-111）。
     hasPrintMedia, hasDigitalMedia,
+    // 第４条 電子：電子の条件が全部「入金額」基準なら 乙の受領額 × 料率。混ざれば本文は配信価格の式のまま、備考の行を指す（197 以降のひな形）。
+    digitalReceiptBasis: hasDigitalMedia && digitalConds.length > 0 && digitalConds.every((c) => String(c.priceBasis) === "receipts"),
+    digitalBasisMixed: digitalConds.some((c) => String(c.priceBasis) === "receipts") && !digitalConds.every((c) => String(c.priceBasis) === "receipts"),
     // 翻訳の立て付け（A-034）。条文と一覧の見出しがこれで入れ替わる。
     translationDerivative,
     translationLabel,

@@ -43,6 +43,8 @@ export interface PubWorkPatch {
 }
 export interface PubConditionPatch {
   ratePpm?: number; exclusivity?: "exclusive" | "non_exclusive";
+  /** 利用許諾料の価格の基準（A-091）。電子は「入金額」（乙が配信事業者から受領する金額 × 料率）を取れる。 */
+  priceBasis?: "list" | "receipts" | null;
   termStart?: string | null; termEnd?: string | null; paymentTerms?: string | null; notes?: string | null;
   /** 2 版目以降の非加算（発行部数の %）。紙の条件だけ。 */
   royaltyExemptLaterPct?: number | null;
@@ -123,6 +125,8 @@ export interface PubWorkRow {
   cids: string[];
   /** 刊行物（版元・ISBN）。列が空なら null。 */
   edition: PubEditionRow | null;
+  /** 電子の価格の基準（「電子価格基準」の列。入金額なら乙の受領額 × 料率）。 */
+  priceBasis: "list" | "receipts" | null;
   /** 2 版目以降の非加算（%）。「増刷時非加算」の列。 */
   exemptLaterPct: number | null;
   /** 原作名（196）。新しく作る作品にだけ入れる。 */
@@ -144,7 +148,19 @@ const sharesLabel = (shares: Share[]) => shares.map((s) => `${s.name} ${Math.rou
 interface PubCondition {
   id: number; conditionNo: string | null; usageType: string; ratePpm: number | null;
   exclusivity: string | null; counterpartyId: number; partyName: string;
+  priceBasis: string | null;
 }
+
+/** 「電子価格基準」の列。定価（配信価格 × ダウンロード数 × 料率）か 入金額（乙の受領額 × 料率）。 */
+const PRICE_BASIS: Record<string, "list" | "receipts"> = { "定価": "list", "配信価格": "list", "入金額": "receipts", "受領額": "receipts" };
+function priceBasisColumn(row: Record<string, string>): "list" | "receipts" | null {
+  const v = text(row, "電子価格基準");
+  if (!v) return null;
+  if (!PRICE_BASIS[v]) throw new DomainError("VALIDATION", `電子価格基準は「定価」か「入金額」です（"${v}"）`);
+  return PRICE_BASIS[v];
+}
+/** 作品の文字の列。「なし」と書けば空にする（空欄は触らない）。 */
+const CLEAR_WORDS = new Set(["なし", "無し", "-", "—", "ー"]);
 
 const text = (row: Record<string, string>, header: string) => String(row[header] ?? "").trim();
 /** 小数 4 桁までで、末尾の 0 を落とす（15 → "15"、11.25 → "11.25"）。 */
@@ -291,6 +307,7 @@ export class PubWorksImportService {
     }
     if (p.cids.length) parts.push(`CID ${p.cids.length} 件`);
     if (p.exemptLaterPct !== null) parts.push(`増刷時の非加算 ${p.exemptLaterPct}%`);
+    if (p.priceBasis === "receipts") parts.push("電子の価格の基準は入金額");
     if (p.termStart || p.termEnd) {
       parts.push(`許諾期間 ${renewalLabel({ termStart: p.termStart, termEnd: p.termEnd, autoRenew: p.autoRenew,
                                             renewMonths: p.renewMonths, renewStoppedOn: null })}`);
@@ -408,6 +425,9 @@ export class PubWorksImportService {
     if (p.exemptLaterPct !== null && set.print) {
       await this.deps.conditions.updateEconomics(set.print.id, { royaltyExemptLaterPct: p.exemptLaterPct }, actor, null);
     }
+    if (p.priceBasis && set.digital) {
+      await this.deps.conditions.updateEconomics(set.digital.id, { priceBasis: p.priceBasis }, actor, null);
+    }
     const edition = p.edition ? await this.writeEdition(workId, p, actor) : null;
     for (const cid of p.cids) {
       await this.database.query(
@@ -451,7 +471,8 @@ export class PubWorksImportService {
   /** 既存の作品の紙・電子の IN 許諾条件（有効・予定）。 */
   private async pubConditionsOf(workId: number, partyId: number | null): Promise<PubCondition[]> {
     const r = await this.database.query(
-      `SELECT c.id, c.condition_no, c.usage_type, c.rate_ppm, c.exclusivity, c.counterparty_id, p.name AS party_name
+      `SELECT c.id, c.condition_no, c.usage_type, c.rate_ppm, c.exclusivity, c.counterparty_id, p.name AS party_name,
+              to_jsonb(c) ->> 'price_basis' AS price_basis
          FROM conditions c LEFT JOIN parties p ON p.id = c.counterparty_id
         WHERE c.work_id = $1 AND c.direction = 'in' AND c.kind = 'license'
           AND c.status IN ('active', 'scheduled') AND c.usage_type IN ('pub_print', 'pub_digital')
@@ -461,7 +482,8 @@ export class PubWorksImportService {
       id: Number(row.id), conditionNo: row.condition_no ?? null, usageType: String(row.usage_type),
       ratePpm: row.rate_ppm === null || row.rate_ppm === undefined ? null : Number(row.rate_ppm),
       exclusivity: row.exclusivity ?? null,
-      counterpartyId: Number(row.counterparty_id), partyName: String(row.party_name ?? "")
+      counterpartyId: Number(row.counterparty_id), partyName: String(row.party_name ?? ""),
+      priceBasis: row.price_basis ?? null
     }));
   }
 
@@ -502,7 +524,8 @@ export class PubWorksImportService {
     const workChanged: string[] = [];
     const putWork = (header: string, key: keyof PubWorkPatch) => {
       const v = text(row, header);
-      if (v) { workPatch[key] = v; workChanged.push(header); }
+      if (CLEAR_WORDS.has(v)) { workPatch[key] = null; workChanged.push(`${header}（空にする）`); }
+      else if (v) { workPatch[key] = v; workChanged.push(header); }
     };
     putWork("カナ", "titleKana"); putWork("著作権表示", "copyrightNotice"); putWork("第三者権利", "thirdPartyRights");
     putWork("作品備考", "remarks"); putWork("事業区分", "businessLine"); putWork("原作名", "sourceTitle");
@@ -529,6 +552,7 @@ export class PubWorksImportService {
 
     const { printTerms: updPrintTerms, digitalTerms: updDigitalTerms } = mediaTerms(row, null, null);
     const updExempt = ratePct(text(row, "増刷時非加算"), "増刷時非加算");
+    const updBasis = priceBasisColumn(row);
     type Plan = { cond: PubCondition; patch: PubConditionPatch; what: string[] };
     const plans: Plan[] = [];
     const creates: Array<{ usage: "pub_print" | "pub_digital"; ratePct: number }> = [];
@@ -540,6 +564,7 @@ export class PubWorksImportService {
       const patch: PubConditionPatch = { ...common };
       const what = [...commonChanged];
       if (usage === "pub_print" && updExempt !== null) { patch.royaltyExemptLaterPct = updExempt; what.push(`増刷時の非加算 ${updExempt}%`); }
+      if (usage === "pub_digital" && updBasis !== null && updBasis !== (cond.priceBasis ?? "list")) { patch.priceBasis = updBasis; what.push(`価格の基準 ${updBasis === "receipts" ? "入金額" : "定価"}`); }
       const own = usage === "pub_print" ? updPrintTerms : updDigitalTerms;
       if (own) {
         patch.paymentTerms = own;
@@ -653,6 +678,9 @@ export class PubWorksImportService {
       if (updExempt !== null && set.print) {
         await this.deps.conditions.updateEconomics(set.print.id, { royaltyExemptLaterPct: updExempt }, actor, null);
       }
+      if (updBasis !== null && set.digital) {
+        await this.deps.conditions.updateEconomics(set.digital.id, { priceBasis: updBasis }, actor, null);
+      }
     }
     if (scopes.length) {
       for (const cond of [printCond, digitalCond]) {
@@ -703,6 +731,7 @@ export class PubWorksImportService {
       `SELECT w.id AS work_id, w.title, w.work_code, w.title_kana, w.business_line, w.remarks AS work_remarks,
               to_jsonb(w) ->> 'copyright_notice' AS copyright_notice, to_jsonb(w) ->> 'third_party_rights' AS third_party_rights,
               c.id, c.usage_type, c.rate_ppm, c.exclusivity, c.counterparty_id, p.name AS party_name,
+              to_jsonb(c) ->> 'price_basis' AS price_basis,
               to_jsonb(p) ->> 'party_code' AS party_code,
               to_jsonb(w) ->> 'source_title' AS source_title,
               ag.agreement_no, c.term_start, c.term_end, c.auto_renew, c.renew_months, c.payment_terms, c.notes,
@@ -758,6 +787,7 @@ export class PubWorksImportService {
         "原作名": main.source_title ?? "",
         "相手先": main.party_name ?? "", "相手先コード": main.party_code ?? "",
         "紙料率": printC ? pct(printC.rate_ppm) : "", "電子料率": digitalC ? pct(digitalC.rate_ppm) : "",
+        "電子価格基準": digitalC && digitalC.price_basis === "receipts" ? "入金額" : "",
         "独占": main.exclusivity === "exclusive" ? "独占" : main.exclusivity === "non_exclusive" ? "非独占" : "",
         // 紙・電子の 2 列で出す（同じ按分でも両方に）。
         "紙取り分": ratioText(printShares),
@@ -798,6 +828,8 @@ export class PubWorksImportService {
     const exemptText = text(row, "増刷時非加算");
     const exemptLaterPct = ratePct(exemptText, "増刷時非加算");
     if (exemptLaterPct !== null && print === null) throw new DomainError("VALIDATION", "増刷時非加算を入れるなら紙料率も入れてください");
+    const priceBasis = priceBasisColumn(row);
+    if (priceBasis !== null && digital === null) throw new DomainError("VALIDATION", "電子価格基準を入れるなら電子料率も入れてください");
     const exclText = text(row, "独占");
     if (exclText && !EXCLUSIVITY[exclText]) throw new DomainError("VALIDATION", `独占は「独占」か「非独占」です（"${exclText}"）`);
     const exclusivity = exclText ? EXCLUSIVITY[exclText] : "non_exclusive";
@@ -857,7 +889,7 @@ export class PubWorksImportService {
       line, label: title, title, work,
       newWork: work ? null : {
         title, titleKana: text(row, "カナ") || null, workCode: code || null, remarks: text(row, "作品備考") || null,
-        copyrightNotice: text(row, "著作権表示") || null, thirdPartyRights: text(row, "第三者権利") || null,
+        copyrightNotice: text(row, "著作権表示") || null, thirdPartyRights: CLEAR_WORDS.has(text(row, "第三者権利")) ? null : text(row, "第三者権利") || null,
         businessLine: text(row, "事業区分") || "出版"
       },
       party, agreementId,
@@ -865,7 +897,7 @@ export class PubWorksImportService {
       digital: digital === null ? null : { ratePct: digital, exclusivity, ...(digitalTerms ? { paymentTerms: digitalTerms } : {}) },
       termStart, termEnd, ...renew, sourceTitle: text(row, "原作名") || null,
       paymentTerms: text(row, "支払条件") || null, notes: text(row, "備考") || null,
-      scopes, shares, printShares, digitalShares, distribution, cids, edition, exemptLaterPct
+      scopes, shares, printShares, digitalShares, distribution, cids, edition, exemptLaterPct, priceBasis
     };
   }
 
@@ -928,7 +960,8 @@ function renewColumns(row: Record<string, string>): { autoRenew: boolean | null;
 
 export const PUB_WORKS_HEADERS = [
   "作品名", "作品コード", "カナ", "原作名", "相手先", "相手先コード", "紙料率", "電子料率", "独占", "紙取り分", "電子取り分", "分配", "CID",
-  "契約番号", "開始日", "終了日", "自動更新", "更新の単位", "支払条件", "紙支払条件", "電子支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分"
+  "契約番号", "開始日", "終了日", "自動更新", "更新の単位", "支払条件", "紙支払条件", "電子支払条件", "地域", "言語", "著作権表示", "第三者権利", "備考", "作品備考", "事業区分",
+  "電子価格基準"
 ];
 
 /**
