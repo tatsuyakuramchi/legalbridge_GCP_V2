@@ -3222,6 +3222,13 @@ export function createRoutes(database: Transactable) {
     }));
 
   // 台帳。作品と原作（Core Logic）の系譜を1回で返す。
+  // 作品の統合の下見（/works/:id より前に置く）。
+  router.get("/works/merge/preview", asyncRoute(async (req, res) => {
+    const { fromId, intoId } = z.object({
+      fromId: z.coerce.number().int().positive(), intoId: z.coerce.number().int().positive()
+    }).parse(req.query ?? {});
+    res.json(await workWrites.mergePreview(fromId, intoId));
+  }));
   router.get("/works/tree", asyncRoute(async (req, res) => {
     res.json(await works.tree(String(req.query.q ?? ""), String(req.query.archived ?? "") === "1"));
   }));
@@ -3624,6 +3631,10 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const { intoId } = z.object({ intoId: z.coerce.number().int().positive() }).parse(req.body ?? {});
       res.json(await workWrites.merge(Number(req.params.id), intoId, actor(res)));
+    }));
+  router.post("/works/:id/unmerge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await workWrites.unmerge(Number(req.params.id), actor(res)));
     }));
 
   // 終了 → 削除の2段階。条件と同じ作り。
