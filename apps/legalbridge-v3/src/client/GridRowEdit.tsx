@@ -267,8 +267,17 @@ export function GridRowEdit(
     if (!reason.trim()) { setError("直す理由（取り消しの理由）を入れてください"); return; }
     setBusy(true); setError(null); setVoidBlock(null);
     try {
+      // 検収書・計算書に載っていれば、先にその文書を無効にする（載っている実績は全部解放され、この実績だけ取り消す）。
+      // 支払が立っていれば文書の側で止まる（何も書かない）。取り消して続ければ、もう一度ここから。
+      const d = docOf(e);
+      let voidedDoc: string | null = null;
+      if (d && d.status !== "void") {
+        await api.post(`/documents/${d.id}/void`, { reason: reason.trim() });
+        voidedDoc = d.documentNo ?? `#${d.id}`;
+      }
       await api.post(`/conditions/${row.conditionId}/events/${e.id}/void`, { reason: reason.trim() });
-      onDone(`${row.conditionNo ?? `#${row.conditionId}`} の実績（${e.occurredOn ?? "日付なし"}・${yen(e.amount)}）を取り消しました`);
+      onDone(`${row.conditionNo ?? `#${row.conditionId}`} の実績（${e.occurredOn ?? "日付なし"}・${yen(e.amount)}）を取り消しました`
+        + (voidedDoc ? `。${voidedDoc} も無効にしました（載っていたほかの実績は検収書なしに戻ります）` : ""));
     } catch (err) {
       const blocked = blockingPaymentsOf(err);
       if (blocked) setVoidBlock({ eventId: e.id, payments: blocked, message: (err as ApiError).message });
@@ -383,14 +392,14 @@ export function GridRowEdit(
                     {cancelling && <span className="chip chg">支払を取り消して作り直す</span>}
                     {locked && <span className="chip stop">支払済み：金額は直せません</span>}
                     {!locked && (
-                      <span style={{ marginLeft: "auto" }} className="row" title={d ? `${d.documentNo ?? `#${d.id}`} に載っているので取り消せません。先にその文書を無効にしてください` : "この実績を無効にします（理由は下の欄）"}>
+                      <span style={{ marginLeft: "auto" }} className="row" title={d ? `${d.documentNo ?? `#${d.id}`} を無効にしてから、この実績を無効にします（理由は下の欄。文書の無効は戻せます）` : "この実績を無効にします（理由は下の欄）"}>
                         {voiding === e.id
                           ? <>
-                              <span className="faint">この実績を取り消しますか？</span>
+                              <span className="faint">{d ? `${d.documentNo ?? `#${d.id}`} を無効にして、この実績を取り消しますか？` : "この実績を取り消しますか？"}</span>
                               <button className="btn btn-sm danger" disabled={busy || !reason.trim()} onClick={() => void voidEvent(e)}>取り消す</button>
                               <button className="btn btn-sm" onClick={() => setVoiding(null)}>やめる</button>
                             </>
-                          : <button className="linky" disabled={Boolean(d) || busy} onClick={() => { setVoiding(e.id); setError(null); }}>この実績を取り消す</button>}
+                          : <button className="linky" disabled={busy} onClick={() => { setVoiding(e.id); setError(null); }}>{d ? "検収書ごと取り消す" : "この実績を取り消す"}</button>}
                       </span>
                     )}
                   </div>
