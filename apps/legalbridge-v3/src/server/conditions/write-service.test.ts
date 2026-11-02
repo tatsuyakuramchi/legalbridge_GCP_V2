@@ -251,6 +251,33 @@ test("無効化は行を残し、理由を備考に足す", async () => {
   assert.equal(audit!.params[1], "condition.void");
 });
 
+test("無効化の取り消し：有効に戻し、理由を備考に足す。新しい版や同じ内容の条件が生きていれば戻さない", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions WHERE id = $1 FOR UPDATE")) return [{ id: 1, condition_no: "CL-1", status: "void", counterparty_id: 3, currency: "JPY", series_id: null, effective_from: null }];
+    if (t.includes("UPDATE conditions")) return [{ id: 1 }];
+    return [];
+  });
+  const r = await new ConditionWriteService(db).unvoid(1, "整理で間違えて無効にした", "t");
+  const up = db.find("SET status = $2")!;
+  assert.deepEqual(up.params, [1, "active", "無効化の取り消し：整理で間違えて無効にした"]);
+  assert.deepEqual(r.changed, [{ target: "conditions（無効化の取り消し）", rows: 1 }]);
+  assert.equal(db.find("INSERT INTO audit_events")!.params[1], "condition.unvoid");
+
+  const withLive = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions WHERE id = $1 FOR UPDATE")) return [{ id: 1, condition_no: "CL-1", status: "void", counterparty_id: 3, currency: "JPY", series_id: 1, effective_from: null }];
+    if (t.includes("status IN ('active', 'scheduled') LIMIT 1") && t.includes("COALESCE(series_id, id)")) return [{ id: 2, condition_no: "CL-1-R2" }];
+    return [];
+  });
+  await assert.rejects(() => new ConditionWriteService(withLive).unvoid(1, "x", "t"), /新しい版 CL-1-R2 が生きています/);
+  const withDup = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions WHERE id = $1 FOR UPDATE")) return [{ id: 1, condition_no: "CL-1", status: "void", counterparty_id: 3, currency: "JPY", series_id: null, effective_from: null }];
+    if (t.includes("JOIN conditions d ON")) return [{ id: 9, condition_no: "CL-9" }];
+    return [];
+  });
+  await assert.rejects(() => new ConditionWriteService(withDup).unvoid(1, "x", "t"), /CL-9 が有効です/);
+  await assert.rejects(() => new ConditionWriteService(db).unvoid(1, " ", "t"), /理由は必須/);
+});
+
 test("理由なしでは無効化できない", async () => {
   const db = new FakeDatabase(deleteRows());
   await assert.rejects(() => new ConditionWriteService(db).void(1, " ", "t"), /理由は必須/);
