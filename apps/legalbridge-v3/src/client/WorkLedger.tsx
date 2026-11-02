@@ -390,7 +390,7 @@ export function WorkLedger(
         ...g.rows.map(rowOf)]);
 
   return (
-    <div className={`ledger${workId !== null ? " ledger-single" : ""}`}>
+    <div className={`wledger${workId !== null ? " wledger-single" : ""}`}>
       {workId === null && <nav className="ledger-works" aria-label="作品">
         <div className="faint ledger-works-hd">作品で選ぶ</div>
         {[{ key: "all", title: "すべての作品", tally: groupByWork(mine).reduce((t, g) => ({ conditions: t.conditions + g.tally.conditions, stuck: t.stuck + g.tally.stuck, unpaid: t.unpaid + g.tally.unpaid }), { conditions: 0, stuck: 0, unpaid: 0 }) },

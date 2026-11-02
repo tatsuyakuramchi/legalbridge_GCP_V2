@@ -239,7 +239,7 @@ tr.grid-edit td{background:var(--sunken);padding:12px 14px}
   padding:7px 10px;background:var(--accent-soft);border:1px solid var(--accent);
   border-radius:7px;font-size:11.5px}
 /* 作品別の一覧：行を選んだまま下へ行っても、操作の帯が見えている。 */
-.ledger .bulkbar{position:sticky;top:6px;z-index:2}
+.wledger .bulkbar{position:sticky;top:6px;z-index:2}
 
 /* お金の流れの道しるべ（案件の中身のタブの下）。どのタブにいても出したまま。 */
 .chain{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 6px;
@@ -727,8 +727,8 @@ button.pipe-step:hover{border-color:var(--accent)}
 .ledger-check{display:inline-flex;align-items:center;gap:5px;font-size:12px}
 tr[aria-selected="true"] td{background:var(--accent-soft)}
 .inline-input{width:100%;border:1px solid var(--line-strong);border-radius:5px;padding:3px 6px;font:inherit;font-size:12px;background:var(--surface)}
-.ledger .btn-sm{white-space:nowrap}
-.ledger td .row{flex-wrap:nowrap}
+.ledger .btn-sm,.wledger .btn-sm{white-space:nowrap}
+.ledger td .row,.wledger td .row{flex-wrap:nowrap}
 
 /* 案件の「整理」タブ。半分幅の枠に条件・文書・実績を並べるので、表ではなく2行の行にする。 */
 .graph-list{display:flex;flex-direction:column}
@@ -1007,9 +1007,10 @@ table.report tr.work td .row .btn { margin-left: auto; }
 @media (max-width:1100px){.fix.cedit{grid-template-columns:1fr}}
 .cedit .form-grid > [hidden]{display:none !important}
 
-/* 作品別の条件一覧（案件「条件ごと」。WorkLedger.tsx）：左に作品、右に 1行＝1条件。 */
-.ledger{display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px;align-items:start}
-@media (max-width:900px){.ledger{grid-template-columns:1fr}}
+/* 作品別の条件一覧（案件「条件ごと」。WorkLedger.tsx）：左に作品、右に 1行＝1条件。
+   作品台帳の .ledger（一覧と詳細の組）とは別物なので、名前を分ける。 */
+.wledger{display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:900px){.wledger{grid-template-columns:1fr}}
 .ledger-works{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:6px;display:grid;gap:2px;position:sticky;top:8px}
 .ledger-works-hd{font-size:10.5px;letter-spacing:.1em;padding:4px 8px}
 .ledger-work{all:unset;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1px 8px;padding:6px 9px;border-radius:6px;font-size:12.5px}
@@ -1021,8 +1022,8 @@ table.report tr.work td .row .btn { margin-left: auto; }
 .ledger-work .n{font-family:var(--mono);font-size:11.5px}
 .ledger-work .s{grid-column:1/-1;font-size:11px;display:flex;gap:8px;flex-wrap:wrap;color:var(--muted)}
 .ledger-work[aria-pressed="true"] .s{color:inherit}
-.ledger .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;vertical-align:1px}
-.ledger .dot.stop{background:var(--out)} .ledger .dot.chg{background:var(--warn)} .ledger .dot.ok{background:var(--ok)}
+.wledger .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;vertical-align:1px}
+.wledger .dot.stop{background:var(--out)} .wledger .dot.chg{background:var(--warn)} .wledger .dot.ok{background:var(--ok)}
 .ledger-table{min-width:960px}
 .ledger-table td:nth-child(2){white-space:nowrap}
 .ledger-cell{cursor:pointer;border-left:1px solid var(--line)}
@@ -1088,4 +1089,4 @@ td.dm-frozen .was{text-decoration:line-through;color:var(--faint);font-weight:40
 td.dm-docno{font-family:inherit;white-space:normal}
 td.dm-docno td{padding:0;border:0;background:transparent}
 /* 作品台帳の「条件ごと」：作品は 1 点なので左の作品の欄は無く、表だけ。 */
-.ledger.ledger-single{grid-template-columns:minmax(0,1fr)}
+.wledger.wledger-single{grid-template-columns:minmax(0,1fr)}
