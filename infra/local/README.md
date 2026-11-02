@@ -29,7 +29,11 @@ GCP（Cloud Run・Cloud SQL）が止まったときに、手元の PC で前夜�
 | Cloud Storage 経由 | 443 のみ | GCP の契約の都合でバケットを作れない |
 
 自動同期は使えないが、**本番の中身を手作業で持ってくる経路はある**。
-Cloud SQL Studio は使えるので、そこから取り出して取り込む（下の「Studio から本番の中身を入れる」）。
+
+- **Cloud Shell で写して落とす（おすすめ）**：コマンド 1 本で `ops sync` と同じ写しができる
+  （下の「手作業で写す（Cloud Shell）」）
+- Cloud SQL Studio から CSV で取り出して取り込む（下の「Studio から本番の中身を入れる」）。
+  Cloud Shell が使えないとき
 
 **再開するとき**は、どちらか一方が解ければそのまま動く。
 
@@ -309,6 +313,58 @@ docker compose up -d app
 
 支払は「立てる」まで。払った事実は銀行にしかないので、この画面から
 まとめて支払済みにはしない。
+
+## 手作業で写す（Cloud Shell）
+
+自動同期（`ops sync`）が使えないときに、好きなときに手で写しを取る手順。
+Cloud Shell は Google の中にいるので Cloud SQL に届く。PC 側はブラウザで
+ファイルを落とすだけ（443 番）なので、3307 番が塞がれていても通る。
+本番は読むだけで、変わらない。
+
+できる写しは `ops sync` と同じ形（`v3_YYYYmmdd_HHMM.dump`）なので、
+`ops restore`・`ops status`・画面左下の「データ … 時点」がそのまま使える。
+Studio の CSV と違ってページを分けて落とす必要はなく、ビュー・関数・トリガーも入る。
+
+**準備（1回だけ）**：Cloud Shell にリポジトリと Cloud SQL Auth Proxy を置く
+（`docs/v3-deploy-cloudshell.md` の A・B）。つなぐロールは読み取り専用の
+`legalbridge_v3_backup`（事前準備の 3 で作ったもの）。パスワードは `.env` の `SYNC_DB_PASSWORD`。
+
+**1. Cloud Shell で写す**
+
+```bash
+cd ~/legalbridge_GCP_V2 && git pull
+infra/gcp/backup-v3-dump.sh
+```
+
+- パスワードを聞かれたら `legalbridge_v3_backup` のものを入れる
+  （管理ロールで取るなら `PGUSER=postgres infra/gcp/backup-v3-dump.sh`）
+- Proxy の貼り直しはスクリプトがやる（トークン切れを気にしなくてよい）
+- 取り終わるとブラウザのダウンロードが始まる（確認が出たら許可する）。
+  始まらなければ、右上「︙」→「ダウンロード」で表示されたファイル名を指定する
+- 落とし終えたら Enter。Cloud Shell 側の写しは消える（本番データを置きっぱなしにしない）
+
+`pg_dump` は Cloud Shell の docker で `postgres:17-alpine` のものを使う。予備系の
+`pg_restore` と同じ版なので、取った写しは必ず読める（Cloud Shell に入っている
+`pg_dump` を使うなら `PG_DUMP=local`）。
+
+**2. PC で入れる（PowerShell、`infra\local` で）**
+
+```powershell
+Move-Item "$HOME\Downloads\v3_*.dump" dumps\
+docker compose run --rm ops status                               # 写しの一覧に出る
+docker compose run --rm ops restore /dumps/v3_YYYYmmdd_HHMM.dump  # 一覧に出た名前で
+```
+
+- 入れ替えの前に、いまの v3 を `dumps/before_import_….dump` に自動で写す
+  （手元で作った案件・文書は消えるので、戻すときはそれを `ops restore`）
+- 予備系で書いた変更の記録（`ops backup-begin`）が開いている間は止まる。先に持ち帰る
+- 写しは `KEEP_DUMPS` 世代を超えると、次の `ops sync` で古いものから消える。
+  手で取った分だけのときは、不要になった `dumps\v3_*.dump` を自分で消す
+- 写した直後にアプリの画面がエラーになるなら、手元のコードが本番より古い。
+  `git pull` → `docker compose up -d --build app`
+
+**★ 写しには口座情報・個人情報が入る。** チャットや issue に貼らない。
+Downloads に残さない（`Move-Item` で移せば残らない）。
 
 ## Studio から本番の中身を入れる
 
