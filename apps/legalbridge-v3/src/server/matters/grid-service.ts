@@ -81,7 +81,9 @@ const documentLateral = (alias: string, keys: string, importKinds: string | null
            (d.template_version_id IS NULL) AS imported,
            NULLIF(d.rendered_values ->> 'DELIVERY_DATE', '') AS delivery_on,
            NULLIF(d.rendered_values ->> 'INSPECTION_DATE', '') AS inspection_on,
-           NULLIF(d.rendered_values ->> 'PAYMENT_DATE', '') AS payment_on,
+           -- 支払期日の欄はひな形で名前が違う（write-back.ts の HEADER_PAY_KEYS と同じ並び）。
+           COALESCE(NULLIF(d.rendered_values ->> 'PAYMENT_DATE', ''), NULLIF(d.rendered_values ->> 'paymentDueDate', ''),
+                    NULLIF(d.rendered_values ->> '支払期日', ''), NULLIF(d.rendered_values ->> 'sc_payment_date', '')) AS payment_on,
            (SELECT dv.sent_at FROM document_delivery(d.id) dv) AS sent_at,
            -- CloudSign の状態（送った／締結／取下げ）。束の画面に出す。
            ${signStateSql("d.id")} AS sign
@@ -93,7 +95,8 @@ const documentLateral = (alias: string, keys: string, importKinds: string | null
        AND (t.template_key IN ${keys}${importKinds
          ? ` OR (t.template_key IS NULL AND d.manual_inputs ->> 'documentKind' IN ${importKinds})` : ""})
        AND d.status <> 'void'
-     ORDER BY (d.status = 'draft'), d.issued_at DESC NULLS LAST, d.id DESC
+     -- 退いた版（superseded）は、訂正版より決定日が新しくても後ろ（決定日を遡って出した訂正版で逆転していた）。
+     ORDER BY (d.status = 'draft'), (d.status = 'superseded'), d.issued_at DESC NULLS LAST, d.id DESC
      LIMIT 1
   ) ${alias} ON true`;
 

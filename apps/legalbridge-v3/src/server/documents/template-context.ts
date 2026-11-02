@@ -222,7 +222,10 @@ function orderNoFor(context: Ctx, conditionId: unknown): string | null {
  * 予定の回の支払日で代える。
  */
 function payOnFor(event: Ctx, condition: Ctx): string | null {
-  return payDateFromDelivery(event.occurredOn ?? null, condition.counterparty?.kind ?? null)
+  // 支払が先に立っていれば、その期日が正（作る順番は 実績 → 支払 → 検収書）。
+  // 無ければ納品日から計算し、それも無ければ予定の回の支払日。
+  return (event.paymentDueOn as string | null | undefined)
+    ?? payDateFromDelivery(event.occurredOn ?? null, condition.counterparty?.kind ?? null)
     ?? ((event.schedule?.payOn as string | null | undefined) ?? null);
 }
 
@@ -386,7 +389,8 @@ function serviceCompletionExtras(context: Ctx, block: Record<string, unknown>, m
     hasOverage, hasShortfall,
     sc_report_received_on: latest((e) => e.reportReceivedOn),
     // お支払予定日：回の支払期日。無ければ完了日と相手先の区分から（検収書の行の支払日と同じ規則）。
-    sc_payment_date: latest((e) => e.schedule?.payOn) ?? (first ? payOnFor(first, condition) : null),
+    // 支払が先に立っていればその期日が正（実績 → 支払 → 検収書）。無ければ回の支払期日、それも無ければ完了日から。
+    sc_payment_date: latest((e) => e.paymentDueOn) ?? latest((e) => e.schedule?.payOn) ?? (first ? payOnFor(first, condition) : null),
     // 確認期限：送付日から 10 営業日。送付日は決まっていないので発行日で仮置きし、人が直せる。
     sc_confirm_deadline: typedDeadline || addBusinessDays(issuedOn, 10),
     sc_is_invoice_statement: invoiceNo.length >= 13,

@@ -546,6 +546,32 @@ export class PaymentService {
    * その割当から出るので、行がそのまま経理の明細になる。
    */
   async createFromInspection(documentId: number, actor: string, options: { dueOn?: string | null } = {}) {
+    return this.createFromEventRows(
+      `e.document_id = $1`, [documentId],
+      "この文書に結び付いた実績がありません。実績から作った検収書だけが支払になります",
+      (rows) => ({ documentId, eventIds: rows.map((r) => Number(r.event_id)) }), actor, options);
+  }
+
+  /**
+   * 実績から支払を立てる（検収書はまだ無くてよい）。
+   *
+   * 作る順番を 条件 → 発注書 → 実績 → 支払 → 検収書 にする（A-13x）。支払の期日が先に決まり、
+   * 検収書はそれを印字する（template-context の payOnFor）。検収書から起こす道（createFromInspection）も残す。
+   */
+  async createFromEvents(eventIds: number[], actor: string, options: { dueOn?: string | null } = {}) {
+    const ids = [...new Set(eventIds.map(Number))].filter((n) => Number.isFinite(n) && n > 0);
+    if (!ids.length) throw new DomainError("VALIDATION", "実績を選んでください");
+    return this.createFromEventRows(
+      `e.id = ANY($1::bigint[])`, [ids],
+      "選んだ実績が見つかりません（取り消したものは支払になりません）",
+      (rows) => ({ eventIds: rows.map((r) => Number(r.event_id)) }), actor, options);
+  }
+
+  private async createFromEventRows(
+    where: string, params: unknown[], emptyMessage: string,
+    detailOf: (rows: Array<Record<string, any>>) => Record<string, unknown>,
+    actor: string, options: { dueOn?: string | null }
+  ) {
     try {
       return await inTransaction(this.database, async (client) => {
         const found = await client.query(
@@ -562,14 +588,11 @@ export class PaymentService {
              LEFT JOIN parties p ON p.id = c.counterparty_id
              LEFT JOIN condition_schedules s ON s.id = e.schedule_id
              LEFT JOIN documents d ON d.id = e.document_id
-            WHERE e.document_id = $1 AND e.status = 'active'
+            WHERE ${where} AND e.status = 'active'
             ORDER BY e.id
-              FOR UPDATE OF e`, [documentId]);
+              FOR UPDATE OF e`, params);
         const rows = found.rows as Array<Record<string, any>>;
-        if (!rows.length) {
-          throw new DomainError("VALIDATION",
-            "この文書に結び付いた実績がありません。実績から作った検収書だけが支払になります");
-        }
+        if (!rows.length) throw new DomainError("VALIDATION", emptyMessage);
 
         const parties = new Set(rows.map((r) => Number(r.counterparty_id)));
         if (parties.size !== 1 || !rows[0].counterparty_id) {
@@ -597,7 +620,7 @@ export class PaymentService {
             LIMIT 1`,
           [rows.map((r) => Number(r.event_id))]);
         if (duplicated.rows[0]) {
-          throw blockedBy(duplicated.rows[0] as unknown as BlockingPayment, "この検収書");
+          throw blockedBy(duplicated.rows[0] as unknown as BlockingPayment, "この実績");
         }
 
         // 権利を許諾する側（out）は受け取る側なので入金、取得側（in）は支払。
@@ -668,7 +691,7 @@ export class PaymentService {
             conditionId: Number(r.condition_id), eventId: Number(r.event_id),
             amount: Number(r.amount ?? 0)
           })),
-          detail: { documentId, eventIds: rows.map((r) => Number(r.event_id)) }
+          detail: detailOf(rows)
         }, actor);
       });
     } catch (error) { throw translate(error); }

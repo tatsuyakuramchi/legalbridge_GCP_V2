@@ -206,11 +206,14 @@ export function driftOf(row: GridRow): Drift | null {
     add("payment", "amount", row.payment.paymentNo, allocated, settleBasis, settleLabel,
       split ? "分納なので、途中の支払はこの額で合っています" : null);
   }
-  const payBasis = isDate(doc?.paymentOn ?? null) ? doc!.paymentOn! : row.schedules.payOn;
-  const payLabel = isDate(doc?.paymentOn ?? null) ? "検収書" : "予定";
-  if (row.payment && isDate(row.payment.dueOn) && isDate(payBasis)) {
-    add("payment", "payment", row.payment.paymentNo, row.payment.dueOn, payBasis, payLabel,
-      split ? "分納なので、回ごとの支払は予定の1日と合いません" : null);
+  // 支払期日の正は支払（作る順番は 実績 → 支払 → 検収書。検収書は支払の期日を印字する）。
+  // 支払が立っていれば、検収書に焼き付いた支払期日を支払と比べる。支払が無ければ比べる相手が無い
+  // （検収書の支払期日は納品日から計算した値で、支払を立てるときにそれを引き継ぐ）。
+  const payBasis = row.payment && isDate(row.payment.dueOn) ? row.payment.dueOn : row.schedules.payOn;
+  if (docLive && row.payment && isDate(row.payment.dueOn) && isDate(doc!.paymentOn)) {
+    add("settlementDoc", "payment", doc!.documentNo, doc!.paymentOn!, row.payment.dueOn, "支払",
+      manyConditions(doc!.conditionCount, "検収書")
+        ?? (split ? "分納なので、回ごとの検収書の支払期日は1件の支払と合いません" : null));
   }
 
   const bases: DriftBasis[] = [
@@ -227,6 +230,10 @@ export function driftOf(row: GridRow): Drift | null {
   if (isDate(row.schedules.payOn)) {
     bases.push({ key: "schedulePay", label: "予定の支払日", value: row.schedules.payOn,
       hint: "発注書の支払期日はこれと比べます" });
+  }
+  if (row.payment && isDate(row.payment.dueOn)) {
+    bases.push({ key: "paymentDue", label: "支払の期日", value: row.payment.dueOn,
+      hint: "検収書の支払期日はこれと比べます" });
   }
   if (isDate(row.events.latestOn)) {
     bases.push({ key: "delivered_on", label: "実績の納品日", value: row.events.latestOn,

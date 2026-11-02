@@ -473,13 +473,23 @@ export class DocumentIssueService {
               `SELECT request_id FROM intake_request_links
                 WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
               [documentId])).rows[0] as any)?.request_id);
+        // 実績：渡されたもの → 下書きに控えたもの（_eventIds）→ 訂正版なら元の文書に付いている実績。
+        // 訂正版を画面の外（食い違いの一括修正・金額の直し）から決定するとき、実績を渡さないと明細の無い検収書が出る。
+        const manualEvents = Array.isArray((row.manual_inputs as Record<string, unknown> | null)?._eventIds)
+          ? ((row.manual_inputs as Record<string, unknown>)._eventIds as unknown[]).map(Number).filter((n) => Number.isFinite(n) && n > 0) : [];
+        let eventIds = extra.eventIds?.length ? extra.eventIds : manualEvents;
+        if (!eventIds.length && row.supersedes_id) {
+          const onOld = await client.query(
+            "SELECT id FROM condition_events WHERE document_id = $1 AND status = 'active' ORDER BY id", [row.supersedes_id]);
+          eventIds = (onOld.rows as Array<{ id: number }>).map((e) => Number(e.id));
+        }
         const context = withInspectionLines(template.templateKey, await this.buildContext(client, {
           templateKey: template.templateKey,
           conditionIds,
           matterId: row.matter_id,
           requestId,
           agreementId: row.agreement_id,
-          eventIds: extra.eventIds ?? [],
+          eventIds,
           royalty: extra.royalty ?? null
         }, printedNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId),
            chosenRefs(settled.manual)), settled.manual as Record<string, unknown>);

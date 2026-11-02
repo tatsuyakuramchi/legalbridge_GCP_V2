@@ -4,12 +4,13 @@ import { SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel } from "./ConditionLabel.js";
 import { GridRowEdit, type EditFocus } from "./GridRowEdit.js";
 import { EventEntryForm } from "./EventEntryForm.js";
+import { DriftMatrixDialog } from "./DriftMatrix.js";
 import { ConditionEntryForm, ENTRY_KINDS, type ConditionEntryKind } from "./ConditionEntryForm.js";
 import {
   applyFilter, groupByParty, groupByWork, isStuck, unpaidPayments,
   type GridRound, type GridRow
 } from "../server/matters/grid.js";
-import { driftOf, driftSummary, hasDrift, repairPlan, FIELD_LABEL, type Drift, type DriftPart } from "../server/matters/drift.js";
+import { driftOf, driftSummary, hasDrift, FIELD_LABEL, type Drift, type DriftPart } from "../server/matters/drift.js";
 import type { DuplicateGroup, DuplicateView } from "../server/conditions/duplicates.js";
 
 /**
@@ -287,10 +288,18 @@ export function WorkLedger(
     if (!rs.length && r.settlementDoc && r.settlementDoc.phase !== "draft" && !r.payment) seen.set(r.settlementDoc.id, { id: r.settlementDoc.id, documentNo: r.settlementDoc.documentNo, seq: null });
     return [...seen.values()];
   };
+  /** 支払の無い実績（検収書が無くても、実績から支払を立てられる。作る順番は 実績 → 支払 → 検収書）。 */
+  const unpaidEvents = (r: GridRow) => {
+    const rs = doneRounds(r).filter((x) => !x.payment);
+    if (rs.length) return rs.map((x) => ({ eventId: x.eventId!, seq: x.seq, amount: x.amount, occurredOn: x.occurredOn }));
+    if (!doneRounds(r).length && r.events.latestId && !r.payment) return [{ eventId: r.events.latestId, seq: null, amount: r.events.amount ?? null, occurredOn: r.events.latestOn }];
+    return [];
+  };
   const addPayButton = (r: GridRow) => {
-    const docs = payableDocs(r);
-    if (!canWrite || !docs.length || r.settlement.done) return null;
-    return <button className="btn btn-sm ledger-add" onClick={(e) => { e.stopPropagation(); setNotice(null); setAdding({ kind: "payment", conditionId: r.conditionId }); }}>＋ 支払を立てる{docs.length > 1 ? `（${docs.length} 枚）` : ""}</button>;
+    const docs = payableDocs(r), evs = unpaidEvents(r);
+    if (!canWrite || (!docs.length && !evs.length) || r.settlement.done) return null;
+    return <button className="btn btn-sm ledger-add" onClick={(e) => { e.stopPropagation(); setNotice(null); setAdding({ kind: "payment", conditionId: r.conditionId }); }}
+                   title={docs.length ? "決定済みの検収書・計算書から立てる" : "実績から立てる（検収書はあとで。検収書は支払の期日を印字します）"}>＋ 支払を立てる{docs.length > 1 ? `（${docs.length} 枚）` : ""}</button>;
   };
 
   const settleCell = (r: GridRow) => {
@@ -435,10 +444,10 @@ export function WorkLedger(
                 作業テーブルで作る（契約書・セット）</button>
             )}
             <button className="btn btn-sm" onClick={() => { setBulkTemplate(null); setBulk("docs"); }}>ほかのひな形で</button>
-            {isAdmin && pickedRows.some(hasDrift) && (
-              <button className="btn btn-sm primary" onClick={() => setBulk("drift")}
-                      title="発注書・検収書の訂正版を下書きで作って（必要なら決定まで）、支払の期日をそろえる">
-                食い違いをそろえる（{pickedRows.filter(hasDrift).length}）</button>
+            {isAdmin && (
+              <button className={`btn btn-sm${pickedRows.some(hasDrift) ? " primary" : ""}`} onClick={() => setBulk("drift")}
+                      title="行＝条件 × 列＝段 の表で、条件・予定・実績・支払（正）を直し、発注書・検収書を一度に作り直す">
+                食い違いをそろえる（表）{pickedRows.some(hasDrift) ? `（${pickedRows.filter(hasDrift).length}）` : ""}</button>
             )}
             {isAdmin && <button className="btn btn-sm" onClick={() => setBulk("due")}>支払日をそろえる</button>}
             {isAdmin && <button className="btn btn-sm danger" disabled={!pickedRows.some((r) => unpaidPayments(r).length)} onClick={() => setBulk("cancel")}>
@@ -563,15 +572,17 @@ export function WorkLedger(
       })()}
       {adding?.kind === "payment" && (() => {
         const r = all.find((x) => x.conditionId === adding.conditionId);
-        return r ? <PaymentDialog row={r} docs={payableDocs(r)} onClose={() => setAdding(null)} onDone={(m) => { setAdding(null); reload(m); }} /> : null;
+        return r ? <PaymentDialog row={r} docs={payableDocs(r)} events={unpaidEvents(r)} onClose={() => setAdding(null)} onDone={(m) => { setAdding(null); reload(m); }} /> : null;
       })()}
       {bulk === "docs" && (
         <BulkDocsDialog matterId={matterId} rows={pickedRows} onCompose={onCompose} onOpenDocument={onOpenDocument}
           initialTemplateKey={bulkTemplate} onClose={() => setBulk(null)} onDone={(m) => reload(m)} />
       )}
       {bulk === "drift" && (
-        <DriftFixDialog matterId={matterId} rows={pickedRows.filter(hasDrift)} onOpenDocument={onOpenDocument}
-          onClose={() => setBulk(null)} onDone={(m) => { setBulk(null); reload(m); }} />
+        <Modal wide title={`食い違いをそろえる（${pickedRows.length} 本）`} onClose={() => { setBulk(null); reload(); }}>
+          <DriftMatrixDialog matterId={matterId} rows={pickedRows} onOpenDocument={onOpenDocument}
+            onClose={() => setBulk(null)} onDone={(m) => { setBulk(null); reload(m); }} />
+        </Modal>
       )}
       {bulk === "cancel" && (
         <BulkCancelDialog rows={pickedRows} onClose={() => setBulk(null)} onDone={(m) => { setBulk(null); reload(m); }} />
@@ -584,17 +595,27 @@ export function WorkLedger(
 }
 
 /** 決定済みの検収書・計算書から支払を立てる（文書1枚につき1件。POST /documents/:id/payment）。 */
-function PaymentDialog({ row, docs, onClose, onDone }: {
+function PaymentDialog({ row, docs, events, onClose, onDone }: {
   row: GridRow; docs: Array<{ id: number; documentNo: string | null; seq: number | null }>;
+  /** 検収書の無い実績。文書が無ければ、実績から立てる。 */
+  events: Array<{ eventId: number; seq: number | null; amount: number | null; occurredOn: string | null }>;
   onClose: () => void; onDone: (m: string) => void;
 }) {
-  const [picked, setPicked] = useState<Set<number>>(new Set(docs.map((d) => d.id)));
+  const fromEvents = docs.length === 0;
+  const [picked, setPicked] = useState<Set<number>>(new Set(fromEvents ? events.map((e) => e.eventId) : docs.map((d) => d.id)));
   const [dueOn, setDueOn] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function run() {
     setBusy(true); setError(null);
     const made: string[] = []; const bad: string[] = [];
+    if (fromEvents) {
+      try {
+        const r = await api.post<{ paymentNo?: string | null; id?: number; paymentId?: number }>(`/payments/from-events`, { eventIds: [...picked], dueOn: dueOn || null });
+        onDone(`支払 ${r.paymentNo ?? `#${r.paymentId ?? r.id ?? ""}`} を実績から立てました。検収書を作ると、この期日が印字されます`);
+      } catch (e) { setError((e as ApiError).message); }
+      setBusy(false); return;
+    }
     for (const d of docs.filter((x) => picked.has(x.id))) {
       try {
         const r = await api.post<{ paymentNo?: string | null; id?: number; paymentId?: number }>(`/documents/${d.id}/payment`, { dueOn: dueOn || null });
@@ -608,14 +629,22 @@ function PaymentDialog({ row, docs, onClose, onDone }: {
   return (
     <Modal title={<>{row.counterparty?.name ?? ""}　{row.name}　<span className="faint">支払を立てる</span></>} onClose={onClose}>
       <div className="stack" style={{ gap: 8 }}>
-        <p className="faint" style={{ margin: 0 }}>支払は決定済みの検収書・計算書から、文書1枚につき1件立ちます。金額は文書の額です。</p>
+        <p className="faint" style={{ margin: 0 }}>{fromEvents
+          ? "検収書はまだありません。実績から支払を立てます（作る順番は 実績 → 支払 → 検収書。検収書はこの支払の期日を印字します）。選んだ実績で1件になります。"
+          : "支払は決定済みの検収書・計算書から、文書1枚につき1件立ちます。金額は文書の額です。"}</p>
+        {fromEvents && events.map((e) => (
+          <label key={e.eventId} className="row" style={{ gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={picked.has(e.eventId)} onChange={(ev) => setPicked((p) => { const n = new Set(p); if (ev.target.checked) n.add(e.eventId); else n.delete(e.eventId); return n; })} />
+            <span>{e.seq ? `第${e.seq}回　` : ""}{e.occurredOn ?? "日付なし"}　<span className="ledger-num">{yen(e.amount)}</span></span>
+          </label>
+        ))}
         {docs.map((d) => (
           <label key={d.id} className="row" style={{ gap: 8, alignItems: "center" }}>
             <input type="checkbox" checked={picked.has(d.id)} onChange={(e) => setPicked((p) => { const n = new Set(p); if (e.target.checked) n.add(d.id); else n.delete(d.id); return n; })} />
             <span>{d.seq ? `第${d.seq}回　` : ""}<span className="code">{d.documentNo ?? `#${d.id}`}</span></span>
           </label>
         ))}
-        <label className="field"><span>支払日（空なら条件・予定の支払日）</span><input type="date" value={dueOn} onChange={(e) => setDueOn(e.target.value)} /></label>
+        <label className="field"><span>支払日（空なら納品日から計算）</span><input type="date" value={dueOn} onChange={(e) => setDueOn(e.target.value)} /></label>
         {error && <div className="alert">{error}</div>}
         <div className="row" style={{ gap: 8 }}>
           <button className="btn primary" disabled={busy || !picked.size} onClick={() => void run()}>{busy ? "立てています…" : `${picked.size} 件を立てる`}</button>
@@ -796,120 +825,6 @@ function BulkDocsDialog({ matterId, rows, onClose, onDone, onCompose, onOpenDocu
           )}
           <button className="btn" onClick={onClose}>{results.length ? "閉じる" : "やめる"}</button>
           <span className="faint">作るのは下書きまで。決定・送信は文書の画面で行います</span>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-/**
- * 食い違いをまとめてそろえる（選んだ条件）。生きている側（条件・予定・実績）が正で、取り残された側を直す：
- *   - 発注書・検収書の訂正版を下書きで作り（明細も引き直す）、望めばそのまま決定する
- *   - 支払の期日を 検収書の支払期日（無ければ予定の支払日）にそろえる
- * 条件を何本も載せた文書（束ねた発注書・検収書）は何本の行に出ても1枚なので、1回だけ作る。
- * 判定と手順は 金額の直し の画面と同じ（drift.ts repairPlan）。
- */
-function DriftFixDialog({ matterId, rows, onClose, onDone, onOpenDocument }: {
-  matterId: number; rows: GridRow[]; onClose: () => void; onDone: (m: string) => void; onOpenDocument?: (id: number) => void;
-}) {
-  const [openDrafts, setOpenDrafts] = useState<Map<number, number> | null>(null);
-  const [reason, setReason] = useState("条件・予定・実績に合わせて文書と支払を直すため");
-  const [issue, setIssue] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [log, setLog] = useState<string[]>([]);
-  const [done, setDone] = useState(false);
-  useEffect(() => {
-    api.get<{ drafts: Array<{ id: number; supersedesId: number }> }>(`/drift?matterId=${matterId}`)
-      .then((r) => setOpenDrafts(new Map(r.drafts.map((d) => [d.supersedesId, d.id]))))
-      .catch(() => setOpenDrafts(new Map()));
-  }, [matterId]);
-
-  const plans = rows.map((r) => ({ r, drift: driftOf(r)!, plan: repairPlan(r, driftOf(r)!, openDrafts ?? new Map()) }));
-  // 同じ文書・同じ支払は1回だけ。
-  const seenDoc = new Set<number>(); const seenPay = new Set<number>();
-  const work = plans.map(({ r, plan }) => {
-    const reissue = plan.reissue.filter((d) => !seenDoc.has(d.id) && Boolean(seenDoc.add(d.id)));
-    const pay = plan.paymentDueOn && r.payment && !seenPay.has(r.payment.id) && seenPay.add(r.payment.id)
-      ? { id: r.payment.id, dueOn: plan.paymentDueOn } : null;
-    return { r, plan, reissue, pay };
-  });
-  const docCount = work.reduce((n, w) => n + w.reissue.length, 0);
-  const payCount = work.filter((w) => w.pay).length;
-  const hand = plans.flatMap(({ r, plan }) => plan.steps.filter((st) => st.kind === "hand" && !/訂正版を決定する/.test(st.text)).map((st) => `${r.conditionNo ?? `#${r.conditionId}`}：${st.text}`));
-
-  async function run() {
-    setBusy(true);
-    const said: string[] = [];
-    const drafts: Array<{ draftId: number; documentNo: string | null }> = [];
-    for (const w of work) {
-      if (!w.reissue.length && !w.pay) continue;
-      const name = w.r.conditionNo ?? `#${w.r.conditionId}`;
-      const body: Record<string, unknown> = { reason: reason.trim() };
-      if (w.reissue.length) body.reissue = w.reissue.map((d) => d.id);
-      if (w.pay) body.payment = w.pay;
-      try {
-        const out = await api.patch<{ stoppedAt: { message: string } | null; reissued: Array<{ documentNo: string | null; documentId: number; draftId: number; repriced: string[]; pending: string[] }> }>(
-          `/conditions/${w.r.conditionId}/bundle`, body);
-        if (out.stoppedAt) { said.push(`${name}：止まりました（${out.stoppedAt.message}）`); continue; }
-        for (const d of out.reissued ?? []) {
-          drafts.push({ draftId: d.draftId, documentNo: d.documentNo });
-          said.push(`${d.documentNo ?? `#${d.documentId}`}：訂正版を下書き #${d.draftId} に作りました${d.repriced.length ? `（${d.repriced.join("／")}）` : ""}${d.pending.length ? `。引き直せなかったもの：${d.pending.join("／")}` : ""}`);
-        }
-        if (w.pay) said.push(`${name}：支払の期日を ${w.pay.dueOn} にしました`);
-      } catch (e) { said.push(`${name}：${(e as ApiError).message}`); }
-      setLog([...said]);
-    }
-    if (issue) {
-      for (const d of drafts) {
-        try {
-          const r = await api.post<{ documentNo?: string | null }>(`/documents/${d.draftId}/issue`, {});
-          said.push(`${d.documentNo ?? ""} の訂正版を決定しました（${r.documentNo ?? `#${d.draftId}`}）`);
-        } catch (e) { said.push(`下書き #${d.draftId} を決定できませんでした：${(e as ApiError).message}。文書の画面で中身を確かめて決定してください`); }
-        setLog([...said]);
-      }
-    }
-    setLog(said); setBusy(false); setDone(true);
-  }
-
-  return (
-    <Modal wide title={`食い違いをそろえる（${rows.length} 本）`} onClose={() => (done ? onDone(`食い違いをそろえました（${rows.length} 本）`) : onClose())}>
-      <div className="stack" style={{ gap: 10 }}>
-        <p className="faint" style={{ margin: 0 }}>いまの条件・予定・実績を正として、取り残された発注書・検収書の訂正版と、支払の期日を直します。束ねた文書（条件を何本も載せたもの）は1枚として1回だけ作ります。</p>
-        {!openDrafts ? <div className="faint">調べています…</div> : (
-          <table>
-            <thead><tr><th>条件</th><th>食い違い</th><th>行うこと</th></tr></thead>
-            <tbody>
-              {work.map(({ r, plan, reissue, pay }) => (
-                <tr key={r.conditionId}>
-                  <td><b>{r.counterparty?.name ?? ""}</b><div className="code faint">{r.conditionNo ?? `#${r.conditionId}`}</div></td>
-                  <td>{driftOf(r)!.flagged.map((e) => (
-                    <div key={`${e.part}${e.field}`} className="faint">{e.part === "order" ? "発注書" : e.part === "settlementDoc" ? "検収書" : e.part === "payment" ? "支払" : "実績"}の{FIELD_LABEL[e.field]} {typeof e.value === "number" ? yen(e.value) : e.value} ≠ {e.basisLabel} {typeof e.basis === "number" ? yen(e.basis) : e.basis}</div>
-                  ))}</td>
-                  <td>
-                    {reissue.map((d) => <div key={d.id}><span className="chip new">訂正版</span> {d.documentNo ?? `#${d.id}`}{issue ? "（作って決定）" : "（下書きまで）"}</div>)}
-                    {pay && <div><span className="chip chg">支払</span> 期日を {pay.dueOn} に</div>}
-                    {plan.reissue.filter((d) => !reissue.includes(d)).map((d) => <div key={d.id} className="faint">{d.documentNo ?? `#${d.id}`} は上の行と同じ文書（1回で直ります）</div>)}
-                    {plan.steps.filter((st) => st.kind === "hand" && !/訂正版を決定する/.test(st.text) && !/もう下書き/.test(st.text)).map((st) => <div key={st.text} className="faint"><span className="chip man">人が直す</span> {st.text}</div>)}
-                    {plan.steps.filter((st) => /もう下書き/.test(st.text)).map((st) => <div key={st.text} className="faint">{st.text}</div>)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <label className="row" style={{ gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={issue} onChange={(e) => setIssue(e.target.checked)} />
-          <span>作った訂正版をそのまま決定する（番号に -Rn が付き、元の文書は「訂正済み」になります）</span>
-        </label>
-        <label className="field"><span>直す理由（監査に残ります）</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-        {log.length > 0 && <div className={done ? "note ok" : "note"}>{log.map((t, i) => <div key={i}>{t}</div>)}</div>}
-        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          {!done
-            ? <button className="btn primary" disabled={busy || !openDrafts || !reason.trim() || (docCount === 0 && payCount === 0)} onClick={() => void run()}>
-                {busy ? "直しています…" : `訂正版 ${docCount} 枚${issue ? "を作って決定" : "を下書きで作成"}・支払 ${payCount} 件を直す`}</button>
-            : <button className="btn primary" onClick={() => onDone(`食い違いをそろえました（${rows.length} 本）`)}>閉じる</button>}
-          {!done && <button className="btn" onClick={onClose}>やめる</button>}
-          {hand.length > 0 && <span className="faint">人が直すものが {hand.length} 件あります（上の表）</span>}
         </div>
       </div>
     </Modal>
