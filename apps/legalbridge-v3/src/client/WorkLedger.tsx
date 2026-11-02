@@ -4,6 +4,7 @@ import { SettlementTag, StatusTag } from "./labels.js";
 import { conditionAmountLabel } from "./ConditionLabel.js";
 import { GridRowEdit, type EditFocus } from "./GridRowEdit.js";
 import { EventEntryForm } from "./EventEntryForm.js";
+import { ConditionEntryForm, ENTRY_KINDS, type ConditionEntryKind } from "./ConditionEntryForm.js";
 import {
   applyFilter, groupByParty, groupByWork, isStuck, unpaidPayments,
   type GridRound, type GridRow
@@ -101,7 +102,19 @@ export function WorkLedger(
   const [dupOpen, setDupOpen] = useState<DuplicateGroup | null>(null);
   const [bulk, setBulk] = useState<"docs" | "cancel" | "due" | null>(null);
   /** 実績を入れる（条件と、次の回）／支払を立てる（条件）。 */
-  const [adding, setAdding] = useState<{ kind: "event"; conditionId: number; scheduleId: number | null } | { kind: "payment"; conditionId: number } | null>(null);
+  /**
+   * 実績を入れる：queue は続けて入れる条件（押した行から、表示順で実績を入れられる行）。
+   * 1件入れたら閉じずに次の条件へ進む（画面が毎回切り替わると、どこまで入れたか分からなくなる）。
+   */
+  /**
+   * 条件を続けて足す。登録しても閉じず、同じ作品・同じ種類（任意で同じ取引先）で次の条件のフォームを出す。
+   * 案件の条件は何本も続けて入れるもので、1本ごとに画面が戻ると数が合っているか分からなくなる。
+   */
+  const [creating, setCreating] = useState<{
+    workId: number | null; workTitle: string | null; kind: ConditionEntryKind | null;
+    keepParty: boolean; party: { id: number; name: string } | null; made: string[]; seq: number;
+  } | null>(null);
+  const [adding, setAdding] = useState<{ kind: "event"; queue: number[]; index: number; done: string[] } | { kind: "payment"; conditionId: number } | null>(null);
 
   useEffect(() => {
     api.get<{ user?: { role: string } }>("/me").then((r) => setIsAdmin(r.user?.role === "admin")).catch(() => setIsAdmin(false));
@@ -114,6 +127,10 @@ export function WorkLedger(
     api.get<DuplicateView>(`/matters/${matterId}/duplicate-conditions`).then(setDups).catch(() => setDups(null));
   }, [matterId, reloadKey, version]);
 
+  const startCreate = (w: { id: number | null; title: string | null }) => {
+    setNotice(null);
+    setCreating({ workId: w.id, workTitle: w.title, kind: null, keepParty: false, party: null, made: [], seq: 0 });
+  };
   const reload = (message?: string) => { if (message) setNotice(message); setVersion((x) => x + 1); onChanged?.(); };
 
   const dupOf = useMemo(() => {
@@ -215,13 +232,25 @@ export function WorkLedger(
     );
   };
   const canWrite = isAdmin || Boolean(onOpenDeals);
+  /** 実績を入れられる行（払い切りでない）。 */
+  const takesEvent = (r: GridRow) => !r.settlement.done;
+  /** その行の次の回（予定があってまだ実績の無い回）。 */
+  const nextSchedule = (r: GridRow) => (r.rounds ?? []).find((x) => x.eventId === null) ?? null;
+  /** 押した行から順に、続けて入れる列を組む。 */
+  const startEvents = (from: GridRow | null, only?: GridRow[]) => {
+    const base = (only ?? rows).filter(takesEvent);
+    const i = from ? base.findIndex((r) => r.conditionId === from.conditionId) : 0;
+    const queue = (i >= 0 ? base.slice(i) : [from!, ...base]).map((r) => r.conditionId);
+    setNotice(null);
+    setAdding({ kind: "event", queue, index: 0, done: [] });
+  };
   const pendingRounds = (r: GridRow) => {
     const left = (r.rounds ?? []).filter((x) => x.eventId === null);
     const out: ReactElement[] = [];
     if (left.length) out.push(<div key="left" className="faint">あと {left.length} 回（{left.map((x) => x.seq ? `第${x.seq}回` : "").filter(Boolean).join("・")}）</div>);
     // 払い切った条件には足さない。次の回（予定があればその回）に入れる。
     if (canWrite && !r.settlement.done) {
-      out.push(<button key="add" className="btn btn-sm ledger-add" onClick={(e) => { e.stopPropagation(); setNotice(null); setAdding({ kind: "event", conditionId: r.conditionId, scheduleId: left[0]?.scheduleId ?? null }); }}>
+      out.push(<button key="add" className="btn btn-sm ledger-add" onClick={(e) => { e.stopPropagation(); startEvents(r); }}>
         ＋ 実績を入れる{left[0]?.seq ? `（第${left[0].seq}回）` : ""}</button>);
     }
     return out;
@@ -312,13 +341,15 @@ export function WorkLedger(
     </tr>
   );
 
-  const groupHead = (key: string, title: string, sub: string) => (
-    <tr key={`g${key}`} className="grid-grp"><td colSpan={cols}><b>{title}</b><span className="faint">　{sub}</span></td></tr>
+  const groupHead = (key: string, title: string, sub: string, add?: { id: number | null; title: string | null }) => (
+    <tr key={`g${key}`} className="grid-grp"><td colSpan={cols}><b>{title}</b><span className="faint">　{sub}</span>
+      {add && canWrite && <button className="linky" style={{ marginLeft: 10 }} onClick={() => startCreate(add)}>＋ この作品に条件を足す</button>}</td></tr>
   );
   const body = byParty
     ? groupByParty(rows).flatMap((g) => [groupHead(`p${g.id}`, g.name, `条件 ${g.tally.conditions} 本`), ...g.rows.map(rowOf)])
     : groupByWork(rows).flatMap((g) => [groupHead(`w${g.id}`, g.title,
-        `条件 ${g.tally.conditions} 本${g.tally.amount ? `・${yen(g.tally.amount)}` : ""}${g.tally.stuck ? `・止まり ${g.tally.stuck}` : ""}${g.tally.unpaid ? `・未払い ${g.tally.unpaid}` : ""}`),
+        `条件 ${g.tally.conditions} 本${g.tally.amount ? `・${yen(g.tally.amount)}` : ""}${g.tally.stuck ? `・止まり ${g.tally.stuck}` : ""}${g.tally.unpaid ? `・未払い ${g.tally.unpaid}` : ""}`,
+        { id: g.id, title: g.id === null ? null : g.title }),
         ...g.rows.map(rowOf)]);
 
   return (
@@ -344,6 +375,10 @@ export function WorkLedger(
             <button key={f} className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>{FILTER_LABEL[f]} {counts[f]}</button>
           ))}
           {onFixDrift && counts.drift > 0 && <button className="btn btn-sm" onClick={onFixDrift}>食い違いをまとめて直す画面へ</button>}
+          {canWrite && (
+            <button className="btn btn-sm primary" onClick={() => { const g = works.find((x) => String(x.id ?? "none") === work); startCreate(g ? { id: g.id, title: g.title } : { id: null, title: null }); }}
+                    title="登録しても閉じずに、次の条件のフォームが出ます">＋ 条件を続けて足す{work !== "all" ? `（${works.find((x) => String(x.id ?? "none") === work)?.title ?? ""}）` : ""}</button>
+          )}
           <label className="row" style={{ gap: 5, marginLeft: "auto" }}>
             <input type="checkbox" checked={byParty} onChange={(e) => setByParty(e.target.checked)} />
             <span className="faint">取引先でまとめる</span>
@@ -360,7 +395,8 @@ export function WorkLedger(
         {pickedRows.length > 0 && (
           <div className="bulkbar">
             <b>{pickedRows.length} 本を選んでいます</b>
-            {isAdmin || onCompose ? <button className="btn btn-sm primary" onClick={() => setBulk("docs")}>文書をまとめて作る</button> : null}
+            {canWrite && <button className="btn btn-sm primary" disabled={!pickedRows.some(takesEvent)} onClick={() => startEvents(null, pickedRows)}>実績を続けて入れる（{pickedRows.filter(takesEvent).length}）</button>}
+            {isAdmin || onCompose ? <button className="btn btn-sm" onClick={() => setBulk("docs")}>文書をまとめて作る</button> : null}
             {isAdmin && <button className="btn btn-sm" onClick={() => setBulk("due")}>支払日をそろえる</button>}
             {isAdmin && <button className="btn btn-sm danger" disabled={!pickedRows.some((r) => unpaidPayments(r).length)} onClick={() => setBulk("cancel")}>
               未払いの支払を取り消す（{pickedRows.reduce((n, r) => n + unpaidPayments(r).length, 0)}）</button>}
@@ -401,16 +437,86 @@ export function WorkLedger(
         <DuplicateDialog matterId={matterId} group={dupOpen} onOpenCondition={onOpenCondition}
           onClose={() => setDupOpen(null)} onDone={(m) => { setDupOpen(null); reload(m); }} />
       )}
-      {adding?.kind === "event" && (() => {
-        const r = all.find((x) => x.conditionId === adding.conditionId);
-        return r ? (
-          <Modal wide title={<>{r.counterparty?.name ?? ""}　{r.name}　<span className="faint">実績を入れる</span></>} onClose={() => setAdding(null)}>
-            <EventEntryForm conditionId={r.conditionId} scheduleId={adding.scheduleId} matterId={matterId}
-              title={r.conditionNo ?? undefined}
-              onDone={() => { setAdding(null); reload(`${r.conditionNo ?? `#${r.conditionId}`} に実績を入れました`); }}
-              onCancel={() => setAdding(null)} />
+      {creating && (() => {
+        const c = creating;
+        const finish = () => { setCreating(null); if (c.made.length) reload(`条件明細を ${c.made.length} 本登録しました：${c.made.join("・")}`); };
+        const workOptions = works.filter((g) => g.id !== null).map((g) => ({ id: g.id!, title: g.title, workCode: null }));
+        return (
+          <Modal wide title={<>条件を続けて足す{c.workTitle ? <>　<span className="faint">{c.workTitle}</span></> : null}</>} onClose={finish}>
+            <div className="row ledger-queue" style={{ gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+              <b>{c.made.length + 1} 本目</b>
+              <span className="faint">登録しても閉じません。同じ作品{c.kind ? "・同じ種類" : ""}で次のフォームが出ます</span>
+              {c.made.length > 0 && <span className="tag ok">登録した {c.made.length}：{c.made.join("・")}</span>}
+              {c.party && (
+                <label className="row" style={{ gap: 4 }}>
+                  <input type="checkbox" checked={c.keepParty} onChange={(e) => setCreating({ ...c, keepParty: e.target.checked })} />
+                  <span className="faint">次も {c.party.name} で</span>
+                </label>
+              )}
+              <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={finish}>{c.made.length ? "ここで終わる" : "やめる"}</button>
+            </div>
+            <ConditionEntryForm key={c.seq} initialKind={c.kind}
+              preset={{ matterId, workId: c.workId, workTitle: c.workTitle, workOptions,
+                        ...(c.keepParty && c.party ? { counterpartyId: c.party.id, counterpartyName: c.party.name } : {}) }}
+              onDone={async (made) => {
+                // 「1 本だけ」と OUT は案件に繋がらないので、ここで繋ぐ（セット系は matterId 付きでサーバが繋ぐ。重ねても断られない）。
+                try { await api.post(`/matters/${matterId}/conditions`, { conditionIds: made.conditionIds }); }
+                catch (e) { setNotice(`案件に繋げませんでした：${(e as ApiError).message}`); }
+                // 表は裏で読み直し、フォームは同じ作品・種類で出し直す。取引先は作った条件から引いて「次も同じで」に使う。
+                setVersion((x) => x + 1); onChanged?.();
+                const kind = ENTRY_KINDS.find((k) => k.templateKey && k.templateKey === made.templateKey)?.value ?? c.kind;
+                let party = c.party;
+                let labels: string[] = made.conditionIds.map((id) => `#${id}`);
+                try {
+                  const heads = await Promise.all(made.conditionIds.map((id) => api.get<{ conditionNo: string | null; counterparty: { id: number; name: string } | null }>(`/conditions/${id}`)));
+                  labels = heads.map((h, i) => h.conditionNo ?? `#${made.conditionIds[i]}`);
+                  party = heads[0]?.counterparty ?? party;
+                } catch { /* 番号が引けなくても続ける */ }
+                setCreating((cur) => cur ? { ...cur, kind, party, made: [...cur.made, ...labels], seq: cur.seq + 1 } : cur);
+              }}
+              onCancel={finish} />
           </Modal>
-        ) : null;
+        );
+      })()}
+      {adding?.kind === "event" && (() => {
+        const id = adding.queue[adding.index];
+        const r = all.find((x) => x.conditionId === id);
+        const total = adding.queue.length, k = adding.index + 1;
+        const finish = (extra?: string) => {
+          const done = [...adding.done, ...(extra ? [extra] : [])];
+          setAdding(null);
+          if (done.length) reload(`実績を入れました：${done.join("・")}`);
+        };
+        const advance = (entered: boolean) => {
+          const label = r?.conditionNo ?? `#${id}`;
+          const done = entered ? [...adding.done, label] : adding.done;
+          // 表は裏で読み直す（ポップアップは閉じない）。
+          if (entered) { setVersion((x) => x + 1); onChanged?.(); }
+          if (adding.index + 1 >= total) { setAdding(null); if (done.length) setNotice(`実績を入れました：${done.join("・")}`); return; }
+          setAdding({ ...adding, index: adding.index + 1, done });
+        };
+        if (!r) return null;
+        const next = adding.queue[adding.index + 1];
+        const nextRow = next !== undefined ? all.find((x) => x.conditionId === next) : null;
+        return (
+          <Modal wide title={<>{r.counterparty?.name ?? ""}　{r.name}　<span className="faint">実績を入れる</span></>} onClose={() => finish()}>
+            {total > 1 && (
+              <div className="row ledger-queue" style={{ gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                <b>{k} / {total} 件目</b>
+                <span className="faint">入れると閉じずに次へ進みます{nextRow ? `。次：${nextRow.counterparty?.name ?? ""} ${nextRow.name}` : "（これが最後）"}</span>
+                {adding.done.length > 0 && <span className="tag ok">入れた {adding.done.length}</span>}
+                <span style={{ marginLeft: "auto" }} className="row">
+                  {nextRow && <button className="btn btn-sm" onClick={() => advance(false)}>この条件は飛ばす</button>}
+                  <button className="btn btn-sm" onClick={() => finish()}>ここで終わる</button>
+                </span>
+              </div>
+            )}
+            <EventEntryForm key={r.conditionId} conditionId={r.conditionId} scheduleId={nextSchedule(r)?.scheduleId ?? null} matterId={matterId}
+              title={r.conditionNo ?? undefined}
+              onDone={() => advance(true)}
+              onCancel={() => (total > 1 && nextRow ? advance(false) : finish())} />
+          </Modal>
+        );
       })()}
       {adding?.kind === "payment" && (() => {
         const r = all.find((x) => x.conditionId === adding.conditionId);
