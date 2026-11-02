@@ -58,6 +58,8 @@ export function SearchSelect(
 
   useEffect(() => {
     if (!search || !open) return;
+    // 空のまま欄を押しても探さない（押すたびに適当な 40 件が並んでいた）。名前の一部を打ってから探す。
+    if (!q.trim()) { setHits([]); return; }
     let alive = true;
     search(q.trim()).then((r) => { if (alive) setHits(r.slice(0, 40)); }).catch(() => undefined);
     return () => { alive = false; };
