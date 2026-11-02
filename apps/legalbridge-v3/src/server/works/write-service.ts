@@ -4,6 +4,49 @@ import { recordAudit } from "../core/audit.js";
 import { upsertCredit } from "./credits.js";
 import { allocateNumber } from "../core/numbering.js";
 
+/** 作品の統合の下見（案件の統合と同じ形）。 */
+export interface WorkMergeCounts {
+  conditions: number; activeConditions: number; parts: number; editions: number; codes: number;
+  credits: number; events: number; matters: number; links: number; lineage: number;
+}
+export interface WorkMergePreview {
+  from: { id: number; workCode: string | null; title: string; kind: string; status: string };
+  into: { id: number; workCode: string | null; title: string; kind: string; status: string };
+  moves: WorkMergeCounts;
+  /** 統合を止める理由。空なら実行できる。 */
+  blockers: string[];
+  /** 止めはしないが、確認のうえで進めるもの。 */
+  warnings: string[];
+}
+/** 統合で動かしたもの。取り消しはこれを読んで付け戻す（監査 work.merge の detail.restore）。 */
+interface MergeRestore {
+  prevStatus: string;
+  conditions: number[]; work_editions: number[]; ebook_work_codes: number[]; work_credits: number[];
+  condition_events: number[]; matters: number[];
+  parts: Array<{ id: number; partNo: number }>;
+  links: Array<{ matterId: number }>;
+  /** 先もすでに指していたので消した繋がり（取り消しで戻す）。 */
+  linksDropped: Array<{ matterId: number }>;
+  lineage: Array<{ parentId: number; childId: number; relationType: string }>;
+  lineageAdded: Array<{ parentId: number; childId: number; relationType: string }>;
+}
+/** 2 つの作品が系譜で繋がっているか（$1 の上下 20 段に $2 が居るか）。 */
+const LINEAGE_RELATED_SQL = `WITH RECURSIVE up AS (
+             SELECT parent_work_id AS wid, 1 AS depth FROM work_lineage WHERE child_work_id = $1
+             UNION
+             SELECT l.parent_work_id, up.depth + 1 FROM work_lineage l JOIN up ON l.child_work_id = up.wid
+              WHERE up.depth < 20
+           ), down AS (
+             SELECT child_work_id AS wid, 1 AS depth FROM work_lineage WHERE parent_work_id = $1
+             UNION
+             SELECT l.child_work_id, down.depth + 1 FROM work_lineage l JOIN down ON l.parent_work_id = down.wid
+              WHERE down.depth < 20
+           )
+           SELECT 1 FROM up WHERE wid = $2
+           UNION ALL
+           SELECT 1 FROM down WHERE wid = $2
+           LIMIT 1`;
+
 export type WorkKind = "own" | "source_ip" | "derivative";
 export type WorkStatus = "planning" | "in_production" | "released" | "archived";
 
@@ -409,6 +452,162 @@ export class WorkWriteService {
     } catch (error) { throw translate(error); }
   }
 
+  /**
+   * 統合の下見。何が移るか（条件・刊行物・実績・案件…）と、止める理由・注意を返す。
+   * 案件の統合（matters/merge-service）と同じ形で、画面は実行前にこれを出す。
+   */
+  async mergePreview(id: number, intoId: number): Promise<WorkMergePreview> {
+    try {
+      const client = this.database;
+      const blockers: string[] = [];
+      const warnings: string[] = [];
+      const head = async (wid: number) => {
+        const r = await client.query(
+          "SELECT id, work_code, title, kind, status, merged_into_id FROM works WHERE id = $1", [wid]);
+        const w = r.rows[0] as { id: number; work_code: string | null; title: string; kind: string; status: string;
+                                 merged_into_id: number | null } | undefined;
+        if (!w) throw new DomainError("NOT_FOUND", `作品 ${wid} が見つかりません`);
+        return w;
+      };
+      const from = await head(id);
+      const into = id === intoId ? from : await head(intoId);
+      if (id === intoId) blockers.push("同じ作品にはまとめられません");
+      if (from.merged_into_id) blockers.push("この作品はすでに別の作品にまとめてあります");
+      if (into.merged_into_id) blockers.push("統合先がすでに別の作品にまとめられています。その先を選んでください");
+      if (into.status === "archived") blockers.push("終了した作品にはまとめられません。残す側を選んでください");
+      if (id !== intoId) {
+        const related = await client.query(LINEAGE_RELATED_SQL, [id, intoId]);
+        if (related.rows[0]) blockers.push("系譜で繋がっている作品どうしはまとめられません。先に原作の付け外しで系譜を切ってください");
+      }
+      const count = async (sql: string, params: unknown[]) => {
+        try { return Number(((await client.query(sql, params)).rows[0] as { n?: number } | undefined)?.n ?? 0); }
+        catch (error) {
+          const code = (error as { code?: string })?.code;
+          if (code === "42P01" || code === "42703") return 0;   // 表・列が無い DB
+          throw error;
+        }
+      };
+      const moves: WorkMergeCounts = {
+        conditions: await count("SELECT count(*)::int AS n FROM conditions WHERE work_id = $1", [id]),
+        activeConditions: await count(
+          "SELECT count(*)::int AS n FROM conditions WHERE work_id = $1 AND status IN ('active','scheduled','draft')", [id]),
+        parts: await count("SELECT count(*)::int AS n FROM work_parts WHERE work_id = $1", [id]),
+        editions: await count("SELECT count(*)::int AS n FROM work_editions WHERE work_id = $1", [id]),
+        codes: await count("SELECT count(*)::int AS n FROM ebook_work_codes WHERE work_id = $1", [id]),
+        credits: await count("SELECT count(*)::int AS n FROM work_credits WHERE work_id = $1", [id]),
+        events: await count("SELECT count(*)::int AS n FROM condition_events WHERE work_id = $1", [id]),
+        matters: await count("SELECT count(*)::int AS n FROM matters WHERE work_id = $1", [id]),
+        links: await count("SELECT count(*)::int AS n FROM matter_links WHERE target_type = 'work' AND target_ref = $1", [String(id)]),
+        lineage: await count(
+          "SELECT count(*)::int AS n FROM work_lineage WHERE parent_work_id = $1 OR child_work_id = $1", [id])
+      };
+      if (from.kind !== into.kind) warnings.push(`種別が違います（${from.kind} → ${into.kind}）`);
+      if (moves.activeConditions > 0) {
+        const intoActive = await count(
+          "SELECT count(*)::int AS n FROM conditions WHERE work_id = $1 AND status IN ('active','scheduled','draft')", [intoId]);
+        if (intoActive > 0) {
+          warnings.push(`両方に生きている条件があります（こちら ${moves.activeConditions}・先 ${intoActive}）。` +
+                        "同じ相手・同じ使い方の条件が二重になっていないか、統合後に「条件ごと」で確かめてください");
+        }
+      }
+      const side = (w: typeof from) => ({
+        id: Number(w.id), workCode: w.work_code ?? null, title: String(w.title ?? ""), kind: String(w.kind), status: String(w.status)
+      });
+      return { from: side(from), into: side(into), moves, blockers, warnings };
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 統合を取り消す。統合のときに動かしたものだけ付け戻す（統合後に先で作ったものは残る）。
+   * 動かしたものの id は統合の監査（work.merge の detail.restore）に残してある。
+   */
+  async unmerge(id: number, actor: string): Promise<{ id: number; intoId: number; restored: Record<string, number> }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const work = await this.requireWork(client, id);
+        if (!work.merged_into_id) throw new DomainError("CONFLICT", "この作品は統合されていません");
+        const intoId = Number(work.merged_into_id);
+        const audit = await client.query(
+          `SELECT detail FROM audit_events
+            WHERE action = 'work.merge' AND target_type = 'work' AND target_id = $1
+            ORDER BY id DESC LIMIT 1`, [id]);
+        const raw = (audit.rows[0] as { detail: unknown } | undefined)?.detail ?? {};
+        const detail = (typeof raw === "string" ? JSON.parse(raw) : raw) as { intoId?: number; restore?: Partial<MergeRestore> };
+        if (detail.intoId && Number(detail.intoId) !== intoId) {
+          throw new DomainError("CONFLICT", "統合の記録と統合先が合いません。手で付け直してください");
+        }
+        const r: Partial<MergeRestore> = detail.restore ?? {};
+        const restored: Record<string, number> = {};
+        const back = async (table: string, ids: number[] | undefined, extra = "") => {
+          if (!ids?.length) { restored[table] = 0; return; }
+          await client.query("SAVEPOINT unmerge_back");
+          try {
+            const q = await client.query(
+              `UPDATE ${table} SET work_id = $1${extra} WHERE id = ANY($3::bigint[]) AND work_id = $2`, [id, intoId, ids]);
+            restored[table] = q.rowCount ?? 0;
+            await client.query("RELEASE SAVEPOINT unmerge_back");
+          } catch (error) {
+            await client.query("ROLLBACK TO SAVEPOINT unmerge_back");
+            const code = (error as { code?: string })?.code;
+            if (code !== "42P01" && code !== "42703") throw error;
+            restored[table] = 0;
+          }
+        };
+        await back("conditions", r.conditions, ", updated_at = now()");
+        await back("work_editions", r.work_editions, ", updated_at = now()");
+        await back("ebook_work_codes", r.ebook_work_codes);
+        await back("work_credits", r.work_credits);
+        await back("condition_events", r.condition_events);
+        await back("matters", r.matters, ", updated_at = now()");
+        let parts = 0;
+        for (const p of r.parts ?? []) {
+          const q = await client.query(
+            "UPDATE work_parts SET work_id = $1, part_no = $4 WHERE id = $3 AND work_id = $2", [id, intoId, p.id, p.partNo]);
+          parts += q.rowCount ?? 0;
+        }
+        restored.parts = parts;
+        let links = 0;
+        for (const l of r.links ?? []) {
+          const q = await client.query(
+            `UPDATE matter_links SET target_ref = $1 WHERE matter_id = $3 AND target_type = 'work' AND target_ref = $2`,
+            [String(id), String(intoId), l.matterId]);
+          links += q.rowCount ?? 0;
+        }
+        for (const l of r.linksDropped ?? []) {
+          const q = await client.query(
+            `INSERT INTO matter_links (matter_id, target_type, target_ref) VALUES ($1, 'work', $2)
+             ON CONFLICT DO NOTHING`, [l.matterId, String(id)]);
+          links += q.rowCount ?? 0;
+        }
+        restored.links = links;
+        // 系譜：先へ写した行のうち、統合で入れたものだけ消し、元の行を戻す。
+        for (const l of r.lineageAdded ?? []) {
+          await client.query(
+            "DELETE FROM work_lineage WHERE parent_work_id = $1 AND child_work_id = $2 AND relation_type = $3",
+            [l.parentId, l.childId, l.relationType]);
+        }
+        let lineage = 0;
+        for (const l of r.lineage ?? []) {
+          const q = await client.query(
+            `INSERT INTO work_lineage (parent_work_id, child_work_id, relation_type) VALUES ($1, $2, $3)
+             ON CONFLICT DO NOTHING`, [l.parentId, l.childId, l.relationType]);
+          lineage += q.rowCount ?? 0;
+        }
+        restored.lineage = lineage;
+        await client.query(
+          `UPDATE works
+              SET status = $2, merged_into_id = NULL,
+                  remarks = NULLIF(btrim(regexp_replace(COALESCE(remarks, ''), '(^|\n)統合：→ [^\n]*$', '')), ''),
+                  updated_at = now()
+            WHERE id = $1`, [id, r.prevStatus ?? "released"]);
+        await recordAudit(client, {
+          actor, action: "work.unmerge", targetType: "work", targetId: id, detail: { intoId, restored }
+        });
+        return { id, intoId, restored };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   /** 統合の本体（同じトランザクションの中で）。 */
   private async mergeWithin(client: Queryable, id: number, intoId: number, actor: string): Promise<{
     id: number; intoId: number; moved: { conditions: number; parts: number; lineage: number } & Record<string, number>;
@@ -427,44 +626,36 @@ export class WorkWriteService {
         if (target.status === "archived") {
           throw new DomainError("VALIDATION", "終了した作品にはまとめられません。残す側を選んでください");
         }
-        const related = await client.query(
-          `WITH RECURSIVE up AS (
-             SELECT parent_work_id AS wid, 1 AS depth FROM work_lineage WHERE child_work_id = $1
-             UNION
-             SELECT l.parent_work_id, up.depth + 1 FROM work_lineage l JOIN up ON l.child_work_id = up.wid
-              WHERE up.depth < 20
-           ), down AS (
-             SELECT child_work_id AS wid, 1 AS depth FROM work_lineage WHERE parent_work_id = $1
-             UNION
-             SELECT l.child_work_id, down.depth + 1 FROM work_lineage l JOIN down ON l.parent_work_id = down.wid
-              WHERE down.depth < 20
-           )
-           SELECT 1 FROM up WHERE wid = $2
-           UNION ALL
-           SELECT 1 FROM down WHERE wid = $2
-           LIMIT 1`, [id, intoId]);
+        const related = await client.query(LINEAGE_RELATED_SQL, [id, intoId]);
         if (related.rows[0]) {
           throw new DomainError("VALIDATION",
             "系譜で繋がっている作品どうしはまとめられません。先に原作の付け外しで系譜を切ってください");
         }
 
+        const ids = (rows: unknown[]) => rows.map((r) => Number((r as { id?: unknown }).id)).filter((n) => Number.isFinite(n));
+        const restore: MergeRestore = {
+          prevStatus: String(source.status), conditions: [], work_editions: [], ebook_work_codes: [], work_credits: [],
+          condition_events: [], matters: [], parts: [], links: [], linksDropped: [], lineage: [], lineageAdded: []
+        };
         const conditions = await client.query(
-          "UPDATE conditions SET work_id = $2, updated_at = now() WHERE work_id = $1", [id, intoId]);
+          "UPDATE conditions SET work_id = $2, updated_at = now() WHERE work_id = $1 RETURNING id", [id, intoId]);
+        restore.conditions = ids(conditions.rows);
         // 作品を指すほかの行も先へ。残すと、終了した作品にぶら下がったまま見えなくなる
         // （刊行物の ISBN は一意なので、残すと統合先に同じ ISBN を足せない）。
         // 表がまだ無い DB（193 の前など）は飛ばす。SAVEPOINT で、1 つ無くても統合は続ける。
         const others: Record<string, number> = {};
         for (const [table, sql] of [
-          ["work_editions", "UPDATE work_editions SET work_id = $2, updated_at = now() WHERE work_id = $1"],
-          ["ebook_work_codes", "UPDATE ebook_work_codes SET work_id = $2 WHERE work_id = $1"],
-          ["work_credits", "UPDATE work_credits SET work_id = $2 WHERE work_id = $1"],
-          ["condition_events", "UPDATE condition_events SET work_id = $2 WHERE work_id = $1"],
-          ["matters", "UPDATE matters SET work_id = $2, updated_at = now() WHERE work_id = $1"]
+          ["work_editions", "UPDATE work_editions SET work_id = $2, updated_at = now() WHERE work_id = $1 RETURNING id"],
+          ["ebook_work_codes", "UPDATE ebook_work_codes SET work_id = $2 WHERE work_id = $1 RETURNING id"],
+          ["work_credits", "UPDATE work_credits SET work_id = $2 WHERE work_id = $1 RETURNING id"],
+          ["condition_events", "UPDATE condition_events SET work_id = $2 WHERE work_id = $1 RETURNING id"],
+          ["matters", "UPDATE matters SET work_id = $2, updated_at = now() WHERE work_id = $1 RETURNING id"]
         ] as const) {
           await client.query("SAVEPOINT merge_other");
           try {
             const r = await client.query(sql, [id, intoId]);
             others[table] = r.rowCount ?? 0;
+            restore[table] = ids(r.rows);
             await client.query("RELEASE SAVEPOINT merge_other");
           } catch (error) {
             await client.query("ROLLBACK TO SAVEPOINT merge_other");
@@ -472,21 +663,57 @@ export class WorkWriteService {
             if (code !== "42P01" && code !== "42703") throw error;   // 表・列が無い DB だけ飛ばす
           }
         }
+        // 案件が「ほかの作品」として指している行（matter_links target_type='work'）も先へ。
+        // 先をすでに指している案件は、二重になるので元の行を消す。
+        await client.query("SAVEPOINT merge_links");
+        try {
+          const dropped = await client.query(
+            `DELETE FROM matter_links a USING matter_links b
+              WHERE a.target_type = 'work' AND a.target_ref = $1
+                AND b.matter_id = a.matter_id AND b.target_type = 'work' AND b.target_ref = $2
+              RETURNING a.matter_id`,
+            [String(id), String(intoId)]);
+          restore.linksDropped = dropped.rows.map((r) => ({ matterId: Number((r as { matter_id: unknown }).matter_id) }));
+          const moved = await client.query(
+            "UPDATE matter_links SET target_ref = $2 WHERE target_type = 'work' AND target_ref = $1 RETURNING matter_id",
+            [String(id), String(intoId)]);
+          restore.links = moved.rows.map((r) => ({ matterId: Number((r as { matter_id: unknown }).matter_id) }));
+          others.links = moved.rowCount ?? 0;
+          await client.query("RELEASE SAVEPOINT merge_links");
+        } catch (error) {
+          await client.query("ROLLBACK TO SAVEPOINT merge_links");
+          const code = (error as { code?: string })?.code;
+          if (code !== "42P01" && code !== "42703") throw error;
+        }
+        const partsBefore = await client.query("SELECT id, part_no FROM work_parts WHERE work_id = $1", [id]);
+        restore.parts = partsBefore.rows.map((r) => ({
+          id: Number((r as { id: unknown }).id), partNo: Number((r as { part_no: unknown }).part_no) }));
         const parts = await client.query(
           `UPDATE work_parts SET work_id = $2,
                   part_no = part_no + (SELECT COALESCE(max(part_no), 0) FROM work_parts WHERE work_id = $2)
             WHERE work_id = $1`, [id, intoId]);
         // 系譜。先と同じ行があれば ON CONFLICT で吸収し、自分自身への輪は入れない。
+        const lineageRow = (r: unknown) => ({
+          parentId: Number((r as { parent_work_id: unknown }).parent_work_id),
+          childId: Number((r as { child_work_id: unknown }).child_work_id),
+          relationType: String((r as { relation_type: unknown }).relation_type ?? "")
+        });
+        const lineageBefore = await client.query(
+          "SELECT parent_work_id, child_work_id, relation_type FROM work_lineage WHERE parent_work_id = $1 OR child_work_id = $1", [id]);
+        restore.lineage = lineageBefore.rows.map(lineageRow);
         const parents = await client.query(
           `INSERT INTO work_lineage (parent_work_id, child_work_id, relation_type)
            SELECT parent_work_id, $2, relation_type FROM work_lineage
             WHERE child_work_id = $1 AND parent_work_id <> $2
-           ON CONFLICT DO NOTHING`, [id, intoId]);
+           ON CONFLICT DO NOTHING
+           RETURNING parent_work_id, child_work_id, relation_type`, [id, intoId]);
         const children = await client.query(
           `INSERT INTO work_lineage (parent_work_id, child_work_id, relation_type)
            SELECT $2, child_work_id, relation_type FROM work_lineage
             WHERE parent_work_id = $1 AND child_work_id <> $2
-           ON CONFLICT DO NOTHING`, [id, intoId]);
+           ON CONFLICT DO NOTHING
+           RETURNING parent_work_id, child_work_id, relation_type`, [id, intoId]);
+        restore.lineageAdded = [...parents.rows, ...children.rows].map(lineageRow);
         await client.query(
           "DELETE FROM work_lineage WHERE parent_work_id = $1 OR child_work_id = $1", [id]);
 
@@ -504,7 +731,7 @@ export class WorkWriteService {
         };
         await recordAudit(client, {
           actor, action: "work.merge", targetType: "work", targetId: id,
-          detail: { intoId, intoCode: target.work_code, moved }
+          detail: { intoId, intoCode: target.work_code, moved, restore }
         });
         await recordAudit(client, {
           actor, action: "work.merge_in", targetType: "work", targetId: intoId,

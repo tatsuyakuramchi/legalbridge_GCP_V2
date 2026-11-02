@@ -11,6 +11,7 @@ import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import type { DocBack } from "./RoyaltyLedger.js";
 import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayDocsWorkspace.js";
 import { WorkRounds } from "./RoundsOverview.js";
+import { WorkLedger } from "./WorkLedger.js";
 import { WorkRightsFlow } from "./WorkRightsFlow.js";
 import { WorkEditions, editionFamilyOf } from "./WorkEditions.js";
 import type { ImportPreset } from "./BulkRegister.js";
@@ -46,6 +47,15 @@ interface TreeWork {
   conditions: number; parts: number;
 }
 interface Tree { works: TreeWork[]; lineage: Array<{ parentId: number; childId: number }> }
+
+/** 作品の統合の下見（GET /works/merge/preview）。案件の統合と同じ形。 */
+interface WorkMergePreview {
+  from: { id: number; workCode: string | null; title: string; kind: string; status: string };
+  into: { id: number; workCode: string | null; title: string; kind: string; status: string };
+  moves: { conditions: number; activeConditions: number; parts: number; editions: number; codes: number;
+           credits: number; events: number; matters: number; links: number; lineage: number };
+  blockers: string[]; warnings: string[];
+}
 
 interface WorkRefRow { id: number; workCode: string | null; title: string; kind: string }
 interface Part { id: number; partNo: number; name: string; partType: string; royaltyBearing: boolean;
@@ -173,7 +183,7 @@ export function WorksWorkspace(
   const [selected, setSelected] = useState<number | undefined>(initialId);
   useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   // 「利用許諾計算」タブは閉じた（A-074）。報告・計算書は支払文書の「作家の報告と計算書」へ。
-  const [pane, setPane] = useState<"work" | "rights" | "paydocs">("work");
+  const [pane, setPane] = useState<"work" | "rights" | "paydocs" | "ledger">("work");
   /** 支払文書のタブの見せ方：進み順（支払文書の表）か、条件ごと（回号・根拠の契約書・計算書）。 */
   const [payView, setPayView] = useState<"progress" | "conditions">("progress");
   /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */
@@ -253,6 +263,7 @@ export function WorksWorkspace(
   const [moving, setMoving] = useState(false);
   const [mergeTo, setMergeTo] = useState<string>("");
   const [merging, setMerging] = useState(false);
+  const [mergePreview, setMergePreview] = useState<WorkMergePreview | null>(null);
   const [newSource, setNewSource] = useState<{ title: string; titleKana: string } | null>(null);
   const [cleanup, setCleanup] = useState<{ conditions: LegacyCondition[]; works: LegacyWork[] } | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
@@ -261,6 +272,16 @@ export function WorksWorkspace(
   const [notice, setNotice] = useState<string | null>(null);
 
   const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : String(e));
+
+  // 統合の下見。先を選んだら、何が移るか・止める理由を出してから「統合する」を押せるようにする（案件と同じ）。
+  useEffect(() => {
+    if (!merging || !work || !mergeTo) { setMergePreview(null); return; }
+    let live = true;
+    api.get<WorkMergePreview>(`/works/merge/preview?fromId=${work.id}&intoId=${mergeTo}`)
+      .then((p) => { if (live) setMergePreview(p); })
+      .catch((e) => { if (live) { setMergePreview(null); fail(e); } });
+    return () => { live = false; };
+  }, [merging, mergeTo, work?.id]);
 
   function reloadTree(select?: number) {
     const q = search.trim();
@@ -372,19 +393,38 @@ export function WorksWorkspace(
    * （条件の work_id を付け替えるだけで、条件の中身は変わらない）。
    */
   async function mergeWork() {
-    if (!work || !mergeTo) return;
-    const target = tree.works.find((t) => String(t.id) === mergeTo);
-    if (!confirm(`「${work.title}」を「${target?.title ?? mergeTo}」にまとめます。\n` +
-                 `条件 ${conditions.length} 件・パート ${work.parts.length} 件・原作の繋がりを移し、` +
-                 `「${work.title}」は終了になります。よろしいですか？`)) return;
+    if (!work || !mergeTo || !mergePreview || mergePreview.blockers.length) return;
+    const target = mergePreview.into;
+    const m = mergePreview.moves;
+    const warn = mergePreview.warnings.length ? `\n注意：${mergePreview.warnings.join("／")}` : "";
+    if (!confirm(`「${work.title}」を「${target.title}」にまとめます。\n` +
+                 `条件 ${m.conditions} 件（生きている ${m.activeConditions}）・実績 ${m.events}・刊行物 ${m.editions}・` +
+                 `パート ${m.parts} 件・案件 ${m.matters + m.links}・原作の繋がり ${m.lineage} を移し、` +
+                 `「${work.title}」は終了になります。あとで「統合を取り消す」で戻せます。${warn}\nよろしいですか？`)) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.post<{ moved: { conditions: number; parts: number; lineage: number } }>(
+      const r = await api.post<{ moved: { conditions: number; parts: number; lineage: number } & Record<string, number> }>(
         `/works/${work.id}/merge`, { intoId: Number(mergeTo) });
-      setNotice(`「${target?.title ?? ""}」にまとめました（条件 ${r.moved.conditions}・パート ${r.moved.parts}・系譜 ${r.moved.lineage}）`);
-      setMerging(false); setMergeTo("");
+      setNotice(`「${target.title}」にまとめました（条件 ${r.moved.conditions}・実績 ${r.moved.condition_events ?? 0}・` +
+                `刊行物 ${r.moved.work_editions ?? 0}・パート ${r.moved.parts}・系譜 ${r.moved.lineage}）`);
+      setMerging(false); setMergeTo(""); setMergePreview(null);
       setSelected(Number(mergeTo));
       await reloadTree();
+    } catch (e) { fail(e); } finally { setBusy(false); }
+  }
+
+  /** 統合の取り消し。統合のときに移した条件・実績・刊行物などを戻し、この作品を元の状態に戻す。 */
+  async function unmergeWork() {
+    if (!work?.mergedInto) return;
+    if (!confirm(`「${work.title}」の統合を取り消します。\n` +
+                 `統合のときに「${work.mergedInto.title}」へ移した条件・実績・刊行物・パートをこの作品へ戻します` +
+                 `（統合後に先で作ったものは先に残ります）。よろしいですか？`)) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ restored: Record<string, number> }>(`/works/${work.id}/unmerge`, {});
+      setNotice(`統合を取り消しました（条件 ${r.restored.conditions ?? 0}・実績 ${r.restored.condition_events ?? 0}・` +
+                `刊行物 ${r.restored.work_editions ?? 0}・パート ${r.restored.parts ?? 0} を戻しました）`);
+      await Promise.all([reloadTree(), reloadWork()]);
     } catch (e) { fail(e); } finally { setBusy(false); }
   }
 
@@ -771,7 +811,14 @@ export function WorksWorkspace(
               {/* 作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近のお金（docs/navigation.md §5）。 */}
               <button role="tab" aria-selected={pane === "rights"} onClick={() => setPane("rights")}>権利とお金の流れ</button>
               <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>
+              {/* 案件の「条件ごと」と同じ表を、作品 1 点で（案件をまたいで）。条件・実績・発注書・検収書・支払を 1 行で直す。 */}
+              <button role="tab" aria-selected={pane === "ledger"} onClick={() => setPane("ledger")}>条件ごと</button>
             </div>
+          )}
+          {work && pane === "ledger" && (
+            <WorkLedger workId={work.id} onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
+              onCompose={(ids, eventIds, mid, templateKey) => onCompose?.(ids, eventIds, mid ?? null, templateKey)}
+              onChanged={() => { void reloadWork(); void reloadTree(); }} />
           )}
           {work && pane === "rights" && (
             <WorkRightsFlow workId={work.id} onOpenCondition={onOpenCondition} onOpenWork={(id) => setSelected(id)}
@@ -804,11 +851,14 @@ export function WorksWorkspace(
                 <span className="tag accent">{KIND_LABEL[work.kind] ?? work.kind}</span>
                 <StatusTag kind="work" value={work.status} />
                 {work.legacy && <span className="tag">V2 から移行</span>}
-                {work.mergedInto && (
+                {work.mergedInto && (<>
                   <button className="btn btn-sm" onClick={() => setSelected(work.mergedInto!.id)}>
                     → {work.mergedInto.workCode ?? `#${work.mergedInto.id}`} {work.mergedInto.title} にまとめ済み
                   </button>
-                )}
+                  {editable && (
+                    <button className="btn btn-sm" disabled={busy} onClick={() => void unmergeWork()}>統合を取り消す</button>
+                  )}
+                </>)}
                 {editable && !work.mergedInto && (
                   <span className="row" style={{ marginLeft: "auto" }}>
                     {!merging && work.status !== "archived" && (
@@ -833,9 +883,24 @@ export function WorksWorkspace(
                       })}
                       onChange={(v) => setMergeTo(v)} />
                   </div>
-                  <button className="btn btn-sm primary" disabled={busy || !mergeTo} onClick={() => void mergeWork()}>統合する</button>
-                  <button className="btn btn-sm" onClick={() => { setMerging(false); setMergeTo(""); }}>やめる</button>
-                  <span className="faint">条件・パート・原作の繋がりを先へ移し、この作品は終了になります。系譜で繋がっている2つはまとめられません</span>
+                  <button className="btn btn-sm primary" disabled={busy || !mergeTo || !mergePreview || mergePreview.blockers.length > 0}
+                          onClick={() => void mergeWork()}>
+                    {mergePreview?.warnings.length ? "確認のうえ統合する" : "統合する"}
+                  </button>
+                  <button className="btn btn-sm" onClick={() => { setMerging(false); setMergeTo(""); setMergePreview(null); }}>やめる</button>
+                  <span className="faint">条件・実績・刊行物・パート・案件・原作の繋がりを先へ移し、この作品は終了になります。あとで取り消せます</span>
+                  {mergePreview && (
+                    <div className="stack" style={{ flexBasis: "100%", gap: 4 }}>
+                      <div className="faint">
+                        移るもの：条件 {mergePreview.moves.conditions}（生きている {mergePreview.moves.activeConditions}）／
+                        実績 {mergePreview.moves.events}／刊行物 {mergePreview.moves.editions}／電子コード {mergePreview.moves.codes}／
+                        クレジット {mergePreview.moves.credits}／パート {mergePreview.moves.parts}／
+                        案件 {mergePreview.moves.matters + mergePreview.moves.links}／系譜 {mergePreview.moves.lineage}
+                      </div>
+                      {mergePreview.blockers.map((b) => <div key={b} className="alert">{b}</div>)}
+                      {mergePreview.warnings.map((w) => <div key={w} className="note warn">{w}</div>)}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="panel-bd ledger-form">

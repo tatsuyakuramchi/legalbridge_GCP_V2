@@ -872,6 +872,11 @@ export function createRoutes(database: Transactable) {
    * 工程表。条件1本を1行に、予定・発注書・実績・検収書・支払を畳んで返す。
    * 段ごとに引くと、条件36本の案件で問い合わせが200回近くになる。
    */
+  // 作品台帳の「条件ごと」：作品 1 点の条件を案件をまたいで 1 行ずつ（列は案件の工程表と同じ）。
+  router.get("/works/:id/grid", asyncRoute(async (req, res) => {
+    res.json({ rows: await new MatterGridService(database).rowsForWork(Number(req.params.id)) });
+  }));
+
   router.get("/matters/:id/grid", asyncRoute(async (req, res) => {
     const grid = new MatterGridService(database);
     const id = Number(req.params.id);
@@ -3217,6 +3222,13 @@ export function createRoutes(database: Transactable) {
     }));
 
   // 台帳。作品と原作（Core Logic）の系譜を1回で返す。
+  // 作品の統合の下見（/works/:id より前に置く）。
+  router.get("/works/merge/preview", asyncRoute(async (req, res) => {
+    const { fromId, intoId } = z.object({
+      fromId: z.coerce.number().int().positive(), intoId: z.coerce.number().int().positive()
+    }).parse(req.query ?? {});
+    res.json(await workWrites.mergePreview(fromId, intoId));
+  }));
   router.get("/works/tree", asyncRoute(async (req, res) => {
     res.json(await works.tree(String(req.query.q ?? ""), String(req.query.archived ?? "") === "1"));
   }));
@@ -3619,6 +3631,10 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const { intoId } = z.object({ intoId: z.coerce.number().int().positive() }).parse(req.body ?? {});
       res.json(await workWrites.merge(Number(req.params.id), intoId, actor(res)));
+    }));
+  router.post("/works/:id/unmerge", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await workWrites.unmerge(Number(req.params.id), actor(res)));
     }));
 
   // 終了 → 削除の2段階。条件と同じ作り。
