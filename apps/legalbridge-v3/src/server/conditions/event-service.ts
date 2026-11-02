@@ -727,6 +727,13 @@ export class ConditionEventService {
             `この実績は計算書 ${row.document_no ?? `#${row.document_id}`} から作られています。` +
             "取り消すなら計算書ごと無効にしてください");
         }
+        // 支払が割り当たっている実績を消すと、支払が宙に浮く。先に支払を取り消す（画面はその場で取り消して続けられる）。
+        const blocking = await blockingPayments(client, { eventIds: [eventId] });
+        if (blocking.length) {
+          throw new DomainError("CONFLICT",
+            `この実績には支払 ${blocking.map((p) => p.paymentNo ?? `#${p.id}`).join("・")} が立っています。取り消すなら先にその支払を取り消してください`,
+            { blockingPayments: blocking });
+        }
 
         await client.query(
           "UPDATE condition_events SET status = 'void', note = $2 WHERE id = $1",
