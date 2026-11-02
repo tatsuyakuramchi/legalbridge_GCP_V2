@@ -1,4 +1,5 @@
 import type { Queryable } from "../core/db.js";
+import { recordAudit } from "../core/audit.js";
 import { DomainError } from "../core/errors.js";
 import { RELATION_LABEL, RELATION_OF, normalizeProductCode, type EditionInput, type EditionRelation } from "../works/editions.js";
 
@@ -58,6 +59,11 @@ export interface EditionRow {
   outRatePct: number | null;
   /** 出版だけ：電子の料率（%）。版元との電子の再許諾の条件を作るか使う。 */
   outDigitalRatePct?: number | null;
+  /**
+   * 同じ ISBN／JAN が別の作品に登録済みで、この行が新しい作品を作るとき：その刊行物を新しい作品へ付け替える。
+   * （同じ題名の別版を 1 作品に畳んで取り込んだあと、別作品に分け直すとき。刊行物を二重に作らない）
+   */
+  moveFrom?: { editionId: number; workId: number; title: string } | null;
 }
 
 const text = (row: Record<string, string>, header: string) => String(row[header] ?? "").trim();
@@ -87,7 +93,9 @@ function date(value: string): string | null {
 export async function readEditionColumns(
   q: Queryable, row: Record<string, string>, n: EditionColumnNames,
   findParty: (code: string, name: string, what: string) => Promise<{ id: number; name: string }>,
-  sameWorkId: number | null = null
+  sameWorkId: number | null = null,
+  /** 新しく作る作品の題名。別の作品の ISBN が「同じ題名の別版」（題名がその作品の題名で始まる）なら付け替える。 */
+  newTitle: string | null = null
 ): Promise<(EditionRow & { reuse: boolean }) | null> {
   if (!editionColumns(n).some((h) => text(row, h))) return null;
   const pName = text(row, n.partner);
@@ -115,15 +123,21 @@ export async function readEditionColumns(
   }
   const isbn = normalizeProductCode(text(row, n.code), n.code);
   let reuse = false;
+  let moveFrom: EditionRow["moveFrom"] = null;
   if (isbn) {
     const hit = await q.query(
-      `SELECT e.work_id, w.title FROM work_editions e JOIN works w ON w.id = e.work_id WHERE e.isbn = $1 AND e.status = 'active' LIMIT 1`, [isbn])
+      `SELECT e.id, e.work_id, w.title FROM work_editions e JOIN works w ON w.id = e.work_id WHERE e.isbn = $1 AND e.status = 'active' LIMIT 1`, [isbn])
       .catch((error: { code?: string }) => {
         if (error?.code === "42P01") throw new DomainError("VALIDATION", `${n.thing}の台帳がまだありません（infra/v3/193 を当ててください）`);
         throw error;
       });
-    const h = hit.rows[0] as { work_id: number; title: string } | undefined;
+    const h = hit.rows[0] as { id: number; work_id: number; title: string } | undefined;
     if (h && sameWorkId !== null && Number(h.work_id) === sameWorkId) reuse = true;
+    // 新しい作品を作る行で、題名がその作品の題名で始まる（「◯◯（新紀元社版）」のような同じ題名の別版）なら、
+    // 別の作品に付いている刊行物を付け替える。題名が違えば打ち間違いとして止める。
+    else if (h && sameWorkId === null && newTitle && newTitle !== String(h.title) && newTitle.startsWith(String(h.title))) {
+      moveFrom = { editionId: Number(h.id), workId: Number(h.work_id), title: String(h.title) };
+    }
     else if (h) throw new DomainError("CONFLICT", `${n.code} ${isbn} は「${h.title}」の${n.thing}に登録済みです。この行は飛ばされます`);
   }
   const publishedOn = date(text(row, n.date));
@@ -135,7 +149,7 @@ export async function readEditionColumns(
       [sameWorkId, relation, publisher?.id ?? null, publishedOn]).catch(() => ({ rows: [] }));
     if (same.rows[0]) reuse = true;
   }
-  return { publisher, relation, isbn, publishedOn, listPrice, outRatePct, outDigitalRatePct, reuse };
+  return { publisher, relation, isbn, publishedOn, listPrice, outRatePct, outDigitalRatePct, reuse, moveFrom };
 }
 
 /** 読み上げ（「刊行物 KADOKAWA（再許諾 12%） ISBN 978… 2004-09-10 刊」）。 */
@@ -148,7 +162,8 @@ export function editionRowLabel(e: EditionRow, n: EditionColumnNames): string {
     : e.relation === "group" ? "グループ会社・料率なし"
     : e.relation === "own" ? n.ownLabel
     : `他社販売・${n.partner}との条件は既存の OEM を使う`;
-  return `${n.thing} ${who}（${rel}）${e.isbn ? ` ${n.code} ${e.isbn}` : ` ${n.code} なし`}${e.publishedOn ? ` ${e.publishedOn} ${n.dateSuffix}` : ""}`;
+  return `${n.thing} ${who}（${rel}）${e.isbn ? ` ${n.code} ${e.isbn}` : ` ${n.code} なし`}${e.publishedOn ? ` ${e.publishedOn} ${n.dateSuffix}` : ""}`
+    + (e.moveFrom ? `（「${e.moveFrom.title}」に登録済みの${n.thing}をこの作品へ付け替える）` : "");
 }
 
 export interface EditionWriteDeps {
@@ -173,6 +188,17 @@ export async function writeEditionRow(
 ): Promise<string> {
   if (e.reuse) return "";
   if (!deps.editions) throw new DomainError("VALIDATION", `${n.thing}の台帳がありません（193 を当ててください）`);
+  if (e.moveFrom) {
+    // 別の作品に付いている刊行物を、この（新しい）作品へ付け替える。版元との条件（OUT）が付いていればそれも。
+    await q.query("UPDATE work_editions SET work_id = $2, updated_at = now() WHERE id = $1", [e.moveFrom.editionId, workId]);
+    await q.query(
+      `UPDATE conditions SET work_id = $2, updated_at = now()
+        WHERE id = (SELECT out_condition_id FROM work_editions WHERE id = $1) AND work_id = $3`,
+      [e.moveFrom.editionId, workId, e.moveFrom.workId]);
+    await recordAudit(q, { actor, action: "work_edition.move", targetType: "work", targetId: workId,
+      detail: { editionId: e.moveFrom.editionId, fromWorkId: e.moveFrom.workId, isbn: e.isbn } });
+    return `${n.thing} ${e.isbn ?? ""} を「${e.moveFrom.title}」から付け替えた`;
+  }
   const { outConditionId, made } = await ensurePartnerOuts(q, deps, workId, title, e, n, actor);
   await deps.editions.create(workId, {
     publisherPartyId: e.publisher?.id ?? null, relation: e.relation, isbn: e.isbn, publishedOn: e.publishedOn,
