@@ -93,7 +93,9 @@ function date(value: string): string | null {
 export async function readEditionColumns(
   q: Queryable, row: Record<string, string>, n: EditionColumnNames,
   findParty: (code: string, name: string, what: string) => Promise<{ id: number; name: string }>,
-  sameWorkId: number | null = null
+  sameWorkId: number | null = null,
+  /** 新しく作る作品の題名。別の作品の ISBN が「同じ題名の別版」（題名がその作品の題名で始まる）なら付け替える。 */
+  newTitle: string | null = null
 ): Promise<(EditionRow & { reuse: boolean }) | null> {
   if (!editionColumns(n).some((h) => text(row, h))) return null;
   const pName = text(row, n.partner);
@@ -131,8 +133,11 @@ export async function readEditionColumns(
       });
     const h = hit.rows[0] as { id: number; work_id: number; title: string } | undefined;
     if (h && sameWorkId !== null && Number(h.work_id) === sameWorkId) reuse = true;
-    // 新しい作品を作る行（既存の作品に当たらない）なら、別の作品に付いている刊行物を付け替える。
-    else if (h && sameWorkId === null) moveFrom = { editionId: Number(h.id), workId: Number(h.work_id), title: String(h.title) };
+    // 新しい作品を作る行で、題名がその作品の題名で始まる（「◯◯（新紀元社版）」のような同じ題名の別版）なら、
+    // 別の作品に付いている刊行物を付け替える。題名が違えば打ち間違いとして止める。
+    else if (h && sameWorkId === null && newTitle && newTitle !== String(h.title) && newTitle.startsWith(String(h.title))) {
+      moveFrom = { editionId: Number(h.id), workId: Number(h.work_id), title: String(h.title) };
+    }
     else if (h) throw new DomainError("CONFLICT", `${n.code} ${isbn} は「${h.title}」の${n.thing}に登録済みです。この行は飛ばされます`);
   }
   const publishedOn = date(text(row, n.date));

@@ -903,7 +903,7 @@ export class PubWorksImportService {
 
   /** 刊行物の列を読む（imports/edition-columns.ts）。 */
   private readEdition(row: Record<string, string>): Promise<PubEditionRow | null> {
-    return readEditionColumns(this.database, row, PUB_EDITION_NAMES, (c, n, w) => this.findParty(c, n, w));
+    return readEditionColumns(this.database, row, PUB_EDITION_NAMES, (c, n, w) => this.findParty(c, n, w), null, text(row, "作品名") || null);
   }
 
   /**

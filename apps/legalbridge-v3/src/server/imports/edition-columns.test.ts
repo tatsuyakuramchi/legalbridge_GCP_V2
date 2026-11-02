@@ -67,8 +67,10 @@ test("別の作品に登録済みの ISBN で新しい作品を作る行は、�
   assert.equal(same!.reuse, true);
   // 別の作品（id 9）に足す行なら止める。
   await assert.rejects(() => readEditionColumns(db, row, PUB_EDITION_NAMES, find, 9), /登録済みです/);
-  // 新しい作品を作る行なら付け替え。
-  const fresh = await readEditionColumns(db, row, PUB_EDITION_NAMES, find, null);
+  // 新しい作品を作る行でも、題名が別物なら止める（打ち間違い）。
+  await assert.rejects(() => readEditionColumns(db, row, PUB_EDITION_NAMES, find, null, "まったく別の本"), /登録済みです/);
+  // 同じ題名の別版（題名がその作品の題名で始まる）なら付け替え。
+  const fresh = await readEditionColumns(db, row, PUB_EDITION_NAMES, find, null, "クトゥルフ・ホラーショウ（新紀元社版）");
   assert.deepEqual(fresh!.moveFrom, { editionId: 77, workId: 3, title: "クトゥルフ・ホラーショウ" });
   const d = deps();
   const said = await writeEditionRow(db, d, 40, "クトゥルフ・ホラーショウ（新紀元社版）", fresh!, PUB_EDITION_NAMES, "tester");
