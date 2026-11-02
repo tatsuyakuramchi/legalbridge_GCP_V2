@@ -101,6 +101,8 @@ export function WorkLedger(
   const [dups, setDups] = useState<DuplicateView | null>(null);
   const [dupOpen, setDupOpen] = useState<DuplicateGroup | null>(null);
   const [bulk, setBulk] = useState<"docs" | "cancel" | "due" | null>(null);
+  /** 「文書をまとめて作る」を開くときのひな形（発注書／検収書のボタンから）。 */
+  const [bulkTemplate, setBulkTemplate] = useState<string | null>(null);
   /** 実績を入れる（条件と、次の回）／支払を立てる（条件）。 */
   /**
    * 実績を入れる：queue は続けて入れる条件（押した行から、表示順で実績を入れられる行）。
@@ -396,7 +398,21 @@ export function WorkLedger(
           <div className="bulkbar">
             <b>{pickedRows.length} 本を選んでいます</b>
             {canWrite && <button className="btn btn-sm primary" disabled={!pickedRows.some(takesEvent)} onClick={() => startEvents(null, pickedRows)}>実績を続けて入れる（{pickedRows.filter(takesEvent).length}）</button>}
-            {isAdmin || onCompose ? <button className="btn btn-sm" onClick={() => setBulk("docs")}>文書をまとめて作る</button> : null}
+            {/* 文書の動線：発注書（条件の文書）・検収書（実績の文書）はひな形を決めて開く。
+                契約書＋発注書のセットなど、ひな形を組んで作るものは作業テーブルへ（選んだ条件を渡す）。 */}
+            <button className="btn btn-sm" onClick={() => { setBulkTemplate("purchase_order"); setBulk("docs"); }}
+                    title="選んだ条件を載せた発注書の下書きを作る（1枚にまとめる／取引先ごと／条件ごと）">
+              発注書を作る{pickedRows.some((r) => !r.order && !r.orderRef && !isLicense(r)) ? `（まだ ${pickedRows.filter((r) => !r.order && !r.orderRef && !isLicense(r)).length}）` : ""}</button>
+            <button className="btn btn-sm" disabled={!planDocs(pickedRows, "each", true).some((p) => p.rows.length)}
+                    onClick={() => { setBulkTemplate("inspection_certificate"); setBulk("docs"); }}
+                    title="まだ検収書に載っていない実績を回ごとに拾って、検収書・計算書の下書きを作る">
+              検収書・計算書を作る（{planDocs(pickedRows, "each", true).filter((p) => p.rows.length).length}）</button>
+            {onCompose && (
+              <button className="btn btn-sm" onClick={() => onCompose(pickedRows.map((r) => r.conditionId), [], matterId, null)}
+                      title="作業テーブルを選んだ条件で開く。契約書（基本契約・単体契約）と発注書のセット、既にある文書を繋ぐ、外の文書の登録はこちら">
+                作業テーブルで作る（契約書・セット）</button>
+            )}
+            <button className="btn btn-sm" onClick={() => { setBulkTemplate(null); setBulk("docs"); }}>ほかのひな形で</button>
             {isAdmin && <button className="btn btn-sm" onClick={() => setBulk("due")}>支払日をそろえる</button>}
             {isAdmin && <button className="btn btn-sm danger" disabled={!pickedRows.some((r) => unpaidPayments(r).length)} onClick={() => setBulk("cancel")}>
               未払いの支払を取り消す（{pickedRows.reduce((n, r) => n + unpaidPayments(r).length, 0)}）</button>}
@@ -524,7 +540,7 @@ export function WorkLedger(
       })()}
       {bulk === "docs" && (
         <BulkDocsDialog matterId={matterId} rows={pickedRows} onCompose={onCompose} onOpenDocument={onOpenDocument}
-          onClose={() => setBulk(null)} onDone={(m) => reload(m)} />
+          initialTemplateKey={bulkTemplate} onClose={() => setBulk(null)} onDone={(m) => reload(m)} />
       )}
       {bulk === "cancel" && (
         <BulkCancelDialog rows={pickedRows} onClose={() => setBulk(null)} onDone={(m) => { setBulk(null); reload(m); }} />
@@ -663,19 +679,20 @@ export function planDocs(rows: GridRow[], split: Split, settle: boolean): Plan[]
   return [...groups.values()];
 }
 
-function BulkDocsDialog({ matterId, rows, onClose, onDone, onCompose, onOpenDocument }: {
+function BulkDocsDialog({ matterId, rows, onClose, onDone, onCompose, onOpenDocument, initialTemplateKey }: {
   matterId: number; rows: GridRow[]; onClose: () => void; onDone: (message: string) => void;
+  initialTemplateKey?: string | null;
   onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null, templateKey?: string | null) => void;
   onOpenDocument?: (id: number) => void;
 }) {
-  const [templates, setTemplates] = useState<Array<{ templateKey: string; label: string }>>([]);
-  const [templateKey, setTemplateKey] = useState("purchase_order");
+  const [templates, setTemplates] = useState<Array<{ templateKey: string; label: string; category: string | null }>>([]);
+  const [templateKey, setTemplateKey] = useState(initialTemplateKey ?? "purchase_order");
   const parties = new Set(rows.map((r) => r.counterparty?.id ?? 0));
   const [split, setSplit] = useState<Split>(parties.size > 1 ? "party" : "one");
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<Array<{ key: string; partyName: string; id?: number; error?: string }>>([]);
   useEffect(() => {
-    api.get<{ templates: Array<{ templateKey: string; label: string }> }>("/document-templates")
+    api.get<{ templates: Array<{ templateKey: string; label: string; category: string | null }> }>("/document-templates")
       .then((r) => setTemplates(r.templates)).catch(() => setTemplates([]));
   }, []);
   const settle = SETTLE_KEYS.has(templateKey);
@@ -707,8 +724,8 @@ function BulkDocsDialog({ matterId, rows, onClose, onDone, onCompose, onOpenDocu
         <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "end" }}>
           <label className="field" style={{ minWidth: 240 }}><span>ひな形</span>
             <select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
-              {(templates.length ? templates : [{ templateKey: "purchase_order", label: "発注書" }, { templateKey: "inspection_certificate", label: "検収書" }])
-                .map((t) => <option key={t.templateKey} value={t.templateKey}>{t.label}</option>)}
+              {(templates.length ? templates : [{ templateKey: "purchase_order", label: "発注書", category: null }, { templateKey: "inspection_certificate", label: "検収書", category: null }])
+                .map((t) => <option key={t.templateKey} value={t.templateKey}>{t.category ? `${t.category}／` : ""}{t.label}</option>)}
             </select></label>
           <div className="chips" role="radiogroup" aria-label="分け方">
             {([["one", "1枚にまとめる"], ["party", "取引先ごとに1枚"], ["each", "条件ごとに1枚"]] as const).map(([k, label]) => (
@@ -741,9 +758,10 @@ function BulkDocsDialog({ matterId, rows, onClose, onDone, onCompose, onOpenDocu
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <button className="btn primary" disabled={busy || oneBlocked || !makeable.length || results.length > 0} onClick={() => void run()}>
             {busy ? "作っています…" : `下書きを ${makeable.length} 枚作る`}</button>
-          {onCompose && split !== "each" && !oneBlocked && makeable.length === 1 && (
-            <button className="btn" onClick={() => { onClose(); onCompose(makeable[0].rows.map((r) => r.conditionId), makeable[0].eventIds, matterId, templateKey); }}>
-              作業テーブルで1枚ずつ作る</button>
+          {onCompose && (
+            <button className="btn" onClick={() => { onClose(); onCompose(rows.map((r) => r.conditionId), makeable.flatMap((p) => p.eventIds), matterId, templateKey); }}
+                    title="選んだ条件を作業テーブルに渡す。契約書とのセットや、既にある文書を繋ぐのはそちら">
+              作業テーブルで作る</button>
           )}
           <button className="btn" onClick={onClose}>{results.length ? "閉じる" : "やめる"}</button>
           <span className="faint">作るのは下書きまで。決定・送信は文書の画面で行います</span>
