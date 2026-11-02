@@ -66,7 +66,7 @@ git diff --name-status 6ac38fa main -- apps/legalbridge infra/gcp Dockerfile
 ```bash
 # 最新版は https://github.com/GoogleCloudPlatform/cloud-sql-proxy/releases で確認する
 VERSION=v2.14.1
-curl -Lo ~/cloud-sql-proxy \
+curl -fLo ~/cloud-sql-proxy \
   "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/${VERSION}/cloud-sql-proxy.linux.amd64"
 chmod +x ~/cloud-sql-proxy
 ~/cloud-sql-proxy --version

@@ -24,6 +24,12 @@ LOG="${LOG:-/tmp/cloud-sql-proxy.log}"
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 [ -x "${PROXY}" ] || die "${PROXY} が見つかりません（ダウンロード後に chmod +x してください）"
+# ダウンロードが途中で切れると、置いてあっても起動した瞬間に Segmentation fault で落ちる
+# （file で見ると "too large section header offset"）。先に動くかを確かめる。
+"${PROXY}" --version >/dev/null 2>&1 || die "${PROXY} が動きません（ダウンロードが途中で切れている）。消して落とし直してください:
+  rm -f ${PROXY}
+  curl -fLo ${PROXY} https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.0/cloud-sql-proxy.linux.amd64
+  chmod +x ${PROXY}"
 
 if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q .; then
   die "gcloud の認証が切れています。先に 'gcloud auth login' を実行してください。"
