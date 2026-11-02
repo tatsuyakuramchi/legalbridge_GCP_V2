@@ -71,3 +71,10 @@
 支払済みは取り消せないので、差額は調整として別に立てる旨を出す。
 出しているところ：実績の修正（AmendPanel）、実績の取り消し・文書から外す（ConditionEvents）、条件の編集の保存（ConditionEdit）、
 工程表のまとめて直すの試算（GridRowEdit。取り消したら試算をやり直す）。
+
+### 複数回の条件（回ごとの 実績 → 検収書 → 支払）
+
+- 工程表の行（`GridRow`）は `rounds[]` を持つ（`grid-service.ts rounds()`）。回ごとに 予定・実績・検収書（`condition_events.document_id`）・
+  支払（`payment_allocations.event_id`）を引く。実績がまだの予定の回も1回として出す。
+- まとめて直すは回ごとに判じる：直した回の支払だけを取り消す（`cancelPayments[]`）、直した回の検収書だけ訂正版を作る、
+  回ごとの支払日をまとめて直す（`payments[]`）。支払済みの回は、その回の金額だけ止める（ほかの回は直せる）。

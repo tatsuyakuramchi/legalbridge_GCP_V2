@@ -245,3 +245,56 @@ test("条件を何本も載せた文書の明細は引き直さない", async ()
   assert.deepEqual(r.reissued[0].repriced, []);
   assert.match(r.reissued[0].pending[0], /1本ぶんに分けられません/);
 });
+
+test("複数回：回ごとの支払をまとめて取り消してから、回ごとの実績の金額を直す", async () => {
+  // 第1回は支払 #41、第2回は支払 #42 が立っている。両方を取り消す束なら通す。
+  const p = parts({
+    payments: {
+      cancel: async (...a: unknown[]) => { calls.push(`cancel:${a[0]}`); return {} as never; },
+      amend: async (...a: unknown[]) => { calls.push(`payment:${a[0]}`); return { paymentId: Number(a[0]), changed: ["dueOn"], due: null }; }
+    }
+  });
+  const blocking: Record<number, number> = { 91: 41, 92: 42 };
+  const fake = new FakeDatabase((t, params) => {
+    if (t.includes("FROM conditions WHERE id")) return [{ status: "active" }];
+    if (t.includes("FROM condition_events e WHERE e.id")) {
+      const id = Number((params ?? [])[0]);
+      return [{ status: "active", blocking_id: blocking[id], blocking_no: `PY-${blocking[id]}` }];
+    }
+    if (t.includes("FROM payments WHERE id")) return [{ status: "planned" }];
+    return [];
+  });
+  const r = await new ConditionBundleService(fake, p).apply(3, {
+    cancelPayments: [{ id: 41 }, { id: 42 }],
+    events: [{ id: 91, amount: 30000 }, { id: 92, amount: 20000 }]
+  }, "回ごとの数量の訂正", "admin");
+  assert.equal(r.stoppedAt, null);
+  assert.deepEqual(calls.filter((c) => c.startsWith("cancel")), ["cancel:41", "cancel:42"]);
+  assert.ok(calls.indexOf("cancel:42") < calls.findIndex((c) => c.startsWith("event")), "取消が実績より先");
+});
+
+test("複数回：取り消す支払に入っていない回の支払が立っていれば止める", async () => {
+  const p = parts();
+  const fake = new FakeDatabase((t, params) => {
+    if (t.includes("FROM conditions WHERE id")) return [{ status: "active" }];
+    if (t.includes("FROM condition_events e WHERE e.id")) {
+      const id = Number((params ?? [])[0]);
+      return [{ status: "active", blocking_id: id === 91 ? 41 : 42, blocking_no: id === 91 ? "PY-41" : "PY-42" }];
+    }
+    if (t.includes("FROM payments WHERE id")) return [{ status: "planned" }];
+    return [];
+  });
+  await assert.rejects(() => new ConditionBundleService(fake, p).apply(3, {
+    cancelPayments: [{ id: 41 }],
+    events: [{ id: 91, amount: 30000 }, { id: 92, amount: 20000 }]
+  }, "訂正", "admin"), /支払 PY-42 が立っています/);
+});
+
+test("複数回：回ごとの支払日をまとめて直す", async () => {
+  const p = parts();
+  const r = await new ConditionBundleService(db(), p).apply(3, {
+    payments: [{ id: 41, dueOn: "2026-12-31" }, { id: 42, dueOn: "2026-12-31" }]
+  }, "支払日をそろえる", "admin");
+  assert.deepEqual(r.applied.map((a) => a.section), ["payment"]);
+  assert.equal(calls.filter((c) => c.startsWith("payment")).length, 2);
+});

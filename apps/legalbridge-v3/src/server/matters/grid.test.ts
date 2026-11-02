@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GRID_FILTER_LABEL, applyFilter, filterCounts, groupByParty, isPending } from "./grid.js";
+import { GRID_FILTER_LABEL, applyFilter, filterCounts, groupByParty, groupByWork, isPending, isStuck, unpaidPayments } from "./grid.js";
+import type { GridRound } from "./grid.js";
 import type { GridRow } from "./grid.js";
 
 const settlement = (over: Partial<GridRow["settlement"]> = {}): GridRow["settlement"] => ({
@@ -88,4 +89,31 @@ test("取引先でまとめると、社ごとの小計が付く", () => {
   assert.deepEqual(groups[0].rows.map((r) => r.conditionId), [1, 3]);
   // 相手先の分からない行も落とさない（消えると数が合わなくなる）。
   assert.equal(groups[2].rows.length, 1);
+});
+
+const round = (over: Partial<GridRound> = {}): GridRound => ({
+  scheduleId: null, seq: null, label: null, plannedAmount: null, dueOn: null,
+  eventId: null, occurredOn: null, inspectedOn: null, quantity: null, amount: null, doc: null, payment: null, ...over
+});
+const pay = (id: number, status: string) => ({ id, paymentNo: `PY-${id}`, status, amount: 1000, dueOn: null, paidOn: null, note: null });
+
+test("作品でまとめる：止まり・未払いを数え、作品なしは最後", () => {
+  const rows = [
+    row({ conditionId: 1, workId: 7, workTitle: "作品A", rounds: [round({ eventId: 11, doc: { id: 1, documentNo: "IC-1", status: "issued", phase: "決定済み" }, payment: pay(41, "paid") }), round({ eventId: 12, doc: null })] }),
+    row({ conditionId: 2, workId: null }),
+    row({ conditionId: 3, workId: 7, workTitle: "作品A", payment: { id: 42, paymentNo: "PY-42", status: "planned", dueOn: null, note: null, amount: 1000, paidOn: null } })
+  ];
+  const groups = groupByWork(rows);
+  assert.deepEqual(groups.map((g) => g.title), ["作品A", "（作品なし）"]);
+  // 第2回の検収書がまだ → 止まり。第1回は支払済みなので未払いに数えない。
+  assert.deepEqual(groups[0].tally, { conditions: 2, stuck: 2, unpaid: 1, amount: 200000 });
+});
+
+test("未払いの支払は回ごとに拾い、同じ支払は1回だけ", () => {
+  const shared = pay(50, "approved");
+  const r = row({ rounds: [round({ eventId: 1, payment: shared }), round({ eventId: 2, payment: shared }), round({ eventId: 3, payment: pay(51, "paid") })] });
+  assert.deepEqual(unpaidPayments(r).map((p) => p.id), [50]);
+  // 回の情報が無ければ行の支払。
+  assert.deepEqual(unpaidPayments(row({ payment: { id: 9, paymentNo: null, status: "planned", dueOn: null, note: null, amount: null, paidOn: null } })).map((p) => p.id), [9]);
+  assert.equal(isStuck(row({ settlement: settlement({ done: true }) })), false);
 });
