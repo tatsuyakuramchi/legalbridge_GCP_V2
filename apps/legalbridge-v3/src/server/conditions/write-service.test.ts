@@ -497,6 +497,24 @@ test("出版セット：支払条件が空なら媒体ごとの既定（紙は�
   assert.deepEqual(given.all("INSERT INTO conditions").map((q) => q.params[22]), ["月末締め翌月末払い", "月末締め翌月末払い"]);
 });
 
+test("出版セット：電子の支払条件の文が年 4 回なら、周期も四半期になる（文だけ年 4 回で周期が年 1 回のままにしない）", async () => {
+  const mk = () => new FakeDatabase((t) => {
+    if (t.includes("FROM parties WHERE id")) return [{ id: 3, name: "甲", kind: "corporate" }];
+    if (t.includes("FROM works WHERE id")) return [{ id: 5, title: "作品A" }];
+    if (t.includes("current_value")) return [{ current_value: 1 }];
+    if (t.includes("INSERT INTO conditions")) return [{ id: 1, condition_no: "CL-1" }];
+    return [];
+  });
+  const terms = "毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とし、各集計期間の末日の3か月後の月の末日までに支払う。";
+  const fake = mk();
+  await new ConditionWriteService(fake).createPublishingSet({
+    counterpartyId: 3, workId: 5, digital: { ratePct: 42.5, exclusivity: null, paymentTerms: terms }
+  }, "a");
+  const q = fake.all("INSERT INTO conditions")[0]!;
+  assert.equal(q.params[22], terms);
+  assert.ok(q.params.includes("quarter"), "周期が quarter で入る");
+});
+
 test("業務委託の明細：保証利用許諾料に代える（A-075）。行の金額が保証額（MG）、利用形態ごとに許諾条件、対象の対応と予定明細が立つ", async () => {
   const db: FakeDatabase = new FakeDatabase((t, params) => {
     if (t.includes("FROM parties WHERE id = $1")) return [{ id: 3, name: "山田 太郎" }];

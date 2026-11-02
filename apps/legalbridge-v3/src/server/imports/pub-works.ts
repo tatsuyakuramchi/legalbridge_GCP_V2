@@ -10,6 +10,7 @@ import type { EditionInput } from "../works/editions.js";
 import { renewalLabel } from "../conditions/renewal.js";
 import { refuseSimilarWork } from "./similar-work.js";
 import { AUTO_RENEW, parseRenewMonths } from "./renew-columns.js";
+import { CYCLE_CSV, readDigitalCycle } from "../conditions/pub-digital-cycle.js";
 import { PUB_EDITION_NAMES, editionColumns, editionRowLabel, ensurePartnerOuts, readEditionColumns, writeEditionRow, type EditionRow } from "./edition-columns.js";
 
 /**
@@ -45,6 +46,9 @@ export interface PubConditionPatch {
   ratePpm?: number; exclusivity?: "exclusive" | "non_exclusive";
   /** 利用許諾料の価格の基準（A-091）。電子は「入金額」（乙が配信事業者から受領する金額 × 料率）を取れる。 */
   priceBasis?: "list" | "receipts" | null;
+  /** 決済の型（電子の集計のしかた。支払条件の文から読む）。 */
+  settlementMode?: "term_bound" | null;
+  settlementCycle?: "year" | "half_year" | "quarter" | null;
   termStart?: string | null; termEnd?: string | null; paymentTerms?: string | null; notes?: string | null;
   /** 2 版目以降の非加算（発行部数の %）。紙の条件だけ。 */
   royaltyExemptLaterPct?: number | null;
@@ -569,6 +573,9 @@ export class PubWorksImportService {
       if (own) {
         patch.paymentTerms = own;
         if (!what.includes("支払条件")) what.push("支払条件");
+        // 電子の支払条件の文が読めれば、計算書の回の周期（年 1 回・年 2 回・年 4 回）も揃える。
+        const spec = usage === "pub_digital" ? readDigitalCycle(own) : null;
+        if (spec) { patch.settlementMode = "term_bound"; patch.settlementCycle = spec.cycle; what.push(`集計 ${CYCLE_CSV[spec.cycle]}`); }
       }
       if (rate !== null) {
         const ppm = Math.round(rate * 10000);

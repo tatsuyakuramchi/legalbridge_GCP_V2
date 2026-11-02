@@ -18,7 +18,7 @@ import { normalizeSettlementRule, type SettlementCycle, type SettlementMode } fr
 import { normalizeTimeSettlement } from "./time-settlement.js";
 import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee, withinSixtyDays, type PriceBasis, type SublicenseMode } from "./royalty-in-lieu.js";
 import { partRoleOf, type PartRole } from "../core/part-role.js";
-import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
+import { DIGITAL_CYCLE_DEFAULTS, digitalPaymentTerms, readDigitalCycle, settlementCycleOf, type DigitalCycle, type PayDay } from "./pub-digital-cycle.js";
 
 /** 出版の条件（作品1点＝紙・電子）。createPublishingSet の入力。 */
 export interface PublishingTerms {
@@ -794,12 +794,15 @@ export class ConditionWriteService {
         payMonth: input.digital.payMonth ?? DIGITAL_CYCLE_DEFAULTS[cycle].payMonth,
         payDay: input.digital.payDay ?? DIGITAL_CYCLE_DEFAULTS[cycle].payDay
       } : null;
+      const digitalTerms = String(input.digital.paymentTerms ?? "").trim() || terms
+        || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS);
+      // 集計のしかたを選んでいなくても、支払条件の文が読めれば（CSV の「電子支払条件」）そこから周期を取る。
+      // 文だけ年 4 回で周期が年 1 回のままだと、紙面と計算書の回が食い違う。
+      const cycleOfTerms = spec?.cycle ?? readDigitalCycle(digitalTerms)?.cycle ?? "year";
       rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
-                  paymentTerms: String(input.digital.paymentTerms ?? "").trim() || terms
-                    || (spec ? digitalPaymentTerms(spec) : PUB_DIGITAL_PAYMENT_TERMS),
-                  // 電子は集計期間ごと＝時限式（term_bound）。集計のしかたが無ければ既定の支払条件どおり年 1 回。
-                  ...(spec ? { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(spec.cycle) }
-                    : { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf("year") }) });
+                  paymentTerms: digitalTerms,
+                  // 電子は集計期間ごと＝時限式（term_bound）。集計のしかたが無ければ支払条件の文、それも無ければ年 1 回。
+                  settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(cycleOfTerms) });
     }
     if (input.sublicense) {
       rows.push({ usageType: "sublicense", ratePct: input.sublicense.ratePct, exclusivity: input.sublicense.exclusivity ?? null,
