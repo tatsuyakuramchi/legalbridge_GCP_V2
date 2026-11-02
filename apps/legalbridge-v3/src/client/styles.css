@@ -1087,3 +1087,5 @@ td.dm-frozen.bad{background:var(--out-soft);color:var(--out);font-weight:700}
 td.dm-frozen .was{text-decoration:line-through;color:var(--faint);font-weight:400;margin-right:4px}
 td.dm-docno{font-family:inherit;white-space:normal}
 td.dm-docno td{padding:0;border:0;background:transparent}
+/* 作品台帳の「条件ごと」：作品は 1 点なので左の作品の欄は無く、表だけ。 */
+.ledger.ledger-single{grid-template-columns:minmax(0,1fr)}

@@ -45,7 +45,7 @@ function Frozen({ value, target, fmt = (v) => String(v), note }: { value: string
 }
 
 export function DriftMatrixDialog({ matterId, rows, onClose, onDone, onOpenDocument }: {
-  matterId: number; rows: GridRow[]; onClose: () => void; onDone: (m: string) => void; onOpenDocument?: (id: number) => void;
+  matterId: number | null; rows: GridRow[]; onClose: () => void; onDone: (m: string) => void; onOpenDocument?: (id: number) => void;
 }) {
   const [data, setData] = useState<Map<number, Loaded> | null>(null);
   const [staff, setStaff] = useState<Staff[]>([]);

@@ -96,8 +96,11 @@ function DocLine({ doc, onOpen }: { doc: { id: number; documentNo: string | null
 }
 
 export function WorkLedger(
-  { matterId, partyId, reloadKey, onOpenCondition, onOpenDocument, onCompose, onOpenDeals, onFixDrift, onChanged }: {
-    matterId: number;
+  { matterId = null, workId = null, partyId, reloadKey, onOpenCondition, onOpenDocument, onCompose, onOpenDeals, onFixDrift, onChanged }: {
+    /** 案件の中の条件（案件の「条件ごと」）。 */
+    matterId?: number | null;
+    /** 作品 1 点の条件（作品台帳の「条件ごと」。案件をまたいで全部）。matterId と一方だけ。 */
+    workId?: number | null;
     partyId?: number | null;
     reloadKey?: number;
     onOpenCondition?: (conditionId: number) => void;
@@ -114,7 +117,7 @@ export function WorkLedger(
   const [version, setVersion] = useState(0);
   const [work, setWork] = useState<string>("all");
   const [filter, setFilter] = useState<Filter>("all");
-  const [byParty, setByParty] = useState(false);
+  const [byParty, setByParty] = useState(workId !== null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<{ conditionId: number; focus: EditFocus } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -143,11 +146,12 @@ export function WorkLedger(
   }, []);
   useEffect(() => {
     setError(null);
-    api.get<{ rows: GridRow[] }>(`/matters/${matterId}/grid`)
+    api.get<{ rows: GridRow[] }>(workId !== null ? `/works/${workId}/grid` : `/matters/${matterId}/grid`)
       .then((r) => setAll(r.rows)).catch((e: ApiError) => { setError(e.message); setAll([]); });
-    // 重複は法務・管理者だけが引ける。引けなければ印を出さないだけ。
-    api.get<DuplicateView>(`/matters/${matterId}/duplicate-conditions`).then(setDups).catch(() => setDups(null));
-  }, [matterId, reloadKey, version]);
+    // 重複は案件の中だけ（法務・管理者だけが引ける。引けなければ印を出さないだけ）。
+    if (matterId !== null) api.get<DuplicateView>(`/matters/${matterId}/duplicate-conditions`).then(setDups).catch(() => setDups(null));
+    else setDups(null);
+  }, [matterId, workId, reloadKey, version]);
 
   const startCreate = (w: { id: number | null; title: string | null }) => {
     setNotice(null);
@@ -386,8 +390,8 @@ export function WorkLedger(
         ...g.rows.map(rowOf)]);
 
   return (
-    <div className="ledger">
-      <nav className="ledger-works" aria-label="作品">
+    <div className={`ledger${workId !== null ? " ledger-single" : ""}`}>
+      {workId === null && <nav className="ledger-works" aria-label="作品">
         <div className="faint ledger-works-hd">作品で選ぶ</div>
         {[{ key: "all", title: "すべての作品", tally: groupByWork(mine).reduce((t, g) => ({ conditions: t.conditions + g.tally.conditions, stuck: t.stuck + g.tally.stuck, unpaid: t.unpaid + g.tally.unpaid }), { conditions: 0, stuck: 0, unpaid: 0 }) },
           ...works.map((g) => ({ key: String(g.id ?? "none"), title: g.title, tally: g.tally }))].map((w) => (
@@ -399,7 +403,7 @@ export function WorkLedger(
             </span>
           </button>
         ))}
-      </nav>
+      </nav>}
 
       <div className="stack" style={{ gap: 10, minWidth: 0 }}>
         <div className="stagefilter">
@@ -409,7 +413,7 @@ export function WorkLedger(
           ))}
           {onFixDrift && counts.drift > 0 && <button className="btn btn-sm" onClick={onFixDrift}>食い違いをまとめて直す画面へ</button>}
           {canWrite && (
-            <button className="btn btn-sm primary" onClick={() => { const g = works.find((x) => String(x.id ?? "none") === work); startCreate(g ? { id: g.id, title: g.title } : { id: null, title: null }); }}
+            <button className="btn btn-sm primary" onClick={() => { const g = workId !== null ? works[0] : works.find((x) => String(x.id ?? "none") === work); startCreate(g ? { id: g.id, title: g.title } : { id: workId, title: null }); }}
                     title="登録しても閉じずに、次の条件のフォームが出ます">＋ 条件を続けて足す{work !== "all" ? `（${works.find((x) => String(x.id ?? "none") === work)?.title ?? ""}）` : ""}</button>
           )}
           <label className="row" style={{ gap: 5, marginLeft: "auto" }}>
@@ -486,7 +490,7 @@ export function WorkLedger(
       )}
 
       {dupOpen && (
-        <DuplicateDialog matterId={matterId} group={dupOpen} onOpenCondition={onOpenCondition}
+        <DuplicateDialog matterId={matterId!} group={dupOpen} onOpenCondition={onOpenCondition}
           onClose={() => setDupOpen(null)} onDone={(m) => { setDupOpen(null); reload(m); }} />
       )}
       {creating && (() => {
@@ -512,8 +516,10 @@ export function WorkLedger(
                         ...(c.keepParty && c.party ? { counterpartyId: c.party.id, counterpartyName: c.party.name } : {}) }}
               onDone={async (made) => {
                 // 「1 本だけ」と OUT は案件に繋がらないので、ここで繋ぐ（セット系は matterId 付きでサーバが繋ぐ。重ねても断られない）。
-                try { await api.post(`/matters/${matterId}/conditions`, { conditionIds: made.conditionIds }); }
-                catch (e) { setNotice(`案件に繋げませんでした：${(e as ApiError).message}`); }
+                if (matterId !== null) {
+                  try { await api.post(`/matters/${matterId}/conditions`, { conditionIds: made.conditionIds }); }
+                  catch (e) { setNotice(`案件に繋げませんでした：${(e as ApiError).message}`); }
+                }
                 // 表は裏で読み直し、フォームは同じ作品・種類で出し直す。取引先は作った条件から引いて「次も同じで」に使う。
                 setVersion((x) => x + 1); onChanged?.();
                 const kind = ENTRY_KINDS.find((k) => k.templateKey && k.templateKey === made.templateKey)?.value ?? c.kind;
@@ -740,7 +746,7 @@ export function planDocs(rows: GridRow[], split: Split, settle: boolean): Plan[]
 }
 
 function BulkDocsDialog({ matterId, rows, onClose, onDone, onCompose, onOpenDocument, initialTemplateKey }: {
-  matterId: number; rows: GridRow[]; onClose: () => void; onDone: (message: string) => void;
+  matterId: number | null; rows: GridRow[]; onClose: () => void; onDone: (message: string) => void;
   initialTemplateKey?: string | null;
   onCompose?: (conditionIds: number[], eventIds: number[], matterId?: number | null, templateKey?: string | null) => void;
   onOpenDocument?: (id: number) => void;

@@ -278,6 +278,26 @@ export class MatterGridService {
   }
 
   /**
+   * 作品 1 点の条件（案件をまたいで全部）。作品台帳の「条件ごと」。列は案件の工程表と同じ。
+   * 旧版・無効は出さない（改訂の系列は最新版 1 行）。
+   */
+  async rowsForWork(workId: number): Promise<GridRow[]> {
+    try {
+      const r = await this.database.query(
+        `SELECT ${GRID_COLUMNS}
+           FROM conditions c
+           ${GRID_JOINS}
+          WHERE c.work_id = $1
+            AND c.status NOT IN ('void', 'superseded')
+          ORDER BY p.name NULLS LAST, c.direction, c.condition_no NULLS LAST, c.id`, [workId]);
+      const rows = (r.rows as any[]).map(gridRowOf);
+      const rounds = await this.rounds(rows.map((x) => x.conditionId));
+      for (const row of rows) row.rounds = rounds.get(row.conditionId) ?? [];
+      return rows;
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 回ごとの 予定・実績・検収書・支払（複数回の条件）。条件の系列ぜんぶから。
    *
    * 実績は検収書を document_id で、支払を payment_allocations.event_id で指す。
