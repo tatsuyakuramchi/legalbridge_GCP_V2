@@ -165,7 +165,8 @@ export class ConditionBundleService {
                 (SELECT p.payment_no FROM payment_allocations a
                    JOIN payments p ON p.id = a.payment_id
                   WHERE a.event_id = e.id AND p.status <> 'canceled' LIMIT 1) AS blocking_no
-           FROM condition_events e WHERE e.id = $1 AND e.condition_id = $2`,
+           -- 改訂すると実績は旧版に残る（-R2 から直すとき、id では当たらない）。系列で当てる。
+           FROM condition_events e WHERE e.id = $1 AND e.condition_id IN (SELECT x.id FROM conditions x, conditions c WHERE c.id = $2 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))`,
         [event.id, conditionId]);
       const row = ev.rows[0] as { status?: string; blocking_id?: number | null; blocking_no?: string | null } | undefined;
       if (!row) throw new DomainError("NOT_FOUND", `実績 ${event.id} が見つかりません`);
