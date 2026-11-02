@@ -9,7 +9,7 @@ import {
   applyFilter, groupByParty, groupByWork, isStuck, unpaidPayments,
   type GridRound, type GridRow
 } from "../server/matters/grid.js";
-import { driftOf, driftSummary } from "../server/matters/drift.js";
+import { driftOf, driftSummary, hasDrift, repairPlan, FIELD_LABEL, type Drift, type DriftPart } from "../server/matters/drift.js";
 import type { DuplicateGroup, DuplicateView } from "../server/conditions/duplicates.js";
 
 /**
@@ -64,6 +64,25 @@ function Modal({ title, onClose, children, wide }: { title: ReactNode; onClose: 
   );
 }
 
+/**
+ * その段の値が、生きている側（条件・予定・実績）とずれている印。何と比べて何が違うかまで出す
+ * （「日付が食い違い」だけでは、どの日を直せばよいか分からない）。
+ */
+function DriftTags({ drift, part }: { drift: Drift | null; part: DriftPart }) {
+  const hits = drift?.flagged.filter((e) => e.part === part) ?? [];
+  if (!hits.length) return null;
+  const fmt = (v: number | string) => (typeof v === "number" ? yen(v) : v);
+  return (
+    <div className="ledger-tags">
+      {hits.map((e) => (
+        <span key={e.field} className="tag out" title={`この${e.part === "payment" ? "支払" : "文書"}の${FIELD_LABEL[e.field]}は ${fmt(e.value)}。${e.basisLabel}は ${fmt(e.basis)}。セルを押して「まとめて直す」でそろえられます`}>
+          {FIELD_LABEL[e.field]} {fmt(e.value)} ≠ {e.basisLabel} {fmt(e.basis)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function DocLine({ doc, onOpen }: { doc: { id: number; documentNo: string | null; phase: string }; onOpen?: (id: number) => void }) {
   return (
     <div className="ledger-line">
@@ -100,7 +119,7 @@ export function WorkLedger(
   const [notice, setNotice] = useState<string | null>(null);
   const [dups, setDups] = useState<DuplicateView | null>(null);
   const [dupOpen, setDupOpen] = useState<DuplicateGroup | null>(null);
-  const [bulk, setBulk] = useState<"docs" | "cancel" | "due" | null>(null);
+  const [bulk, setBulk] = useState<"docs" | "cancel" | "due" | "drift" | null>(null);
   /** 「文書をまとめて作る」を開くときのひな形（発注書／検収書のボタンから）。 */
   const [bulkTemplate, setBulkTemplate] = useState<string | null>(null);
   /** 実績を入れる（条件と、次の回）／支払を立てる（条件）。 */
@@ -200,7 +219,10 @@ export function WorkLedger(
         <div className="ledger-tags">
           <StatusTag kind="condition" value={r.status} /> <SettlementTag settlement={r.settlement} compact />
           {r.schedules.total > 1 && <span className="tag">{r.schedules.done}/{r.schedules.total} 回</span>}
-          {drift && drift.flagged.length > 0 && <span className="tag out" title="発注書・検収書・支払のどれかが、いまの条件・予定・実績と違う値です">{driftSummary(drift.flagged)}が食い違い</span>}
+          {drift && drift.flagged.length > 0 && (
+            <span className="tag out" title={drift.flagged.map((e) => `${e.part === "order" ? "発注書" : e.part === "settlementDoc" ? "検収書" : e.part === "payment" ? "支払" : "実績"}の${FIELD_LABEL[e.field]}：${typeof e.value === "number" ? yen(e.value) : e.value}（${e.basisLabel}は ${typeof e.basis === "number" ? yen(e.basis) : e.basis}）`).join("\n")}>
+              {driftSummary(drift.flagged)}が食い違い</span>
+          )}
           {dup && (
             <button className="tag warn linky" onClick={(e) => { e.stopPropagation(); setDupOpen(dup); }}
                     title="相手先・作品・種別・金額・期間・名前が同じ条件明細があります">
@@ -335,11 +357,11 @@ export function WorkLedger(
       {cell(r, "condition", condCell(r), "条件")}
       {cell(r, "event", eventCell(r), "実績")}
       {cell(r, "order", isLicense(r) ? <span className="faint">—</span>
-        : r.order ? <DocLine doc={r.order} onOpen={onOpenDocument} />
+        : r.order ? <><DocLine doc={r.order} onOpen={onOpenDocument} /><DriftTags drift={driftOf(r)} part="order" /></>
         : r.orderRef ? <span className="faint code">{r.orderRef}（外部）</span>
         : <span className="faint">まだ</span>, "発注書")}
-      {cell(r, "settlement", settleCell(r), "検収書・計算書")}
-      {cell(r, "payment", payCell(r), "支払")}
+      {cell(r, "settlement", <>{settleCell(r)}<DriftTags drift={driftOf(r)} part="settlementDoc" /></>, "検収書・計算書")}
+      {cell(r, "payment", <>{payCell(r)}<DriftTags drift={driftOf(r)} part="payment" /></>, "支払")}
     </tr>
   );
 
@@ -413,6 +435,11 @@ export function WorkLedger(
                 作業テーブルで作る（契約書・セット）</button>
             )}
             <button className="btn btn-sm" onClick={() => { setBulkTemplate(null); setBulk("docs"); }}>ほかのひな形で</button>
+            {isAdmin && pickedRows.some(hasDrift) && (
+              <button className="btn btn-sm primary" onClick={() => setBulk("drift")}
+                      title="発注書・検収書の訂正版を下書きで作って（必要なら決定まで）、支払の期日をそろえる">
+                食い違いをそろえる（{pickedRows.filter(hasDrift).length}）</button>
+            )}
             {isAdmin && <button className="btn btn-sm" onClick={() => setBulk("due")}>支払日をそろえる</button>}
             {isAdmin && <button className="btn btn-sm danger" disabled={!pickedRows.some((r) => unpaidPayments(r).length)} onClick={() => setBulk("cancel")}>
               未払いの支払を取り消す（{pickedRows.reduce((n, r) => n + unpaidPayments(r).length, 0)}）</button>}
@@ -541,6 +568,10 @@ export function WorkLedger(
       {bulk === "docs" && (
         <BulkDocsDialog matterId={matterId} rows={pickedRows} onCompose={onCompose} onOpenDocument={onOpenDocument}
           initialTemplateKey={bulkTemplate} onClose={() => setBulk(null)} onDone={(m) => reload(m)} />
+      )}
+      {bulk === "drift" && (
+        <DriftFixDialog matterId={matterId} rows={pickedRows.filter(hasDrift)} onOpenDocument={onOpenDocument}
+          onClose={() => setBulk(null)} onDone={(m) => { setBulk(null); reload(m); }} />
       )}
       {bulk === "cancel" && (
         <BulkCancelDialog rows={pickedRows} onClose={() => setBulk(null)} onDone={(m) => { setBulk(null); reload(m); }} />
@@ -765,6 +796,120 @@ function BulkDocsDialog({ matterId, rows, onClose, onDone, onCompose, onOpenDocu
           )}
           <button className="btn" onClick={onClose}>{results.length ? "閉じる" : "やめる"}</button>
           <span className="faint">作るのは下書きまで。決定・送信は文書の画面で行います</span>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * 食い違いをまとめてそろえる（選んだ条件）。生きている側（条件・予定・実績）が正で、取り残された側を直す：
+ *   - 発注書・検収書の訂正版を下書きで作り（明細も引き直す）、望めばそのまま決定する
+ *   - 支払の期日を 検収書の支払期日（無ければ予定の支払日）にそろえる
+ * 条件を何本も載せた文書（束ねた発注書・検収書）は何本の行に出ても1枚なので、1回だけ作る。
+ * 判定と手順は 金額の直し の画面と同じ（drift.ts repairPlan）。
+ */
+function DriftFixDialog({ matterId, rows, onClose, onDone, onOpenDocument }: {
+  matterId: number; rows: GridRow[]; onClose: () => void; onDone: (m: string) => void; onOpenDocument?: (id: number) => void;
+}) {
+  const [openDrafts, setOpenDrafts] = useState<Map<number, number> | null>(null);
+  const [reason, setReason] = useState("条件・予定・実績に合わせて文書と支払を直すため");
+  const [issue, setIssue] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    api.get<{ drafts: Array<{ id: number; supersedesId: number }> }>(`/drift?matterId=${matterId}`)
+      .then((r) => setOpenDrafts(new Map(r.drafts.map((d) => [d.supersedesId, d.id]))))
+      .catch(() => setOpenDrafts(new Map()));
+  }, [matterId]);
+
+  const plans = rows.map((r) => ({ r, drift: driftOf(r)!, plan: repairPlan(r, driftOf(r)!, openDrafts ?? new Map()) }));
+  // 同じ文書・同じ支払は1回だけ。
+  const seenDoc = new Set<number>(); const seenPay = new Set<number>();
+  const work = plans.map(({ r, plan }) => {
+    const reissue = plan.reissue.filter((d) => !seenDoc.has(d.id) && Boolean(seenDoc.add(d.id)));
+    const pay = plan.paymentDueOn && r.payment && !seenPay.has(r.payment.id) && seenPay.add(r.payment.id)
+      ? { id: r.payment.id, dueOn: plan.paymentDueOn } : null;
+    return { r, plan, reissue, pay };
+  });
+  const docCount = work.reduce((n, w) => n + w.reissue.length, 0);
+  const payCount = work.filter((w) => w.pay).length;
+  const hand = plans.flatMap(({ r, plan }) => plan.steps.filter((st) => st.kind === "hand" && !/訂正版を決定する/.test(st.text)).map((st) => `${r.conditionNo ?? `#${r.conditionId}`}：${st.text}`));
+
+  async function run() {
+    setBusy(true);
+    const said: string[] = [];
+    const drafts: Array<{ draftId: number; documentNo: string | null }> = [];
+    for (const w of work) {
+      if (!w.reissue.length && !w.pay) continue;
+      const name = w.r.conditionNo ?? `#${w.r.conditionId}`;
+      const body: Record<string, unknown> = { reason: reason.trim() };
+      if (w.reissue.length) body.reissue = w.reissue.map((d) => d.id);
+      if (w.pay) body.payment = w.pay;
+      try {
+        const out = await api.patch<{ stoppedAt: { message: string } | null; reissued: Array<{ documentNo: string | null; documentId: number; draftId: number; repriced: string[]; pending: string[] }> }>(
+          `/conditions/${w.r.conditionId}/bundle`, body);
+        if (out.stoppedAt) { said.push(`${name}：止まりました（${out.stoppedAt.message}）`); continue; }
+        for (const d of out.reissued ?? []) {
+          drafts.push({ draftId: d.draftId, documentNo: d.documentNo });
+          said.push(`${d.documentNo ?? `#${d.documentId}`}：訂正版を下書き #${d.draftId} に作りました${d.repriced.length ? `（${d.repriced.join("／")}）` : ""}${d.pending.length ? `。引き直せなかったもの：${d.pending.join("／")}` : ""}`);
+        }
+        if (w.pay) said.push(`${name}：支払の期日を ${w.pay.dueOn} にしました`);
+      } catch (e) { said.push(`${name}：${(e as ApiError).message}`); }
+      setLog([...said]);
+    }
+    if (issue) {
+      for (const d of drafts) {
+        try {
+          const r = await api.post<{ documentNo?: string | null }>(`/documents/${d.draftId}/issue`, {});
+          said.push(`${d.documentNo ?? ""} の訂正版を決定しました（${r.documentNo ?? `#${d.draftId}`}）`);
+        } catch (e) { said.push(`下書き #${d.draftId} を決定できませんでした：${(e as ApiError).message}。文書の画面で中身を確かめて決定してください`); }
+        setLog([...said]);
+      }
+    }
+    setLog(said); setBusy(false); setDone(true);
+  }
+
+  return (
+    <Modal wide title={`食い違いをそろえる（${rows.length} 本）`} onClose={() => (done ? onDone(`食い違いをそろえました（${rows.length} 本）`) : onClose())}>
+      <div className="stack" style={{ gap: 10 }}>
+        <p className="faint" style={{ margin: 0 }}>いまの条件・予定・実績を正として、取り残された発注書・検収書の訂正版と、支払の期日を直します。束ねた文書（条件を何本も載せたもの）は1枚として1回だけ作ります。</p>
+        {!openDrafts ? <div className="faint">調べています…</div> : (
+          <table>
+            <thead><tr><th>条件</th><th>食い違い</th><th>行うこと</th></tr></thead>
+            <tbody>
+              {work.map(({ r, plan, reissue, pay }) => (
+                <tr key={r.conditionId}>
+                  <td><b>{r.counterparty?.name ?? ""}</b><div className="code faint">{r.conditionNo ?? `#${r.conditionId}`}</div></td>
+                  <td>{driftOf(r)!.flagged.map((e) => (
+                    <div key={`${e.part}${e.field}`} className="faint">{e.part === "order" ? "発注書" : e.part === "settlementDoc" ? "検収書" : e.part === "payment" ? "支払" : "実績"}の{FIELD_LABEL[e.field]} {typeof e.value === "number" ? yen(e.value) : e.value} ≠ {e.basisLabel} {typeof e.basis === "number" ? yen(e.basis) : e.basis}</div>
+                  ))}</td>
+                  <td>
+                    {reissue.map((d) => <div key={d.id}><span className="chip new">訂正版</span> {d.documentNo ?? `#${d.id}`}{issue ? "（作って決定）" : "（下書きまで）"}</div>)}
+                    {pay && <div><span className="chip chg">支払</span> 期日を {pay.dueOn} に</div>}
+                    {plan.reissue.filter((d) => !reissue.includes(d)).map((d) => <div key={d.id} className="faint">{d.documentNo ?? `#${d.id}`} は上の行と同じ文書（1回で直ります）</div>)}
+                    {plan.steps.filter((st) => st.kind === "hand" && !/訂正版を決定する/.test(st.text) && !/もう下書き/.test(st.text)).map((st) => <div key={st.text} className="faint"><span className="chip man">人が直す</span> {st.text}</div>)}
+                    {plan.steps.filter((st) => /もう下書き/.test(st.text)).map((st) => <div key={st.text} className="faint">{st.text}</div>)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <label className="row" style={{ gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={issue} onChange={(e) => setIssue(e.target.checked)} />
+          <span>作った訂正版をそのまま決定する（番号に -Rn が付き、元の文書は「訂正済み」になります）</span>
+        </label>
+        <label className="field"><span>直す理由（監査に残ります）</span><input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+        {log.length > 0 && <div className={done ? "note ok" : "note"}>{log.map((t, i) => <div key={i}>{t}</div>)}</div>}
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          {!done
+            ? <button className="btn primary" disabled={busy || !openDrafts || !reason.trim() || (docCount === 0 && payCount === 0)} onClick={() => void run()}>
+                {busy ? "直しています…" : `訂正版 ${docCount} 枚${issue ? "を作って決定" : "を下書きで作成"}・支払 ${payCount} 件を直す`}</button>
+            : <button className="btn primary" onClick={() => onDone(`食い違いをそろえました（${rows.length} 本）`)}>閉じる</button>}
+          {!done && <button className="btn" onClick={onClose}>やめる</button>}
+          {hand.length > 0 && <span className="faint">人が直すものが {hand.length} 件あります（上の表）</span>}
         </div>
       </div>
     </Modal>
