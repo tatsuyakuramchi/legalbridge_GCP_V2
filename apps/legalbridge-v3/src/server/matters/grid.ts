@@ -76,6 +76,11 @@ export interface GridRow {
   settlement: ConditionSettlement;
   /** 作品。許諾条件を足すときの軸（作品 × 受注者）。 */
   workId: number | null;
+  /** 作品の題名。作品別の一覧の束の見出し。 */
+  workTitle?: string | null;
+  /** 発注数量と単位（単価 × 数量の条件）。 */
+  quantity?: number | null;
+  unitLabel?: string | null;
   /** 成果物の帰属先。orderer=発注者 / contractor=受注者。 */
   deliverableOwnership: "orderer" | "contractor" | null;
   /**
@@ -96,6 +101,14 @@ export interface GridRow {
   };
   order: GridDocument | null;
   /**
+   * 回ごとの 実績 → 検収書・計算書 → 支払（複数回の条件）。
+   *
+   * 行の settlementDoc・payment は「直近の1枚」しか持たない。回が分かれていると
+   * 第1回の支払は払った、第2回はまだ、が1行に畳まれて見えなくなる。ここで回ごとに持つ。
+   * 予定の回で実績がまだのものは eventId が null。
+   */
+  rounds?: GridRound[];
+  /**
    * latestId は「まとめて直す」の下敷き。直すのは直近の1件だけ。
    * latestOn は納品日、latestInspectedOn は検収日（無ければ納品日）。
    * 検収書の実納品日・検収日はこの2つから出る。
@@ -103,6 +116,9 @@ export interface GridRow {
   events: {
     count: number; latestOn: string | null; latestId: number | null;
     latestInspectedOn: string | null;
+    /** 実績の数量・金額の合計（系列ぜんぶ、無効を除く）。 */
+    quantity?: number | null;
+    amount?: number;
   };
   settlementDoc: GridDocument | null;
   payment: {
@@ -112,6 +128,30 @@ export interface GridRow {
     /** 束の見出しの合計に使う。 */
     amount: number | null; paidOn: string | null;
   } | null;
+}
+
+export interface GridRound {
+  /** 予定の回（無ければ null）。 */
+  scheduleId: number | null;
+  seq: number | null;
+  label: string | null;
+  plannedAmount: number | null;
+  dueOn: string | null;
+  /** 実績（まだなら null）。 */
+  eventId: number | null;
+  occurredOn: string | null;
+  inspectedOn: string | null;
+  quantity: number | null;
+  amount: number | null;
+  /** その実績を載せた検収書・計算書。 */
+  doc: { id: number; documentNo: string | null; status: string; phase: string } | null;
+  /** その実績に割り当てた支払（取り消したものは除く）。 */
+  payment: GridPayment | null;
+}
+
+export interface GridPayment {
+  id: number; paymentNo: string | null; status: string; amount: number;
+  dueOn: string | null; paidOn: string | null; note: string | null;
 }
 
 /** 束の見出しに出す取引先。契約の有無をここで引く（契約なしは赤で出す）。 */
@@ -185,6 +225,53 @@ export function filterCounts(rows: GridRow[]): Record<GridFilter, number> {
     settled: applyFilter(rows, "settled").length,
     drift: applyFilter(rows, "drift").length
   };
+}
+
+export interface WorkGroup {
+  id: number | null;
+  title: string;
+  rows: GridRow[];
+  /** 見出しに出す数。止まっている＝実績・検収書・支払のどこかが空、未払い＝支払が立っていて払っていない。 */
+  tally: { conditions: number; stuck: number; unpaid: number; amount: number };
+}
+
+/** 未払いの支払（回ごと。回の情報が無ければ行の支払）。重ねない。 */
+export function unpaidPayments(row: GridRow): GridPayment[] {
+  const fromRounds = (row.rounds ?? []).flatMap((r) => (r.payment ? [r.payment] : []));
+  const list: GridPayment[] = fromRounds.length ? fromRounds : row.payment ? [{ ...row.payment, amount: row.payment.amount ?? 0 }] : [];
+  const seen = new Set<number>();
+  return list.filter((p) => {
+    if (p.status === "paid" || p.status === "canceled" || seen.has(p.id)) return false;
+    seen.add(p.id); return true;
+  });
+}
+
+/** 止まっているか（払い切りは除く）。発注書・実績・検収書・支払のどこかがまだ。 */
+export function isStuck(row: GridRow): boolean {
+  if (row.settlement.done) return false;
+  return isPending(row, "order") || isPending(row, "event") || isPending(row, "settlementDoc") || isPending(row, "payment")
+    || (row.rounds ?? []).some((r) => r.eventId !== null && (!r.doc || !r.payment));
+}
+
+/** 作品でまとめる。作品なしは最後。並びは元のまま。 */
+export function groupByWork(rows: GridRow[]): WorkGroup[] {
+  const groups = new Map<string, WorkGroup>();
+  for (const row of rows) {
+    const key = String(row.workId ?? "none");
+    const got = groups.get(key) ?? {
+      id: row.workId, title: row.workTitle ?? (row.workId ? `作品 #${row.workId}` : "（作品なし）"), rows: [],
+      tally: { conditions: 0, stuck: 0, unpaid: 0, amount: 0 }
+    };
+    got.rows.push(row);
+    got.tally.conditions += 1;
+    if (isStuck(row)) got.tally.stuck += 1;
+    if (unpaidPayments(row).length) got.tally.unpaid += 1;
+    if (row.pricingModel === "unit_rate" && row.unitAmount !== null && row.quantity != null) got.tally.amount += Math.round(row.unitAmount * row.quantity);
+    else if (row.flatAmount !== null) got.tally.amount += row.flatAmount;
+    groups.set(key, got);
+  }
+  const out = [...groups.values()];
+  return [...out.filter((g) => g.id !== null), ...out.filter((g) => g.id === null)];
 }
 
 export interface PartyGroup {

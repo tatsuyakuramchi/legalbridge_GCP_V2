@@ -2962,6 +2962,13 @@ export function createRoutes(database: Transactable) {
    * 条件・支払が立っている実績の金額）は、何も書く前に止める。
    * 実績と支払は A-041 と同じ扱いなので admin だけ。
    */
+  const bundlePayment = z.object({
+    id: z.coerce.number().int(),
+    dueOn: z.string().date().nullable().optional(),
+    basisReceivedOn: z.string().date().nullable().optional(),
+    paidOn: z.string().date().nullable().optional(),
+    note: z.string().trim().max(2000).nullable().optional()
+  });
   const conditionBundleSchema = z.object({
     reason: z.string().trim().min(1).max(500),
     condition: economicsSchema.optional(),
@@ -2971,15 +2978,13 @@ export function createRoutes(database: Transactable) {
     events: z.array(z.object({ id: z.coerce.number().int() }).and(eventAmendSchema.omit({ reason: true }))).max(50).optional(),
     // 実績の金額を直す前に取り消す支払（支払済みは断る）。
     cancelPayment: z.object({ id: z.coerce.number().int() }).optional(),
-    payment: z.object({
-      id: z.coerce.number().int(),
-      dueOn: z.string().date().nullable().optional(),
-      basisReceivedOn: z.string().date().nullable().optional(),
-      paidOn: z.string().date().nullable().optional(),
-      note: z.string().trim().max(2000).nullable().optional()
-    }).optional(),
-    // 訂正版を作る決定済みの文書。作るのは下書きまで（決定も送信もしない）。
-    reissue: z.array(z.coerce.number().int()).max(10).optional()
+    // 複数回の条件：回ごとに立っている支払をまとめて取り消す。
+    cancelPayments: z.array(z.object({ id: z.coerce.number().int() })).max(50).optional(),
+    payment: bundlePayment.optional(),
+    // 複数回の条件：回ごとの支払日をまとめて直す。
+    payments: z.array(bundlePayment).max(50).optional(),
+    // 訂正版を作る決定済みの文書。作るのは下書きまで（決定も送信もしない）。複数回なら回ごとの検収書。
+    reissue: z.array(z.coerce.number().int()).max(50).optional()
   });
   // 試算。保存と同じ段を 1 トランザクションの中で流して前後を読み、最後に取り消す（何も残らない）。
   router.post("/conditions/:id/bundle/preview",
