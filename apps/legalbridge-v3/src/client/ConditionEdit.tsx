@@ -156,6 +156,38 @@ export function ConditionEdit(
    * 以前は予定があるだけで止めていて、料率から定額への変更が黙って落ちていた（計算方式は直接編集でしか送られない）。
    */
   const hasPayment = ["partly_paid", "paid"].includes(detail.settlement?.state ?? "");
+  /**
+   * 委託料を「初版の利用許諾料を報酬として払う」に直すとき、同じ作品 × 受注者の利用許諾条件（紙・電子）が無ければ
+   * 保存と一緒に作る（POST /conditions/:id/in-lieu-licenses）。既にあれば作らない（サーバも同じガードを持つ）。
+   */
+  const [lic, setLic] = useState({ on: true, print: "", digital: "", exclusivity: "exclusive", exemptLater: "1",
+                                   termEnd: "", autoRenew: true, renewMonths: "36", digitalCycle: "quarter_next" });
+  const [existingLic, setExistingLic] = useState<Array<{ id: number; conditionNo: string | null; name: string; usageType: string | null }> | null>(null);
+  const licBlockOn = detail.direction === "in" && (inPlace ? (v.kind || detail.kind) : detail.kind) === "service"
+    && v.deliverableOwnership === "contractor" && v.rewardLabel === IN_LIEU_REWARD_LABEL && Boolean(detail.work) && Boolean(detail.counterparty);
+  useEffect(() => {
+    if (!licBlockOn || !detail.counterparty || !detail.work) { setExistingLic(null); return; }
+    let alive = true;
+    api.get<{ conditions: Array<{ id: number; conditionNo: string | null; name: string; kind: string; status: string; usageType?: string | null; work: { id: number } | null }> }>(
+      `/conditions?counterpartyId=${detail.counterparty.id}&direction=in`)
+      .then((r) => { if (alive) setExistingLic(r.conditions
+        .filter((c) => c.kind === "license" && ["active", "draft", "scheduled"].includes(c.status) && c.work?.id === detail.work!.id)
+        .map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name, usageType: c.usageType ?? null }))); })
+      .catch(() => { if (alive) setExistingLic([]); });
+    return () => { alive = false; };
+  }, [licBlockOn, detail.counterparty?.id, detail.work?.id]);
+  const licDigitalTerms = (): string => {
+    if (lic.digitalCycle === "quarter_next") return digitalPaymentTerms({ cycle: "quarter", startMonth: 1, payMonth: 6, payDay: "end" });
+    const c = lic.digitalCycle as DigitalCycle;
+    return digitalPaymentTerms(DIGITAL_CYCLE_DEFAULTS[c] ?? DIGITAL_CYCLE_DEFAULTS.year);
+  };
+  const licRates = () => [
+    ...(Number(lic.print) > 0 ? [{ usageType: "pub_print", ratePct: Number(lic.print) }] : []),
+    ...(Number(lic.digital) > 0 ? [{ usageType: "pub_digital", ratePct: Number(lic.digital) }] : [])
+  ];
+  /** 保存と一緒に利用許諾条件を作るか（欄が出ていて、作る印があり、料率が入っていて、同じ利用形態がまだ無い）。 */
+  const licWanted = licBlockOn && lic.on && licRates().length > 0 && existingLic !== null
+    && licRates().some((r) => !existingLic.some((e) => e.usageType === r.usageType));
   /** 関数更新にする。1 つのハンドラで 2 回呼んでも先の値が消えない（チップで計算方式と報酬名を同時に入れる）。 */
   const set = (k: string, value: string) => setV((prev) => ({ ...prev, [k]: value }));
   /** 電子書籍の集計のしかた（年 1 回・年 2 回・年 4 回）。支払条件の文と決済の型をまとめて入れる。 */
@@ -403,15 +435,34 @@ export function ConditionEdit(
             .map((s) => ({ scopeType: "language", label: s.name, code: s.code || null }))
         ] });
       }
-      if (Object.keys(patch).length) {
-        onDone(await api.patch<EditResult>(`/conditions/${detail.id}`,
-          { ...patch, effectiveFrom: effectiveFrom || null, ...(inPlace ? { inPlace: true } : {}) }));
-      } else {
-        onDone({ changed: [
-          ...(counterpartyChanged ? [{ target: "conditions（相手先）", rows: 1 }] : []),
-          ...(scopesChanged ? [{ target: "condition_scopes", rows: 1 }] : [])
-        ], resolvesThrough: [] });
+      const result: EditResult = Object.keys(patch).length
+        ? await api.patch<EditResult>(`/conditions/${detail.id}`,
+            { ...patch, effectiveFrom: effectiveFrom || null, ...(inPlace ? { inPlace: true } : {}) })
+        : { changed: [
+            ...(counterpartyChanged ? [{ target: "conditions（相手先）", rows: 1 }] : []),
+            ...(scopesChanged ? [{ target: "condition_scopes", rows: 1 }] : [])
+          ], resolvesThrough: [] };
+      // 委託料を保存したあと、同じ作品 × 受注者の利用許諾条件（紙・電子）を作る（無いものだけ）。
+      if (licWanted) {
+        try {
+          const made = await api.post<{ licenseConditions: Array<{ usageType: string; id: number; conditionNo: string | null; existed: boolean }> }>(
+            `/conditions/${result.revisedTo ?? detail.id}/in-lieu-licenses`, {
+              rates: licRates(), exclusivity: lic.exclusivity || null,
+              exemptLaterPct: lic.exemptLater.trim() === "" ? null : Number(lic.exemptLater),
+              digitalPaymentTerms: Number(lic.digital) > 0 ? licDigitalTerms() : null,
+              termStart: v.termStart || null, termEnd: lic.termEnd || null,
+              autoRenew: lic.termEnd ? lic.autoRenew : null, renewMonths: lic.termEnd && lic.autoRenew ? Number(lic.renewMonths) || 36 : null,
+              creditFromWork: true
+            });
+          const fresh = made.licenseConditions.filter((c) => !c.existed);
+          result.changed = [...result.changed,
+            { target: `利用許諾条件を作成（${fresh.map((c) => `${c.conditionNo ?? `#${c.id}`}`).join("・") || "作らず"}）`, rows: fresh.length }];
+        } catch (e) {
+          setError(`委託料は保存しましたが、利用許諾条件を作れませんでした：${(e as ApiError).message}。条件の登録（出版 IN）で作ってください`);
+          setBusy(false); return;
+        }
       }
+      onDone(result);
     } catch (e) { setError((e as ApiError).message); setBlocked(blockingPaymentsOf(e)); }
     finally { setBusy(false); }
   }
@@ -514,6 +565,64 @@ export function ConditionEdit(
         {/* 初版の利用許諾料を報酬として払う形に直すときの手順ナビ（委託料・取得側の利用許諾のとき）。 */}
         {detail.direction === "in" && (kindNow === "service" || kindNow === "license") && (
           <InLieuGuide detail={detail} v={v} set={set} pm={pm} hasPayment={hasPayment} chooseInLieu={chooseInLieu} onOpenCondition={onOpenCondition} />
+        )}
+        {licBlockOn && (
+          <div className="note" style={{ marginTop: 8 }}>
+            <b>利用許諾条件（紙・電子）</b>
+            <span className="faint">　同じ作品 × 受注者の利用許諾条件。無ければ保存と一緒に作ります（既にあるものは作りません）</span>
+            {existingLic === null ? <div className="faint">確かめています…</div>
+             : existingLic.length > 0 ? (
+              <div style={{ marginTop: 4 }}>
+                {existingLic.map((c) => (
+                  <div key={c.id} className="row" style={{ gap: 6 }}>
+                    <span className="tag ok">あり</span><span className="code">{c.conditionNo ?? `#${c.id}`}</span>{c.name}
+                    {onOpenCondition && <button type="button" className="btn btn-sm" onClick={() => onOpenCondition(c.id)}>開く</button>}
+                  </div>
+                ))}
+                {licRates().some((r) => !existingLic.some((e) => e.usageType === r.usageType)) && lic.on && (
+                  <small className="faint">まだ無い利用形態（{licRates().filter((r) => !existingLic.some((e) => e.usageType === r.usageType)).map((r) => r.usageType === "pub_print" ? "紙" : "電子").join("・")}）だけ、保存と一緒に作ります</small>
+                )}
+              </div>
+             ) : null}
+            {existingLic !== null && (
+              <div className="form-grid" style={{ marginTop: 6 }}>
+                <label className="field"><span>保存と一緒に作る</span>
+                  <select value={lic.on ? "1" : "0"} onChange={(e) => setLic({ ...lic, on: e.target.value === "1" })}>
+                    <option value="1">作る（無い利用形態だけ）</option><option value="0">作らない</option>
+                  </select></label>
+                <label className="field"><span>紙の料率（2 版目以降・%）</span>
+                  <input type="number" step="0.001" value={lic.print} placeholder="7.1" onChange={(e) => setLic({ ...lic, print: e.target.value })} /></label>
+                <label className="field"><span>電子の料率（%）</span>
+                  <input type="number" step="0.001" value={lic.digital} placeholder="42.5" onChange={(e) => setLic({ ...lic, digital: e.target.value })} />
+                  <small className="faint">空なら電子の条件は作らない</small></label>
+                <label className="field"><span>独占／非独占</span>
+                  <select value={lic.exclusivity} onChange={(e) => setLic({ ...lic, exclusivity: e.target.value })}>
+                    <option value="exclusive">独占</option><option value="non_exclusive">非独占</option>
+                  </select></label>
+                <label className="field"><span>2 版目以降の非加算（%）</span>
+                  <input type="number" step="0.01" value={lic.exemptLater} onChange={(e) => setLic({ ...lic, exemptLater: e.target.value })} /></label>
+                <label className="field"><span>電子の集計</span>
+                  <select value={lic.digitalCycle} onChange={(e) => setLic({ ...lic, digitalCycle: e.target.value })}>
+                    <option value="quarter_next">年 4 回（四半期締め・翌四半期末払い）</option>
+                    <option value="quarter">年 4 回（四半期締め・翌々月末払い）</option>
+                    <option value="half_year">年 2 回（半期締め・翌々月末払い）</option>
+                    <option value="year">年 1 回（7/1〜6/30・10 月末払い）</option>
+                  </select></label>
+                <label className="field"><span>許諾終了日</span>
+                  <input type="date" value={lic.termEnd} onChange={(e) => setLic({ ...lic, termEnd: e.target.value })} />
+                  <small className="faint">空なら期間の定めなし。開始は委託料の開始日</small></label>
+                {lic.termEnd && (<>
+                  <label className="field"><span>自動更新</span>
+                    <select value={lic.autoRenew ? "1" : "0"} onChange={(e) => setLic({ ...lic, autoRenew: e.target.value === "1" })}>
+                      <option value="1">する</option><option value="0">しない</option>
+                    </select></label>
+                  {lic.autoRenew && <label className="field"><span>更新の単位（月）</span>
+                    <input type="number" value={lic.renewMonths} onChange={(e) => setLic({ ...lic, renewMonths: e.target.value })} /></label>}
+                </>)}
+              </div>
+            )}
+            <small className="faint">作る本は 許諾料の扱い＝初版の利用許諾料を委託報酬として支払済み、初版の算定の基礎（紙の 1 本）、クレジット表記は作品から引用。条件書の第三者権利・備考は作品の値から出ます</small>
+          </div>
         )}
 
         {/* 並びは登録のフォームと同じ。見出しを押すと節を開け閉めする。 */}

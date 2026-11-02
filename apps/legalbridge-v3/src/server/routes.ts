@@ -2393,6 +2393,38 @@ export function createRoutes(database: Transactable) {
       }, actor(res)));
     }));
 
+  // すでにある委託料（初版の利用許諾料を報酬として払う形）から、利用許諾条件（紙・電子）を立てる。
+  // 同じ 作品 × パート × 受注者 × 利用形態 の生きた条件があれば作らない（existed=true で返す）。
+  router.post("/conditions/:id/in-lieu-licenses", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        rates: z.array(z.object({
+          usageType: z.enum(CONDITION_USAGE_TYPES.map((t) => t.value) as [ConditionUsageType, ...ConditionUsageType[]]),
+          ratePct: z.coerce.number().min(0).max(100),
+          exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
+        })).min(1).max(10),
+        exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional(),
+        exemptLaterPct: z.coerce.number().min(0).max(100).nullable().optional(),
+        paymentTerms: z.string().trim().max(300).nullable().optional(),
+        digitalPaymentTerms: z.string().trim().max(300).nullable().optional(),
+        termStart: z.string().date().nullable().optional(),
+        termEnd: z.string().date().nullable().optional(),
+        autoRenew: z.boolean().nullable().optional(),
+        renewMonths: z.coerce.number().int().min(1).max(600).nullable().optional(),
+        agreementId: z.coerce.number().int().positive().nullable().optional(),
+        sublicense: z.enum(["no", "consent", "covered"]).nullable().optional(),
+        creditNotice: z.string().trim().max(600).nullable().optional(),
+        creditFromWork: z.boolean().nullable().optional(),
+        scopes: z.array(z.object({
+          scopeType: z.enum(["region", "language"]), label: z.string().trim().min(1).max(100),
+          code: z.string().trim().max(20).nullable().optional()
+        })).max(100).optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await conditionWrites.createInLieuLicenses(Number(req.params.id), {
+        ...input, scopes: input.scopes?.map((s) => ({ ...s, code: s.code ?? null }))
+      }, actor(res)));
+    }));
+
   router.post("/conditions/license-set", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = licenseSetSchema.parse(req.body ?? {});
