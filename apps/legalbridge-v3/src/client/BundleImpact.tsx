@@ -30,12 +30,15 @@ function BeforeAfter({ was, now, fmt, diff }: { was: number | null; now: number 
   );
 }
 
-export function BundleImpact({ preview, busy, paidBlocked }: {
+export function BundleImpact({ preview, busy, paidBlocked, stepsOnly }: {
   preview: BundlePreview | null; busy: boolean;
+  /** 段ごとの前後は行のセルに出ている（作品別の一覧）。ここでは保存の手順だけ。 */
+  stepsOnly?: boolean;
   /** 支払済みで実績の金額を直せない（画面の側で分かっている）。差額を出して「人が直す」にする。 */
   paidBlocked?: { paymentNo: string | null; diff: number } | null;
 }) {
   if (!preview) {
+    if (stepsOnly) return <div className="faint">{busy ? "試算しています…" : "左の欄を直すと、上の行のセルに 前 → 後 が出ます（保存前の試算）"}</div>;
     return <div className="fix-out"><div className="fix-tbody faint">{busy ? "試算しています…" : "左の欄を直すと、ここに段ごとの変わり方が出ます（保存前の試算）"}</div></div>;
   }
   const { before: b, after: a, result: r } = preview;
@@ -90,6 +93,26 @@ export function BundleImpact({ preview, busy, paidBlocked }: {
   }
   const recreated = a.payments.some((p) => p.status === "canceled") && b.payments.some((p) => p.status !== "canceled" && a.payments.find((q) => q.id === p.id)?.status === "canceled");
   if (recreated) steps.push("検収書の訂正版を決定したら、文書の画面で支払を作り直す");
+
+  if (stepsOnly) {
+    return (
+      <div className="stack" style={{ gap: 6 }} aria-busy={busy}>
+        {preview.refused && <div className="alert">保存できません：{preview.refused}</div>}
+        {r?.stoppedAt && <div className="alert">{SECTION_LABEL[r.stoppedAt.section]}で止まります：{r.stoppedAt.message}</div>}
+        {paidBlocked && (
+          <div className="fix-row"><span className="chip man">人が直す</span>
+            <span className="faint">支払済みの回の差額 {paidBlocked.diff < 0 ? "−" : "＋"}{yen(Math.abs(paidBlocked.diff))}（税抜）は、返金・次回相殺などの調整として別に立てる</span></div>
+        )}
+        {drafts.flatMap((d) => d.pending.length ? [
+          <div key={d.documentId} className="fix-row"><span className="chip man">人が直す</span>
+            <span className="faint">{d.documentNo ?? `#${d.documentId}`}：{d.pending.join("・")}（下書きを開いて直す）</span></div>] : [])}
+        {steps.length > 0
+          ? <div><b style={{ fontSize: 12.5 }}>保存すると、この順に行います</b>
+              <ol className="fix-steps">{steps.map((s) => <li key={s}>{s}</li>)}</ol></div>
+          : <div className="faint">まだ何も変わりません</div>}
+      </div>
+    );
+  }
 
   return (
     <div className="stack" style={{ gap: 8 }}>

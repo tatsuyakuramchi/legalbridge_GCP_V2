@@ -593,7 +593,7 @@ export class ConditionEventService {
                   e.id, e.status, e.document_id, e.out_condition_id, d.document_no
              FROM condition_events e
              LEFT JOIN documents d ON d.id = e.document_id
-            WHERE e.id = $1 AND e.condition_id = $2
+            WHERE e.id = $1 AND e.condition_id IN (SELECT x.id FROM conditions x, conditions c WHERE c.id = $2 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))
               FOR UPDATE OF e`, [eventId, conditionId]);
         const row = found.rows[0] as Record<string, any> | undefined;
         if (!row) throw new DomainError("NOT_FOUND", `実績 ${eventId} が見つかりません`);
@@ -679,7 +679,7 @@ export class ConditionEventService {
                   (SELECT count(*)::int FROM payment_allocations a WHERE a.event_id = e.id) AS allocations,
                   (SELECT count(*)::int FROM statement_lines l WHERE l.event_id = e.id) AS statement_lines
              FROM condition_events e
-            WHERE e.id = $1 AND e.condition_id = $2 FOR UPDATE OF e`, [eventId, conditionId]);
+            WHERE e.id = $1 AND e.condition_id IN (SELECT x.id FROM conditions x, conditions c WHERE c.id = $2 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id)) FOR UPDATE OF e`, [eventId, conditionId]);
         const row = found.rows[0] as
           { status: string; occurred_on: unknown; allocations: number; statement_lines: number } | undefined;
         if (!row) throw new DomainError("NOT_FOUND", `実績 ${eventId} が見つかりません`);
@@ -715,7 +715,7 @@ export class ConditionEventService {
           `SELECT e.id, e.status, e.amount, e.document_id, d.document_no
              FROM condition_events e
              LEFT JOIN documents d ON d.id = e.document_id
-            WHERE e.id = $1 AND e.condition_id = $2`, [eventId, conditionId]);
+            WHERE e.id = $1 AND e.condition_id IN (SELECT x.id FROM conditions x, conditions c WHERE c.id = $2 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))`, [eventId, conditionId]);
         const row = found.rows[0] as any;
         if (!row) throw new DomainError("NOT_FOUND", `実績 ${eventId} が見つかりません`);
         if (row.status === "void") {
@@ -726,6 +726,13 @@ export class ConditionEventService {
           throw new DomainError("CONFLICT",
             `この実績は計算書 ${row.document_no ?? `#${row.document_id}`} から作られています。` +
             "取り消すなら計算書ごと無効にしてください");
+        }
+        // 支払が割り当たっている実績を消すと、支払が宙に浮く。先に支払を取り消す（画面はその場で取り消して続けられる）。
+        const blocking = await blockingPayments(client, { eventIds: [eventId] });
+        if (blocking.length) {
+          throw new DomainError("CONFLICT",
+            `この実績には支払 ${blocking.map((p) => p.paymentNo ?? `#${p.id}`).join("・")} が立っています。取り消すなら先にその支払を取り消してください`,
+            { blockingPayments: blocking });
         }
 
         await client.query(

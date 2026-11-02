@@ -4,7 +4,7 @@ import { translate } from "../core/errors.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "../conditions/settlement.js";
 import { phaseOf } from "../documents/repository.js";
 import { signStateOf, signStateSql } from "../documents/sign-state.js";
-import type { GridDocument, GridParty, GridRow } from "./grid.js";
+import type { GridDocument, GridParty, GridRound, GridRow } from "./grid.js";
 
 /**
  * 工程表の行を引く。
@@ -123,7 +123,8 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
  */
 export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.currency,
                 c.pricing_model, c.flat_amount, c.unit_amount, c.rate_ppm, c.term_end,
-                c.work_id, c.deliverable_ownership,
+                c.work_id, c.deliverable_ownership, c.quantity, c.unit_label,
+                w.title AS work_title,
                 p.id AS party_id, p.name AS party_name,
                 lic.count AS license_count,
                 ${SETTLEMENT_COLUMNS},
@@ -132,6 +133,7 @@ export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.c
                 sch.due_kinds, sch.pay_kinds,
                 ev.count AS event_count, ev.latest_on AS event_latest_on, ev.latest_id AS event_latest_id,
                 ev.latest_inspected_on AS event_latest_inspected_on,
+                ev.quantity_sum AS event_quantity_sum, ev.amount_sum AS event_amount_sum,
                 po.id AS order_id, po.document_no AS order_no, po.status AS order_status,
                 po.sent_at AS order_sent_at, po.sign AS order_sign,
                 po.amount_ex_tax AS order_amount_ex_tax,
@@ -157,6 +159,7 @@ export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.c
  */
 export const GRID_JOINS = `
            LEFT JOIN parties p ON p.id = c.counterparty_id
+           LEFT JOIN works w ON w.id = c.work_id
            ${SETTLEMENT_LATERAL_SQL}
            -- 同じ作品 × 同じ受注者の利用許諾条件（A-048）。受注者帰属の行の印に使う。
            LEFT JOIN LATERAL (
@@ -182,6 +185,8 @@ export const GRID_JOINS = `
              SELECT count(*)::int AS count, max(e.occurred_on) AS latest_on,
                     -- 検収日は納品日と別の日になりうる。入っていなければ納品日。
                     max(COALESCE(e.inspected_on, e.occurred_on)) AS latest_inspected_on,
+                    -- 作品別の一覧で 実績の数量・金額 を1セルに出す。
+                    sum(e.quantity) AS quantity_sum, COALESCE(sum(e.amount), 0)::bigint AS amount_sum,
                     (SELECT x.id FROM condition_events x
                       WHERE x.condition_id IN ${SERIES} AND x.status = 'active'
                       ORDER BY x.occurred_on DESC NULLS LAST, x.id DESC LIMIT 1) AS latest_id
@@ -216,6 +221,9 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
   status: String(row.status),
   settlement: settlementOf(row),
   workId: int(row.work_id),
+  workTitle: str(row.work_title),
+  quantity: row.quantity === null || row.quantity === undefined ? null : Number(row.quantity),
+  unitLabel: str(row.unit_label),
   deliverableOwnership: row.deliverable_ownership === "orderer" || row.deliverable_ownership === "contractor"
     ? row.deliverable_ownership : null,
   licenseCount: Number(row.license_count ?? 0),
@@ -229,7 +237,9 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
   events: {
     count: Number(row.event_count ?? 0), latestOn: dateStr(row.event_latest_on),
     latestId: int(row.event_latest_id),
-    latestInspectedOn: dateStr(row.event_latest_inspected_on)
+    latestInspectedOn: dateStr(row.event_latest_inspected_on),
+    quantity: row.event_quantity_sum === null || row.event_quantity_sum === undefined ? null : Number(row.event_quantity_sum),
+    amount: Number(row.event_amount_sum ?? 0)
   },
   settlementDoc: doc(row, "result"),
   payment: row.payment_id
@@ -256,9 +266,72 @@ export class MatterGridService {
            ${GRID_JOINS}
           WHERE ml.matter_id = $1
             AND c.status NOT IN ('void', 'superseded')
-          ORDER BY p.name NULLS LAST, c.condition_no NULLS LAST, c.id`, [matterId]);
-      return (r.rows as any[]).map(gridRowOf);
+          ORDER BY w.title NULLS LAST, p.name NULLS LAST, c.condition_no NULLS LAST, c.id`, [matterId]);
+      const rows = (r.rows as any[]).map(gridRowOf);
+      const rounds = await this.rounds(rows.map((x) => x.conditionId));
+      for (const row of rows) row.rounds = rounds.get(row.conditionId) ?? [];
+      return rows;
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 回ごとの 予定・実績・検収書・支払（複数回の条件）。条件の系列ぜんぶから。
+   *
+   * 実績は検収書を document_id で、支払を payment_allocations.event_id で指す。
+   * 予定の回で実績がまだのものも1回として出す（何回目まで進んだかが見える）。
+   */
+  async rounds(conditionIds: number[]): Promise<Map<number, GridRound[]>> {
+    const out = new Map<number, GridRound[]>();
+    if (!conditionIds.length) return out;
+    const r = await this.database.query(
+      `WITH base AS (
+         SELECT c.id AS row_id, COALESCE(c.series_id, c.id) AS series
+           FROM conditions c WHERE c.id = ANY($1::bigint[])
+       ), ser AS (
+         SELECT b.row_id, x.id AS condition_id FROM base b
+           JOIN conditions x ON COALESCE(x.series_id, x.id) = b.series
+       )
+       SELECT ser.row_id, s.id AS schedule_id, s.seq, s.label, s.planned_amount, s.due_on,
+              e.id AS event_id, e.occurred_on, e.inspected_on, e.quantity, e.amount,
+              d.id AS doc_id, d.document_no AS doc_no, d.status AS doc_status,
+              (SELECT dv.sent_at FROM document_delivery(d.id) dv) AS doc_sent_at,
+              y.id AS pay_id, y.payment_no, y.status AS pay_status, y.amount AS pay_amount,
+              y.due_on AS pay_due_on, y.paid_on AS pay_paid_on, y.note AS pay_note
+         FROM ser
+         JOIN condition_events e ON e.condition_id = ser.condition_id AND e.status = 'active'
+         LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+         LEFT JOIN documents d ON d.id = e.document_id AND d.status <> 'void'
+         LEFT JOIN LATERAL (
+           SELECT p.* FROM payment_allocations al JOIN payments p ON p.id = al.payment_id
+            WHERE al.event_id = e.id AND p.status <> 'canceled'
+            ORDER BY p.id DESC LIMIT 1
+         ) y ON true
+       UNION ALL
+       SELECT ser.row_id, s.id, s.seq, s.label, s.planned_amount, s.due_on,
+              NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+              NULL, NULL, NULL, NULL, NULL, NULL, NULL
+         FROM base ser
+         JOIN condition_schedules s ON s.condition_id = ser.row_id
+        WHERE NOT EXISTS (SELECT 1 FROM condition_events e
+                           WHERE e.schedule_id = s.id AND e.status = 'active')
+       ORDER BY 1, 3 NULLS LAST, 8 NULLS LAST, 7 NULLS LAST`, [conditionIds]);
+    for (const x of r.rows as any[]) {
+      const list = out.get(Number(x.row_id)) ?? [];
+      list.push({
+        scheduleId: int(x.schedule_id), seq: x.seq === null ? null : Number(x.seq), label: str(x.label),
+        plannedAmount: int(x.planned_amount), dueOn: dateStr(x.due_on),
+        eventId: int(x.event_id), occurredOn: dateStr(x.occurred_on), inspectedOn: dateStr(x.inspected_on),
+        quantity: x.quantity === null || x.quantity === undefined ? null : Number(x.quantity),
+        amount: int(x.amount),
+        doc: x.doc_id ? { id: Number(x.doc_id), documentNo: str(x.doc_no), status: String(x.doc_status),
+                          phase: phaseOf(String(x.doc_status), x.doc_sent_at) } : null,
+        payment: x.pay_id ? { id: Number(x.pay_id), paymentNo: str(x.payment_no), status: String(x.pay_status),
+                              amount: Number(x.pay_amount), dueOn: dateStr(x.pay_due_on), paidOn: dateStr(x.pay_paid_on),
+                              note: str(x.pay_note) } : null
+      });
+      out.set(Number(x.row_id), list);
+    }
+    return out;
   }
 
   /**

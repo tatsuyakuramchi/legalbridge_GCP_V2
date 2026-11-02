@@ -6,6 +6,7 @@ import { ensureAgreementForOrder } from "../agreements/order-agreement.js";
 import { inContractRef } from "../royalty/in-contract.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
+import { blockingPayments } from "../payments/blocking.js";
 import { MatterLinkService } from "../matters/link-service.js";
 import { withImpliedVariables, assertComplete, bindVariables, type BindingResult } from "./binding.js";
 import { documentWarnings, type Warning } from "./preflight.js";
@@ -636,6 +637,18 @@ export class DocumentIssueService {
         if (row.status === "superseded") {
           throw new DomainError("CONFLICT",
             "差し替え済みの文書は無効にできません。差し替えた新しい版を無効にしてください");
+        }
+
+        // この文書の実績に支払が立っていれば止める。文書だけ無効にすると支払が宙に浮く。
+        // 画面はその場で支払を取り消して続けられる（detail.blockingPayments → PaymentBlock）。
+        const onDoc = await client.query(
+          "SELECT id FROM condition_events WHERE document_id = $1 AND status = 'active'", [documentId]);
+        const eventIds = (onDoc.rows as Array<{ id: number }>).map((e) => Number(e.id));
+        const blocking = eventIds.length ? await blockingPayments(client, { eventIds }) : [];
+        if (blocking.length) {
+          throw new DomainError("CONFLICT",
+            `${row.document_no ?? `#${documentId}`} の実績には支払 ${blocking.map((p) => p.paymentNo ?? `#${p.id}`).join("・")} が立っています。`
+            + "無効にするなら先にその支払を取り消してください", { blockingPayments: blocking });
         }
 
         await client.query(

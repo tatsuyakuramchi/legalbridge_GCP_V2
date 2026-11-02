@@ -27,6 +27,19 @@ test("無効化しても行は消さない。status を変えて理由を残す"
   assert.match(JSON.stringify(audit.params), /宛先を間違えた/);
 });
 
+test("支払が立っている検収書は無効にできない（止めた支払を返す）", async () => {
+  const db = new FakeDatabase((text) => {
+    if (text.includes("FROM documents WHERE id")) return [doc("issued")];
+    if (text.includes("FROM condition_events WHERE document_id")) return [{ id: 70 }];
+    if (text.includes("FROM payment_allocations a JOIN payments p")) return [{ id: 9, payment_no: "PY-9", status: "planned", amount: 100, due_on: null, paid_on: null }];
+    return undefined;
+  });
+  await assert.rejects(() => new DocumentIssueService(db).void(5, "重複", "k"),
+    (e: { message: string; detail?: { blockingPayments?: Array<{ id: number }> } }) =>
+      /支払 PY-9 が立っています/.test(e.message) && e.detail?.blockingPayments?.[0]?.id === 9);
+  assert.ok(!db.queries.some((q) => /UPDATE documents SET status = 'void'/.test(q.text)), "無効にしていない");
+});
+
 test("理由なしでは無効にできない", async () => {
   const svc = new DocumentIssueService(build(doc("issued")));
   await assert.rejects(() => svc.void(5, "   ", "k"), /理由を書いてください/);

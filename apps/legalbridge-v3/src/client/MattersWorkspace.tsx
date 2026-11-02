@@ -6,7 +6,7 @@ import { SearchSelect, searchParties, staffOptions } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { DetailBack, isWideLayout } from "./DetailBack.js";
 import { MoneyChain } from "./MoneyChain.js";
-import { MatterGrid } from "./MatterGrid.js";
+import { WorkLedger } from "./WorkLedger.js";
 import { MatterBundles } from "./MatterBundles.js";
 import { MatterPartyFilter } from "./MatterPartyFilter.js";
 import { filterByParty, partiesOf } from "../server/matters/party-view.js";
@@ -38,8 +38,8 @@ import { BUSINESS_LINES } from "../server/matters/title.js";
  * 案件の中身のタブ。既定は「取引先ごと」（束）。条件明細・実績・文書・支払の
  * 種類別の表は「一覧」に畳み、その中で切り替える（横断の一括操作と CSV の置き場）。
  */
-type Tab = "bundles" | "grid" | "conditions" | "events" | "documents" | "payments" | "deals" | "tasks" | "communications" | "graph";
-const LIST_TABS: Tab[] = ["conditions", "events", "documents", "payments", "deals", "grid"];
+type Tab = "ledger" | "bundles" | "conditions" | "events" | "documents" | "payments" | "deals" | "tasks" | "communications" | "graph";
+const LIST_TABS: Tab[] = ["conditions", "events", "documents", "payments", "deals"];
 
 /** 統合の下見。サーバの MatterMergePreview と対。 */
 interface MergePreview {
@@ -116,7 +116,7 @@ export function MattersWorkspace(
   // タブが持っていない紐づけだけ。ここに条件や文書を出すと3か所目になる。
   const externalLinks = (detail?.links ?? []).filter((l) => !OWNED_BY_TABS.has(l.targetType));
   const [kind, setKind] = useState<MatterKind | "all">("all");
-  const [tab, setTab] = useState<Tab>("bundles");
+  const [tab, setTab] = useState<Tab>("ledger");
   /** 「一覧」で最後に開いていた表。タブを戻しても同じ表に戻る。 */
   const [listTab, setListTab] = useState<Tab>("conditions");
   const goTab = (t: Tab) => { setTab(t); if (LIST_TABS.includes(t)) setListTab(t); };
@@ -270,15 +270,15 @@ export function MattersWorkspace(
 
   useEffect(() => {
     if (!selected) return;
-    setTab("bundles"); setEventCondition(null);
+    setTab("ledger"); setEventCondition(null);
     setBacklog(null); setIssueKey(""); setStyleEdit(false);
     api.get<MatterDetail>(`/matters/${selected}`).then(setDetail)
       .catch((e: ApiError) => setError(e.message));
   }, [selected]);
 
-  // 工程表は8列あるので、開いている間は一覧を畳んで幅を全部渡す（fullwidth）。
+  // 条件ごとの一覧は7列＋作品の欄があるので、開いている間は一覧を畳んで幅を全部渡す（fullwidth）。
   return (
-    <section className={`workspace${selected ? " picked" : ""}${selected && tab === "grid" ? " fullwidth" : ""}`}>
+    <section className={`workspace${selected ? " picked" : ""}${selected && tab === "ledger" ? " fullwidth" : ""}`}>
       <header className="workspace-head">
         <h1>案件</h1>
         <p>すべての作業の入口。案件は 作品ごと（制作委託 → 許諾、または許諾のみ）か 業務ごと（店舗事業・管理事業）に立て、どちらにも属さないものは その他案件。条件・文書・支払・連絡はその下にぶら下がり、付帯する契約が終わるまで開いたまま。</p>
@@ -637,12 +637,13 @@ export function MattersWorkspace(
                 <div className="panel-bd">
                   {/* 取引先で絞る。選ぶと下の4タブが揃ってその社のぶんだけになる。
                       タブの数字も絞ったあとの数に変わる（数と中身が食い違わない）。 */}
-                  {LIST_TABS.includes(tab) && (
+                  {(LIST_TABS.includes(tab) || tab === "ledger") && (
                     <MatterPartyFilter parties={parties} value={party} onChange={setParty} />
                   )}
 
                   <div className="tabs">
-                    {([["bundles", "取引先ごと"],
+                    {([["ledger", "条件ごと"],
+                       ["bundles", "取引先ごと"],
                        ["list", "一覧"],
                        // 案件の中の作業（A-064）。状態はデイリータスクと同じ 4 つ。
                        ["tasks", `作業 ${detail.tasks.filter((t) => t.status !== "done").length}`],
@@ -663,8 +664,7 @@ export function MattersWorkspace(
                            ["documents", `文書 ${shown.documents.length}`],
                            ["payments", `支払 ${shown.payments.length}`],
                            // 条件 × 回 で 予定 → 実績 → 決済文書 → 支払 を進める（取引管理をこの案件に絞ったもの）。
-                           ["deals", "取引管理"],
-                           ["grid", "工程表（表）"]] as const).map(([key, label]) => (
+                           ["deals", "取引管理"]] as const).map(([key, label]) => (
                           <button key={key} className="chip" aria-pressed={tab === key}
                                   onClick={() => goTab(key as Tab)}>{label}</button>
                         ))}
@@ -690,12 +690,12 @@ export function MattersWorkspace(
                       channels={channels} isAdmin={isAdmin} />
                   )}
 
-                  {tab === "grid" && (
-                    <MatterGrid matterId={detail.id} partyId={party} reloadKey={linkVersion}
+                  {tab === "ledger" && (
+                    <WorkLedger matterId={detail.id} partyId={party} reloadKey={linkVersion} onChanged={relink}
                       onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument}
                       onCompose={(conditionIds, eventIds, mid, templateKey) =>
                         onCompose?.(conditionIds, eventIds, mid ?? detail.id, templateKey)}
-                      // 回の操作（実績・決済文書・支払）は取引管理で。工程表はその条件で取引管理を開くだけ。
+                      // 管理者以外がセルを押したとき、取引管理をその条件で開く。
                       onOpenDeals={(id) => { setDealsCondition(id); goTab("deals"); }}
                       onFixDrift={onFixDrift && (() => onFixDrift(detail.id))} />
                   )}

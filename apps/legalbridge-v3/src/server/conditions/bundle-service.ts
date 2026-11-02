@@ -45,8 +45,12 @@ export interface BundlePatch {
    * 先に取り消す（作り直しは、検収書の訂正版を決定したあと文書の画面で）。支払済みは取り消せない。
    */
   cancelPayment?: { id: number };
+  /** 取り消す支払（何件でも）。複数回の条件で、回ごとに立っている支払をまとめて取り消すとき。 */
+  cancelPayments?: Array<{ id: number }>;
   /** 支払1件。 */
   payment?: { id: number } & Record<string, unknown>;
+  /** 支払（何件でも）。回ごとの支払日をまとめて直すとき。 */
+  payments?: Array<{ id: number } & Record<string, unknown>>;
   /**
    * 訂正版を作る決定済みの文書（発注書・検収書）。
    *
@@ -56,6 +60,13 @@ export interface BundlePatch {
    */
   reissue?: number[];
 }
+
+/** 取り消す支払の id（cancelPayment と cancelPayments を合わせ、重複を除く）。 */
+export const cancelIdsOf = (patch: BundlePatch): number[] =>
+  [...new Set([...(patch.cancelPayment ? [patch.cancelPayment.id] : []), ...(patch.cancelPayments ?? []).map((p) => p.id)].map(Number))];
+/** 直す支払（payment と payments を合わせる）。 */
+export const paymentEditsOf = (patch: BundlePatch): Array<{ id: number } & Record<string, unknown>> =>
+  [...(patch.payment ? [patch.payment] : []), ...(patch.payments ?? [])];
 
 export type BundleSection = "condition" | "schedules" | "cancelPayment" | "event" | "payment" | "reissue";
 
@@ -134,14 +145,15 @@ export class ConditionBundleService {
       throw new DomainError("CONFLICT", "無効にした条件はまとめて直せません");
     }
 
-    if (patch.cancelPayment) {
+    const cancelIds = cancelIdsOf(patch);
+    for (const cancelId of cancelIds) {
       const pay = await this.database.query(
-        "SELECT status, payment_no FROM payments WHERE id = $1", [patch.cancelPayment.id]);
+        "SELECT status, payment_no FROM payments WHERE id = $1", [cancelId]);
       const p = pay.rows[0] as { status?: string; payment_no?: string | null } | undefined;
-      if (!p) throw new DomainError("NOT_FOUND", `支払 ${patch.cancelPayment.id} が見つかりません`);
+      if (!p) throw new DomainError("NOT_FOUND", `支払 ${cancelId} が見つかりません`);
       if (p.status === "paid") {
         throw new DomainError("CONFLICT",
-          `支払 ${p.payment_no ?? `#${patch.cancelPayment.id}`} は支払済みなので取り消せません。差額は調整として別に立ててください`);
+          `支払 ${p.payment_no ?? `#${cancelId}`} は支払済みなので取り消せません。差額は調整として別に立ててください`);
       }
     }
     for (const event of [...(patch.event ? [patch.event] : []), ...(patch.events ?? [])]) {
@@ -153,7 +165,8 @@ export class ConditionBundleService {
                 (SELECT p.payment_no FROM payment_allocations a
                    JOIN payments p ON p.id = a.payment_id
                   WHERE a.event_id = e.id AND p.status <> 'canceled' LIMIT 1) AS blocking_no
-           FROM condition_events e WHERE e.id = $1 AND e.condition_id = $2`,
+           -- 改訂すると実績は旧版に残る（-R2 から直すとき、id では当たらない）。系列で当てる。
+           FROM condition_events e WHERE e.id = $1 AND e.condition_id IN (SELECT x.id FROM conditions x, conditions c WHERE c.id = $2 AND COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))`,
         [event.id, conditionId]);
       const row = ev.rows[0] as { status?: string; blocking_id?: number | null; blocking_no?: string | null } | undefined;
       if (!row) throw new DomainError("NOT_FOUND", `実績 ${event.id} が見つかりません`);
@@ -162,7 +175,7 @@ export class ConditionBundleService {
       }
       const touchesMoney = EVENT_MONEY.some((k) => event[k] !== undefined);
       // 同じ束で取り消す支払なら通す（取消が実績より先に走る）。
-      const cancels = patch.cancelPayment && Number(row.blocking_id) === patch.cancelPayment.id;
+      const cancels = row.blocking_id !== null && row.blocking_id !== undefined && cancelIds.includes(Number(row.blocking_id));
       if (touchesMoney && row.blocking_no !== null && row.blocking_no !== undefined && !cancels) {
         throw new DomainError("CONFLICT",
           `この実績には支払 ${row.blocking_no} が立っています。`
@@ -190,11 +203,11 @@ export class ConditionBundleService {
       }
     }
 
-    if (patch.payment) {
+    for (const edit of paymentEditsOf(patch)) {
       const pay = await this.database.query(
-        "SELECT status FROM payments WHERE id = $1", [patch.payment.id]);
+        "SELECT status FROM payments WHERE id = $1", [edit.id]);
       const st = (pay.rows[0] as { status?: string } | undefined)?.status;
-      if (!st) throw new DomainError("NOT_FOUND", `支払 ${patch.payment.id} が見つかりません`);
+      if (!st) throw new DomainError("NOT_FOUND", `支払 ${edit.id} が見つかりません`);
       if (st === "canceled") {
         throw new DomainError("CONFLICT", "取り消した支払は直せません。支払の欄を空にしてください");
       }
@@ -241,12 +254,13 @@ export class ConditionBundleService {
         }
       });
     }
-    if (patch.cancelPayment) {
+    const cancelIds = cancelIdsOf(patch);
+    if (cancelIds.length) {
       steps.push({
         section: "cancelPayment",
         run: async () => {
-          await this.parts.payments.cancel(patch.cancelPayment!.id, why, actor);
-          return [`#${patch.cancelPayment!.id}`];
+          for (const id of cancelIds) await this.parts.payments.cancel(id, why, actor);
+          return cancelIds.map((id) => `#${id}`);
         }
       });
     }
@@ -265,13 +279,17 @@ export class ConditionBundleService {
         }
       });
     }
-    if (patch.payment) {
+    const paymentEdits = paymentEditsOf(patch);
+    if (paymentEdits.length) {
       steps.push({
         section: "payment",
         run: async () => {
-          const { id, ...fields } = patch.payment!;
-          const r = await this.parts.payments.amend(id, fields, why, actor);
-          return r.changed;
+          const changed: string[] = [];
+          for (const { id, ...fields } of paymentEdits) {
+            const r = await this.parts.payments.amend(id, fields, why, actor);
+            changed.push(...r.changed);
+          }
+          return [...new Set(changed)];
         }
       });
     }
