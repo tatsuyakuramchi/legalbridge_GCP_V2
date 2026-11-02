@@ -186,6 +186,19 @@ export function ConditionsWorkspace(
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
+  async function unvoidCondition() {
+    if (!detail) return;
+    const reason = prompt(`条件 ${detail.conditionNo ?? `#${detail.id}`}「${detail.name}」の無効化を取り消して有効に戻します。理由を書いてください。`);
+    if (!reason?.trim()) return;
+    setError(null);
+    try {
+      const r = await api.post<WriteResult>(`/conditions/${detail.id}/unvoid`, { reason: reason.trim() });
+      setResult(r);
+      setDetail(await api.get<DetailResponse>(`/conditions/${detail.id}`));
+      reload();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+  }
+
   async function removeCondition() {
     if (!detail) return;
     if (!confirm(`条件 ${detail.conditionNo ?? `#${detail.id}`} を削除します。元に戻せません。よろしいですか？`)) return;
@@ -476,6 +489,8 @@ export function ConditionsWorkspace(
                   )}
                   {!editing && detail.status === "void" && (
                     <span className="row" style={{ marginLeft: "auto" }}>
+                      <button className="btn btn-sm primary" title="無効化を取り消して有効に戻す（新しい版や同じ内容の条件が生きていれば戻せない）"
+                              onClick={() => void unvoidCondition()}>無効を取り消す</button>
                       <button className="btn btn-sm" onClick={() => void removeCondition()}>
                         削除する
                       </button>

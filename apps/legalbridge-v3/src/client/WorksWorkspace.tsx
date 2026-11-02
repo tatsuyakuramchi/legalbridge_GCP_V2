@@ -496,6 +496,18 @@ export function WorksWorkspace(
     } catch (e) { fail(e); } finally { setBusy(false); }
   }
 
+  async function unvoidCondition(c: ConditionSummary) {
+    const reason = prompt(`条件 ${c.conditionNo ?? `#${c.id}`}「${c.name}」の無効化を取り消して有効に戻します。理由を書いてください。`);
+    if (!reason?.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      await api.post(`/conditions/${c.id}/unvoid`, { reason: reason.trim() });
+      setNotice(`${c.conditionNo ?? `#${c.id}`} を有効に戻しました`);
+      await reloadWork(); void reloadTree();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
   async function voidPicked() {
     if (!picked.length) return;
     const reason = prompt(`条件 ${picked.length} 件を無効化します。理由を書いてください（全件に同じ理由が付きます）。`);
@@ -1228,9 +1240,11 @@ export function WorksWorkspace(
                             <button className="btn btn-sm" disabled={busy} title="終了日を伸ばす（支払が立っていれば改訂になる）"
                                     onClick={() => startRenew([c.id])}>期間更新</button>
                           )}
-                          {editable && c.status === "void" && (
+                          {editable && c.status === "void" && (<>
+                            <button className="btn btn-sm" disabled={busy} title="無効化を取り消して有効に戻す"
+                                    onClick={() => void unvoidCondition(c)}>無効を取り消す</button>
                             <button className="btn btn-sm" disabled={busy} onClick={() => void removeCondition(c)}>削除</button>
-                          )}
+                          </>)}
                           {canHaveShares(c) && (
                             <button className="btn btn-sm" aria-pressed={sharesFor?.id === c.id}
                                     title="共著の分配。当社から複数の権利者へ直接払うときに、誰に何 % かを入れる"

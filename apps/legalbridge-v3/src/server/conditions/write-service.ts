@@ -1880,6 +1880,59 @@ export class ConditionWriteService {
   }
 
   /**
+   * 無効化の取り消し。無効にした条件を有効（適用開始が未来なら予約）に戻す。
+   *
+   * 無効化は行を残すので戻せる。戻せないのは、同じ系列に生きた版がある（改訂で退いた旧版を
+   * 戻すと版が二重になる）ときと、同じ 作品 × 受注者 × 向き × 種別 × 利用形態 × パート の生きた
+   * 条件がもうある（重複整理で畳んだ側を戻すと二重になる）とき。理由は備考に残し、監査にも残す。
+   */
+  async unvoid(id: number, reason: string, actor: string): Promise<WriteResult> {
+    const why = String(reason ?? "").trim();
+    if (!why) throw new DomainError("VALIDATION", "無効化を取り消す理由は必須です");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const before = await this.repository.requireExisting(client, id);
+        if (before.status !== "void") throw new DomainError("CONFLICT", "無効化していない条件です");
+        const live = await client.query(
+          `SELECT id, condition_no FROM conditions
+            WHERE id <> $1 AND COALESCE(series_id, id) = COALESCE($2::bigint, $1) AND status IN ('active', 'scheduled') LIMIT 1`,
+          [id, before.series_id]);
+        const l = live.rows[0] as { id: number; condition_no: string | null } | undefined;
+        if (l) {
+          throw new DomainError("CONFLICT",
+            `同じ条件の新しい版 ${l.condition_no ?? `#${l.id}`} が生きています。旧版は戻せません（直すならその版を直してください）`);
+        }
+        const dup = await client.query(
+          `SELECT d.id, d.condition_no FROM conditions c
+             JOIN conditions d ON d.id <> c.id AND d.status IN ('active', 'scheduled')
+              AND d.counterparty_id = c.counterparty_id AND d.direction = c.direction AND d.kind = c.kind
+              AND d.work_id IS NOT DISTINCT FROM c.work_id AND d.usage_type IS NOT DISTINCT FROM c.usage_type
+              AND d.work_part_id IS NOT DISTINCT FROM c.work_part_id
+            WHERE c.id = $1 AND c.work_id IS NOT NULL LIMIT 1`, [id]);
+        const d = dup.rows[0] as { id: number; condition_no: string | null } | undefined;
+        if (d) {
+          throw new DomainError("CONFLICT",
+            `同じ作品・相手先・利用形態の条件 ${d.condition_no ?? `#${d.id}`} が有効です。戻すと二重になります（そちらを無効にしてから）`);
+        }
+        const ef = dateStr(before.effective_from);
+        const next = ef && ef > new Date().toISOString().slice(0, 10) ? "scheduled" : "active";
+        await client.query(
+          `UPDATE conditions
+              SET status = $2,
+                  notes = concat_ws(E'\n', NULLIF(notes, ''), $3::text),
+                  updated_at = now()
+            WHERE id = $1`,
+          [id, next, `無効化の取り消し：${why}`]);
+        await recordAudit(client, {
+          actor, action: "condition.unvoid", targetType: "condition", targetId: id,
+          detail: { reason: why, conditionNo: before.condition_no, to: next }
+        });
+        return { changed: [{ target: "conditions（無効化の取り消し）", rows: 1 }], resolvesThrough: [] };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 条件の削除。削除の2段目。
    *
    * 無効化してあるものだけを消す（無効化 → 削除の2段階）。いきなり消せる

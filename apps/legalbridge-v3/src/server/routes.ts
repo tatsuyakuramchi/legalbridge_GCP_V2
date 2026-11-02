@@ -2562,6 +2562,11 @@ export function createRoutes(database: Transactable) {
       const { reason } = reasonSchema.parse(req.body ?? {});
       res.json(await conditionWrites.void(Number(req.params.id), reason, actor(res)));
     }));
+  router.post("/conditions/:id/unvoid", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const { reason } = reasonSchema.parse(req.body ?? {});
+      res.json(await conditionWrites.unvoid(Number(req.params.id), reason, actor(res)));
+    }));
   router.delete("/conditions/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await conditionWrites.remove(Number(req.params.id), actor(res)));
