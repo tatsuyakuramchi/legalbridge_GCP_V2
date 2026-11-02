@@ -310,6 +310,16 @@ test("紙支払条件・電子支払条件：その媒体だけに入り、共�
   assert.match(bad.rows[0].message ?? "", /電子支払条件を入れるなら電子料率も/);
 });
 
+test("更新：電子支払条件が年 4 回の形なら、計算書の回の周期（四半期）も揃える", async () => {
+  const d = deps();
+  const fake = db({ parties: PARTIES, works: WORKS, pub: PUB });
+  const terms = "毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とし、各集計期間の末日の3か月後の月の末日までに支払う。";
+  const r = await new PubWorksImportService(fake, d).run([{ "作品コード": "WRK-7", "電子支払条件": terms }], false, "tester", "update");
+  assert.equal(r.ok, 1, JSON.stringify(r.rows));
+  assert.match(r.rows[0].message ?? "", /集計 年4回/);
+  assert.deepEqual(d.calls[0].args.slice(0, 2), [602, { paymentTerms: terms, settlementMode: "term_bound", settlementCycle: "quarter" }]);
+});
+
 test("更新：電子支払条件だけ直す（紙は触らない）", async () => {
   const d = deps();
   const fake = db({ parties: PARTIES, works: WORKS, pub: PUB });
