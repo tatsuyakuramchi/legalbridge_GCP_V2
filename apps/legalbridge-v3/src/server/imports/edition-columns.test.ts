@@ -53,3 +53,27 @@ test("ゲーム：販売元料率は媒体なしの 1 本", async () => {
   assert.equal(outs[0].scopes, undefined);
   assert.equal(outs[0].name, "新作｜再許諾（Alpha Games）");
 });
+
+test("別の作品に登録済みの ISBN で新しい作品を作る行は、刊行物をその作品へ付け替える（二重に作らない）", async () => {
+  const { readEditionColumns } = await import("./edition-columns.js");
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM work_editions e JOIN works w")) return [{ id: 77, work_id: 3, title: "クトゥルフ・ホラーショウ" }];
+    return [];
+  });
+  const row = { "版元": "新紀元社", "版元コード": "", "版元との関係": "グループ会社", "ISBN": "9784775322727", "刊行日": "2026-03-19", "本体価格": "", "版元料率": "", "版元電子料率": "" };
+  const find = async () => ({ id: 21, name: "新紀元社" });
+  // 既存の作品（id 3）に足す行なら「登録済み」。
+  const same = await readEditionColumns(db, row, PUB_EDITION_NAMES, find, 3);
+  assert.equal(same!.reuse, true);
+  // 別の作品（id 9）に足す行なら止める。
+  await assert.rejects(() => readEditionColumns(db, row, PUB_EDITION_NAMES, find, 9), /登録済みです/);
+  // 新しい作品を作る行なら付け替え。
+  const fresh = await readEditionColumns(db, row, PUB_EDITION_NAMES, find, null);
+  assert.deepEqual(fresh!.moveFrom, { editionId: 77, workId: 3, title: "クトゥルフ・ホラーショウ" });
+  const d = deps();
+  const said = await writeEditionRow(db, d, 40, "クトゥルフ・ホラーショウ（新紀元社版）", fresh!, PUB_EDITION_NAMES, "tester");
+  assert.match(said, /付け替えた/);
+  assert.equal(d.calls.length, 0, "刊行物も条件も新しく作らない");
+  const moved = db.queries.find((q) => /UPDATE work_editions SET work_id/.test(q.text))!;
+  assert.deepEqual(moved.params, [77, 40]);
+});
