@@ -1169,6 +1169,154 @@ export class ConditionWriteService {
   }
 
   /** 条件1本の INSERT。トランザクションは呼ぶ側が持つ（セット登録・文書の決定から使う）。 */
+  /**
+   * すでにある委託料の条件（初版の利用許諾料を報酬として払う形。A-077）から、利用許諾条件（紙・電子）を立てる。
+   *
+   * 条件の登録（1 本）や『業務委託（発注）』では委託料と利用許諾条件を 1 回で作るが、編集画面で既存の委託料を
+   * in_lieu に直したときは利用許諾条件が無いままだった。ここで同じ形（licenseFeeBasis=in_lieu、初版の算定の
+   * 基礎は紙の 1 本、2 版目以降の非加算、対価を兼ねる対応 condition_fee_covers）で足す。
+   *
+   * 重複のガード：同じ 作品 × パート × 受注者 × 利用形態 の生きた条件（active／scheduled／draft）があれば作らず、
+   * それを existed=true で返す（二重に立てない）。初版の算定の基礎は、既にある紙の条件が持っていれば新しい本には入れない。
+   */
+  async createInLieuLicenses(
+    serviceConditionId: number,
+    input: {
+      rates: Array<{ usageType: ConditionUsageType; ratePct: number; exclusivity?: "exclusive" | "non_exclusive" | null }>;
+      exclusivity?: "exclusive" | "non_exclusive" | null;
+      exemptLaterPct?: number | null;
+      paymentTerms?: string | null;
+      /** 電子（pub_digital）だけの支払条件（集計期間の文。読めれば周期も入る）。 */
+      digitalPaymentTerms?: string | null;
+      termStart?: string | null; termEnd?: string | null;
+      autoRenew?: boolean | null; renewMonths?: number | null;
+      agreementId?: number | null;
+      sublicense?: SublicenseMode | null;
+      creditFromWork?: boolean | null; creditNotice?: string | null;
+      scopes?: ConditionScope[];
+    },
+    actor: string
+  ): Promise<{ licenseConditions: Array<{ usageType: ConditionUsageType; id: number; conditionNo: string | null; existed: boolean }> }> {
+    const rates = (input.rates ?? []).filter((r) => r && r.usageType);
+    if (!rates.length) throw new DomainError("VALIDATION", "2 版目以降・電子の料率（紙・電子 など）を 1 つ以上入れてください");
+    if (new Set(rates.map((r) => r.usageType)).size !== rates.length) {
+      throw new DomainError("VALIDATION", "同じ利用形態の料率が 2 回入っています");
+    }
+    for (const r of rates) {
+      if (!Number.isFinite(r.ratePct) || r.ratePct <= 0 || r.ratePct > 100) {
+        throw new DomainError("VALIDATION", `${conditionUsageLabel(r.usageType)}の料率は 0 より大きく 100% 以下で入れてください`);
+      }
+      if (input.sublicense === "no" && isSublicensingUsage(r.usageType)) {
+        throw new DomainError("VALIDATION", `再許諾を「不可」にしているので、${conditionUsageLabel(r.usageType)}の料率は入れられません`);
+      }
+    }
+    if (input.exemptLaterPct !== undefined && input.exemptLaterPct !== null && (input.exemptLaterPct < 0 || input.exemptLaterPct > 100)) {
+      throw new DomainError("VALIDATION", "2 版目以降の非加算の割合は 0〜100% で入れてください");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const found = await client.query(
+          `SELECT c.id, c.kind, c.direction, c.status, c.name, c.work_id, c.work_part_id, c.counterparty_id, c.agreement_id, c.currency,
+                  c.deliverable_ownership, c.reward_label, c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm,
+                  c.royalty_exempt_first_copies, c.confirm_within_days, c.price_basis, c.term_start, c.delivery_due,
+                  w.title AS work_title,
+                  (SELECT ml.matter_id FROM matter_links ml WHERE ml.target_type = 'condition' AND ml.target_ref = c.id::text
+                    ORDER BY ml.id LIMIT 1) AS matter_id,
+                  (SELECT s.pay_on FROM condition_schedules s WHERE s.condition_id = c.id ORDER BY s.seq LIMIT 1) AS pay_on
+             FROM conditions c LEFT JOIN works w ON w.id = c.work_id
+            WHERE c.id = $1 FOR UPDATE OF c`, [serviceConditionId]);
+        const c = found.rows[0] as Record<string, any> | undefined;
+        if (!c) throw new DomainError("NOT_FOUND", `条件 ${serviceConditionId} が見つかりません`);
+        if (String(c.kind) !== "service" || String(c.direction) !== "in") {
+          throw new DomainError("VALIDATION", "利用許諾条件を立てられるのは、取得側（IN）の委託料の条件だけです");
+        }
+        if (String(c.status) === "void") throw new DomainError("CONFLICT", "無効にした条件からは作れません");
+        if (!c.work_id) throw new DomainError("VALIDATION", "作品が付いていません。先に委託料の条件に作品を付けてください");
+        if (!c.counterparty_id) throw new DomainError("VALIDATION", "相手先（受注者）がありません");
+        if (String(c.deliverable_ownership ?? "") !== "contractor") {
+          throw new DomainError("VALIDATION", "成果物の帰属先が「受注者」ではありません。先に委託料の条件を直して保存してください");
+        }
+        if (String(c.reward_label ?? "") !== IN_LIEU_REWARD_LABEL) {
+          throw new DomainError("VALIDATION", "支払の形が「初版の利用許諾料を報酬として払う」ではありません。先に委託料の条件を直して保存してください");
+        }
+        const fe = { price: Number(c.first_edition_price ?? 0), copies: Number(c.first_edition_copies ?? 0),
+                     ratePct: Number(c.first_edition_rate_ppm ?? 0) / 10000, exemptCopies: Number(c.royalty_exempt_first_copies ?? 0) || null,
+                     priceBasis: (c.price_basis === "supply" || c.price_basis === "receipts" ? c.price_basis : null) as PriceBasis | null };
+        const receipts = fe.priceBasis === "receipts";
+        if (!(fe.price > 0) || !(receipts || fe.copies > 0) || !(fe.ratePct > 0)) {
+          throw new DomainError("VALIDATION", "初版の算定の基礎（見込みの本体価格・初版部数・料率）を委託料の条件に入れて保存してから作ってください");
+        }
+        const provisional = firstEditionFee({ ...fe, copies: receipts ? 1 : fe.copies, exemptCopies: receipts ? 0 : fe.exemptCopies ?? 0 });
+        const workId = Number(c.work_id), partId = c.work_part_id ? Number(c.work_part_id) : null;
+        const counterpartyId = Number(c.counterparty_id);
+        const workTitle = String(c.work_title ?? "");
+        const partName = partId
+          ? String(((await client.query("SELECT name FROM work_parts WHERE id = $1", [partId])).rows[0] as { name?: string } | undefined)?.name ?? "") || null
+          : null;
+        // 初版の算定の基礎を持つ紙の 1 本が既にあるか（あれば新しい本には入れない）。
+        const headExists = await client.query(
+          `SELECT 1 FROM conditions WHERE work_id = $1 AND counterparty_id = $2 AND direction = 'in' AND kind = 'license'
+             AND license_fee_basis = 'in_lieu' AND first_edition_price IS NOT NULL AND status IN ('active', 'scheduled', 'draft') LIMIT 1`,
+          [workId, counterpartyId]);
+        let headGiven = (headExists.rows.length ?? 0) > 0;
+        const out: Array<{ usageType: ConditionUsageType; id: number; conditionNo: string | null; existed: boolean }> = [];
+        const agreementId = input.agreementId === undefined ? (c.agreement_id ? Number(c.agreement_id) : null) : input.agreementId;
+        for (const rate of rates) {
+          // 重複のガード：同じ 作品 × パート × 受注者 × 利用形態 の生きた条件は作らない。
+          const existing = await client.query(
+            `SELECT id, condition_no FROM conditions
+              WHERE work_id = $1 AND counterparty_id = $2 AND direction = 'in' AND kind = 'license'
+                AND usage_type = $3 AND work_part_id IS NOT DISTINCT FROM $4
+                AND status IN ('active', 'scheduled', 'draft') LIMIT 1`,
+            [workId, counterpartyId, rate.usageType, partId]);
+          const hit = existing.rows[0] as { id: number; condition_no: string | null } | undefined;
+          if (hit) { out.push({ usageType: rate.usageType, id: Number(hit.id), conditionNo: hit.condition_no, existed: true }); continue; }
+          const head = !headGiven;
+          const one: ConditionInput = {
+            matterId: c.matter_id ? Number(c.matter_id) : null,
+            name: conditionNameFor({ workTitle, usageType: rate.usageType, partName }) ?? `${workTitle}｜利用許諾`,
+            direction: "in", kind: "license", counterpartyId, agreementId, workId, workPartId: partId,
+            usageType: rate.usageType, licenseFeeBasis: "in_lieu",
+            pricingModel: "revenue_rate", ratePpm: Math.round(rate.ratePct * 10000),
+            ...(head ? {
+              firstEditionPrice: Math.round(fe.price), firstEditionCopies: receipts ? 1 : Math.floor(fe.copies),
+              firstEditionRatePpm: Math.round(fe.ratePct * 10000),
+              royaltyExemptFirstCopies: fe.exemptCopies ? Math.floor(fe.exemptCopies) : null,
+              confirmWithinDays: c.confirm_within_days ? Number(c.confirm_within_days) : 45
+            } : {}),
+            priceBasis: fe.priceBasis,
+            royaltyExemptLaterPct: input.exemptLaterPct ?? null,
+            creditNotice: input.creditNotice ?? null, creditFromWork: input.creditFromWork ?? false,
+            paymentTerms: (rate.usageType === "pub_digital" ? String(input.digitalPaymentTerms ?? "").trim() : "") || String(input.paymentTerms ?? "").trim() || null,
+            // 電子の集計期間の文が読めれば、計算書の回の周期も入れる（時限式）。
+            ...(rate.usageType === "pub_digital" && readDigitalCycle(input.digitalPaymentTerms)
+              ? { settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(readDigitalCycle(input.digitalPaymentTerms)!.cycle) } : {}),
+            sublicensable: input.sublicense ? input.sublicense !== "no" : null,
+            sublicenseConsent: input.sublicense === "covered" ? "covered" : input.sublicense === "consent" ? "required" : null,
+            currency: String(c.currency ?? "JPY"),
+            termStart: input.termStart ?? dateStr(c.term_start) ?? null, termEnd: input.termEnd ?? null,
+            autoRenew: input.autoRenew ?? null, renewMonths: input.renewMonths ?? null,
+            exclusivity: rate.exclusivity ?? input.exclusivity ?? "non_exclusive",
+            scopes: input.scopes?.length ? input.scopes : undefined,
+            notes: `業務委託（${String(c.name ?? "")}）の成果物の利用許諾。初版の利用許諾料（仮計算 金${provisional.toLocaleString("ja-JP")}円）は委託料として支払い、受領後${c.confirm_within_days ? Number(c.confirm_within_days) : 45}日以内に確定。${c.pay_on ? `支払期日 ${dateStr(c.pay_on)}。` : ""}計算書の対象は 2 版目以降`
+          };
+          validateConditionInput(one);
+          const made = await this.createWithin(client, one, actor);
+          headGiven = headGiven || head;
+          out.push({ usageType: rate.usageType, ...made, existed: false });
+          await client.query(
+            `INSERT INTO condition_fee_covers (license_condition_id, service_condition_id)
+             VALUES ($1, $2) ON CONFLICT DO NOTHING`, [made.id, serviceConditionId]);
+        }
+        await recordAudit(client, {
+          actor, action: "condition.in_lieu_licenses", targetType: "condition", targetId: serviceConditionId,
+          detail: { created: out.filter((o) => !o.existed).map((o) => o.id), existed: out.filter((o) => o.existed).map((o) => o.id) }
+        });
+        return { licenseConditions: out };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async createWithin(client: Queryable, input: ConditionInput, actor: string)
     : Promise<{ id: number; conditionNo: string | null }> {
     const name = String(input.name ?? "").trim();

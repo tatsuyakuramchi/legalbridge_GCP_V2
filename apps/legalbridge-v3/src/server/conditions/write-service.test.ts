@@ -606,3 +606,57 @@ test("業務委託の明細：保証利用許諾料に代える（A-075）。行
     payment: { mode: "periodic", periodicFrom: "2026-11-01", periodicTo: "2027-01-31" } }, "a"), /定期払い/);
   await assert.rejects(() => svc.createServiceSet({ ...base, deliverableOwnership: "orderer", license }, "a"), /帰属先が受注者/);
 });
+
+test("既存の委託料（初版の利用許諾料を報酬として払う形）から利用許諾条件を立てる。同じ利用形態があれば作らない", async () => {
+  const service = {
+    id: 40, kind: "service", direction: "in", status: "active", name: "原稿制作", work_id: 5, work_part_id: null, counterparty_id: 3,
+    agreement_id: 8, currency: "JPY", deliverable_ownership: "contractor", reward_label: "初版利用許諾料",
+    first_edition_price: 3000, first_edition_copies: 3000, first_edition_rate_ppm: 71000, royalty_exempt_first_copies: 100,
+    confirm_within_days: 45, price_basis: null, term_start: "2026-10-30", delivery_due: "2026-10-01", work_title: "カルト・オブ・クトゥルフ",
+    matter_id: 77, pay_on: "2026-11-30"
+  };
+  const mk = (existingDigital: boolean) => {
+    const db: FakeDatabase = new FakeDatabase((t, params) => {
+      if (t.includes("FROM conditions c LEFT JOIN works w")) return [service];
+      if (t.includes("license_fee_basis = 'in_lieu' AND first_edition_price IS NOT NULL")) return [];
+      if (t.includes("usage_type = $3 AND work_part_id IS NOT DISTINCT FROM $4")) {
+        return existingDigital && params?.[2] === "pub_digital" ? [{ id: 99, condition_no: "CL-99" }] : [];
+      }
+      if (t.includes("FROM parties WHERE id = $1")) return [{ id: 3, name: "スタジオ・アーカム" }];
+      if (t.includes("FROM works WHERE id")) return [{ id: 5, title: "カルト・オブ・クトゥルフ" }];
+      if (t.includes("FROM matters WHERE id")) return [{ id: 77 }];
+      if (t.includes("current_value")) return [{ current_value: 1 }];
+      if (t.includes("INSERT INTO conditions")) return [{ id: 10 + db.all("INSERT INTO conditions").length, condition_no: "CL-x" }];
+      return [];
+    });
+    return db;
+  };
+  const db = mk(false);
+  const r = await new ConditionWriteService(db).createInLieuLicenses(40, {
+    rates: [{ usageType: "pub_print", ratePct: 7.1 }, { usageType: "pub_digital", ratePct: 42.5 }],
+    exclusivity: "exclusive", exemptLaterPct: 1, termStart: "2026-10-30", termEnd: "2029-10-29", autoRenew: true, renewMonths: 36
+  }, "a");
+  const inserts = db.all("INSERT INTO conditions").map((q) => q.params);
+  assert.equal(inserts.length, 2, "紙・電子の 2 本");
+  assert.equal(inserts[0][3], "license"); assert.equal(inserts[0][4], "カルト・オブ・クトゥルフ｜紙出版");
+  assert.equal(inserts[0][34], "in_lieu", "許諾料の扱い");
+  assert.ok(inserts[0].includes(3000) && inserts[0].includes(71000), "初版の算定の基礎は紙の 1 本が持つ");
+  assert.ok(!inserts[1].includes(71000), "電子には算定の基礎を入れない");
+  assert.deepEqual(r.licenseConditions.map((c) => [c.usageType, c.existed]), [["pub_print", false], ["pub_digital", false]]);
+  // 対価を兼ねる対応（発注書の「■ 利用許諾条件」の対象）。
+  assert.equal(db.all("INSERT INTO condition_fee_covers").length, 2);
+  assert.deepEqual(db.all("INSERT INTO condition_fee_covers")[0].params, [11, 40]);
+
+  // 電子が既にあれば紙だけ作る（二重に立てない）。
+  const db2 = mk(true);
+  const r2 = await new ConditionWriteService(db2).createInLieuLicenses(40, {
+    rates: [{ usageType: "pub_print", ratePct: 7.1 }, { usageType: "pub_digital", ratePct: 42.5 }]
+  }, "a");
+  assert.equal(db2.all("INSERT INTO conditions").length, 1);
+  assert.deepEqual(r2.licenseConditions.map((c) => [c.usageType, c.existed, c.id]), [["pub_print", false, 11], ["pub_digital", true, 99]]);
+
+  // 支払の形が in_lieu でない委託料からは作れない。
+  const db3 = new FakeDatabase((t) => t.includes("FROM conditions c LEFT JOIN works w") ? [{ ...service, reward_label: null }] : []);
+  await assert.rejects(() => new ConditionWriteService(db3).createInLieuLicenses(40, { rates: [{ usageType: "pub_print", ratePct: 7 }] }, "a"),
+    /初版の利用許諾料を報酬として払う/);
+});
