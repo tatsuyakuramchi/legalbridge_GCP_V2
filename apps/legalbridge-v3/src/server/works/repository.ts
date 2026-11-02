@@ -9,18 +9,27 @@ import { renewalOf } from "../conditions/renewal.js";
  * 取引先で作品を引く条件（作品台帳の検索キー）。作品に付いた生きた条件の相手先（作者・許諾先）、
  * 共著の取り分の権利者、刊行物・製品の版元・販売元のどれかが、名前・カナ・取引先コード・別名に当たる作品。
  * withEditions = false は刊行物の台帳（193）の無い DB 用。
+ *
+ * 当たる取引先を先に 1 回だけ求め（pm_hit）、その取引先を指す作品の集合に w.id が入るかで判定する。
+ * 作品の行ごとに取引先を舐め直す形（作品 × 取引先 × ILIKE）だと、本番の件数では 1 回の検索が
+ * 数秒かかり、接続プールを塞いで無関係な要求まで 5 秒待ちで落ちた。
  */
-const partyMatchSql = (w: string, withEditions: boolean) => `EXISTS (
-    SELECT 1 FROM parties pm
-     WHERE pm.status <> 'merged'
-       AND (pm.name ILIKE '%' || $1 || '%' OR COALESCE(pm.name_kana, '') ILIKE '%' || $1 || '%'
-            OR COALESCE(pm.party_code, '') ILIKE '%' || $1 || '%'
-            OR EXISTS (SELECT 1 FROM unnest(COALESCE(pm.aliases, '{}'::text[])) a WHERE a ILIKE '%' || $1 || '%'))
-       AND (EXISTS (SELECT 1 FROM conditions cm WHERE cm.work_id = ${w}.id AND cm.status <> 'void' AND cm.counterparty_id = pm.id)
-            OR EXISTS (SELECT 1 FROM condition_shares sm JOIN conditions cs ON cs.id = sm.condition_id
-                        WHERE cs.work_id = ${w}.id AND cs.status <> 'void' AND sm.party_id = pm.id)
-            ${withEditions ? `OR EXISTS (SELECT 1 FROM work_editions em
-                        WHERE em.work_id = ${w}.id AND em.status = 'active' AND em.publisher_party_id = pm.id)` : ""}))`;
+const partyMatchSql = (w: string, withEditions: boolean) => `${w}.id IN (
+    WITH pm_hit AS (
+      SELECT pm.id FROM parties pm
+       WHERE pm.status <> 'merged'
+         AND (pm.name ILIKE '%' || $1 || '%' OR COALESCE(pm.name_kana, '') ILIKE '%' || $1 || '%'
+              OR COALESCE(pm.party_code, '') ILIKE '%' || $1 || '%'
+              OR EXISTS (SELECT 1 FROM unnest(COALESCE(pm.aliases, '{}'::text[])) a WHERE a ILIKE '%' || $1 || '%'))
+    )
+    SELECT cm.work_id FROM conditions cm
+     WHERE cm.work_id IS NOT NULL AND cm.status <> 'void' AND cm.counterparty_id IN (SELECT id FROM pm_hit)
+    UNION
+    SELECT cs.work_id FROM condition_shares sm JOIN conditions cs ON cs.id = sm.condition_id
+     WHERE cs.work_id IS NOT NULL AND cs.status <> 'void' AND sm.party_id IN (SELECT id FROM pm_hit)
+    ${withEditions ? `UNION
+    SELECT em.work_id FROM work_editions em
+     WHERE em.status = 'active' AND em.publisher_party_id IN (SELECT id FROM pm_hit)` : ""})`;
 
 /** 刊行物の台帳（193）の無い DB では、刊行物の版元を除いて引き直す。 */
 async function withEditionsFallback<T>(run: (withEditions: boolean) => Promise<T>): Promise<T> {
