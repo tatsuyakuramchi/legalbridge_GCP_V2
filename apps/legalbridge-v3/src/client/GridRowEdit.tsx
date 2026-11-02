@@ -83,6 +83,9 @@ export function GridRowEdit(
   /** 支払を取り消したあと、試算をやり直す。 */
   const [nonce, setNonce] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /** 実績を取り消す：押した実績（2度目で実行）。 */
+  const [voiding, setVoiding] = useState<number | null>(null);
+  const [voidBlock, setVoidBlock] = useState<{ eventId: number; payments: ReturnType<typeof blockingPaymentsOf>; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -259,6 +262,20 @@ export function GridRowEdit(
     return () => clearTimeout(t);
   }, [focus, Boolean(head && lines)]);
 
+  /** 実績1件を取り消す（無効にする）。検収書に載っていれば断られる。支払が立っていれば PaymentBlock で先に取り消す。 */
+  async function voidEvent(e: EventLine) {
+    if (!reason.trim()) { setError("直す理由（取り消しの理由）を入れてください"); return; }
+    setBusy(true); setError(null); setVoidBlock(null);
+    try {
+      await api.post(`/conditions/${row.conditionId}/events/${e.id}/void`, { reason: reason.trim() });
+      onDone(`${row.conditionNo ?? `#${row.conditionId}`} の実績（${e.occurredOn ?? "日付なし"}・${yen(e.amount)}）を取り消しました`);
+    } catch (err) {
+      const blocked = blockingPaymentsOf(err);
+      if (blocked) setVoidBlock({ eventId: e.id, payments: blocked, message: (err as ApiError).message });
+      else setError((err as ApiError).message);
+    } finally { setBusy(false); setVoiding(null); }
+  }
+
   async function save() {
     if (!body || !Object.keys(body).length) { setError("直した欄がありません"); return; }
     setBusy(true); setError(null);
@@ -365,7 +382,22 @@ export function GridRowEdit(
                     {p && payLine(p)}
                     {cancelling && <span className="chip chg">支払を取り消して作り直す</span>}
                     {locked && <span className="chip stop">支払済み：金額は直せません</span>}
+                    {!locked && (
+                      <span style={{ marginLeft: "auto" }} className="row" title={d ? `${d.documentNo ?? `#${d.id}`} に載っているので取り消せません。先にその文書を無効にしてください` : "この実績を無効にします（理由は下の欄）"}>
+                        {voiding === e.id
+                          ? <>
+                              <span className="faint">この実績を取り消しますか？</span>
+                              <button className="btn btn-sm danger" disabled={busy || !reason.trim()} onClick={() => void voidEvent(e)}>取り消す</button>
+                              <button className="btn btn-sm" onClick={() => setVoiding(null)}>やめる</button>
+                            </>
+                          : <button className="linky" disabled={Boolean(d) || busy} onClick={() => { setVoiding(e.id); setError(null); }}>この実績を取り消す</button>}
+                      </span>
+                    )}
                   </div>
+                  {voidBlock?.eventId === e.id && voidBlock.payments && (
+                    <PaymentBlock payments={voidBlock.payments} message={voidBlock.message} defaultReason={reason.trim() || undefined}
+                                  onCanceled={() => voidEvent(e)} />
+                  )}
                   <div className="fix-round-bd">
                     <label className="field"><span>検収数量</span>
                       <input className={edited(`evq${e.id}`, e.quantity)} inputMode="decimal" disabled={locked} value={v[`evq${e.id}`] ?? ""}

@@ -77,6 +77,18 @@ test("計算書から作られた実績は取り消せない（片方だけ消�
   assert.equal(database.find("UPDATE condition_events"), undefined);
 });
 
+test("支払が立っている実績は取り消せない（先に支払を取り消す。止めた支払を返す）", async () => {
+  const database = db({
+    "FROM condition_events e": [{ id: 5, status: "active", amount: 100, document_id: null }],
+    "FROM payment_allocations a JOIN payments p": [{ id: 9, payment_no: "PY-9", status: "planned", amount: 100, due_on: null, paid_on: null }]
+  });
+  await assert.rejects(
+    () => new ConditionEventService(database).void(1, 5, "入力ミス", "a"),
+    (e: { message: string; detail?: { blockingPayments?: Array<{ id: number }> } }) =>
+      /支払 PY-9 が立っています/.test(e.message) && e.detail?.blockingPayments?.[0]?.id === 9);
+  assert.equal(database.find("UPDATE condition_events"), undefined);
+});
+
 test("取り消し済みを二度取り消さない", async () => {
   const database = db({ "FROM condition_events e": [{ id: 5, status: "void", amount: 100, document_id: null }] });
   await assert.rejects(
