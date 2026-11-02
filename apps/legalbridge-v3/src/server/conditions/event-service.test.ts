@@ -89,6 +89,16 @@ test("支払が立っている実績は取り消せない（先に支払を取�
   assert.equal(database.find("UPDATE condition_events"), undefined);
 });
 
+test("改訂した条件（-R2）からでも、旧版に残る実績を直せる・取り消せる（系列で当てる）", async () => {
+  // 改訂すると条件は新しい版になり、実績は元の版に付いたまま残る。条件の id で当てると
+  // 「実績が見つかりません」になる（実際に起きた）。
+  const database = db({ "FROM condition_events e": [{ id: 5, status: "active", amount: 100, document_id: null }] });
+  await new ConditionEventService(database).void(99, 5, "重複", "a");
+  const q = database.find("FROM condition_events e")!;
+  assert.match(q.text, /COALESCE\(x\.series_id, x\.id\) = COALESCE\(c\.series_id, c\.id\)/);
+  assert.deepEqual(q.params, [5, 99]);
+});
+
 test("取り消し済みを二度取り消さない", async () => {
   const database = db({ "FROM condition_events e": [{ id: 5, status: "void", amount: 100, document_id: null }] });
   await assert.rejects(
