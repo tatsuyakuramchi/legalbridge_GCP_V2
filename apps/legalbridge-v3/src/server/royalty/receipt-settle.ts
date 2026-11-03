@@ -9,6 +9,7 @@ import { loadDistribution, loadShares } from "./shares.js";
 import { WORK_LINEAGE_UP_SQL } from "./ledger-service.js";
 import { ppmToPct } from "./economics.js";
 import { coveringIns } from "./receipts.js";
+import { inContractRef } from "./in-contract.js";
 
 /**
  * 入金から計算書（支払文書 › 入金から計算書）。
@@ -39,6 +40,11 @@ export interface SettleAuthor {
   estimate: number | null;
   /** 共著の取り分（当社が各人に払う）の受取人。空なら相手先 1 枚。 */
   payees: Array<{ partyId: number; partyName: string }>;
+  /**
+   * 計算書の「対象契約」「契約番号」に自動で出る作者側の契約（基本契約 / 個別契約）。
+   * 両方空なら紙は「契約未指定」。画面で 基本契約・個別契約番号 を選んで直せる（contracts）。
+   */
+  contract: { title: string; number: string };
 }
 
 export interface SettlePreview {
@@ -73,6 +79,7 @@ export interface SettleInput {
   note?: string | null;
   /** 作者（IN 条件）。空なら効く作者ぜんぶ。 */
   authors?: number[] | null;
+  contracts?: AuthorContractChoice[] | null;
   /** 下書きで止める（決定しない。文書の画面で確かめて決定する）。 */
   draftOnly?: boolean | null;
   /** 計算書を決定したら作者への支払も立てる。 */
@@ -81,9 +88,17 @@ export interface SettleInput {
 }
 
 /** 複数の入金をまとめて 1 枚に（前金と後金、別の取引先）。作者ごとに、全部の入金の報告を 1 枚の計算書に並べる。 */
+/** 作者（IN 条件）ごとの契約の選び直し。文書フォームの 基本契約・個別契約番号 と同じ。 */
+export interface AuthorContractChoice {
+  conditionId: number;
+  agreementId?: number | null;
+  termsNo?: string | null;
+}
+
 export interface SettleManyInput {
   receipts: SettleInput[];
   authors?: number[] | null;
+  contracts?: AuthorContractChoice[] | null;
   draftOnly?: boolean | null;
   withPayment?: boolean | null;
   dueOn?: string | null;
@@ -152,6 +167,19 @@ export class ReceiptSettleService {
       workId: int(r.work_id), workTitle: str(r.work_title),
       languages: strip(r.languages, "全言語"), regions: strip(r.regions, "全世界")
     };
+  }
+
+  /** 自動で出る作者側の契約（受取人が 1 人ならその人宛て、複数なら相手先宛てで代表させる）。 */
+  private async contractOf(conditionId: number, payees: SettleAuthor["payees"]): Promise<SettleAuthor["contract"]> {
+    try {
+      const ref = await inContractRef(this.database, conditionId, { payeePartyId: payees.length === 1 ? payees[0].partyId : null });
+      return { title: ref.title, number: ref.number };
+    } catch { return { title: "", number: "" }; }
+  }
+
+  private async payeeAndContract(conditionId: number): Promise<Pick<SettleAuthor, "payees" | "contract">> {
+    const payees = await this.payeesOf(conditionId);
+    return { payees, contract: await this.contractOf(conditionId, payees) };
   }
 
   private async payeesOf(conditionId: number): Promise<SettleAuthor["payees"]> {
@@ -300,7 +328,7 @@ export class ReceiptSettleService {
           state: x.state, reportCount: x.reports.length,
           documents: x.reports.flatMap((e) => e.documents ?? (e.documentId ? [{ id: e.documentId, documentNo: e.documentNo }] : []))
             .filter((d, i, a) => a.findIndex((y) => y.id === d.id) === i),
-          estimate: estimateOf(amount, x.ratePct), payees: await this.payeesOf(x.conditionId)
+          estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId))
         })));
       } else {
         const found = await this.deps.receipts.authorsFor(outId);
@@ -311,7 +339,7 @@ export class ReceiptSettleService {
           conditionId: x.conditionId, conditionNo: x.conditionNo, name: x.name, partyId: x.partyId, partyName: x.partyName,
           workId: x.workId, workTitle: x.workTitle, ratePct: x.ratePct, targeted: Boolean(x.targetPartyId),
           state: "unreported", reportCount: 0, documents: [],
-          estimate: estimateOf(amount, x.ratePct), payees: await this.payeesOf(x.conditionId)
+          estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId))
         })));
       }
       if (!authors.length) {
@@ -346,7 +374,7 @@ export class ReceiptSettleService {
       conditionId: x.conditionId, conditionNo: x.conditionNo, name: x.name, partyId: x.partyId, partyName: x.partyName,
       workId: x.workId, workTitle: x.workTitle, ratePct: x.ratePct, targeted: false,
       state: "unreported", reportCount: 0, documents: [],
-      estimate: estimateOf(amount, x.ratePct), payees: await this.payeesOf(x.conditionId)
+      estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId))
     })));
     if (!authors.length) blockers.push("この作品（とその元の作品）に、自社製造・自社販売の作者の条件（IN）が見つかりません");
     notes.push("自社製造・自社販売は当社の売上なので入金は記録しません。数量 × 基準価格（税抜）から作者の報告を起こします");
@@ -390,7 +418,7 @@ export class ReceiptSettleService {
 
   /** 実行：入金の記録 → 報告 → 計算書 → 支払（入金 1 件）。 */
   async settle(input: SettleInput, actor: string): Promise<SettleResult> {
-    return this.settleMany({ receipts: [input], authors: input.authors, draftOnly: input.draftOnly,
+    return this.settleMany({ receipts: [input], authors: input.authors, contracts: input.contracts, draftOnly: input.draftOnly,
                              withPayment: input.withPayment, dueOn: input.dueOn }, actor);
   }
 
@@ -576,7 +604,8 @@ export class ReceiptSettleService {
 
   /** 作者 1 人（受取人ごと）の計算書と支払。 */
   private async issueFor(a: SettleAuthor, eventIds: number[], issuedOn: string,
-                         input: { draftOnly?: boolean | null; withPayment?: boolean | null; dueOn?: string | null }, actor: string): Promise<SettleResultRow[]> {
+                         input: { draftOnly?: boolean | null; withPayment?: boolean | null; dueOn?: string | null;
+                                  contracts?: AuthorContractChoice[] | null }, actor: string): Promise<SettleResultRow[]> {
     const payees: Array<{ partyId: number | null; partyName: string | null }> = a.payees.length ? a.payees : [{ partyId: null, partyName: null }];
     const out: SettleResultRow[] = [];
     for (const payee of payees) {
@@ -586,11 +615,18 @@ export class ReceiptSettleService {
       };
       try {
         const entry = { conditionId: a.conditionId, eventIds, payeePartyId: payee.partyId };
+        // 契約の選び直し（基本契約・個別契約番号）。文書フォームの agreementId・_termsNo と同じ渡し方。
+        const choice = (input.contracts ?? []).find((c) => c.conditionId === a.conditionId);
+        const termsNo = String(choice?.termsNo ?? "").trim();
+        const chosen = {
+          agreementId: choice?.agreementId ?? null,
+          manualInputs: termsNo ? { _termsNo: termsNo } : {}
+        };
         if (input.draftOnly) {
-          const d = await this.deps.issuer.draft({ entries: [entry] }, actor);
+          const d = await this.deps.issuer.draft({ entries: [entry], ...chosen }, actor);
           row.documentId = d.id; row.draft = true;
         } else {
-          const made = await this.deps.issuer.issue({ entries: [entry], issuedOn }, actor);
+          const made = await this.deps.issuer.issue({ entries: [entry], issuedOn, ...chosen }, actor);
           row.documentId = made.document.id; row.documentNo = made.document.documentNo;
           if (input.withPayment !== false) {
             try {

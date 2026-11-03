@@ -30,7 +30,13 @@ interface Author { conditionId: number; conditionNo: string | null; name: string
   workId: number | null; workTitle: string | null; ratePct: number | null; targeted: boolean;
   state: "unreported" | "mismatch" | "waiting" | "issued"; reportCount: number;
   documents: Array<{ id: number; documentNo: string | null }>; estimate: number | null;
-  payees: Array<{ partyId: number; partyName: string }>; receiptCount: number }
+  payees: Array<{ partyId: number; partyName: string }>; receiptCount: number;
+  /** 紙の「対象契約」「契約番号」に自動で出る作者側の契約。両方空なら「契約未指定」。 */
+  contract: { title: string; number: string } }
+/** 作者の契約の候補（文書フォームの 基本契約・個別契約番号 と同じ引き方）。 */
+interface AuthorRefs { masters: Array<{ id: number; agreementNo: string | null; datedTitle: string; primary: boolean; status: string }>;
+  terms: Array<{ id: number; documentNo: string; title: string; label: string; issuedOn: string | null }> }
+interface ContractChoice { agreementId: number | null; termsNo: string }
 interface OnePreview { mode: "receipt" | "in_house"; paymentId: number | null; paymentNo: string | null; paidOn: string | null;
   amount: number | null; currency: string; outConditionId: number | null; outName: string | null; usageLabel: string;
   licenseeName: string | null; workId: number | null; workTitle: string | null; languages: string[];
@@ -75,6 +81,9 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   const [dueOn, setDueOn] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [picked, setPicked] = useState<number[]>([]);
+  /** 作者ごとの契約の候補と、選び直し。 */
+  const [refs, setRefs] = useState<Record<number, AuthorRefs | null>>({});
+  const [contracts, setContracts] = useState<Record<number, ContractChoice>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
@@ -90,7 +99,17 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
     if (!bodies.length) return;
     let live = true;
     api.post<Preview>("/royalty-settle/preview", { receipts: bodies })
-      .then((p) => { if (!live) return; setPreview(p); setPicked(p.authors.filter((a) => a.state !== "issued").map((a) => a.conditionId)); })
+      .then((p) => {
+        if (!live) return;
+        setPreview(p); setPicked(p.authors.filter((a) => a.state !== "issued").map((a) => a.conditionId));
+        // 作者ごとの契約の候補（基本契約・個別契約番号）。紙が「契約未指定」になる作者はここで選ぶ。
+        for (const a of p.authors) {
+          if (refs[a.conditionId] !== undefined) continue;
+          api.get<AuthorRefs>(`/agreement-map/parties/${a.partyId}/document-refs?conditionIds=${a.conditionId}`)
+            .then((r) => setRefs((cur) => ({ ...cur, [a.conditionId]: { masters: r.masters, terms: r.terms } })))
+            .catch(() => setRefs((cur) => ({ ...cur, [a.conditionId]: null })));
+        }
+      })
       .catch((e: ApiError) => { if (live) setError(e.message); });
     return () => { live = false; };
   }, [previewKey]);
@@ -106,7 +125,10 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
     if (!confirm(`${head} から、作者 ${picked.length} 人の報告を起こし、${what}。${ordered.length > 1 ? `入金 ${ordered.length} 件は作者ごとに 1 枚の計算書にまとめます。` : ""}よろしいですか？`)) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.post<Result>("/royalty-settle", { receipts: bodies, authors: picked, draftOnly, withPayment, dueOn: dueOn || null });
+      const chosen = Object.entries(contracts)
+        .filter(([, c]) => c.agreementId || c.termsNo)
+        .map(([id, c]) => ({ conditionId: Number(id), agreementId: c.agreementId, termsNo: c.termsNo || null }));
+      const r = await api.post<Result>("/royalty-settle", { receipts: bodies, authors: picked, contracts: chosen, draftOnly, withPayment, dueOn: dueOn || null });
       setResult(r);
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -153,7 +175,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
             {preview.notes.map((n) => <div key={n} className="note">{n}</div>)}
             {preview.authors.length > 0 && (
               <table className="table">
-                <thead><tr><th></th><th>作者</th><th>IN 条件</th><th>料率</th><th className="num">見込み額</th><th>状態</th><th>計算書</th></tr></thead>
+                <thead><tr><th></th><th>作者</th><th>IN 条件</th><th>料率</th><th className="num">見込み額</th><th>対象契約（紙に出る契約）</th><th>状態</th><th>計算書</th></tr></thead>
                 <tbody>
                   {preview.authors.map((a) => {
                     const s = STATE[a.state];
@@ -169,6 +191,10 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
                         <td>{link(a.conditionId, a.conditionNo ?? `#${a.conditionId}`)}{a.workTitle ? <div className="faint">{a.workTitle}</div> : null}</td>
                         <td>{a.ratePct === null ? "—" : `${a.ratePct}%`}</td>
                         <td className="num">{a.estimate === null ? "—" : money(a.estimate, "JPY")}</td>
+                        <td>
+                          <ContractCell a={a} refs={refs[a.conditionId]} value={contracts[a.conditionId] ?? { agreementId: null, termsNo: "" }}
+                                        onChange={(c) => setContracts((cur) => ({ ...cur, [a.conditionId]: c }))} />
+                        </td>
                         <td><span className={`tag ${s.tag}`}>{s.label}</span>{a.reportCount ? <span className="faint"> 報告 {a.reportCount}</span> : null}</td>
                         <td>{a.documents.map((d) => onOpenDocument
                           ? <div key={d.id}><button className="linky code" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? `#${d.id}`}</button></div>
@@ -450,6 +476,47 @@ function ReceiptCard({ index, count, link, onChange, onRemove }: {
           <input className="inline-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="備考（計算書の備考に載る。例：前金 50%）" style={{ minWidth: 260 }} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 作者 1 人の「対象契約」。自動で出る契約（条件に付いた基本契約・決定済みの条件書）を見せ、
+ * 無ければ「契約未指定」。基本契約・個別契約番号 を選ぶと紙の「対象契約」「契約番号」に出る。
+ */
+function ContractCell({ a, refs, value, onChange }: {
+  a: Author; refs: AuthorRefs | null | undefined; value: ContractChoice; onChange: (c: ContractChoice) => void;
+}) {
+  const master = refs?.masters.find((m) => m.id === value.agreementId) ?? null;
+  const auto = a.contract.title || a.contract.number;
+  const shown = value.agreementId || value.termsNo
+    ? [master?.datedTitle, value.termsNo].filter(Boolean).join(" / ")
+    : auto ? [a.contract.title, a.contract.number].filter(Boolean).join("　") : null;
+  return (
+    <div className="stack" style={{ gap: 3 }}>
+      {shown ? <span>{shown}</span> : <span className="warn">契約未指定（下で選ぶ）</span>}
+      {refs === undefined && <span className="faint">候補を読み込み中…</span>}
+      {refs && (
+        <span className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+          <select className="inline-input" style={{ width: "auto", maxWidth: 260 }} aria-label={`${a.partyName} の基本契約`}
+                  value={value.agreementId ?? ""} onChange={(e) => onChange({ ...value, agreementId: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">{a.contract.title ? "基本契約は自動（条件の契約）" : "基本契約なし"}</option>
+            {refs.masters.map((m) => (
+              <option key={m.id} value={m.id}>{m.primary ? "★ " : ""}{m.datedTitle}{m.agreementNo ? `（${m.agreementNo}）` : ""}{m.status !== "executed" ? "［未締結］" : ""}</option>
+            ))}
+          </select>
+          <select className="inline-input" style={{ width: "auto", maxWidth: 260 }} aria-label={`${a.partyName} の個別契約番号`}
+                  value={value.termsNo} onChange={(e) => onChange({ ...value, termsNo: e.target.value })}>
+            <option value="">{a.contract.number ? `個別契約は自動（${a.contract.number}）` : "個別契約なし"}</option>
+            {refs.terms.map((t) => (
+              <option key={t.id} value={t.documentNo}>{t.documentNo}　{t.label}{t.title ? `：${t.title}` : ""}{t.issuedOn ? `（${t.issuedOn}）` : ""}</option>
+            ))}
+          </select>
+        </span>
+      )}
+      {refs && !refs.masters.length && !refs.terms.length && !auto && (
+        <span className="faint">この作者に契約（基本契約・条件書）が登録されていません。契約 › 取引先⇔基本契約 で登録するか、条件明細の「契約の紐づけ」で付けてください</span>
+      )}
     </div>
   );
 }
