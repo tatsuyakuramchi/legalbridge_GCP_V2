@@ -114,11 +114,18 @@ export class StatementIssuer {
     return r.rows[0] ? PUB_STATEMENT_KEY : key;
   }
 
-  async issue(input: IssueStatementInput, actor: string): Promise<{
-    document: Awaited<ReturnType<DocumentIssueService["issue"]>>;
-    statements: Awaited<ReturnType<RoyaltyStatementService["finalizeAll"]>>;
-    totals: BundleTotals; lines: BundleLine[]; templateKey: string;
+  /**
+   * 試算 → 行を焼き付けた下書き、まで（決定しない）。issue() の前半。
+   * 「入金から計算書」の下書きで止める、が使う。決定は文書の画面から（決定すると実績が結ばれる）。
+   */
+  async draft(input: IssueStatementInput, actor: string): Promise<{
+    id: number; totals: BundleTotals; lines: BundleLine[]; templateKey: string;
   }> {
+    const made = await this.prepare(input, actor);
+    return { id: made.draft.id, totals: made.totals, lines: made.lines, templateKey: made.templateKey };
+  }
+
+  private async prepare(input: IssueStatementInput, actor: string) {
     const supersedes = [...new Set(input.supersedes ?? [])];
     if (supersedes.length && !String(input.reason ?? "").trim()) {
       throw new DomainError("VALIDATION", "訂正版を出す理由を書いてください");
@@ -163,6 +170,15 @@ export class StatementIssuer {
       supersedeReason: input.reason ?? null
     }, actor);
 
+    return { draft, supersedes, previews, totals, lines, templateKey, eventIds };
+  }
+
+  async issue(input: IssueStatementInput, actor: string): Promise<{
+    document: Awaited<ReturnType<DocumentIssueService["issue"]>>;
+    statements: Awaited<ReturnType<RoyaltyStatementService["finalizeAll"]>>;
+    totals: BundleTotals; lines: BundleLine[]; templateKey: string;
+  }> {
+    const { draft, supersedes, totals, lines, templateKey, eventIds } = await this.prepare(input, actor);
     let document;
     try {
       document = await this.deps.issues.issue(draft.id, actor, { eventIds, issuedOn: input.issuedOn ?? null });

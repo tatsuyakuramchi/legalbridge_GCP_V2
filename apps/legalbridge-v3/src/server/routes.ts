@@ -76,6 +76,7 @@ import { RoyaltyStatementService } from "./royalty/statement-service.js";
 import { RoyaltyLedgerService, WORK_LINEAGE_UP_SQL } from "./royalty/ledger-service.js";
 import { RoundOverviewService } from "./royalty/round-overview.js";
 import { RoyaltyReceiptService } from "./royalty/receipts.js";
+import { ReceiptSettleService } from "./royalty/receipt-settle.js";
 import { WorkRightsFlowService } from "./works/rights-flow.js";
 import { WorkStructureCheckService } from "./works/structure-check.js";
 import { EDITION_RELATIONS, WorkEditionService, type EditionRelation } from "./works/editions.js";
@@ -3296,6 +3297,43 @@ export function createRoutes(database: Transactable) {
     }).parse(req.query);
     res.json(await royaltyReceipts.list(input));
   }));
+  // 入金から計算書（支払文書 › 入金から計算書）。入金の記録 → 報告 → 計算書 → 支払 を 1 回で（royalty/receipt-settle.ts）。
+  const receiptSettle = new ReceiptSettleService(database, {
+    receipts: royaltyReceipts, payments, issuer: statementIssuer, events: conditionEvents
+  });
+  const settleSchema = z.object({
+    paymentId: z.coerce.number().int().positive().nullable().optional(),
+    outConditionId: z.coerce.number().int().positive().nullable().optional(),
+    workId: z.coerce.number().int().positive().nullable().optional(),
+    usageType: z.enum(["sublicense", "oem", "in_house"]).nullable().optional(),
+    amount: z.coerce.number().int().min(0).nullable().optional(),
+    quantity: z.coerce.number().min(0).nullable().optional(),
+    unitAmount: z.coerce.number().int().min(0).nullable().optional(),
+    sampleQuantity: z.coerce.number().min(0).nullable().optional(),
+    paidOn: z.string().date().nullable().optional(),
+    taxIncluded: z.coerce.boolean().nullable().optional(),
+    paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
+    languages: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
+    regions: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
+    note: z.string().trim().max(2000).nullable().optional(),
+    authors: z.array(z.coerce.number().int().positive()).max(30).nullable().optional(),
+    draftOnly: z.coerce.boolean().nullable().optional(),
+    withPayment: z.coerce.boolean().nullable().optional(),
+    dueOn: z.string().date().nullable().optional()
+  });
+  router.get("/royalty-settle/licensees", asyncRoute(async (req, res) => {
+    res.json({ parties: await receiptSettle.licensees(String(req.query.q ?? "")) });
+  }));
+  router.get("/royalty-settle/outs", asyncRoute(async (req, res) => {
+    const { partyId } = z.object({ partyId: z.coerce.number().int().positive() }).parse(req.query);
+    res.json(await receiptSettle.outsOf(partyId));
+  }));
+  router.post("/royalty-settle/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    res.json(await receiptSettle.preview(settleSchema.parse(req.body ?? {})));
+  }));
+  router.post("/royalty-settle", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    res.status(201).json(await receiptSettle.settle(settleSchema.parse(req.body ?? {}), actor(res)));
+  }));
   router.post("/royalty-receipts/reports", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({
@@ -3304,6 +3342,9 @@ export function createRoutes(database: Transactable) {
         entries: z.array(z.object({
           conditionId: z.coerce.number().int().positive(),
           grossAmount: z.coerce.number().int().positive().nullable().optional(),
+          quantity: z.coerce.number().min(0).nullable().optional(),
+          unitAmount: z.coerce.number().int().min(0).nullable().optional(),
+          sampleQuantity: z.coerce.number().min(0).nullable().optional(),
           taxIncluded: z.boolean().nullable().optional(),
           paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
           languages: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
