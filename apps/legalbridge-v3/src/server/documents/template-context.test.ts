@@ -1352,3 +1352,16 @@ test("検収書の行の支払日：実績に支払が立っていれば、行�
   }) as Record<string, any>;
   assert.equal(typed.delivery_line_items[0].payment_date, "2026-12-05");
 });
+
+test("検収書の行の単価：条件の単価 × 数量 が実績の金額と合わなければ、金額 ÷ 数量（金額が正）", () => {
+  const lines = deliveryLinesFrom(ctx({
+    conditions: [condition({ id: 1, unitAmount: 140000, pricingModel: "fixed", flatAmount: 780000 })],
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-09-28", quantity: 1, amount: 780000 }]
+  })) as Array<Record<string, any>>;
+  assert.equal(lines[0].unit_price, 780000, "単価 ¥140,000 × 1 ＝ ¥780,000 と刷らない");
+  const ok = deliveryLinesFrom(ctx({
+    conditions: [condition({ id: 1, unitAmount: 2500 })],
+    events: [{ id: 9, conditionId: 1, occurredOn: "2026-09-28", quantity: 87, amount: 217500 }]
+  })) as Array<Record<string, any>>;
+  assert.equal(ok[0].unit_price, 2500, "合っていれば条件の単価");
+});
