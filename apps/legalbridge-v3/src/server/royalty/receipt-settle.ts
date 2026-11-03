@@ -11,6 +11,7 @@ import { WORK_LINEAGE_UP_SQL } from "./ledger-service.js";
 import { ppmToPct } from "./economics.js";
 import { coveringIns } from "./receipts.js";
 import { inContractRef } from "./in-contract.js";
+import { payDateFromDelivery, payDateFromTerms } from "../conditions/payment-terms.js";
 
 /**
  * 入金から計算書（支払文書 › 入金から計算書）。
@@ -46,6 +47,11 @@ export interface SettleAuthor {
    * 両方空なら紙は「契約未指定」。画面で 基本契約・個別契約番号 を選んで直せる（contracts）。
    */
   contract: { title: string; number: string };
+  /**
+   * 自動の支払期日：入金日を起点に、作者の条件の支払条件（個人は 20 日）から。無ければ納品日からの既定。
+   * 画面の「支払期日」が空ならこれが計算書の支払予定日と支払の期日になる（下書きにも入る）。
+   */
+  dueOn: string | null;
 }
 
 export interface SettlePreview {
@@ -181,9 +187,14 @@ export class ReceiptSettleService {
     } catch { return { title: "", number: "" }; }
   }
 
-  private async payeeAndContract(conditionId: number): Promise<Pick<SettleAuthor, "payees" | "contract">> {
+  private async payeeAndContract(conditionId: number, basisOn: string | null = null): Promise<Pick<SettleAuthor, "payees" | "contract" | "dueOn">> {
     const payees = await this.payeesOf(conditionId);
-    return { payees, contract: await this.contractOf(conditionId, payees) };
+    const r = (await this.database.query(
+      `SELECT c.payment_terms, p.kind AS party_kind FROM conditions c LEFT JOIN parties p ON p.id = c.counterparty_id WHERE c.id = $1`,
+      [conditionId])).rows[0] as { payment_terms?: string | null; party_kind?: string | null } | undefined;
+    const basis = basisOn ?? today();
+    const dueOn = payDateFromTerms(basis, r?.payment_terms ?? null, r?.party_kind ?? null) ?? payDateFromDelivery(basis, r?.party_kind ?? null);
+    return { payees, contract: await this.contractOf(conditionId, payees), dueOn };
   }
 
   private async payeesOf(conditionId: number): Promise<SettleAuthor["payees"]> {
@@ -342,7 +353,7 @@ export class ReceiptSettleService {
           state: x.state, reportCount: x.reports.length,
           documents: x.reports.flatMap((e) => e.documents ?? (e.documentId ? [{ id: e.documentId, documentNo: e.documentNo }] : []))
             .filter((d, i, a) => a.findIndex((y) => y.id === d.id) === i),
-          estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId))
+          estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId, receipt?.paidOn ?? input.paidOn ?? null))
         })));
       } else {
         const found = await this.deps.receipts.authorsFor(outId, head.usageType);
@@ -353,7 +364,7 @@ export class ReceiptSettleService {
           conditionId: x.conditionId, conditionNo: x.conditionNo, name: x.name, partyId: x.partyId, partyName: x.partyName,
           workId: x.workId, workTitle: x.workTitle, ratePct: x.ratePct, targeted: Boolean(x.targetPartyId),
           state: "unreported", reportCount: 0, documents: [],
-          estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId))
+          estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId, input.paidOn ?? null))
         })));
       }
       if (!authors.length) {
@@ -388,7 +399,7 @@ export class ReceiptSettleService {
       conditionId: x.conditionId, conditionNo: x.conditionNo, name: x.name, partyId: x.partyId, partyName: x.partyName,
       workId: x.workId, workTitle: x.workTitle, ratePct: x.ratePct, targeted: false,
       state: "unreported", reportCount: 0, documents: [],
-      estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId))
+      estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId, input.paidOn ?? null))
     })));
     if (!authors.length) blockers.push("この作品（とその元の作品）に、自社製造・自社販売の作者の条件（IN）が見つかりません");
     notes.push("自社製造・自社販売は当社の売上なので入金は記録しません。数量 × 基準価格（税抜）から作者の報告を起こします");
@@ -418,6 +429,7 @@ export class ReceiptSettleService {
           cur.documents = [...cur.documents, ...a.documents].filter((d, i, arr) => arr.findIndex((y) => y.id === d.id) === i);
           // 1 件でもまだの入金があれば、その作者は「まだ」。
           if (stateRank[a.state] < stateRank[cur.state]) cur.state = a.state;
+          if (a.dueOn && (!cur.dueOn || a.dueOn > cur.dueOn)) cur.dueOn = a.dueOn;
         }
       }
       const notes = [...new Set(receipts.flatMap((p) => p.notes))];
@@ -642,9 +654,14 @@ export class ReceiptSettleService {
         const choice = (input.contracts ?? []).find((c) => c.conditionId === a.conditionId);
         const termsNo = String(choice?.termsNo ?? "").trim();
         const notes = String(input.statementNotes ?? "").trim();
+        // 支払予定日：画面の支払期日 → 作者の自動の期日。紙に焼き付け、支払の期日も同じにする（下書きにも入る）。
+        const dueOn = String(input.dueOn ?? "").trim() || a.dueOn || null;
         const chosen = {
           agreementId: choice?.agreementId ?? null,
-          manualInputs: { ...(termsNo ? { _termsNo: termsNo } : {}), ...(notes ? { notes } : {}) }
+          manualInputs: {
+            ...(termsNo ? { _termsNo: termsNo } : {}), ...(notes ? { notes } : {}),
+            ...(dueOn ? { PAYMENT_DATE: dueOn, paymentDueDate: dueOn, 支払期日: dueOn } : {})
+          }
         };
         if (input.draftOnly) {
           const d = await this.deps.issuer.draft({ entries: [entry], ...chosen }, actor);
@@ -654,7 +671,7 @@ export class ReceiptSettleService {
           row.documentId = made.document.id; row.documentNo = made.document.documentNo;
           if (input.withPayment !== false) {
             try {
-              const pay = await this.deps.payments.createFromStatementDocument(made.document.id, actor, { dueOn: input.dueOn ?? undefined });
+              const pay = await this.deps.payments.createFromStatementDocument(made.document.id, actor, { dueOn: dueOn ?? undefined });
               row.paymentId = Number((pay as any).id ?? (pay as any).paymentId ?? 0) || null;
               row.paymentNo = str((pay as any).paymentNo);
             } catch (error) {

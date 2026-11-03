@@ -88,13 +88,18 @@ export function GridRowEdit(
   const [voidBlock, setVoidBlock] = useState<{ eventId: number; payments: ReturnType<typeof blockingPaymentsOf>; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /** 開いたときに引き直した支払（表の行の支払より新しく、全部ある）。 */
+  const [livePayments, setLivePayments] = useState<Array<Pay & { eventIds: number[] }> | null>(null);
   useEffect(() => {
     setError(null);
     Promise.all([
       api.get<ConditionHead>(`/conditions/${row.conditionId}`).catch(() => null),
       api.get<{ lines: ScheduleLine[] }>(`/conditions/${row.conditionId}/schedules`).catch(() => null),
-      api.get<{ events: EventLine[] }>(`/conditions/${row.conditionId}/events`).catch(() => null)
-    ]).then(([c, s, e]) => {
+      api.get<{ events: EventLine[] }>(`/conditions/${row.conditionId}/events`).catch(() => null),
+      api.get<{ payments: Array<Pay & { eventIds: number[] }> }>(`/conditions/${row.conditionId}/payments`).catch(() => null)
+    ]).then(([c, s, e, p]) => {
+      const pays = p?.payments ?? null;
+      setLivePayments(pays);
       // 回の順（納品日の古いもの → 新しいもの）。一覧は新しい順で返す。
       const evs = (e?.events ?? []).filter((x) => x.status !== "void")
         .sort((a, b) => (a.occurredOn ?? "").localeCompare(b.occurredOn ?? "") || a.id - b.id);
@@ -104,7 +109,7 @@ export function GridRowEdit(
       setV({
         unitAmount: text(c?.unitAmount), quantity: text(c?.quantity), flatAmount: text(c?.flatAmount),
         termStart: text(c?.termStart), termEnd: text(c?.termEnd),
-        ...Object.fromEntries(allPayments.flatMap((p) => [[`pdue${p.id}`, text(p.dueOn)], [`pnote${p.id}`, text(p.note)]])),
+        ...Object.fromEntries((pays ?? allPayments).flatMap((p) => [[`pdue${p.id}`, text(p.dueOn)], [`pnote${p.id}`, text(p.note)]])),
         ...Object.fromEntries(evs.flatMap((x) => [
           [`evq${x.id}`, text(x.quantity)], [`eva${x.id}`, text(x.amount)],
           [`evo${x.id}`, text(x.occurredOn)], [`evi${x.id}`, text(x.inspectedOn)]
@@ -121,6 +126,9 @@ export function GridRowEdit(
   const roundOf = useMemo(() => new Map((row.rounds ?? []).filter((r) => r.eventId !== null).map((r) => [r.eventId!, r])), [row.rounds]);
   const multi = (row.rounds ?? []).filter((r) => r.eventId !== null).length > 1;
   const paymentOf = (e: EventLine): Pay | null => {
+    // 開いたときに引き直した支払があればそれ（実績に割り当てたもの）。
+    const live = livePayments?.find((p) => p.eventIds.includes(e.id));
+    if (live) return live;
     const r = roundOf.get(e.id);
     if (r) return r.payment;
     return row.payment ? { ...row.payment, amount: row.payment.amount ?? 0 } : null;
@@ -129,11 +137,12 @@ export function GridRowEdit(
   const paidOf = (e: EventLine) => paymentOf(e)?.status === "paid";
   /** この条件に立っている支払（回をまたいで1回ずつ）。 */
   const allPayments = useMemo(() => {
+    if (livePayments) return livePayments;
     const seen = new Map<number, Pay>();
     for (const r of row.rounds ?? []) if (r.payment) seen.set(r.payment.id, r.payment);
     if (!seen.size && row.payment) seen.set(row.payment.id, { ...row.payment, amount: row.payment.amount ?? 0 });
     return [...seen.values()];
-  }, [row]);
+  }, [row, livePayments]);
   const paid = allPayments.length > 0 && allPayments.every((p) => p.status === "paid");
   const set = (k: string, value: string) => setV((cur) => ({ ...cur, [k]: value }));
 
