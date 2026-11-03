@@ -1339,8 +1339,14 @@ test("検収書の行の支払日：実績に支払が立っていれば、行�
   assert.equal(resolveLegacyVariable("PAYMENT_DATE", withInspectionLines("inspection_certificate",
     ctx({ conditions: [condition({ id: 1 })], events: withPay }), { delivery_line_items: [{ ...row, payment_date: "2029-07-31" }] })), "2026-11-20",
     "頭書きのお支払予定日も支払の期日");
+  const noPayEvents = [{ id: 9, conditionId: 1, occurredOn: "2026-10-20", amount: 1 }];
+  // 支払が無い古い下書きの行（_auto 無し）：作ったときの値のままなので、納品日からの既定で出し直す。
+  const legacy = buildTemplateContext("inspection_certificate", ctx({ conditions: [condition({ id: 1, counterparty: { kind: "individual" } })], events: noPayEvents }), {
+    delivery_line_items: [{ ...row, payment_date: "2029-07-31" }]
+  }) as Record<string, any>;
+  assert.equal(legacy.delivery_line_items[0].payment_date, "2026-11-20", "納品 10/20・個人 → 翌月 20 日");
   // 支払が無い行：人が直した日付（_auto と違う）は残す。
-  const noPay = [{ id: 9, conditionId: 1, occurredOn: "2026-10-20", amount: 1 }];
+  const noPay = noPayEvents;
   const typed = buildTemplateContext("inspection_certificate", ctx({ conditions: [condition({ id: 1 })], events: noPay }), {
     delivery_line_items: [{ ...row, payment_date: "2026-12-05", payment_date_auto: "2026-11-30" }]
   }) as Record<string, any>;
