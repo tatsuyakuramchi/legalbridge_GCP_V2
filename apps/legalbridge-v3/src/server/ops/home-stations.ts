@@ -40,24 +40,50 @@ export interface StationTools {
 
 const CONTRACT_KEYS = `(t.template_key ~ '(master|terms)' )`;
 
+/** 盤面の数を覚えておく時間。画面を開き直すたびに 10 本の集計を回さない。 */
+const CACHE_MS = 60_000;
+
 export class HomeStationsService {
   constructor(private readonly database: Queryable, private readonly tools: StationTools) {}
 
+  private cache: { at: number; value: HomeStations } | null = null;
+  private inflight: Promise<HomeStations> | null = null;
+
+  /**
+   * 10 本の集計を一度に走らせない。それぞれが中で何本も問い合わせを並べるので、全部を Promise.all で
+   * 投げると DB の接続プール（10 本）を独り占めし、同時に開いた画面の要求が接続待ち（5 秒）で落ちていた。
+   * 2 本ずつ順に回し、結果は 1 分覚える（同時に来た要求は 1 回の計算に相乗り）。
+   */
   async stations(): Promise<HomeStations> {
+    if (this.cache && Date.now() - this.cache.at < CACHE_MS) return this.cache.value;
+    if (this.inflight) return this.inflight;
+    this.inflight = this.compute()
+      .then((value) => { this.cache = { at: Date.now(), value }; return value; })
+      .finally(() => { this.inflight = null; });
+    return this.inflight;
+  }
+
+  private async compute(): Promise<HomeStations> {
     try {
-      const safe = <T,>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
-      const [intake, tasks, unsent, missing, paydocs, term, notice, stmts, tidy, sql] = await Promise.all([
-        safe(this.tools.intake.counts(), { new: 0, updated: 0 }),
-        safe(this.tools.tasks.counts(null), { open: 0 }),
-        safe(this.tools.unsent.list(), { bundles: [] }),
-        safe(this.tools.missing.list(), { parties: [] }),
-        safe(this.tools.paydocs.list({ view: "todo" }), { tiles: {} }),
-        safe(this.tools.term.preview(), { targets: [] }),
-        safe(this.tools.notice.preview(null), { targets: [] }),
-        safe(this.tools.statements.preview(), { groups: [] }),
-        safe(this.tools.tidy.parties({ issuesOnly: true }), []),
-        safe(this.counts(), { drafts: 0, ownerCheck: 0, signing: 0, planned: 0 })
-      ]);
+      const safe = <T,>(run: () => Promise<T>, fallback: T) => () => run().catch(() => fallback);
+      const jobs = [
+        safe(() => this.tools.intake.counts(), { new: 0, updated: 0 }),
+        safe(() => this.tools.tasks.counts(null), { open: 0 }),
+        safe(() => this.tools.unsent.list(), { bundles: [] as Array<{ docs: unknown[] }> }),
+        safe(() => this.tools.missing.list(), { parties: [] as unknown[] }),
+        safe(() => this.tools.paydocs.list({ view: "todo" }), { tiles: {} as Record<string, number> }),
+        safe(() => this.tools.term.preview(), { targets: [] as Array<{ skip: string | null }> }),
+        safe(() => this.tools.notice.preview(null), { targets: [] as Array<{ skip: string | null }> }),
+        safe(() => this.tools.statements.preview(), { groups: [] as Array<{ status: string }> }),
+        safe(() => this.tools.tidy.parties({ issuesOnly: true }), [] as Array<{ marks: number }>),
+        safe(() => this.counts(), { drafts: 0, ownerCheck: 0, signing: 0, planned: 0 })
+      ] as const;
+      const results = await runLimited(jobs as unknown as Array<() => Promise<unknown>>, 2);
+      const [intake, tasks, unsent, missing, paydocs, term, notice, stmts, tidy, sql] = results as [
+        { new: number; updated: number }, { open: number }, { bundles: Array<{ docs: unknown[] }> }, { parties: unknown[] },
+        { tiles: Record<string, number> }, { targets: Array<{ skip: string | null }> }, { targets: Array<{ skip: string | null }> },
+        { groups: Array<{ status: string }> }, Array<{ marks: number }>, { drafts: number; ownerCheck: number; signing: number; planned: number }
+      ];
       const tiles = (k: string) => Number(paydocs.tiles[k] ?? 0);
       const fixes = term.targets.filter((t) => !t.skip).length + notice.targets.filter((t) => !t.skip).length
         + stmts.groups.filter((g) => g.status === "ready").length;
@@ -115,4 +141,18 @@ export class HomeStationsService {
     const row = (r.rows[0] ?? {}) as Record<string, unknown>;
     return { drafts: Number(row.drafts ?? 0), ownerCheck: Number(row.owner_check ?? 0), signing: Number(row.signing ?? 0), planned: Number(row.planned ?? 0) };
   }
+}
+
+/** 同時に n 本まで。順番どおりの結果を返す。 */
+async function runLimited<T>(jobs: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const out: T[] = new Array(jobs.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const i = next++;
+      out[i] = await jobs[i]();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
+  return out;
 }
