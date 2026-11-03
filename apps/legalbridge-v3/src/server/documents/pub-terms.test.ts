@@ -458,3 +458,13 @@ test("乙（当社）の通知先：案件の担当者が無ければ自社の�
   const patch = pubTermsPatch(ctx, {});
   assert.equal(patch.licenseeContact, "出版事業部 ／ 編集 花子 ／ pub@example.test ／ 03-2222-2222");
 });
+
+test("行に控えた条件 id が無くなっていても（改訂・重複の付け替え）、同じ作品の今の条件から料率と独占区分を引き直す", () => {
+  // 行は古い条件（id 99、非独占 7.1%）から作った。いまの文書の条件は id 3（ねこの図書館、独占 10%）。
+  const patch = pubTermsPatch(context, {
+    pub_titles: [{ title: "ねこの図書館", print_condition_id: 99, print_rate: "7.1%", print_exclusivity: "非独占", digital_rate: "—", digital_exclusivity: "—" }]
+  });
+  const row = (patch.titles as Array<Record<string, unknown>>)[0];
+  assert.equal(row.printExclusivity, "独占");
+  assert.equal(row.printRate, "10%");
+});
