@@ -12,6 +12,7 @@ import { withImpliedVariables, assertComplete, bindVariables, type BindingResult
 import { documentWarnings, type Warning } from "./preflight.js";
 import { DocumentContextRepository } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
+import { voidSuccessors } from "./void-successors.js";
 import { renderDocumentHtml } from "./render.js";
 import { inLieuInspectionViolations, withInspectionLines,
   buildTemplateContext, INTL_INSPECTION_KEY, isStatementTemplate, seedLines, suggestionsFor, templateWarnings
@@ -899,12 +900,29 @@ export class DocumentIssueService {
         } else {
           // 既定は引き継ぎ。参照方向は文書→条件なので、行を複製する。
           await client.query(
-            // 無効にした条件は引き継がない（載せたままだと決定で「無効または旧版の条件は文書にできません」と止まる）。
             `INSERT INTO document_conditions (document_id, condition_id, line_no)
              SELECT $2, dc.condition_id, dc.line_no
-               FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
-              WHERE dc.document_id = $1 AND c.status <> 'void'
+               FROM document_conditions dc
+              WHERE dc.document_id = $1
              ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
+          // 旧版・無効の条件は、新しい方（今の版・同じ作品と相手先の生きている条件）に付け替える。
+          // 新しい方の無い無効の条件は外す（載せたままだと決定で「無効または旧版の条件は文書にできません」と止まる）。
+          const copied = (await client.query(
+            "SELECT condition_id FROM document_conditions WHERE document_id = $1 ORDER BY line_no", [newId]))
+            .rows.map((x) => Number((x as { condition_id: number }).condition_id));
+          const followed = await this.followRevisions(client, copied);
+          const stillVoid = followed.length ? new Set((await client.query(
+            "SELECT id FROM conditions WHERE id = ANY($1::bigint[]) AND status = 'void'", [followed]))
+            .rows.map((x) => Number((x as { id: number }).id))) : new Set<number>();
+          const kept = followed.filter((id) => !stillVoid.has(id));
+          if (kept.join(",") !== copied.join(",")) {
+            await client.query("DELETE FROM document_conditions WHERE document_id = $1", [newId]);
+            await this.linkConditions(client, newId, kept);
+            await recordAudit(client, {
+              actor, action: "document.conditions_revised", targetType: "document", targetId: newId,
+              detail: { from: copied, to: kept, dropped: followed.filter((id) => stillVoid.has(id)) }
+            });
+          }
         }
 
         // 元はまだ退かせない。訂正版を発行した瞬間に入れ替える（issue の中）。
@@ -1169,9 +1187,13 @@ export class DocumentIssueService {
        )
        SELECT DISTINCT ON (start_id) start_id, id FROM chain ORDER BY start_id, depth DESC`, [unique]);
     const latest = new Map((r.rows as Array<{ start_id: number; id: number }>).map((x) => [Number(x.start_id), Number(x.id)]));
+    // 無効にした条件は、同じ 作品 × 相手先 × 向き × 種類 × 利用形態 × パート の生きている条件（重複を 1 本にしたときの
+    // 残した側。いちばん新しいもの）に置き換える。無ければそのまま（決定で断る）。
+    const successors = await voidSuccessors(client, [...new Set([...unique, ...latest.values()])]);
     const out: number[] = [];
     for (const id of unique) {
-      const to = latest.get(id) ?? id;
+      const current = latest.get(id) ?? id;
+      const to = successors.get(current) ?? current;
       if (!out.includes(to)) out.push(to);
     }
     return out;

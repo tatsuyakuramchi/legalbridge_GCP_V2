@@ -119,11 +119,13 @@ V1 の別ページ ArchivePage を新設せず、V2 で既にアーカイブを�
 > 訂正版の枝番は再利用しない）。`-R<n>` は社内の番号で、紙・メール・検収書の発注番号には本体の番号を出す
 > （`printedDocumentNumber`。`DocumentSummary.printedNo`）。相手に差し替えだと分かるよう「（改訂 n）」の印を
 > 添えるかは訂正版ごとに文書の画面で選び、`manual_inputs._showRevision`（"1"／"0"、既定は出す）に残る。
-> **無効にした条件（2026-11）**：訂正版の下書きには無効（void）の条件を引き継がない（`reissue` の
-> document_conditions の複製）。下書きを開き直すときも無効の条件は外して知らせる（文書の画面の
-> 「無効にした条件 … はこの文書から外しました」。`GET /documents/:id` の conditions に `status`）。旧版
-> （superseded）は従来どおり `currentId` で今の版に選び直す。載せたままだと決定で
-> 「無効または旧版の条件は文書にできません」と止まり、一覧に無効の条件は出ないので外しようがなかった。
+> **古い条件は新しい方に付け替える（2026-11）**：文書が指す条件が 旧版（superseded）なら今の版、
+> 無効（void）なら同じ 作品 × 相手先 × 向き × 種類 × 利用形態 × パート の生きている条件（重複を 1 本に
+> したときの残した側。`documents/void-successors.ts`）に付け替える。決定（`followRevisions`）・訂正版の
+> 下書き（`reissue`。新しい方の無い無効の条件は外す）・下書きの開き直し（`GET /documents/:id` の
+> conditions に `status`・`successorId`。画面は「無効にした条件 …（新しい条件 #n に置き換え／外しました）」）
+> の 3 か所で同じ決まり。付け替えは監査 `document.conditions_revised`（from／to／dropped）。載せたままだと
+> 決定で「無効または旧版の条件は文書にできません」と止まり、一覧に無効の条件は出ないので外しようがなかった。
 **重要**：V2 の残高は `condition_events.voided_at IS NULL` のみで判定し文書 lifecycle では絞らない
 （`conditions/repository.ts` で確認）。そのため旧版の実績を残すと二重計上になるため、再発行時に
 旧版の有効実績を同一トランザクションで取消する（void 10-2 と同じ列 UPDATE を再利用）。
