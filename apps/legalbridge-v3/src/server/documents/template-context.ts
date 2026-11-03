@@ -787,7 +787,10 @@ export function inspectionLines(context: Ctx, manual: Record<string, unknown>): 
           || (line[`${k}_auto`] && line[k] === line[`${k}_auto`]);
         // 支払日は、実績に支払が立っていればその期日が正。行に古い日付が残っていても（支払を直す前に作った
         // 下書き。2029/07/31 のまま刷られていた）、支払の期日で出し直す。支払が無い行は納品日・検収日と同じ扱い。
-        const follow = k === "payment_date" && fresh[idx].payment_date_from_payment === true;
+        // 支払日は台帳が正：支払の期日 → 納品日からの既定 → 予定の支払日。行の日付が _auto と違うとき（人が行で
+        // 打ち直した）だけ残す。_auto の無い古い下書きの行は、作ったときの値のまま＝人は触っていないので出し直す。
+        const follow = k === "payment_date"
+          && (fresh[idx].payment_date_from_payment === true || !line.payment_date_auto);
         if ((untouched || follow) && fresh[idx][k]) { line[k] = fresh[idx][k]; line[`${k}_auto`] = fresh[idx][`${k}_auto`]; }
       }
       // 役務提供期間は条件（契約形式・契約期間）と実績から引き直す（A-115）。行を直していても、請負の行に
