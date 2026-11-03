@@ -544,3 +544,9 @@ test("OUT 条件の取引形態と実績の使い方が違えば止める。形�
     assert.equal(r.id, 9);
   }
 });
+
+test("実績の修正：年を打ち間違えた日付（0006-09-28）は断る（検収書に 0006/09/28 と刷られる）", async () => {
+  await assert.rejects(
+    () => new ConditionEventService(amendDb()).amend(1, 9, { occurredOn: "0006-09-28" }, "直す", "admin"),
+    /日付が読めません/);
+});

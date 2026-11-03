@@ -249,7 +249,15 @@ function readAmend(kind: "int" | "num" | "date" | "text" | "list" | "bool", valu
   const text = String(value ?? "").trim();
   if (text === "") return null;
   if (kind === "text") return text;
-  if (kind === "date") return text.slice(0, 10);
+  if (kind === "date") {
+    const day = text.slice(0, 10);
+    // 年の打ち間違い（「6」→ 0006 年）をそのまま持つと、検収書に「0006/09/28」と刷られる。
+    const year = Number(day.slice(0, 4));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || year < 1900 || year > 2100) {
+      throw new DomainError("VALIDATION", `日付が読めません：${text}（西暦 4 桁で 1900〜2100 年）`);
+    }
+    return day;
+  }
   const n = Number(text.replace(/[^0-9.-]/g, ""));
   if (!Number.isFinite(n)) return null;
   return kind === "int" ? Math.round(n) : n;

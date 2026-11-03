@@ -257,9 +257,13 @@ function unitPriceOf(held: unknown, amount: unknown, quantity: unknown): number 
   // 条件の単価が 0 で金額が付いている行（料率から定額に直した条件など）は、単価を持っていないものとして扱う。
   // 「単価 ¥0 × 1 ＝ ¥568,000」と刷られるのは変で、経理の表でも単価と金額が食い違う。
   const heldN = held === null || held === undefined || String(held) === "" ? null : num(held);
-  if (heldN !== null && (heldN !== 0 || !(num(amount, 0) > 0))) return heldN;
   const total = num(amount, Number.NaN);
   const count = num(quantity, Number.NaN);
+  // 条件の単価 × 数量 が実績の金額と合わない行（初版の利用許諾料を仮計算額に直した条件で、古い単価が残っている
+  // など）は、金額が正。「単価 ¥140,000 × 1 ＝ ¥780,000」と刷られていた。合っているときだけ条件の単価を使う。
+  const consistent = heldN === null || !Number.isFinite(total) || !Number.isFinite(count) || count === 0
+    || Math.round(heldN * count) === Math.round(total);
+  if (heldN !== null && consistent && (heldN !== 0 || !(num(amount, 0) > 0))) return heldN;
   if (!Number.isFinite(total) || !Number.isFinite(count) || count === 0) return null;
   const unit = Math.round((total / count) * 100) / 100;
   return unit * count === total ? unit : null;
