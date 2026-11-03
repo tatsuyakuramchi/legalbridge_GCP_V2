@@ -156,6 +156,8 @@ export class StatementIssuer {
         // 受取人（共著の取り分）。宛名・口座・源泉がこの人になる。
         ...(payeePartyId ? { _payeePartyId: payeePartyId } : {}),
         statementMode: "bundle",
+        // 下書きを開き直したときに実績が選ばれているように（文書の画面は _eventIds を見る）。決定時も同じ実績を結ぶ。
+        ...(eventIds.length ? { _eventIds: eventIds } : {}),
         rs_bundle_lines: lines,
         rs_bundle_tax: totals.tax,
         // 出版の計算書は源泉と差引振込額まで刷る（適格請求書の仕入明細書として）。
