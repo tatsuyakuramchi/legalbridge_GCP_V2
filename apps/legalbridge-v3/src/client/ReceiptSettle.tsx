@@ -72,7 +72,8 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   const [basis, setBasis] = useState<"lump" | "per_unit">("lump");
   const [taxIncluded, setTaxIncluded] = useState(false);
   const [stage, setStage] = useState<"" | "advance" | "balance">("");
-  const [language, setLanguage] = useState("");
+  /** この入金の言語。許諾先が複数の言語を持つとき、まとめて来る入金は全部（既定）、言語ごとに来るなら選ぶ。 */
+  const [languages, setLanguages] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [draftOnly, setDraftOnly] = useState(false);
   const [withPayment, setWithPayment] = useState(true);
@@ -103,7 +104,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   // 入金を選び直したら、その入金の許諾先と金額を入れ物に写す。
   const chosenReceipt = openReceipts.find((x) => x.paymentId === paymentId) ?? null;
   const out = outs.find((o) => o.id === (chosenReceipt?.outConditionId ?? outId)) ?? null;
-  useEffect(() => { setLanguage(out && out.languages.length === 1 ? out.languages[0] : ""); }, [out?.id]);
+  useEffect(() => { setLanguages(out ? [...out.languages] : []); }, [out?.id]);
 
   // 下見：許諾先（か作品）が決まったら、払うべき作者を引く。金額を入れれば見込み額が付く。
   const body = () => ({
@@ -115,7 +116,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
             sampleQuantity: num(sample) || null }
         : { paymentId: paymentId ?? null, outConditionId: out?.id ?? null, amount: num(amount) || null }),
     paidOn: paidOn || null, taxIncluded, paymentStage: stage || null,
-    languages: language ? [language] : null, note: note.trim() || null
+    languages: languages.length ? languages : null, note: note.trim() || null
   });
   const previewKey = inHouse ? `${work?.id ?? 0}:${num(quantity)}:${num(unit)}`
     : `${paymentId ?? 0}:${out?.id ?? 0}:${perUnit ? `u${num(quantity)}x${num(unit)}-${num(sample)}` : num(amount)}`;
@@ -131,7 +132,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
 
   const amountFor = inHouse ? unitTotal : (chosenReceipt?.amount ?? (perUnit ? unitTotal : num(amount)));
   const ready = canWrite && preview && !preview.blockers.length && picked.length > 0 && amountFor > 0
-    && (!(preview.languages.length > 1) || paymentId || language);
+    && (!(preview.languages.length > 1) || languages.length > 0);
 
   async function run() {
     if (!preview) return;
@@ -282,10 +283,18 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
               ))}
             </span>
             {!inHouse && out && out.languages.length > 1 && (
-              <select className="inline-input" aria-label="この入金の言語" style={{ width: "auto" }} value={language} onChange={(e) => setLanguage(e.target.value)}>
-                <option value="">言語を選ぶ</option>
-                {out.languages.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
+              <span className="row" style={{ gap: 6, alignItems: "center" }}>
+                <span className="faint">言語</span>
+                <span className="chips" aria-label="この入金の言語（複数可）">
+                  {out.languages.map((l) => (
+                    <button key={l} className="chip" aria-pressed={languages.includes(l)}
+                            onClick={() => setLanguages((cur) => cur.includes(l) ? cur.filter((x) => x !== l) : [...cur, l])}>{l}</button>
+                  ))}
+                </span>
+                <button className="linky" onClick={() => setLanguages(languages.length === out.languages.length ? [] : [...out.languages])}>
+                  {languages.length === out.languages.length ? "全部外す" : "全部"}
+                </button>
+              </span>
             )}
             <input className="inline-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="備考（計算書の備考に載る。例：前金 50%）" style={{ minWidth: 260 }} />
           </div>
