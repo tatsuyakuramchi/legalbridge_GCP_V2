@@ -67,6 +67,9 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   const [amount, setAmount] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
+  const [sample, setSample] = useState("");
+  /** 他社販売の入れ方：受領額か、数量 × 受領価格（個数建ての契約）。 */
+  const [basis, setBasis] = useState<"lump" | "per_unit">("lump");
   const [taxIncluded, setTaxIncluded] = useState(false);
   const [stage, setStage] = useState<"" | "advance" | "balance">("");
   const [language, setLanguage] = useState("");
@@ -81,6 +84,8 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   const [result, setResult] = useState<Result | null>(null);
 
   const inHouse = usage === "in_house";
+  const perUnit = inHouse || (usage === "oem" && basis === "per_unit");
+  const unitTotal = Math.round(num(quantity) * num(unit));
 
   // OUT 先を選んだら、その社の条件（取引モデルで絞る）と記録済みの入金。
   useEffect(() => {
@@ -105,11 +110,15 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
     usageType: usage,
     ...(inHouse
       ? { workId: work?.id ?? null, quantity: num(quantity) || null, unitAmount: num(unit) || null }
-      : { paymentId: paymentId ?? null, outConditionId: out?.id ?? null, amount: num(amount) || null }),
+      : perUnit
+        ? { paymentId: paymentId ?? null, outConditionId: out?.id ?? null, quantity: num(quantity) || null, unitAmount: num(unit) || null,
+            sampleQuantity: num(sample) || null }
+        : { paymentId: paymentId ?? null, outConditionId: out?.id ?? null, amount: num(amount) || null }),
     paidOn: paidOn || null, taxIncluded, paymentStage: stage || null,
     languages: language ? [language] : null, note: note.trim() || null
   });
-  const previewKey = inHouse ? `${work?.id ?? 0}:${num(quantity)}:${num(unit)}` : `${paymentId ?? 0}:${out?.id ?? 0}:${num(amount)}`;
+  const previewKey = inHouse ? `${work?.id ?? 0}:${num(quantity)}:${num(unit)}`
+    : `${paymentId ?? 0}:${out?.id ?? 0}:${perUnit ? `u${num(quantity)}x${num(unit)}-${num(sample)}` : num(amount)}`;
   useEffect(() => {
     setPreview(null); setResult(null); setError(null);
     if (inHouse ? !work : !out) return;
@@ -120,7 +129,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
     return () => { live = false; };
   }, [previewKey]);
 
-  const amountFor = inHouse ? Math.round(num(quantity) * num(unit)) : (chosenReceipt?.amount ?? num(amount));
+  const amountFor = inHouse ? unitTotal : (chosenReceipt?.amount ?? (perUnit ? unitTotal : num(amount)));
   const ready = canWrite && preview && !preview.blockers.length && picked.length > 0 && amountFor > 0
     && (!(preview.languages.length > 1) || paymentId || language);
 
@@ -129,7 +138,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
     const what = draftOnly ? "作者ごとの計算書の下書きを作ります（決定は文書の画面で）" : `作者ごとの計算書を決定${withPayment ? "し、作者への支払を立てます" : "します"}`;
     const head = inHouse
       ? `作品「${preview.workTitle}」の売上 ${money(amountFor, "JPY")}（${quantity} × ${money(num(unit), "JPY")}）から`
-      : `${preview.licenseeName} からの入金 ${money(amountFor, preview.currency)}${paymentId ? `（${preview.paymentNo ?? ""} 記録済み）` : "（新しく記録）"} から`;
+      : `${preview.licenseeName} からの入金 ${money(amountFor, preview.currency)}${perUnit ? `（${quantity} × ${money(num(unit), preview.currency)}）` : ""}${paymentId ? `（${preview.paymentNo ?? ""} 記録済み）` : "（新しく記録）"} から`;
     if (!confirm(`${head}、作者 ${picked.length} 人の報告を起こし、${what}。よろしいですか？`)) return;
     setBusy(true); setError(null);
     try {
@@ -143,7 +152,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   }
 
   function reset() {
-    setParty(null); setWork(null); setOutId(null); setPaymentId(null); setAmount(""); setQuantity(""); setUnit("");
+    setParty(null); setWork(null); setOutId(null); setPaymentId(null); setAmount(""); setQuantity(""); setUnit(""); setSample("");
     setStage(""); setTaxIncluded(false); setNote(""); setPreview(null); setResult(null); setError(null);
   }
 
@@ -238,12 +247,32 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
                 <input className="inline-input" inputMode="numeric" value={unit} onChange={(e) => setUnit(e.target.value)} style={{ width: 110 }} />
               </label>
               <span className="faint">= {money(Math.round(num(quantity) * num(unit)), "JPY")}</span>
-            </>) : (
-              <label className="row" style={{ gap: 4 }}>入金額
-                <input className="inline-input" inputMode="numeric" value={chosenReceipt ? String(chosenReceipt.amount) : amount} disabled={!!chosenReceipt}
-                       onChange={(e) => setAmount(e.target.value)} style={{ width: 130 }} placeholder="例：1,000,000" />
-              </label>
-            )}
+            </>) : (<>
+              {usage === "oem" && (
+                <span className="chips" aria-label="入れ方">
+                  {([["lump", "受領額で"], ["per_unit", "数量 × 受領価格で"]] as const).map(([v, l]) => (
+                    <button key={v} className="chip" aria-pressed={basis === v} onClick={() => setBasis(v)}>{l}</button>
+                  ))}
+                </span>
+              )}
+              {perUnit ? (<>
+                <label className="row" style={{ gap: 4 }}>数量
+                  <input className="inline-input" inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value)} style={{ width: 90 }} />
+                </label>
+                <label className="row" style={{ gap: 4 }}>受領価格（1 個あたり）
+                  <input className="inline-input" inputMode="numeric" value={unit} onChange={(e) => setUnit(e.target.value)} style={{ width: 110 }} />
+                </label>
+                <label className="row" style={{ gap: 4 }}>見本
+                  <input className="inline-input" inputMode="numeric" value={sample} onChange={(e) => setSample(e.target.value)} style={{ width: 70 }} placeholder="0" />
+                </label>
+                <span className="faint">= {money(unitTotal, out?.currency ?? "JPY")}{chosenReceipt && unitTotal !== chosenReceipt.amount ? <span className="warn">（入金額 {money(chosenReceipt.amount, chosenReceipt.currency)} と違う）</span> : null}</span>
+              </>) : (
+                <label className="row" style={{ gap: 4 }}>入金額
+                  <input className="inline-input" inputMode="numeric" value={chosenReceipt ? String(chosenReceipt.amount) : amount} disabled={!!chosenReceipt}
+                         onChange={(e) => setAmount(e.target.value)} style={{ width: 130 }} placeholder="例：1,000,000" />
+                </label>
+              )}
+            </>)}
             <label className="row" style={{ gap: 4 }}>
               <input type="checkbox" checked={taxIncluded} onChange={(e) => setTaxIncluded(e.target.checked)} />税込（1.1 で割り戻す）
             </label>

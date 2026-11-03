@@ -64,7 +64,8 @@ export interface SettleInput {
   usageType?: SettleUsage | null;
   /** 受領額（税抜。税込なら taxIncluded）。自社販売は 数量 × 基準価格。 */
   amount?: number | null;
-  quantity?: number | null; unitAmount?: number | null;
+  /** 個数建て：数量 × 単価（自社販売は基準価格、他社販売は受領価格 1 個あたり）。入れれば受領額はその積。 */
+  quantity?: number | null; unitAmount?: number | null; sampleQuantity?: number | null;
   paidOn?: string | null;
   taxIncluded?: boolean | null;
   paymentStage?: "advance" | "balance" | null;
@@ -260,7 +261,13 @@ export class ReceiptSettleService {
       if (head.status === "void" || head.status === "superseded") blockers.push("無効・改訂済みの条件です。今の版を選んでください");
       if (!head.workId) blockers.push("許諾先の条件に作品が付いていません。作者の条件を引けません");
 
-      const amount = receipt ? receipt.amount : (input.amount ?? null);
+      const perUnit = Number(input.quantity ?? 0) > 0 && Number(input.unitAmount ?? 0) > 0;
+      if (perUnit && head.usageType !== "oem") notes.push("数量 × 受領価格 で入れられるのは自社製造・他社販売だけです。再許諾は受領額で入れてください");
+      const typed = perUnit ? Math.round(Number(input.quantity) * Number(input.unitAmount)) : (input.amount ?? null);
+      const amount = receipt ? receipt.amount : typed;
+      if (receipt && perUnit && typed !== receipt.amount) {
+        notes.push(`数量 × 受領価格（${typed}）が入金額（${receipt.amount}）と違います。報告はその積で立ち、入金の欄に「金額が違う」と出ます`);
+      }
       let authors: SettleAuthor[];
       if (receipt) {
         if (receipt.media === "print") {
@@ -345,8 +352,12 @@ export class ReceiptSettleService {
       let paymentNo = pre.paymentNo;
       let paymentCreated = false;
       const paidOn = pre.paidOn ?? input.paidOn ?? today();
+      const perUnit = Number(input.quantity ?? 0) > 0 && Number(input.unitAmount ?? 0) > 0;
+      if (perUnit && pre.usageType !== "oem") {
+        throw new DomainError("VALIDATION", "数量 × 受領価格 で入れられるのは自社製造・他社販売だけです（再許諾は受領額）");
+      }
       if (!paymentId) {
-        const amount = input.amount ?? null;
+        const amount = perUnit ? Math.round(Number(input.quantity) * Number(input.unitAmount)) : (input.amount ?? null);
         if (!(amount && amount > 0)) throw new DomainError("VALIDATION", "入金額を入れてください");
         if (pre.languages.length > 1 && !(input.languages?.length)) {
           throw new DomainError("VALIDATION", "この入金の言語を選んでください（許諾先が複数の言語を持っています）");
@@ -367,7 +378,9 @@ export class ReceiptSettleService {
           const made = await this.deps.receipts.createReports({
             paymentId, outConditionId: outId,
             entries: fresh.map((a) => ({
-              conditionId: a.conditionId, grossAmount: null, taxIncluded: input.taxIncluded ?? false,
+              conditionId: a.conditionId, grossAmount: null,
+              ...(perUnit ? { quantity: input.quantity, unitAmount: input.unitAmount, sampleQuantity: input.sampleQuantity ?? null } : {}),
+              taxIncluded: input.taxIncluded ?? false,
               paymentStage: input.paymentStage ?? null, languages: input.languages ?? null, regions: input.regions ?? null,
               note: str(input.note)
             }))

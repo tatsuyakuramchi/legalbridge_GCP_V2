@@ -3309,6 +3309,7 @@ export function createRoutes(database: Transactable) {
     amount: z.coerce.number().int().min(0).nullable().optional(),
     quantity: z.coerce.number().min(0).nullable().optional(),
     unitAmount: z.coerce.number().int().min(0).nullable().optional(),
+    sampleQuantity: z.coerce.number().min(0).nullable().optional(),
     paidOn: z.string().date().nullable().optional(),
     taxIncluded: z.coerce.boolean().nullable().optional(),
     paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
@@ -3341,6 +3342,9 @@ export function createRoutes(database: Transactable) {
         entries: z.array(z.object({
           conditionId: z.coerce.number().int().positive(),
           grossAmount: z.coerce.number().int().positive().nullable().optional(),
+          quantity: z.coerce.number().min(0).nullable().optional(),
+          unitAmount: z.coerce.number().int().min(0).nullable().optional(),
+          sampleQuantity: z.coerce.number().min(0).nullable().optional(),
           taxIncluded: z.boolean().nullable().optional(),
           paymentStage: z.enum(["advance", "balance"]).nullable().optional(),
           languages: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),

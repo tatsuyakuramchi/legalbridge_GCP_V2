@@ -158,7 +158,9 @@ export class RoyaltyReceiptService {
     const media = (pubOuts ?? await publicationOuts(q)).get(Number(r.out_id)) ?? null;
     const ins = await this.insFor(q, Number(r.out_id), media);
     const reports = ins.length ? (await q.query(
-      `SELECT e.id, e.condition_id, COALESCE(c.series_id, c.id) AS series, e.gross_amount, e.amount, e.occurred_on,
+      `SELECT e.id, e.condition_id, COALESCE(c.series_id, c.id) AS series,
+              -- 個数建ての報告（数量 × 受領価格）は受領額が空なので、積を受領額として入金と突き合わせる。
+              COALESCE(e.gross_amount, round(e.quantity * e.unit_amount)::bigint) AS gross_amount, e.amount, e.occurred_on,
               e.scope_languages, d.id AS document_id, d.document_no
          FROM condition_events e
          JOIN conditions c ON c.id = e.condition_id
@@ -280,7 +282,10 @@ export class RoyaltyReceiptService {
    */
   async createReports(input: {
     paymentId: number; outConditionId: number;
-    entries: Array<{ conditionId: number; grossAmount?: number | null; taxIncluded?: boolean | null;
+    entries: Array<{ conditionId: number; grossAmount?: number | null;
+                     /** 個数建て（自社製造・他社販売）：数量 × 受領価格（1 個あたり）。受領額はその積。 */
+                     quantity?: number | null; unitAmount?: number | null; sampleQuantity?: number | null;
+                     taxIncluded?: boolean | null;
                      paymentStage?: "advance" | "balance" | null; languages?: string[] | null; regions?: string[] | null;
                      note?: string | null }>;
   }, actor: string): Promise<{ eventIds: number[]; receipt: Receipt }> {
@@ -303,13 +308,20 @@ export class RoyaltyReceiptService {
           if (target.reports.length) {
             throw new DomainError("CONFLICT", `${target.partyName}（${target.conditionNo ?? target.name}）にはこの入金の報告がもうあります`);
           }
-          const gross = entry.grossAmount ?? before.amount;
+          const perUnit = Number(entry.quantity ?? 0) > 0 && Number(entry.unitAmount ?? 0) > 0;
+          if (perUnit && head.usage_type !== "oem") {
+            throw new DomainError("VALIDATION", "数量 × 受領価格 で入れられるのは自社製造・他社販売だけです（再許諾は受領額）");
+          }
+          const gross = perUnit ? Math.round(Number(entry.quantity) * Number(entry.unitAmount)) : (entry.grossAmount ?? before.amount);
           if (!(gross > 0)) throw new DomainError("VALIDATION", "受領額を入れてください");
           const made = await this.events.addWithin(client, entry.conditionId, {
             eventType: head.usage_type === "sublicense" ? "sublicense_receipt" : "sales",
             occurredOn: before.paidOn ?? new Date().toISOString().slice(0, 10),
             usageType: head.usage_type, outConditionId: before.outConditionId,
-            grossAmount: Math.round(gross), amount: 0,
+            // 個数建ては受領額を入れない（計算は 数量 × 受領価格。両方入っていると計算書が断る）。
+            grossAmount: perUnit ? null : Math.round(gross), amount: 0,
+            ...(perUnit ? { quantity: Number(entry.quantity), unitAmount: Math.round(Number(entry.unitAmount)),
+                            sampleQuantity: entry.sampleQuantity ?? null } : {}),
             taxIncluded: entry.taxIncluded ?? false,
             paymentStage: entry.paymentStage ?? null,
             languages: entry.languages ?? (before.languages.length === 1 ? before.languages : null),
