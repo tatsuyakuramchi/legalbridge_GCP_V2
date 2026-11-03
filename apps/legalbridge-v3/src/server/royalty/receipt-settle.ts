@@ -297,7 +297,9 @@ export class ReceiptSettleService {
         blockers.push("この許諾先に効く作者の条件（IN）が見つかりません。許諾先の作品と利用形態、作者の条件の作品（元の作品か）を確かめてください");
       }
       if (!receipt && amount !== null && amount !== undefined && !(amount > 0)) notes.push("受領額を入れると見込み額が出ます");
-      if (head.languages.length > 1) notes.push(`許諾先が複数の言語を持っています（${head.languages.join("・")}）。この入金の言語を選んでください`);
+      if (head.languages.length > 1 && !receipt) {
+        notes.push(`許諾先が複数の言語を持っています（${head.languages.join("・")}）。まとめて来る入金は全部のまま、言語ごとに来るならその言語だけにしてください`);
+      }
       return {
         mode: "receipt",
         paymentId: receipt?.paymentId ?? null, paymentNo: receipt?.paymentNo ?? null, paidOn: receipt?.paidOn ?? input.paidOn ?? null,
@@ -360,7 +362,7 @@ export class ReceiptSettleService {
         const amount = perUnit ? Math.round(Number(input.quantity) * Number(input.unitAmount)) : (input.amount ?? null);
         if (!(amount && amount > 0)) throw new DomainError("VALIDATION", "入金額を入れてください");
         if (pre.languages.length > 1 && !(input.languages?.length)) {
-          throw new DomainError("VALIDATION", "この入金の言語を選んでください（許諾先が複数の言語を持っています）");
+          throw new DomainError("VALIDATION", "この入金の言語を選んでください（許諾先が複数の言語を持っています。まとめて来るなら全部）");
         }
         const made = await this.deps.payments.create({
           conditionId: outId, direction: "in", amount: Math.round(amount), basisReceivedOn: paidOn,
