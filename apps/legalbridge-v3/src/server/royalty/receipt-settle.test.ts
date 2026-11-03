@@ -130,3 +130,42 @@ test("自社製造・自社販売：OUT 先なし。作品の in_house の作者
   assert.equal(r.paymentCreated, false);
   assert.deepEqual(calls, ["event:13:100x5000", "issue:13:95:2026-11-02", "pay.fromDoc:600"]);
 });
+
+test("複数の入金（前金・後金）：入金ごとに記録・報告し、作者 1 人の計算書 1 枚に全部の報告を並べる", async () => {
+  const calls: string[] = [];
+  let seq = 0;
+  const current = { r: receipt({ ins: [receipt().ins[0]] }) };
+  const d = deps(calls, current) as any;
+  d.payments.create = async (input: { amount: number }) => { seq += 1; calls.push(`pay.create:${input.amount}`); return { id: seq, paymentNo: `PAY-${seq}` }; };
+  d.receipts.createReports = async (input: { paymentId: number; entries: Array<{ paymentStage?: string | null }> }) => {
+    const id = 900 + input.paymentId;
+    calls.push(`reports:p${input.paymentId}:${input.entries[0].paymentStage}`);
+    current.r = receipt({ paymentId: input.paymentId, ins: [{ ...receipt().ins[0], state: "waiting",
+      reports: [{ id, grossAmount: 1, amount: 1, occurredOn: null, languages: [], documentId: null, documentNo: null }] }] });
+    return { eventIds: [id], receipt: current.r };
+  };
+  const svc = new ReceiptSettleService(db(), d);
+  const pre = await svc.previewMany({ receipts: [
+    { usageType: "oem", outConditionId: 20, amount: 600_000, paidOn: "2026-10-01", paymentStage: "advance" },
+    { usageType: "oem", outConditionId: 20, amount: 400_000, paidOn: "2026-11-01", paymentStage: "balance" }
+  ] });
+  assert.equal(pre.authors.length, 1); assert.equal(pre.authors[0].estimate, 50_000, "見込みは合計"); assert.equal(pre.authors[0].receiptCount, 2);
+  const r = await svc.settleMany({ receipts: [
+    { usageType: "oem", outConditionId: 20, amount: 600_000, paidOn: "2026-10-01", paymentStage: "advance" },
+    { usageType: "oem", outConditionId: 20, amount: 400_000, paidOn: "2026-11-01", paymentStage: "balance" }
+  ] }, "t");
+  assert.equal(r.payments.length, 2);
+  assert.ok(calls.includes("reports:p1:advance") && calls.includes("reports:p2:balance"));
+  assert.ok(calls.includes("issue:11:901,902:2026-11-01"), `1 枚に両方の報告、決定日は遅い入金日: ${calls.join(" ")}`);
+  assert.equal(calls.filter((c) => c.startsWith("issue:")).length, 1, "計算書は作者 1 人に 1 枚");
+  assert.deepEqual(r.rows.map((x) => [x.partyName, x.eventIds, x.documentNo]), [["作者A", [901, 902], "RS-600"]]);
+});
+
+test("複数の入金：2 件目の入力が足りなければ、1 件目も書かずに止める", async () => {
+  const calls: string[] = [];
+  const svc = new ReceiptSettleService(db(), deps(calls, { r: receipt() }) as any);
+  await assert.rejects(() => svc.settleMany({ receipts: [
+    { usageType: "oem", outConditionId: 20, amount: 600_000 }, { usageType: "oem", outConditionId: 20 }
+  ] }, "t"), /入金 2：入金額/);
+  assert.deepEqual(calls, []);
+});

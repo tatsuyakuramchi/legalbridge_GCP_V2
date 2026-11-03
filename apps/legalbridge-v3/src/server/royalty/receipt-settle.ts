@@ -80,6 +80,23 @@ export interface SettleInput {
   dueOn?: string | null;
 }
 
+/** 複数の入金をまとめて 1 枚に（前金と後金、別の取引先）。作者ごとに、全部の入金の報告を 1 枚の計算書に並べる。 */
+export interface SettleManyInput {
+  receipts: SettleInput[];
+  authors?: number[] | null;
+  draftOnly?: boolean | null;
+  withPayment?: boolean | null;
+  dueOn?: string | null;
+}
+
+export interface SettleManyPreview {
+  receipts: SettlePreview[];
+  /** 作者ごとに、効く入金の見込みを合計。state は手前のもの。 */
+  authors: Array<SettleAuthor & { receiptCount: number }>;
+  blockers: string[];
+  notes: string[];
+}
+
 export interface SettleResultRow {
   conditionId: number; partyName: string; payeeName: string | null;
   eventIds: number[];
@@ -91,9 +108,13 @@ export interface SettleResultRow {
 export interface SettleResult {
   mode: "receipt" | "in_house";
   paymentId: number | null; paymentNo: string | null; paymentCreated: boolean;
+  /** 入金ごと（複数まとめたとき）。 */
+  payments: Array<{ paymentId: number | null; paymentNo: string | null; created: boolean; licenseeName: string | null; amount: number | null }>;
   rows: SettleResultRow[];
   errors: string[];
 }
+
+const stateRank: Record<SettleAuthor["state"], number> = { unreported: 0, mismatch: 1, waiting: 2, issued: 3 };
 
 interface Deps {
   receipts: Pick<RoyaltyReceiptService, "list" | "createReports" | "authorsFor">;
@@ -338,89 +359,206 @@ export class ReceiptSettleService {
     };
   }
 
-  /** 実行：入金の記録 → 報告 → 計算書 → 支払。 */
-  async settle(input: SettleInput, actor: string): Promise<SettleResult> {
+  /** 下見（複数の入金）。作者は条件（IN）でまとめ、見込みは合計する。 */
+  async previewMany(input: SettleManyInput): Promise<SettleManyPreview> {
     try {
-      const pre = await this.preview(input);
+      if (!input.receipts.length) throw new DomainError("VALIDATION", "入金を 1 件は入れてください");
+      const receipts: SettlePreview[] = [];
+      for (const r of input.receipts) receipts.push(await this.preview(r));
+      const byId = new Map<number, SettleAuthor & { receiptCount: number }>();
+      for (const p of receipts) {
+        for (const a of p.authors) {
+          const cur = byId.get(a.conditionId);
+          if (!cur) { byId.set(a.conditionId, { ...a, receiptCount: 1 }); continue; }
+          cur.receiptCount += 1;
+          cur.estimate = cur.estimate === null && a.estimate === null ? null : Number(cur.estimate ?? 0) + Number(a.estimate ?? 0);
+          cur.reportCount += a.reportCount;
+          cur.documents = [...cur.documents, ...a.documents].filter((d, i, arr) => arr.findIndex((y) => y.id === d.id) === i);
+          // 1 件でもまだの入金があれば、その作者は「まだ」。
+          if (stateRank[a.state] < stateRank[cur.state]) cur.state = a.state;
+        }
+      }
+      const notes = [...new Set(receipts.flatMap((p) => p.notes))];
+      if (receipts.length > 1) notes.push(`入金 ${receipts.length} 件を作者ごとに 1 枚の計算書にまとめます（入金 1 件が 1 行）`);
+      return {
+        receipts, authors: [...byId.values()],
+        blockers: [...new Set(receipts.flatMap((p, i) => p.blockers.map((b) => receipts.length > 1 ? `入金 ${i + 1}：${b}` : b)))],
+        notes
+      };
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 実行：入金の記録 → 報告 → 計算書 → 支払（入金 1 件）。 */
+  async settle(input: SettleInput, actor: string): Promise<SettleResult> {
+    return this.settleMany({ receipts: [input], authors: input.authors, draftOnly: input.draftOnly,
+                             withPayment: input.withPayment, dueOn: input.dueOn }, actor);
+  }
+
+  /**
+   * 実行（複数の入金）。入金ごとに 記録 → 報告 を済ませてから、作者ごとに全部の入金の報告を 1 枚の計算書に。
+   * 決定日はいちばん遅い入金日。
+   */
+  async settleMany(input: SettleManyInput, actor: string): Promise<SettleResult> {
+    try {
+      const pre = await this.previewMany(input);
       if (pre.blockers.length) throw new DomainError("VALIDATION", pre.blockers[0]);
       const chosen = new Set(input.authors?.length ? input.authors : pre.authors.map((a) => a.conditionId));
       const targets = pre.authors.filter((a) => chosen.has(a.conditionId));
       if (!targets.length) throw new DomainError("VALIDATION", "作者を選んでください");
-      if (pre.mode === "in_house") return await this.settleInHouse(input, pre, targets, actor);
 
-      const outId = pre.outConditionId!;
+      // 入力の不足は、何も書く前に全部の入金で確かめる（2 件目で止まって 1 件目だけ記録済み、を避ける）。
+      input.receipts.forEach((r, i) => {
+        try { this.requireInputs(r, pre.receipts[i]); }
+        catch (error) {
+          throw new DomainError("VALIDATION", input.receipts.length > 1 ? `入金 ${i + 1}：${(error as Error).message}` : (error as Error).message);
+        }
+      });
       const errors: string[] = [];
-      let paymentId = pre.paymentId;
-      let paymentNo = pre.paymentNo;
-      let paymentCreated = false;
-      const paidOn = pre.paidOn ?? input.paidOn ?? today();
-      const perUnit = Number(input.quantity ?? 0) > 0 && Number(input.unitAmount ?? 0) > 0;
-      if (perUnit && pre.usageType !== "oem") {
-        throw new DomainError("VALIDATION", "数量 × 受領価格 で入れられるのは自社製造・他社販売だけです（再許諾は受領額）");
-      }
-      if (!paymentId) {
-        const amount = perUnit ? Math.round(Number(input.quantity) * Number(input.unitAmount)) : (input.amount ?? null);
-        if (!(amount && amount > 0)) throw new DomainError("VALIDATION", "入金額を入れてください");
-        if (pre.languages.length > 1 && !(input.languages?.length)) {
-          throw new DomainError("VALIDATION", "この入金の言語を選んでください（許諾先が複数の言語を持っています。まとめて来るなら全部）");
+      const payments: SettleResult["payments"] = [];
+      /** 作者（IN 条件）→ まだ文書に結ばれていない報告。 */
+      const open = new Map<number, number[]>();
+      const issued = new Map<number, Array<{ id: number; documentNo: string | null }>>();
+      let issuedOn = today();
+      for (let i = 0; i < input.receipts.length; i++) {
+        const r = input.receipts[i];
+        const p = pre.receipts[i];
+        const mine = p.authors.filter((a) => chosen.has(a.conditionId));
+        if (!mine.length) continue;
+        try {
+          const step = p.mode === "in_house"
+            ? await this.inHouseReports(r, p, mine, actor)
+            : await this.receiptReports(r, p, mine, actor);
+          payments.push(...step.payments);
+          errors.push(...step.errors);
+          if (step.paidOn > issuedOn || i === 0) issuedOn = step.paidOn;
+          for (const [cid, ids] of step.open) open.set(cid, [...new Set([...(open.get(cid) ?? []), ...ids])]);
+          for (const [cid, docs] of step.issued) issued.set(cid, [...(issued.get(cid) ?? []), ...docs]);
+        } catch (error) {
+          errors.push(`入金 ${i + 1}：${(error as Error).message}`);
         }
-        const made = await this.deps.payments.create({
-          conditionId: outId, direction: "in", amount: Math.round(amount), basisReceivedOn: paidOn,
-          note: str(input.note) ?? `入金から計算書（${pre.licenseeName ?? ""}）`
-        }, actor);
-        await this.deps.payments.markPaid(made.id, paidOn, actor);
-        paymentId = made.id; paymentNo = made.paymentNo; paymentCreated = true;
       }
 
-      // 報告：まだの作者だけ。既にある報告（計算書なし）はそのまま使う。
-      const fresh = targets.filter((a) => a.state === "unreported");
-      let receipt: Receipt | null = null;
-      if (fresh.length) {
-        try {
-          const made = await this.deps.receipts.createReports({
-            paymentId, outConditionId: outId,
-            entries: fresh.map((a) => ({
-              conditionId: a.conditionId, grossAmount: null,
-              ...(perUnit ? { quantity: input.quantity, unitAmount: input.unitAmount, sampleQuantity: input.sampleQuantity ?? null } : {}),
-              taxIncluded: input.taxIncluded ?? false,
-              paymentStage: input.paymentStage ?? null, languages: input.languages ?? null, regions: input.regions ?? null,
-              note: str(input.note)
-            }))
-          }, actor);
-          receipt = made.receipt;
-        } catch (error) {
-          errors.push(`報告を起こせませんでした：${(error as Error).message}`);
-        }
-      }
-      if (!receipt) {
-        receipt = (await this.deps.receipts.list({ paymentId })).receipts.find((x) => x.outConditionId === outId) ?? null;
-      }
       const rows: SettleResultRow[] = [];
       for (const a of targets) {
-        const now = receipt?.ins.find((x) => x.conditionId === a.conditionId);
-        const open = (now?.reports ?? []).filter((e) => !e.documentId);
+        const ids = open.get(a.conditionId) ?? [];
+        const docs = issued.get(a.conditionId) ?? [];
         const base: SettleResultRow = {
-          conditionId: a.conditionId, partyName: a.partyName, payeeName: null, eventIds: open.map((e) => e.id),
-          documentId: null, documentNo: null, draft: false, paymentId: null, paymentNo: null, skipped: null, error: null
+          conditionId: a.conditionId, partyName: a.partyName, payeeName: null, eventIds: ids,
+          documentId: docs[0]?.id ?? null, documentNo: docs[0]?.documentNo ?? null, draft: false,
+          paymentId: null, paymentNo: null, skipped: null, error: null
         };
-        if (now?.state === "issued") { rows.push({ ...base, skipped: "計算書済", documentId: a.documents[0]?.id ?? null, documentNo: a.documents[0]?.documentNo ?? null }); continue; }
-        if (!open.length) { rows.push({ ...base, error: "報告がありません" }); continue; }
-        rows.push(...await this.issueFor(a, open.map((e) => e.id), paidOn, input, actor));
+        if (!ids.length) { rows.push(docs.length ? { ...base, skipped: "計算書済" } : { ...base, error: "報告がありません" }); continue; }
+        rows.push(...await this.issueFor(a, ids, issuedOn, input, actor));
       }
-      return { mode: "receipt", paymentId, paymentNo, paymentCreated, rows, errors };
+      const first = payments[0] ?? null;
+      return {
+        mode: pre.receipts.every((p) => p.mode === "in_house") ? "in_house" : "receipt",
+        paymentId: first?.paymentId ?? null, paymentNo: first?.paymentNo ?? null, paymentCreated: first?.created ?? false,
+        payments, rows, errors
+      };
     } catch (error) { throw translate(error); }
   }
 
-  private async settleInHouse(input: SettleInput, pre: SettlePreview, targets: SettleAuthor[], actor: string): Promise<SettleResult> {
+  /** 入金 1 件の入力の確かめ（書く前に）。 */
+  private requireInputs(input: SettleInput, pre: SettlePreview): void {
+    if (pre.mode === "in_house") {
+      if (!(Number(input.quantity ?? 0) > 0) || !(Number(input.unitAmount ?? 0) > 0)) {
+        throw new DomainError("VALIDATION", "自社製造・自社販売は 数量 と 基準価格（税抜） を入れてください");
+      }
+      return;
+    }
+    const perUnit = Number(input.quantity ?? 0) > 0 && Number(input.unitAmount ?? 0) > 0;
+    if (perUnit && pre.usageType !== "oem") {
+      throw new DomainError("VALIDATION", "数量 × 受領価格 で入れられるのは自社製造・他社販売だけです（再許諾は受領額）");
+    }
+    if (!pre.paymentId) {
+      const amount = perUnit ? Math.round(Number(input.quantity) * Number(input.unitAmount)) : (input.amount ?? null);
+      if (!(amount && amount > 0)) throw new DomainError("VALIDATION", "入金額を入れてください");
+      if (pre.languages.length > 1 && !(input.languages?.length)) {
+        throw new DomainError("VALIDATION", "この入金の言語を選んでください（許諾先が複数の言語を持っています。まとめて来るなら全部）");
+      }
+    }
+  }
+
+  /** 入金 1 件：記録（未記録なら）と、まだの作者の報告。作者ごとの「空いている報告」を返す。 */
+  private async receiptReports(input: SettleInput, pre: SettlePreview, targets: SettleAuthor[], actor: string): Promise<{
+    paidOn: string; payments: SettleResult["payments"]; errors: string[];
+    open: Map<number, number[]>; issued: Map<number, Array<{ id: number; documentNo: string | null }>>;
+  }> {
+    const outId = pre.outConditionId!;
+    const errors: string[] = [];
+    let paymentId = pre.paymentId;
+    let paymentNo = pre.paymentNo;
+    let created = false;
+    const paidOn = pre.paidOn ?? input.paidOn ?? today();
+    const perUnit = Number(input.quantity ?? 0) > 0 && Number(input.unitAmount ?? 0) > 0;
+    if (perUnit && pre.usageType !== "oem") {
+      throw new DomainError("VALIDATION", "数量 × 受領価格 で入れられるのは自社製造・他社販売だけです（再許諾は受領額）");
+    }
+    if (!paymentId) {
+      const amount = perUnit ? Math.round(Number(input.quantity) * Number(input.unitAmount)) : (input.amount ?? null);
+      if (!(amount && amount > 0)) throw new DomainError("VALIDATION", "入金額を入れてください");
+      if (pre.languages.length > 1 && !(input.languages?.length)) {
+        throw new DomainError("VALIDATION", "この入金の言語を選んでください（許諾先が複数の言語を持っています。まとめて来るなら全部）");
+      }
+      const made = await this.deps.payments.create({
+        conditionId: outId, direction: "in", amount: Math.round(amount), basisReceivedOn: paidOn,
+        note: str(input.note) ?? `入金から計算書（${pre.licenseeName ?? ""}）`
+      }, actor);
+      await this.deps.payments.markPaid(made.id, paidOn, actor);
+      paymentId = made.id; paymentNo = made.paymentNo; created = true;
+    }
+    const fresh = targets.filter((a) => a.state === "unreported");
+    let receipt: Receipt | null = null;
+    if (fresh.length) {
+      try {
+        const made = await this.deps.receipts.createReports({
+          paymentId, outConditionId: outId,
+          entries: fresh.map((a) => ({
+            conditionId: a.conditionId, grossAmount: null,
+            ...(perUnit ? { quantity: input.quantity, unitAmount: input.unitAmount, sampleQuantity: input.sampleQuantity ?? null } : {}),
+            taxIncluded: input.taxIncluded ?? false,
+            paymentStage: input.paymentStage ?? null, languages: input.languages ?? null, regions: input.regions ?? null,
+            note: str(input.note)
+          }))
+        }, actor);
+        receipt = made.receipt;
+      } catch (error) {
+        errors.push(`報告を起こせませんでした：${(error as Error).message}`);
+      }
+    }
+    if (!receipt) {
+      receipt = (await this.deps.receipts.list({ paymentId })).receipts.find((x) => x.outConditionId === outId) ?? null;
+    }
+    const open = new Map<number, number[]>();
+    const issued = new Map<number, Array<{ id: number; documentNo: string | null }>>();
+    for (const a of targets) {
+      const now = receipt?.ins.find((x) => x.conditionId === a.conditionId);
+      const free = (now?.reports ?? []).filter((e) => !e.documentId).map((e) => e.id);
+      if (free.length) open.set(a.conditionId, free);
+      const docs = (now?.reports ?? []).flatMap((e) => e.documents ?? (e.documentId ? [{ id: e.documentId, documentNo: e.documentNo }] : []));
+      if (docs.length) issued.set(a.conditionId, docs);
+    }
+    return {
+      paidOn, errors, open, issued,
+      payments: [{ paymentId, paymentNo, created, licenseeName: pre.licenseeName, amount: pre.amount }]
+    };
+  }
+
+  /** 自社製造・自社販売：売上の報告（数量 × 基準価格）。入金は無い。 */
+  private async inHouseReports(input: SettleInput, pre: SettlePreview, targets: SettleAuthor[], actor: string): Promise<{
+    paidOn: string; payments: SettleResult["payments"]; errors: string[];
+    open: Map<number, number[]>; issued: Map<number, Array<{ id: number; documentNo: string | null }>>;
+  }> {
     const occurredOn = input.paidOn ?? today();
     const quantity = input.quantity ?? null;
     const unitAmount = input.unitAmount ?? null;
     if (!(quantity && quantity > 0) || !(unitAmount && unitAmount > 0)) {
       throw new DomainError("VALIDATION", "自社製造・自社販売は 数量 と 基準価格（税抜） を入れてください");
     }
-    const rows: SettleResultRow[] = [];
+    const errors: string[] = [];
+    const open = new Map<number, number[]>();
     for (const a of targets) {
-      let eventId: number;
       try {
         const made = await this.deps.events.addWithin(this.database, a.conditionId, {
           eventType: "sales", occurredOn, usageType: "in_house", workId: pre.workId,
@@ -428,19 +566,17 @@ export class ReceiptSettleService {
           taxIncluded: input.taxIncluded ?? false, paymentStage: input.paymentStage ?? null,
           note: str(input.note) ?? "入金から計算書（自社製造・自社販売）"
         } as any, actor);
-        eventId = made.id;
+        open.set(a.conditionId, [made.id]);
       } catch (error) {
-        rows.push({ conditionId: a.conditionId, partyName: a.partyName, payeeName: null, eventIds: [], documentId: null, documentNo: null,
-                    draft: false, paymentId: null, paymentNo: null, skipped: null, error: `報告を起こせませんでした：${(error as Error).message}` });
-        continue;
+        errors.push(`${a.partyName}：報告を起こせませんでした：${(error as Error).message}`);
       }
-      rows.push(...await this.issueFor(a, [eventId], occurredOn, input, actor));
     }
-    return { mode: "in_house", paymentId: null, paymentNo: null, paymentCreated: false, rows, errors: [] };
+    return { paidOn: occurredOn, errors, open, issued: new Map(), payments: [] };
   }
 
   /** 作者 1 人（受取人ごと）の計算書と支払。 */
-  private async issueFor(a: SettleAuthor, eventIds: number[], issuedOn: string, input: SettleInput, actor: string): Promise<SettleResultRow[]> {
+  private async issueFor(a: SettleAuthor, eventIds: number[], issuedOn: string,
+                         input: { draftOnly?: boolean | null; withPayment?: boolean | null; dueOn?: string | null }, actor: string): Promise<SettleResultRow[]> {
     const payees: Array<{ partyId: number | null; partyName: string | null }> = a.payees.length ? a.payees : [{ partyId: null, partyName: null }];
     const out: SettleResultRow[] = [];
     for (const payee of payees) {
