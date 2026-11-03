@@ -191,3 +191,21 @@ test("計算書の備考（statementNotes）は手入力 notes として計算�
                                                        statementNotes: "振込手数料は当社負担" }, "t");
   assert.equal(seen?.notes, "振込手数料は当社負担");
 });
+
+test("取引モデルの無い OUT 条件は、選んだモデルで作者を引き、実行で条件明細に書き込む", async () => {
+  const calls: string[] = [];
+  const base = new FakeDatabase((text, params) => {
+    if (text.includes("FROM conditions oc") && text.includes("WHERE oc.id = $1")) return [{ ...outRow, usage_type: null }];
+    if (text.includes("FROM condition_shares s")) return [];
+    if (text.startsWith("UPDATE conditions SET usage_type")) { calls.push(`usage:${params[0]}:${params[1]}`); return [{ id: 20 }]; }
+    return [];
+  });
+  const d = deps(calls, { r: receipt() }) as any;
+  d.receipts.authorsFor = async (id: number, usage: string | null) => { calls.push(`authors:${id}:${usage}`); return { media: null, authors: [] }; };
+  const svc = new ReceiptSettleService(base, d);
+  const p = await svc.preview({ usageType: "oem", outConditionId: 20, amount: 1000 });
+  assert.ok(p.notes.some((n) => n.includes("取引モデルが入っていません")));
+  assert.ok(calls.includes("authors:20:oem"), "選んだモデルで作者を引く");
+  const none = await svc.preview({ outConditionId: 20, amount: 1000 });
+  assert.ok(none.blockers.some((b) => b.includes("取引モデルが入っていません")), "モデルを選ばなければ止める");
+});

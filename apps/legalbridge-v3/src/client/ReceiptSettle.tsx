@@ -23,7 +23,7 @@ const USAGES: Array<[Usage, string, string]> = [
 
 interface Out { id: number; conditionNo: string | null; name: string; usageType: string | null; usageLabel: string;
   workId: number | null; workTitle: string | null; currency: string; languages: string[]; ratePct: number | null;
-  termStart: string | null; termEnd: string | null }
+  termStart: string | null; termEnd: string | null; status: string }
 interface OpenReceipt { paymentId: number; paymentNo: string | null; paidOn: string | null; amount: number; currency: string;
   outConditionId: number; outName: string; usageLabel: string; workTitle: string | null; reported: boolean }
 interface Author { conditionId: number; conditionNo: string | null; name: string; partyId: number; partyName: string;
@@ -314,9 +314,11 @@ function ReceiptCard({ index, count, link, onChange, onRemove }: {
     if (!party || inHouse) return;
     api.get<{ outs: Out[]; receipts: OpenReceipt[] }>(`/royalty-settle/outs?partyId=${party.id}`)
       .then((r) => {
-        const list = r.outs.filter((o) => o.usageType === usage);
-        setOuts(list); setOpenReceipts(r.receipts.filter((x) => list.some((o) => o.id === x.outConditionId)));
-        if (list.length === 1) setOutId(list[0].id);
+        // 取引モデルの合う条件と、モデル未設定の条件（選んだモデルで進める）が選べる。ほかは見せるだけ。
+        setOuts(r.outs);
+        const usable = r.outs.filter((o) => o.usageType === usage || !o.usageType);
+        setOpenReceipts(r.receipts.filter((x) => usable.some((o) => o.id === x.outConditionId)));
+        if (usable.length === 1) setOutId(usable[0].id);
       })
       .catch((e: ApiError) => setLoadError(e.message));
   }, [party?.id, usage]);
@@ -387,21 +389,31 @@ function ReceiptCard({ index, count, link, onChange, onRemove }: {
                 onChange={(v, o) => setParty(v ? { id: Number(v), name: o?.label ?? v } : null)} />
             )}
           </div>
-          {!inHouse && party && !outs.length && <span className="warn">この取引先に「{USAGES.find((u) => u[0] === usage)?.[1]}」の OUT 条件がありません。取引モデルを変えるか、条件明細を登録してください</span>}
+          {!inHouse && party && !outs.length && <span className="warn">この取引先に許諾（OUT）の条件明細がありません。条件明細を登録してください</span>}
+          {!inHouse && party && outs.length > 0 && !outs.some((o) => o.usageType === usage || !o.usageType) && (
+            <span className="warn">この取引先の条件はどれも「{USAGES.find((u) => u[0] === usage)?.[1]}」ではありません。取引モデルを変えるか、条件明細の利用形態を直してください</span>
+          )}
         </div>
         {!inHouse && outs.length > 0 && (
           <div className="stack" style={{ gap: 6, marginLeft: 120 }}>
             <span className="faint">条件（作品 × 取引モデル）を選ぶ</span>
-            {outs.map((o) => (
-              <label key={o.id} className="row" style={{ gap: 8, alignItems: "baseline" }}>
-                <input type="radio" name={`out-${index}`} checked={(chosenReceipt?.outConditionId ?? outId) === o.id} disabled={!!chosenReceipt}
-                       onChange={() => { setOutId(o.id); setPaymentId(null); }} />
-                <b>{o.workTitle ?? "（作品なし）"}</b>
-                {link(o.id, o.conditionNo ?? `#${o.id}`)}
-                <span className="faint">{o.name}・{o.ratePct === null ? "料率なし" : `${o.ratePct}%`}{o.languages.length ? `・${o.languages.join("・")}` : ""}
-                  {o.termStart || o.termEnd ? `・${o.termStart ?? ""}〜${o.termEnd ?? ""}` : ""}</span>
-              </label>
-            ))}
+            {outs.map((o) => {
+              const usable = o.usageType === usage || !o.usageType;
+              return (
+                <label key={o.id} className="row" style={{ gap: 8, alignItems: "baseline", opacity: usable ? 1 : 0.55 }}>
+                  <input type="radio" name={`out-${index}`} checked={(chosenReceipt?.outConditionId ?? outId) === o.id} disabled={!!chosenReceipt || !usable}
+                         onChange={() => { setOutId(o.id); setPaymentId(null); }} />
+                  <b>{o.workTitle ?? "（作品なし）"}</b>
+                  {link(o.id, o.conditionNo ?? `#${o.id}`)}
+                  <span className="faint">{o.name}・{o.ratePct === null ? "料率なし" : `${o.ratePct}%`}{o.languages.length ? `・${o.languages.join("・")}` : ""}
+                    {o.termStart || o.termEnd ? `・${o.termStart ?? ""}〜${o.termEnd ?? ""}` : ""}</span>
+                  {!o.usageType
+                    ? <span className="tag warn">取引モデル未設定 → 選んだモデルで進める（条件明細に書き込む）</span>
+                    : o.usageType !== usage ? <span className="tag">{o.usageLabel}（モデルが違う）</span> : null}
+                  {o.status !== "active" && <span className="tag">{o.status === "scheduled" ? "予定" : o.status === "draft" ? "下書き" : o.status}</span>}
+                </label>
+              );
+            })}
             {openReceipts.length > 0 && (
               <div className="stack" style={{ gap: 4, marginTop: 4 }}>
                 <span className="faint">記録済みの入金から進める（取引管理で入金済みにしたもの）</span>

@@ -1,5 +1,6 @@
 import { dateStr, int, str, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { recordAudit } from "../core/audit.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
 import type { ConditionEventService } from "../conditions/event-service.js";
 import type { PaymentService } from "../payments/service.js";
@@ -223,11 +224,13 @@ export class ReceiptSettleService {
                 (SELECT count(*)::int FROM payments pm JOIN payment_allocations al ON al.payment_id = pm.id
                   JOIN conditions c2 ON c2.id = al.condition_id
                   WHERE pm.direction = 'in' AND pm.status = 'paid' AND c2.counterparty_id = p.id
-                    AND c2.direction = 'out' AND c2.usage_type = ANY($2::text[])
+                    AND c2.direction = 'out' AND (c2.usage_type = ANY($2::text[]) OR c2.usage_type IS NULL)
                     AND NOT EXISTS (SELECT 1 FROM condition_events e WHERE e.source_payment_id = pm.id AND e.status = 'active')) AS open
            FROM parties p
-           JOIN conditions oc ON oc.counterparty_id = p.id AND oc.direction = 'out'
-                AND oc.usage_type = ANY($2::text[]) AND oc.status IN ('active', 'scheduled')
+           -- 取引モデル（usage_type）が未設定の OUT 条件も候補に出す（画面で選んだモデルで進める）。
+           JOIN conditions oc ON oc.counterparty_id = p.id AND oc.direction = 'out' AND oc.kind = 'license'
+                AND (oc.usage_type = ANY($2::text[]) OR oc.usage_type IS NULL)
+                AND oc.status NOT IN ('void', 'superseded')
           WHERE p.status <> 'merged'
             AND ($1 = '' OR p.name ILIKE '%' || $1 || '%' OR COALESCE(p.name_kana, '') ILIKE '%' || $1 || '%'
                  OR COALESCE(p.party_code, '') ILIKE '%' || $1 || '%')
@@ -245,20 +248,20 @@ export class ReceiptSettleService {
   async outsOf(partyId: number): Promise<{
     outs: Array<{ id: number; conditionNo: string | null; name: string; usageType: string | null; usageLabel: string;
                   workId: number | null; workTitle: string | null; currency: string; languages: string[];
-                  ratePct: number | null; termStart: string | null; termEnd: string | null }>;
+                  ratePct: number | null; termStart: string | null; termEnd: string | null; status: string }>;
     receipts: Array<{ paymentId: number; paymentNo: string | null; paidOn: string | null; amount: number; currency: string;
                       outConditionId: number; outName: string; usageLabel: string; workTitle: string | null; reported: boolean }>;
   }> {
     try {
       const outs = (await this.database.query(
         `SELECT oc.id, oc.condition_no, oc.name, oc.usage_type, oc.currency, oc.work_id, w.title AS work_title, oc.rate_ppm,
-                oc.term_start, oc.term_end,
+                oc.term_start, oc.term_end, oc.status,
                 (SELECT array_agg(sc.label ORDER BY sc.sort_order, sc.label) FROM condition_scopes sc
                   WHERE sc.condition_id = oc.id AND sc.scope_type = 'language') AS languages
            FROM conditions oc LEFT JOIN works w ON w.id = oc.work_id
-          WHERE oc.counterparty_id = $1 AND oc.direction = 'out' AND oc.usage_type = ANY($2::text[])
-            AND oc.status IN ('active', 'scheduled')
-          ORDER BY w.title NULLS LAST, oc.usage_type, oc.condition_no NULLS LAST, oc.id`, [partyId, [...EVENT_USAGES]])).rows as any[];
+          WHERE oc.counterparty_id = $1 AND oc.direction = 'out' AND oc.kind = 'license'
+            AND oc.status NOT IN ('void', 'superseded')
+          ORDER BY w.title NULLS LAST, oc.usage_type NULLS LAST, oc.condition_no NULLS LAST, oc.id`, [partyId])).rows as any[];
       const receipts = (await this.database.query(
         `SELECT pm.id AS payment_id, pm.payment_no, pm.paid_on, al.amount, pm.currency, oc.id AS out_id, oc.name AS out_name,
                 oc.usage_type, w.title AS work_title,
@@ -268,7 +271,7 @@ export class ReceiptSettleService {
            JOIN conditions oc ON oc.id = al.condition_id
            LEFT JOIN works w ON w.id = oc.work_id
           WHERE pm.direction = 'in' AND pm.status = 'paid' AND oc.counterparty_id = $1
-            AND oc.direction = 'out' AND oc.usage_type = ANY($2::text[])
+            AND oc.direction = 'out' AND (oc.usage_type = ANY($2::text[]) OR oc.usage_type IS NULL)
           ORDER BY pm.paid_on DESC NULLS LAST, pm.id DESC
           LIMIT 30`, [partyId, [...EVENT_USAGES]])).rows as any[];
       const strip = (xs: unknown) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== "全言語");
@@ -278,7 +281,7 @@ export class ReceiptSettleService {
           usageLabel: conditionUsageLabel(r.usage_type), workId: int(r.work_id), workTitle: str(r.work_title),
           currency: String(r.currency ?? "JPY"), languages: strip(r.languages),
           ratePct: r.rate_ppm === null || r.rate_ppm === undefined ? null : ppmToPct(Number(r.rate_ppm)),
-          termStart: dateStr(r.term_start), termEnd: dateStr(r.term_end)
+          termStart: dateStr(r.term_start), termEnd: dateStr(r.term_end), status: String(r.status ?? "")
         })),
         receipts: receipts.map((r) => ({
           paymentId: Number(r.payment_id), paymentNo: str(r.payment_no), paidOn: dateStr(r.paid_on), amount: Number(r.amount),
@@ -307,8 +310,16 @@ export class ReceiptSettleService {
       if (!outId) throw new DomainError("VALIDATION", "許諾先の条件か入金を選んでください");
       const head = await this.outHead(outId);
       if (head.direction !== "out") blockers.push("許諾先（OUT）の条件を選んでください");
+      // 取引モデルが未設定の条件は、画面で選んだモデルで進める（実行で条件明細に書き込む）。
+      const picked = input.usageType && (EVENT_USAGES as readonly string[]).includes(input.usageType) ? input.usageType : null;
+      if (!head.usageType && picked) {
+        head.usageType = picked;
+        notes.push(`この条件には取引モデルが入っていません。選んだ「${conditionUsageLabel(picked)}」で進め、条件明細にも書き込みます`);
+      }
       if (!EVENT_USAGES.includes(head.usageType as any)) {
-        blockers.push(`この条件の取引モデル（${conditionUsageLabel(head.usageType)}）は入金から計算書を出す形ではありません。再許諾・自社製造・他社販売だけです`);
+        blockers.push(head.usageType
+          ? `この条件の取引モデル（${conditionUsageLabel(head.usageType)}）は入金から計算書を出す形ではありません。再許諾・自社製造・他社販売だけです`
+          : "この条件には取引モデルが入っていません。上で 再許諾 か 自社製造・他社販売 を選んでください");
       }
       if (head.status === "void" || head.status === "superseded") blockers.push("無効・改訂済みの条件です。今の版を選んでください");
       if (!head.workId) blockers.push("許諾先の条件に作品が付いていません。作者の条件を引けません");
@@ -334,7 +345,7 @@ export class ReceiptSettleService {
           estimate: estimateOf(amount, x.ratePct), ...(await this.payeeAndContract(x.conditionId))
         })));
       } else {
-        const found = await this.deps.receipts.authorsFor(outId);
+        const found = await this.deps.receipts.authorsFor(outId, head.usageType);
         if (found.media === "print") {
           blockers.push("出版の紙の再許諾は、版元の刷部数の報告から計算書を出します（入金からは起こしません）");
         }
@@ -525,6 +536,15 @@ export class ReceiptSettleService {
     const perUnit = Number(input.quantity ?? 0) > 0 && Number(input.unitAmount ?? 0) > 0;
     if (perUnit && pre.usageType !== "oem") {
       throw new DomainError("VALIDATION", "数量 × 受領価格 で入れられるのは自社製造・他社販売だけです（再許諾は受領額）");
+    }
+    // 取引モデルが未設定の OUT 条件は、選んだモデルを書き込んでから進める（報告・計算書はこの値で算定する）。
+    if (pre.usageType && EVENT_USAGES.includes(pre.usageType as any)) {
+      const r = await this.database.query(
+        "UPDATE conditions SET usage_type = $2, updated_at = now() WHERE id = $1 AND usage_type IS NULL RETURNING id", [outId, pre.usageType]);
+      if (r.rowCount) {
+        await recordAudit(this.database as any, { actor, action: "condition.usage_type_set", targetType: "condition", targetId: outId,
+                                                  detail: { usageType: pre.usageType, via: "royalty-settle" } });
+      }
     }
     if (!paymentId) {
       const amount = perUnit ? Math.round(Number(input.quantity) * Number(input.unitAmount)) : (input.amount ?? null);
