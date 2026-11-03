@@ -2807,6 +2807,26 @@ export function createRoutes(database: Transactable) {
         Number(req.params.id), Number(req.params.scheduleId), input, actor(res)));
     }));
 
+  // この条件（改訂の全版）に立っている支払（取り消し以外）と、どの実績に割り当てたか。
+  // 作品台帳・案件の「条件ごと」のポップアップが開くたびに引き直す（表の行は開いた時点のもので、
+  // 立てたばかりの支払や、行の 1 件に丸めた支払が落ちることがあった）。
+  router.get("/conditions/:id/payments", asyncRoute(async (req, res) => {
+    const r = await database.query(
+      `SELECT y.id, y.payment_no, y.status, y.due_on, y.paid_on, y.note, y.amount,
+              array_remove(array_agg(DISTINCT al.event_id), NULL) AS event_ids
+         FROM conditions c
+         JOIN conditions x ON COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id)
+         JOIN payment_allocations al ON al.condition_id = x.id
+         JOIN payments y ON y.id = al.payment_id
+        WHERE c.id = $1 AND y.status <> 'canceled'
+        GROUP BY y.id
+        ORDER BY (y.status = 'paid'), y.due_on NULLS LAST, y.id`, [Number(req.params.id)]);
+    res.json({ payments: (r.rows as any[]).map((y) => ({
+      id: Number(y.id), paymentNo: y.payment_no ?? null, status: String(y.status), amount: Number(y.amount ?? 0),
+      dueOn: dateStr(y.due_on), paidOn: dateStr(y.paid_on),
+      note: y.note ?? null, eventIds: (Array.isArray(y.event_ids) ? y.event_ids : []).map(Number)
+    })) });
+  }));
   router.get("/conditions/:id/events", asyncRoute(async (req, res) => {
     res.json({
       events: await conditionEvents.list(Number(req.params.id)),

@@ -25,6 +25,7 @@ const db = () => new FakeDatabase((text) => {
   if (text.includes("FROM conditions oc") && text.includes("WHERE oc.id = $1")) return [outRow];
   if (text.includes("FROM condition_shares s")) return [];
   if (text.includes("FROM works WHERE id = $1")) return [{ id: 3, title: "ito" }];
+  if (text.includes("SELECT c.payment_terms, p.kind")) return [{ payment_terms: "月末締め翌月末払い", party_kind: "individual" }];
   return [];
 });
 
@@ -208,4 +209,21 @@ test("取引モデルの無い OUT 条件は、選んだモデルで作者を引
   assert.ok(calls.includes("authors:20:oem"), "選んだモデルで作者を引く");
   const none = await svc.preview({ outConditionId: 20, amount: 1000 });
   assert.ok(none.blockers.some((b) => b.includes("取引モデルが入っていません")), "モデルを選ばなければ止める");
+});
+
+test("支払期日：入金日を起点に作者の支払条件（個人は 20 日）から自動で出し、紙の支払予定日に焼き付けて支払の期日にも使う", async () => {
+  const calls: string[] = [];
+  const d = deps(calls, { r: receipt() }) as any;
+  let manual: Record<string, unknown> | undefined; let payDue: string | undefined;
+  d.issuer.draft = async (input: { manualInputs?: Record<string, unknown> }) => { manual = input.manualInputs; return { id: 601 }; };
+  d.issuer.issue = async (input: { manualInputs?: Record<string, unknown> }) => { manual = input.manualInputs; return { document: { id: 600, documentNo: "RS-600" } }; };
+  d.payments.createFromStatementDocument = async (_id: number, _a: string, o: { dueOn?: string }) => { payDue = o.dueOn; return { paymentId: 70, paymentNo: "PAY-70" }; };
+  const svc = new ReceiptSettleService(db(), d);
+  const p = await svc.preview({ usageType: "oem", paymentId: 1, outConditionId: 20 });
+  assert.equal(p.authors[0].dueOn, "2026-12-20", "入金 2026-11-01 → 月末締め翌月末払い・個人 → 翌月 20 日");
+  await svc.settleMany({ receipts: [{ usageType: "oem", paymentId: 1, outConditionId: 20 }], authors: [11], draftOnly: true }, "t");
+  assert.equal(manual?.PAYMENT_DATE, "2026-12-20", "下書きにも支払予定日が入る");
+  await svc.settleMany({ receipts: [{ usageType: "oem", paymentId: 1, outConditionId: 20 }], authors: [11], dueOn: "2026-11-20" }, "t");
+  assert.equal(manual?.PAYMENT_DATE, "2026-11-20", "打った期日が優先");
+  assert.equal(payDue, "2026-11-20", "支払の期日も同じ");
 });

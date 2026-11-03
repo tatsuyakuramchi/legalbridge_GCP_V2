@@ -31,6 +31,8 @@ interface Author { conditionId: number; conditionNo: string | null; name: string
   state: "unreported" | "mismatch" | "waiting" | "issued"; reportCount: number;
   documents: Array<{ id: number; documentNo: string | null }>; estimate: number | null;
   payees: Array<{ partyId: number; partyName: string }>; receiptCount: number;
+  /** 自動の支払期日（入金日を起点に、作者の条件の支払条件から。個人は 20 日）。 */
+  dueOn: string | null;
   /** 紙の「対象契約」「契約番号」に自動で出る作者側の契約。両方空なら「契約未指定」。 */
   contract: { title: string; number: string } }
 /** 作者の契約の候補（文書フォームの 基本契約・個別契約番号 と同じ引き方）。 */
@@ -79,6 +81,8 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   const [draftOnly, setDraftOnly] = useState(false);
   const [withPayment, setWithPayment] = useState(true);
   const [dueOn, setDueOn] = useState("");
+  /** 支払期日を人が打ったか。打っていなければ下見の自動の期日を入れ直す。 */
+  const [dueTyped, setDueTyped] = useState(false);
   /** 計算書の備考（全員に共通。紙の固定文の下に出る）。 */
   const [statementNotes, setStatementNotes] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -104,6 +108,8 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
       .then((p) => {
         if (!live) return;
         setPreview(p); setPicked(p.authors.filter((a) => a.state !== "issued").map((a) => a.conditionId));
+        // 支払期日の既定：作者の自動の期日のいちばん遅い日（人が打っていなければ入れ直す）。
+        if (!dueTyped) setDueOn(p.authors.map((a) => a.dueOn).filter((d): d is string => !!d).sort().pop() ?? "");
         // 作者ごとの契約の候補（基本契約・個別契約番号）。紙が「契約未指定」になる作者はここで選ぶ。
         for (const a of p.authors) {
           if (refs[a.conditionId] !== undefined) continue;
@@ -178,7 +184,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
             {preview.notes.map((n) => <div key={n} className="note">{n}</div>)}
             {preview.authors.length > 0 && (
               <table className="table">
-                <thead><tr><th></th><th>作者</th><th>IN 条件</th><th>料率</th><th className="num">見込み額</th><th>対象契約（紙に出る契約）</th><th>状態</th><th>計算書</th></tr></thead>
+                <thead><tr><th></th><th>作者</th><th>IN 条件</th><th>料率</th><th className="num">見込み額</th><th>支払予定日</th><th>対象契約（紙に出る契約）</th><th>状態</th><th>計算書</th></tr></thead>
                 <tbody>
                   {preview.authors.map((a) => {
                     const s = STATE[a.state];
@@ -194,6 +200,7 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
                         <td>{link(a.conditionId, a.conditionNo ?? `#${a.conditionId}`)}{a.workTitle ? <div className="faint">{a.workTitle}</div> : null}</td>
                         <td>{a.ratePct === null ? "—" : `${a.ratePct}%`}</td>
                         <td className="num">{a.estimate === null ? "—" : money(a.estimate, "JPY")}</td>
+                        <td>{dueOn || a.dueOn || "—"}{!dueOn && a.dueOn ? <div className="faint">条件の支払条件から</div> : dueOn && a.dueOn && dueOn !== a.dueOn ? <div className="faint">自動なら {a.dueOn}</div> : null}</td>
                         <td>
                           <ContractCell a={a} refs={refs[a.conditionId]} value={contracts[a.conditionId] ?? { agreementId: null, termsNo: "" }}
                                         onChange={(c) => setContracts((cur) => ({ ...cur, [a.conditionId]: c }))} />
@@ -224,11 +231,11 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
                 <label className="row" style={{ gap: 4 }}>
                   <input type="checkbox" checked={withPayment} disabled={draftOnly} onChange={(e) => setWithPayment(e.target.checked)} />作者への支払も立てる
                 </label>
-                {withPayment && !draftOnly && (
-                  <label className="row" style={{ gap: 4 }}>支払期日
-                    <input type="date" value={dueOn} onChange={(e) => setDueOn(e.target.value)} /><span className="faint">（空なら条件の支払条件から）</span>
-                  </label>
-                )}
+                <label className="row" style={{ gap: 4 }}>支払期日
+                  <input type="date" value={dueOn} onChange={(e) => { setDueOn(e.target.value); setDueTyped(true); }} />
+                  <span className="faint">{dueTyped ? "（打った日。計算書の支払予定日と支払の期日になります）" : "（自動：作者の条件の支払条件から。直せます。下書きにも入ります）"}</span>
+                  {dueTyped && <button className="linky" onClick={() => { setDueTyped(false); setDueOn(preview.authors.map((a) => a.dueOn).filter((d): d is string => !!d).sort().pop() ?? ""); }}>自動に戻す</button>}
+                </label>
                 <button className="btn primary" disabled={busy || !ready} onClick={() => void run()}>
                   {busy ? "作っています…" : draftOnly ? `${picked.length} 人の計算書の下書きを作る` : `${picked.length} 人の計算書を作る`}
                 </button>
@@ -318,7 +325,10 @@ function ReceiptCard({ index, count, link, onChange, onRemove }: {
         setOuts(r.outs);
         const usable = r.outs.filter((o) => o.usageType === usage || !o.usageType);
         setOpenReceipts(r.receipts.filter((x) => usable.some((o) => o.id === x.outConditionId)));
-        if (usable.length === 1) setOutId(usable[0].id);
+        // 選んだモデルに合う条件が 1 本ならそれを選んでおく（未設定の条件が混ざっていても）。
+        const matching = r.outs.filter((o) => o.usageType === usage);
+        if (matching.length === 1) setOutId(matching[0].id);
+        else if (usable.length === 1) setOutId(usable[0].id);
       })
       .catch((e: ApiError) => setLoadError(e.message));
   }, [party?.id, usage]);

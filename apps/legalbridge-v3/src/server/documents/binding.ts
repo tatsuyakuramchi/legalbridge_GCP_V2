@@ -169,6 +169,12 @@ export function withImpliedVariables(templateKey: string, variables: TemplateVar
     implied.push({ name: "INSPECTION_DATE", label: "検収日（頭書き）", type: "date", group: "I. 検収概要",
                    helpText: "自動は今回検収する行のいちばん遅い検収日（実績の検収日。無ければ納品日）。別の日を書くならここで上書き" });
   }
+  // 計算書の支払予定日。自動は 実績に立つ支払の期日 → 納品日からの既定。入金から計算書は
+  // 作者の支払条件から出した日をここに入れる（下書きにも入り、決定の支払はこの日になる）。
+  if (/^royalty_statement/.test(templateKey)) {
+    implied.push({ name: "PAYMENT_DATE", label: "支払予定日", type: "date", group: "支払",
+                   helpText: "自動は実績に立っている支払の期日（無ければ納品日からの既定）。別の日にするならここで上書き" });
+  }
   const names = new Set(variables.map((v) => v.name));
   return [...variables, ...implied.filter((v) => !names.has(v.name))];
 }
