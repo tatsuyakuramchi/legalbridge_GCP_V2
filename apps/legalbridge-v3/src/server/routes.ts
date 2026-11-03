@@ -3301,6 +3301,12 @@ export function createRoutes(database: Transactable) {
   const receiptSettle = new ReceiptSettleService(database, {
     receipts: royaltyReceipts, payments, issuer: statementIssuer, events: conditionEvents
   });
+  // 作者ごとの契約の選び直し（基本契約・個別契約番号）。紙の「対象契約」「契約番号」に出る。
+  const contractChoiceSchema = z.array(z.object({
+    conditionId: z.coerce.number().int().positive(),
+    agreementId: z.coerce.number().int().positive().nullable().optional(),
+    termsNo: z.string().trim().max(60).nullable().optional()
+  })).max(30).nullable().optional();
   const settleSchema = z.object({
     paymentId: z.coerce.number().int().positive().nullable().optional(),
     outConditionId: z.coerce.number().int().positive().nullable().optional(),
@@ -3317,6 +3323,7 @@ export function createRoutes(database: Transactable) {
     regions: z.array(z.string().trim().min(1).max(60)).max(20).nullable().optional(),
     note: z.string().trim().max(2000).nullable().optional(),
     authors: z.array(z.coerce.number().int().positive()).max(30).nullable().optional(),
+    contracts: contractChoiceSchema,
     draftOnly: z.coerce.boolean().nullable().optional(),
     withPayment: z.coerce.boolean().nullable().optional(),
     dueOn: z.string().date().nullable().optional()
@@ -3332,6 +3339,7 @@ export function createRoutes(database: Transactable) {
   const settleManySchema = z.object({
     receipts: z.array(settleSchema).min(1).max(20),
     authors: z.array(z.coerce.number().int().positive()).max(30).nullable().optional(),
+    contracts: contractChoiceSchema,
     draftOnly: z.coerce.boolean().nullable().optional(),
     withPayment: z.coerce.boolean().nullable().optional(),
     dueOn: z.string().date().nullable().optional()
@@ -3340,7 +3348,7 @@ export function createRoutes(database: Transactable) {
     const b = (body ?? {}) as { receipts?: unknown };
     if (Array.isArray(b.receipts)) return settleManySchema.parse(b);
     const one = settleSchema.parse(b);
-    return { receipts: [one], authors: one.authors, draftOnly: one.draftOnly, withPayment: one.withPayment, dueOn: one.dueOn };
+    return { receipts: [one], authors: one.authors, contracts: one.contracts, draftOnly: one.draftOnly, withPayment: one.withPayment, dueOn: one.dueOn };
   };
   router.post("/royalty-settle/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const input = manyOf(req.body);

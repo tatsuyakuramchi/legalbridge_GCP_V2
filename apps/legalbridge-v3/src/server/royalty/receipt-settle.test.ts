@@ -47,8 +47,10 @@ function deps(calls: string[], current: { r: Receipt }) {
       createFromStatementDocument: async (documentId: number) => { calls.push(`pay.fromDoc:${documentId}`); return { paymentId: 70, paymentNo: "PAY-70" } as any; }
     },
     issuer: {
-      issue: async (input: { entries: Array<{ conditionId: number; eventIds?: number[] }>; issuedOn?: string | null }) => {
-        calls.push(`issue:${input.entries[0].conditionId}:${(input.entries[0].eventIds ?? []).join(",")}:${input.issuedOn}`);
+      issue: async (input: { entries: Array<{ conditionId: number; eventIds?: number[] }>; issuedOn?: string | null;
+                             agreementId?: number | null; manualInputs?: Record<string, unknown> }) => {
+        calls.push(`issue:${input.entries[0].conditionId}:${(input.entries[0].eventIds ?? []).join(",")}:${input.issuedOn}`
+          + (input.agreementId ? `:a${input.agreementId}` : "") + (input.manualInputs?._termsNo ? `:t${input.manualInputs._termsNo}` : ""));
         return { document: { id: 600, documentNo: "RS-600" } } as any;
       },
       draft: async (input: { entries: Array<{ conditionId: number }> }) => { calls.push(`draft:${input.entries[0].conditionId}`); return { id: 601 } as any; }
@@ -168,4 +170,14 @@ test("複数の入金：2 件目の入力が足りなければ、1 件目も書�
     { usageType: "oem", outConditionId: 20, amount: 600_000 }, { usageType: "oem", outConditionId: 20 }
   ] }, "t"), /入金 2：入金額/);
   assert.deepEqual(calls, []);
+});
+
+test("作者ごとの契約の選び直し（基本契約・個別契約番号）は計算書に渡る。下見は自動の契約（空なら契約未指定）を返す", async () => {
+  const calls: string[] = [];
+  const svc = new ReceiptSettleService(db(), deps(calls, { r: receipt() }) as any);
+  const p = await svc.preview({ usageType: "oem", outConditionId: 20, amount: 1 });
+  assert.deepEqual(p.authors[0].contract, { title: "", number: "" }, "契約の無い作者は空（紙は契約未指定）");
+  await svc.settleMany({ receipts: [{ usageType: "oem", paymentId: 1, outConditionId: 20 }], authors: [11],
+                         contracts: [{ conditionId: 11, agreementId: 77, termsNo: "ARC-ILT-2026-0001" }] }, "t");
+  assert.ok(calls.includes("issue:11:91:2026-11-01:a77:tARC-ILT-2026-0001"), calls.join(" "));
 });
