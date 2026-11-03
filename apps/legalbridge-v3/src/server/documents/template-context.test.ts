@@ -1325,3 +1325,24 @@ test("A-119：条件に繋がる行の納品日は、人が触っていなけれ
   }) as Record<string, any>;
   assert.equal(legacy.delivery_line_items[0].delivery_date, "2026-09-28");
 });
+
+test("検収書の行の支払日：実績に支払が立っていれば、行に古い日付が残っていても支払の期日で出し直す。支払が無ければ納品日と同じ扱い", async () => {
+  const { resolveLegacyVariable } = await import("./legacy-variables.js");
+  const { withInspectionLines } = await import("./template-context.js");
+  const row = { condition_id: 1, item_name: "x", spec: "x", amount_ex_tax: 1, inspected_amount_ex_tax: 1, tax_category: "taxable" };
+  // 支払を 2026-11-20 に直した → 下書きの行の 2029-07-31（_auto 無し＝古い下書き）も追従する。
+  const withPay = [{ id: 9, conditionId: 1, occurredOn: "2026-10-20", amount: 1, paymentDueOn: "2026-11-20" }];
+  const follow = buildTemplateContext("inspection_certificate", ctx({ conditions: [condition({ id: 1 })], events: withPay }), {
+    delivery_line_items: [{ ...row, delivery_date: "2026-10-20", payment_date: "2029-07-31" }]
+  }) as Record<string, any>;
+  assert.equal(follow.delivery_line_items[0].payment_date, "2026-11-20");
+  assert.equal(resolveLegacyVariable("PAYMENT_DATE", withInspectionLines("inspection_certificate",
+    ctx({ conditions: [condition({ id: 1 })], events: withPay }), { delivery_line_items: [{ ...row, payment_date: "2029-07-31" }] })), "2026-11-20",
+    "頭書きのお支払予定日も支払の期日");
+  // 支払が無い行：人が直した日付（_auto と違う）は残す。
+  const noPay = [{ id: 9, conditionId: 1, occurredOn: "2026-10-20", amount: 1 }];
+  const typed = buildTemplateContext("inspection_certificate", ctx({ conditions: [condition({ id: 1 })], events: noPay }), {
+    delivery_line_items: [{ ...row, payment_date: "2026-12-05", payment_date_auto: "2026-11-30" }]
+  }) as Record<string, any>;
+  assert.equal(typed.delivery_line_items[0].payment_date, "2026-12-05");
+});
