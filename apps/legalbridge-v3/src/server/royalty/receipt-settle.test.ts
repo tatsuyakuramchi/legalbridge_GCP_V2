@@ -181,3 +181,13 @@ test("作者ごとの契約の選び直し（基本契約・個別契約番号�
                          contracts: [{ conditionId: 11, agreementId: 77, termsNo: "ARC-ILT-2026-0001" }] }, "t");
   assert.ok(calls.includes("issue:11:91:2026-11-01:a77:tARC-ILT-2026-0001"), calls.join(" "));
 });
+
+test("計算書の備考（statementNotes）は手入力 notes として計算書に渡る", async () => {
+  const calls: string[] = [];
+  const d = deps(calls, { r: receipt() }) as any;
+  let seen: Record<string, unknown> | undefined;
+  d.issuer.issue = async (input: { manualInputs?: Record<string, unknown> }) => { seen = input.manualInputs; return { document: { id: 600, documentNo: "RS-600" } }; };
+  await new ReceiptSettleService(db(), d).settleMany({ receipts: [{ usageType: "oem", paymentId: 1, outConditionId: 20 }], authors: [11],
+                                                       statementNotes: "振込手数料は当社負担" }, "t");
+  assert.equal(seen?.notes, "振込手数料は当社負担");
+});
