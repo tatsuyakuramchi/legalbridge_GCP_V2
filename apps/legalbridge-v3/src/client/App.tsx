@@ -46,7 +46,13 @@ const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
     : a.partyId === (b as typeof a).partyId);
 
 export function App() {
-  const [view, setView] = useState<View>("home");
+  // 最初の画面は URL から決める。home を先に出すと、ホームの盤面と集計（重い）が走ったあとに
+  // 目当ての画面へ移ることになり、本番では DB の接続を塞いで目当ての画面の要求が 5 秒待ちで落ちていた。
+  const [view, setView] = useState<View>(() => {
+    const r = parseHash(window.location.hash);
+    if (!r || r.view === "rounds") return r ? "paydocs" : "home";
+    return NAV_VIEWS.has(r.view) ? (r.view as View) : "home";
+  });
   const [conditionId, setConditionId] = useState<number | undefined>();
   /** 検索結果から開いたときに、その画面で選んでおく行。 */
   const [focus, setFocus] = useState<{ view: View; id: number } | null>(null);

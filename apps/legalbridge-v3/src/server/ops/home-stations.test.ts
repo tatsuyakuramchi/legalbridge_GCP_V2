@@ -38,3 +38,27 @@ test("道具が 1 つ落ちても盤面は出る（その札は 0）", async () 
   assert.equal(r.stations.find((s) => s.no === 4)!.cards[0]!.count, 0);
   assert.equal(r.stations.find((s) => s.no === 1)!.cards[0]!.count, 3);
 });
+
+test("盤面の集計は一度に全部走らせず 2 本ずつ、結果は覚えておく（同じ要求で集計を回さない）", async () => {
+  let running = 0, peak = 0, calls = 0;
+  const slow = <T,>(v: T) => async () => {
+    calls += 1; running += 1; peak = Math.max(peak, running);
+    await new Promise((r) => setTimeout(r, 5));
+    running -= 1; return v;
+  };
+  const t = tools();
+  const svc = new HomeStationsService(db(), {
+    ...t,
+    intake: { counts: slow({ new: 1, updated: 0 }) }, tasks: { counts: slow({ open: 2 }) },
+    unsent: { list: slow({ bundles: [] }) }, missing: { list: slow({ parties: [] }) },
+    paydocs: { list: slow({ tiles: {} }) }, term: { preview: slow({ targets: [] }) },
+    notice: { preview: slow({ targets: [] }) }, statements: { preview: slow({ groups: [] }) },
+    tidy: { parties: slow([]) }
+  } as any);
+  const [a, b] = await Promise.all([svc.stations(), svc.stations()]);
+  assert.ok(peak <= 2, `同時 ${peak} 本`);
+  assert.equal(calls, 9, "同時に来た 2 つの要求は 1 回の集計に相乗り");
+  assert.equal(a, b);
+  await svc.stations();
+  assert.equal(calls, 9, "1 分は覚えておく");
+});
