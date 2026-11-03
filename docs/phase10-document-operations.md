@@ -119,6 +119,11 @@ V1 の別ページ ArchivePage を新設せず、V2 で既にアーカイブを�
 > 訂正版の枝番は再利用しない）。`-R<n>` は社内の番号で、紙・メール・検収書の発注番号には本体の番号を出す
 > （`printedDocumentNumber`。`DocumentSummary.printedNo`）。相手に差し替えだと分かるよう「（改訂 n）」の印を
 > 添えるかは訂正版ごとに文書の画面で選び、`manual_inputs._showRevision`（"1"／"0"、既定は出す）に残る。
+> **無効にした条件（2026-11）**：訂正版の下書きには無効（void）の条件を引き継がない（`reissue` の
+> document_conditions の複製）。下書きを開き直すときも無効の条件は外して知らせる（文書の画面の
+> 「無効にした条件 … はこの文書から外しました」。`GET /documents/:id` の conditions に `status`）。旧版
+> （superseded）は従来どおり `currentId` で今の版に選び直す。載せたままだと決定で
+> 「無効または旧版の条件は文書にできません」と止まり、一覧に無効の条件は出ないので外しようがなかった。
 **重要**：V2 の残高は `condition_events.voided_at IS NULL` のみで判定し文書 lifecycle では絞らない
 （`conditions/repository.ts` で確認）。そのため旧版の実績を残すと二重計上になるため、再発行時に
 旧版の有効実績を同一トランザクションで取消する（void 10-2 と同じ列 UPDATE を再利用）。

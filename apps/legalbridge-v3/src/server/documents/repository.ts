@@ -79,7 +79,7 @@ export interface DocumentDetail extends DocumentSummary {
   eventIds: number[];
   conditions: Array<{ id: number; conditionNo: string | null; name: string; lineNo: number;
     /** 改訂で旧版になっていれば、いまの版の id（そうでなければ id と同じ）。 */
-    currentId: number }>;
+    currentId: number; status?: string }>;
   /**
    * この文書の実績にもう立っている支払（取消済みを除く）。
    *
@@ -362,7 +362,9 @@ export class DocumentRepository {
       conditions: conditions.rows.map((c: Record<string, any>) => ({
         id: Number(c.id), conditionNo: str(c.condition_no),
         name: String(c.name), lineNo: Number(c.line_no),
-        currentId: Number(c.current_id ?? c.id)
+        currentId: Number(c.current_id ?? c.id),
+        // 無効にした条件は、下書きを開き直すときに外す（決定で「無効または旧版の条件は文書にできません」と止まる）。
+        status: String(c.status ?? "")
       })),
       payments: (payments.rows as Array<Record<string, any>>).map((y) => ({
         id: Number(y.id), paymentNo: str(y.payment_no), status: String(y.status),

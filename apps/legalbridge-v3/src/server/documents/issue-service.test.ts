@@ -224,7 +224,7 @@ test("条件を指定しなければ、これまでどおり引き継ぐ", async
     return [];
   });
   await new DocumentIssueService(db).reissue(1, "誤字", "a");
-  assert.ok(db.find("SELECT $2, condition_id, line_no FROM document_conditions"));
+  assert.ok(db.find("SELECT $2, dc.condition_id, dc.line_no"), "条件を引き継ぐ（無効は除く）");
 });
 
 // ---- 差し込み用の部分テンプレート ----

@@ -899,8 +899,11 @@ export class DocumentIssueService {
         } else {
           // 既定は引き継ぎ。参照方向は文書→条件なので、行を複製する。
           await client.query(
+            // 無効にした条件は引き継がない（載せたままだと決定で「無効または旧版の条件は文書にできません」と止まる）。
             `INSERT INTO document_conditions (document_id, condition_id, line_no)
-             SELECT $2, condition_id, line_no FROM document_conditions WHERE document_id = $1
+             SELECT $2, dc.condition_id, dc.line_no
+               FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+              WHERE dc.document_id = $1 AND c.status <> 'void'
              ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, newId]);
         }
 
