@@ -297,7 +297,9 @@ test("前金・後金の説明は区分ごとにまとめ、重複と依頼文�
     { paymentStage: "advance", note: "製造時に受領した前払金分" },
     { paymentStage: "advance", note: "依頼文 1：英語 / Asmodee" },
     { paymentStage: null, note: "区分なし" },
-    { paymentStage: "balance", note: "後金：書き手が付けた見出し" }
+    { paymentStage: "balance", note: "後金：書き手が付けた見出し" },
+    // 入金から起こした報告の既定の備考（控え）。相手には見せない。
+    { paymentStage: "balance", note: "入金 PAY-2026-01124 から" }
   ]);
   assert.equal(notes, "前金：製造時に受領した前払金分\n後金：出荷後に受領した残金分\n後金：書き手が付けた見出し");
 });

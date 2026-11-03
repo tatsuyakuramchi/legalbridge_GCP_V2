@@ -79,6 +79,8 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
   const [draftOnly, setDraftOnly] = useState(false);
   const [withPayment, setWithPayment] = useState(true);
   const [dueOn, setDueOn] = useState("");
+  /** 計算書の備考（全員に共通。紙の固定文の下に出る）。 */
+  const [statementNotes, setStatementNotes] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [picked, setPicked] = useState<number[]>([]);
   /** 作者ごとの契約の候補と、選び直し。 */
@@ -128,7 +130,8 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
       const chosen = Object.entries(contracts)
         .filter(([, c]) => c.agreementId || c.termsNo)
         .map(([id, c]) => ({ conditionId: Number(id), agreementId: c.agreementId, termsNo: c.termsNo || null }));
-      const r = await api.post<Result>("/royalty-settle", { receipts: bodies, authors: picked, contracts: chosen, draftOnly, withPayment, dueOn: dueOn || null });
+      const r = await api.post<Result>("/royalty-settle", { receipts: bodies, authors: picked, contracts: chosen, statementNotes: statementNotes.trim() || null,
+                                                             draftOnly, withPayment, dueOn: dueOn || null });
       setResult(r);
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -206,6 +209,13 @@ export function ReceiptSettle({ onOpenCondition, onOpenDocument }: {
               </table>
             )}
             <span className="faint">見込み額は 受領額 × 料率（入金が複数なら合計）。MG・AG・消費税・源泉は計算書で計算します（従来の計算書と同じ決まり）。</span>
+            {canWrite && (
+              <label className="field">
+                <span>計算書の備考</span>
+                <textarea rows={2} value={statementNotes} onChange={(e) => setStatementNotes(e.target.value)}
+                          placeholder="全員の計算書の備考に出す文（固定文の下）。前金・後金の説明は入金カードの備考から自動で足します。あとで直すなら文書の画面の「その他の入力」から" />
+              </label>
+            )}
             {canWrite && (
               <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                 <label className="row" style={{ gap: 4 }}>
@@ -473,7 +483,7 @@ function ReceiptCard({ index, count, link, onChange, onRemove }: {
               </button>
             </span>
           )}
-          <input className="inline-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="備考（計算書の備考に載る。例：前金 50%）" style={{ minWidth: 260 }} />
+          <input className="inline-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="この入金の説明（前金・後金を選ぶと「前金：…」として計算書の備考に載る。例：前金 50%）" style={{ minWidth: 300 }} />
         </div>
       </div>
     </div>

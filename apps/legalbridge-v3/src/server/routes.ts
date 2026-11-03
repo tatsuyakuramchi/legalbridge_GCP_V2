@@ -3324,6 +3324,7 @@ export function createRoutes(database: Transactable) {
     note: z.string().trim().max(2000).nullable().optional(),
     authors: z.array(z.coerce.number().int().positive()).max(30).nullable().optional(),
     contracts: contractChoiceSchema,
+    statementNotes: z.string().trim().max(4000).nullable().optional(),
     draftOnly: z.coerce.boolean().nullable().optional(),
     withPayment: z.coerce.boolean().nullable().optional(),
     dueOn: z.string().date().nullable().optional()
@@ -3340,6 +3341,7 @@ export function createRoutes(database: Transactable) {
     receipts: z.array(settleSchema).min(1).max(20),
     authors: z.array(z.coerce.number().int().positive()).max(30).nullable().optional(),
     contracts: contractChoiceSchema,
+    statementNotes: z.string().trim().max(4000).nullable().optional(),
     draftOnly: z.coerce.boolean().nullable().optional(),
     withPayment: z.coerce.boolean().nullable().optional(),
     dueOn: z.string().date().nullable().optional()
@@ -3348,7 +3350,7 @@ export function createRoutes(database: Transactable) {
     const b = (body ?? {}) as { receipts?: unknown };
     if (Array.isArray(b.receipts)) return settleManySchema.parse(b);
     const one = settleSchema.parse(b);
-    return { receipts: [one], authors: one.authors, contracts: one.contracts, draftOnly: one.draftOnly, withPayment: one.withPayment, dueOn: one.dueOn };
+    return { receipts: [one], authors: one.authors, contracts: one.contracts, statementNotes: one.statementNotes, draftOnly: one.draftOnly, withPayment: one.withPayment, dueOn: one.dueOn };
   };
   router.post("/royalty-settle/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
     const input = manyOf(req.body);

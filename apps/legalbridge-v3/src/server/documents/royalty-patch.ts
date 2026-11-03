@@ -727,9 +727,10 @@ export function singleNumbersFrom(context: Data, taxRatePct: number): SingleStat
 export function stageNotesOf(events: Array<{ paymentStage?: string | null; note?: string | null }>): string {
   const out: string[] = [];
   for (const [stage, label] of [["advance", "前金"], ["balance", "後金"]] as const) {
+    // 「入金 PAY-… から」は入金から起こした報告の控え（royalty/receipts.ts の既定の備考）。相手に見せるものではない。
     const notes = [...new Set(events.filter((e) => e.paymentStage === stage)
       .map((e) => String(e.note ?? "").trim())
-      .filter((n) => n && !/^依頼文\s*\d+[：:]/.test(n)))];
+      .filter((n) => n && !/^依頼文\s*\d+[：:]/.test(n) && !/^入金\s+\S+\s+から$/.test(n)))];
     for (const n of notes) out.push(n.startsWith(label) ? n : `${label}：${n}`);
   }
   return out.join("\n");

@@ -80,6 +80,7 @@ export interface SettleInput {
   /** 作者（IN 条件）。空なら効く作者ぜんぶ。 */
   authors?: number[] | null;
   contracts?: AuthorContractChoice[] | null;
+  statementNotes?: string | null;
   /** 下書きで止める（決定しない。文書の画面で確かめて決定する）。 */
   draftOnly?: boolean | null;
   /** 計算書を決定したら作者への支払も立てる。 */
@@ -99,6 +100,8 @@ export interface SettleManyInput {
   receipts: SettleInput[];
   authors?: number[] | null;
   contracts?: AuthorContractChoice[] | null;
+  /** 計算書の備考（全員の計算書に同じ文。紙の備考の固定文の下に出る。前金・後金の説明は報告の備考から自動で足す）。 */
+  statementNotes?: string | null;
   draftOnly?: boolean | null;
   withPayment?: boolean | null;
   dueOn?: string | null;
@@ -418,7 +421,7 @@ export class ReceiptSettleService {
 
   /** 実行：入金の記録 → 報告 → 計算書 → 支払（入金 1 件）。 */
   async settle(input: SettleInput, actor: string): Promise<SettleResult> {
-    return this.settleMany({ receipts: [input], authors: input.authors, contracts: input.contracts, draftOnly: input.draftOnly,
+    return this.settleMany({ receipts: [input], authors: input.authors, contracts: input.contracts, statementNotes: input.statementNotes, draftOnly: input.draftOnly,
                              withPayment: input.withPayment, dueOn: input.dueOn }, actor);
   }
 
@@ -605,7 +608,7 @@ export class ReceiptSettleService {
   /** 作者 1 人（受取人ごと）の計算書と支払。 */
   private async issueFor(a: SettleAuthor, eventIds: number[], issuedOn: string,
                          input: { draftOnly?: boolean | null; withPayment?: boolean | null; dueOn?: string | null;
-                                  contracts?: AuthorContractChoice[] | null }, actor: string): Promise<SettleResultRow[]> {
+                                  contracts?: AuthorContractChoice[] | null; statementNotes?: string | null }, actor: string): Promise<SettleResultRow[]> {
     const payees: Array<{ partyId: number | null; partyName: string | null }> = a.payees.length ? a.payees : [{ partyId: null, partyName: null }];
     const out: SettleResultRow[] = [];
     for (const payee of payees) {
@@ -618,9 +621,10 @@ export class ReceiptSettleService {
         // 契約の選び直し（基本契約・個別契約番号）。文書フォームの agreementId・_termsNo と同じ渡し方。
         const choice = (input.contracts ?? []).find((c) => c.conditionId === a.conditionId);
         const termsNo = String(choice?.termsNo ?? "").trim();
+        const notes = String(input.statementNotes ?? "").trim();
         const chosen = {
           agreementId: choice?.agreementId ?? null,
-          manualInputs: termsNo ? { _termsNo: termsNo } : {}
+          manualInputs: { ...(termsNo ? { _termsNo: termsNo } : {}), ...(notes ? { notes } : {}) }
         };
         if (input.draftOnly) {
           const d = await this.deps.issuer.draft({ entries: [entry], ...chosen }, actor);
