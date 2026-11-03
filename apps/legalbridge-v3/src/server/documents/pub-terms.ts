@@ -634,11 +634,20 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   const translationDerivative = pick("翻訳の扱い") === "二次的著作物";
   const translationLabel = translationDerivative ? "翻訳版" : "翻訳版再許諾";
 
+  // 行に控えた条件 id が、いまの条件に無いことがある（条件を改訂した・重複を無効にして新しい方に付け替えた）。
+  // そのときは同じ作品（題名）の種の行から引き直す。引けないと、行に書いてある古い料率・独占区分が紙に出続ける。
+  const seedByTitle = new Map(seeds.map((seed) => [text(seed.title) || text(seed.item_name), seed]));
+  const resolve = (row: Data, key: string): Data | undefined => {
+    const direct = row[key] != null ? byId.get(Number(row[key])) : undefined;
+    if (direct) return direct;
+    const seed = seedByTitle.get(text(row.title) || text(row.item_name));
+    return seed && seed[key] != null ? byId.get(Number(seed[key])) : undefined;
+  };
   const titles = rows.map((row, index) => {
-    const print = row.print_condition_id != null ? byId.get(Number(row.print_condition_id)) : undefined;
-    const digital = row.digital_condition_id != null ? byId.get(Number(row.digital_condition_id)) : undefined;
-    const transPrint = row.trans_print_condition_id != null ? byId.get(Number(row.trans_print_condition_id)) : undefined;
-    const transDigital = row.trans_digital_condition_id != null ? byId.get(Number(row.trans_digital_condition_id)) : undefined;
+    const print = resolve(row, "print_condition_id");
+    const digital = resolve(row, "digital_condition_id");
+    const transPrint = resolve(row, "trans_print_condition_id");
+    const transDigital = resolve(row, "trans_digital_condition_id");
     const fromLedger = Boolean(print || digital || transPrint || transDigital);
     // 翻訳版は「紙 50%／電子 40%」のように1つの欄にまとめる。列を2つ足すと
     // A4 縦に収まらない。片方だけの作品はその媒体だけ出す。
