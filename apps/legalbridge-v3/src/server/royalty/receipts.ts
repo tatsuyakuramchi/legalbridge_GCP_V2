@@ -241,15 +241,18 @@ export class RoyaltyReceiptService {
    * 許諾先（OUT 条件）に効く作者（IN 条件）。入金を記録する前の下見（入金から計算書）が使う。
    * 入金 1 件の組み立て（assemble）と同じ決まり。
    */
-  async authorsFor(outConditionId: number) {
+  async authorsFor(outConditionId: number, usageOverride: string | null = null) {
     try {
       const media = (await publicationOuts(this.database)).get(outConditionId) ?? null;
-      return { media, authors: await this.insFor(this.database, outConditionId, media) };
+      return { media, authors: await this.insFor(this.database, outConditionId, media, usageOverride) };
     } catch (error) { throw translate(error); }
   }
 
-  /** OUT 条件に効く IN 条件（作者）。 */
-  private async insFor(q: Queryable, outConditionId: number, media: PublicationMedia | null) {
+  /**
+   * OUT 条件に効く IN 条件（作者）。
+   * usageOverride は OUT 条件に取引モデル（usage_type）が入っていないときに、画面で選んだモデルで引く用。
+   */
+  private async insFor(q: Queryable, outConditionId: number, media: PublicationMedia | null, usageOverride: string | null = null) {
     const rows = (await q.query(
       `SELECT c.id, c.condition_no, c.name, c.counterparty_id, p.name AS party_name, c.work_id, w.title AS work_title,
               c.usage_type, c.rate_ppm, c.target_party_id, COALESCE(c.series_id, c.id) AS series
@@ -259,13 +262,13 @@ export class RoyaltyReceiptService {
          LEFT JOIN works w ON w.id = c.work_id
         WHERE c.direction = 'in' AND c.kind = 'license' AND c.status IN ('active', 'scheduled')
           AND c.pricing_model IN ('revenue_rate', 'unit_rate')
-          AND (c.usage_type = oc.usage_type
+          AND (c.usage_type = COALESCE(oc.usage_type, $3::text)
                -- 出版の電子の再許諾には作者の電子の条件が効く（入金額 × 料率）。紙は入金からは起こさない（printReports）。
-               OR ($2::text = 'digital' AND oc.usage_type = 'sublicense' AND c.usage_type = 'pub_digital'))
+               OR ($2::text = 'digital' AND COALESCE(oc.usage_type, $3::text) = 'sublicense' AND c.usage_type = 'pub_digital'))
           AND oc.work_id IS NOT NULL
           AND c.work_id = ANY(${WORK_LINEAGE_UP_SQL("oc.work_id")})
         ORDER BY p.name, c.condition_no NULLS LAST, c.id`,
-      [outConditionId, media])).rows as any[];
+      [outConditionId, media, usageOverride])).rows as any[];
     const licensee = Number(((await q.query("SELECT counterparty_id FROM conditions WHERE id = $1", [outConditionId])).rows[0] as any)?.counterparty_id ?? 0);
     return coveringIns(rows.map((c) => ({
       conditionId: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
