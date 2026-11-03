@@ -195,6 +195,16 @@
 
 DB：`infra/v3/192_event_source_payment.sql`（戻しは `_rollback`）。「入金と作者への支払」の画面と操作は 192 が要る。当てる前の DB でも、ほかの画面・報告の記録は動く（列は入金から起こすときだけ書く）。
 
+### 10.1 入金から計算書（1 回で通す）
+
+支払文書の「入金から計算書」タブ（`client/ReceiptSettle.tsx`、`server/royalty/receipt-settle.ts`）。イベント式（再許諾・自社製造・他社販売：入金 1 件＝報告 1 件＝計算書 1 枚）だけ。時限式は従来どおり台帳の回から。
+
+- 入口：取引モデル → OUT 先（`GET /royalty-settle/licensees?q=`：再許諾・自社製造・他社販売の OUT 条件を持つ取引先。未処理の入金の数つき）→ その社の条件と記録済みの入金（`GET /royalty-settle/outs?partyId=`）→ 入金の情報 → 下見（`POST /royalty-settle/preview`：払うべき作者と 受領額 × 料率 の見込み、止める理由）→ 実行（`POST /royalty-settle`）。
+- 実行の中身：入金が未記録なら `PaymentService.create`（OUT 条件に割り当て）→ `markPaid`。未報告の作者だけ `createReports`。作者ごと（共著の取り分があれば受取人ごと）に `StatementIssuer.issue`（決定日は入金日）→ `createFromStatementDocument` で支払。「下書きで止める」は `StatementIssuer.draft`（行を焼き付けた下書きまで。決定は文書の画面）。
+- 段ごとに別のトランザクション。途中で失敗したら、作者ごとの行に「どこまで済んだか」と理由を返す。同じ入金でもう一度実行すれば、計算書済の作者は飛ばし、報告のある作者はその報告で続きから進む（報告は `source_payment_id` で入金を指すので二重にならない）。
+- 自社製造・自社販売（`in_house`）は OUT 先が無い（当社の売上）。作品を選び、作品（とその元）に付いた in_house の IN 条件へ 数量 × 基準価格（税抜）の売上の報告を立て、計算書を出す。入金は記録しない。
+- 出版の紙の再許諾（版元の刷部数の報告から出す）は止める。
+
 ## 11. 共著の取り分と「計算書済」（受取人ごとの計算書がそろって済）
 
 「当社が各人に払う」取り分のある条件では、1 つの報告から受取人ごとに計算書が 1 枚ずつ出る（docs/royalty-shares.md）。

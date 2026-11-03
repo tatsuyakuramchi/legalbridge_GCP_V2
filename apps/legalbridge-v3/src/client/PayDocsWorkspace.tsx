@@ -6,6 +6,7 @@ import { EventEntryForm } from "./EventEntryForm.js";
 import { RoyaltyLedger, type DocBack } from "./RoyaltyLedger.js";
 import { EbookSalesImport } from "./EbookSalesImport.js";
 import { RoyaltyReceipts } from "./RoyaltyReceipts.js";
+import { ReceiptSettle } from "./ReceiptSettle.js";
 import type { PayDocRow, PayDocTile, NextAction } from "../server/paydocs/rows.js";
 import type { PayDocsList } from "../server/paydocs/service.js";
 import { ProcessRail, type Station } from "./ProcessRail.js";
@@ -24,7 +25,7 @@ export interface PayDocsHandoff {
   conditionId: number; conditionName: string; roundLabel: string; scheduleId: number | null; eventId: number | null;
 }
 
-export type PayDocsPane = "list" | "receipts" | "author" | "imports" | "plans" | "past";
+export type PayDocsPane = "list" | "settle" | "receipts" | "author" | "imports" | "plans" | "past";
 type Pane = PayDocsPane;
 
 /** 作家の報告と計算書を開く先。支払文書の行・作品・デイリータスクから来る。 */
@@ -202,6 +203,8 @@ export function PayDocsWorkspace(
         <div className="tabs" role="tablist" aria-label="支払文書の見出し">
           <button role="tab" aria-selected={pane === "list"} onClick={() => setPane("list")}>一覧</button>
           {/* 取引先からの入金（OUT）ごとに、払うべき作者（IN）の報告と計算書（docs/royalty-ledger.md §10）。 */}
+          {/* 入金 1 件から 報告 → 計算書 → 支払 まで 1 回で（イベント式）。 */}
+          <button role="tab" aria-selected={pane === "settle"} onClick={() => setPane("settle")}>入金から計算書</button>
           <button role="tab" aria-selected={pane === "receipts"} onClick={() => setPane("receipts")}>入金と作者への支払</button>
           <button role="tab" aria-selected={pane === "author"} onClick={() => setPane("author")}>作家の報告と計算書</button>
           <button role="tab" aria-selected={pane === "imports"} onClick={() => setPane("imports")}>売上の取込（電子書籍・年次締め）</button>
@@ -219,6 +222,7 @@ export function PayDocsWorkspace(
                     onOpenRequest={onOpenRequest} onLedgerCompose={onLedgerCompose}
                     onOpenList={(partyId) => { setPane("list"); setListParty(partyId); }} />
       )}
+      {pane === "settle" && <ReceiptSettle onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "receipts" && <RoyaltyReceipts onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "imports" && <EbookSalesImport />}
       {pane === "plans" && <PlansPane />}

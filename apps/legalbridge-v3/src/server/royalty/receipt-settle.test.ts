@@ -1,0 +1,132 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { FakeDatabase } from "../core/fake-db.js";
+import { ReceiptSettleService } from "./receipt-settle.js";
+import type { Receipt } from "./receipts.js";
+
+// 許諾先（OUT 条件 20）：相手社・作品 3・自社製造・他社販売。作者 A（IN 11）は未報告、作者 B（IN 12）は計算書済。
+const outRow = { id: 20, condition_no: "OUT-1", name: "ito 他社販売", usage_type: "oem", currency: "JPY", status: "active",
+  direction: "out", counterparty_id: 6, licensee_name: "相手社", work_id: 3, work_title: "ito", languages: null, regions: null };
+const receipt = (over: Partial<Receipt> = {}): Receipt => ({
+  key: "1:20", paymentId: 1, paymentNo: "PAY-1", paidOn: "2026-11-01", status: "paid", amount: 1_000_000, currency: "JPY",
+  outConditionId: 20, outConditionNo: "OUT-1", outName: "ito 他社販売", usageType: "oem", usageLabel: "自社製造・他社販売",
+  licenseePartyId: 6, licenseeName: "相手社", workId: 3, workTitle: "ito", languages: [], regions: [],
+  ins: [
+    { conditionId: 11, conditionNo: "IN-A", name: "作者A", partyId: 101, partyName: "作者A", workId: 3, workTitle: "ito",
+      usageLabel: "自社製造・他社販売", ratePct: 5, targeted: false, reports: [], state: "unreported", reported: 0 },
+    { conditionId: 12, conditionNo: "IN-B", name: "作者B", partyId: 102, partyName: "作者B", workId: 3, workTitle: "ito",
+      usageLabel: "自社製造・他社販売", ratePct: 2, targeted: false, state: "issued", reported: 1_000_000,
+      reports: [{ id: 90, grossAmount: 1_000_000, amount: 20_000, occurredOn: "2026-11-01", languages: [], documentId: 500, documentNo: "RS-500" }] }
+  ],
+  state: "unreported", media: null, ...over
+});
+
+const db = () => new FakeDatabase((text) => {
+  if (text.includes("FROM conditions oc") && text.includes("WHERE oc.id = $1")) return [outRow];
+  if (text.includes("FROM condition_shares s")) return [];
+  if (text.includes("FROM works WHERE id = $1")) return [{ id: 3, title: "ito" }];
+  return [];
+});
+
+function deps(calls: string[], current: { r: Receipt }) {
+  return {
+    receipts: {
+      list: async () => ({ receipts: [current.r] }),
+      authorsFor: async () => ({ media: null, authors: current.r.ins.map((x) => ({ ...x, usageType: "oem", targetPartyId: null, series: x.conditionId })) }),
+      createReports: async (input: { entries: Array<{ conditionId: number }> }) => {
+        calls.push(`reports:${input.entries.map((e) => e.conditionId).join(",")}`);
+        current.r = receipt({ ins: current.r.ins.map((x) => x.conditionId === 11
+          ? { ...x, state: "waiting", reports: [{ id: 91, grossAmount: 1_000_000, amount: 50_000, occurredOn: "2026-11-01", languages: [], documentId: null, documentNo: null }] }
+          : x) });
+        return { eventIds: [91], receipt: current.r };
+      }
+    },
+    payments: {
+      create: async (input: { conditionId?: number | null; amount: number }) => { calls.push(`pay.create:${input.conditionId}:${input.amount}`); return { id: 7, paymentNo: "PAY-7", direction: "in" as const, compliance: {} as any, conditionId: 20 }; },
+      markPaid: async (id: number, paidOn: string) => { calls.push(`pay.paid:${id}:${paidOn}`); return { paymentId: id, paidOn }; },
+      createFromStatementDocument: async (documentId: number) => { calls.push(`pay.fromDoc:${documentId}`); return { paymentId: 70, paymentNo: "PAY-70" } as any; }
+    },
+    issuer: {
+      issue: async (input: { entries: Array<{ conditionId: number; eventIds?: number[] }>; issuedOn?: string | null }) => {
+        calls.push(`issue:${input.entries[0].conditionId}:${(input.entries[0].eventIds ?? []).join(",")}:${input.issuedOn}`);
+        return { document: { id: 600, documentNo: "RS-600" } } as any;
+      },
+      draft: async (input: { entries: Array<{ conditionId: number }> }) => { calls.push(`draft:${input.entries[0].conditionId}`); return { id: 601 } as any; }
+    },
+    events: {
+      addWithin: async (_c: unknown, conditionId: number, input: { quantity?: number | null; unitAmount?: number | null }) => {
+        calls.push(`event:${conditionId}:${input.quantity}x${input.unitAmount}`); return { id: 95 };
+      }
+    }
+  };
+}
+
+test("下見：記録前の入金は許諾先の作者と 受領額 × 料率 の見込みを返す", async () => {
+  const calls: string[] = [];
+  const svc = new ReceiptSettleService(db(), deps(calls, { r: receipt() }) as any);
+  const p = await svc.preview({ usageType: "oem", outConditionId: 20, amount: 1_000_000 });
+  assert.equal(p.mode, "receipt"); assert.equal(p.licenseeName, "相手社"); assert.deepEqual(p.blockers, []);
+  assert.deepEqual(p.authors.map((a) => [a.partyName, a.estimate]), [["作者A", 50_000], ["作者B", 20_000]]);
+});
+
+test("実行：入金を記録して入金済みにし、作者ぜんぶの報告 → 計算書 → 支払", async () => {
+  const calls: string[] = [];
+  const svc = new ReceiptSettleService(db(), deps(calls, { r: receipt() }) as any);
+  const r = await svc.settle({ usageType: "oem", outConditionId: 20, amount: 1_000_000, paidOn: "2026-11-01" }, "t");
+  assert.equal(r.paymentCreated, true); assert.equal(r.paymentNo, "PAY-7");
+  assert.deepEqual(calls.slice(0, 3), ["pay.create:20:1000000", "pay.paid:7:2026-11-01", "reports:11,12"], "新しい入金は作者ぜんぶ未報告");
+  assert.ok(calls.includes("issue:11:91:2026-11-01") && calls.includes("pay.fromDoc:600"));
+  assert.deepEqual(r.rows[0] && [r.rows[0].partyName, r.rows[0].documentNo, r.rows[0].paymentNo], ["作者A", "RS-600", "PAY-70"]);
+});
+
+test("実行：記録済みの入金では、未報告の作者だけ報告し、計算書済の作者は飛ばす", async () => {
+  const calls: string[] = [];
+  const svc = new ReceiptSettleService(db(), deps(calls, { r: receipt() }) as any);
+  const r = await svc.settle({ usageType: "oem", paymentId: 1, outConditionId: 20 }, "t");
+  assert.equal(r.paymentCreated, false); assert.equal(r.paymentNo, "PAY-1");
+  assert.deepEqual(calls, ["reports:11", "issue:11:91:2026-11-01", "pay.fromDoc:600"]);
+  assert.deepEqual(r.rows.map((x) => [x.partyName, x.documentNo, x.paymentNo, x.skipped]),
+                   [["作者A", "RS-600", "PAY-70", null], ["作者B", "RS-500", null, "計算書済"]]);
+});
+
+test("実行：記録済みの入金からは入金を作らない。下書きで止めると決定・支払はしない", async () => {
+  const calls: string[] = [];
+  const svc = new ReceiptSettleService(db(), deps(calls, { r: receipt() }) as any);
+  const r = await svc.settle({ usageType: "oem", paymentId: 1, outConditionId: 20, draftOnly: true, authors: [11] }, "t");
+  assert.equal(r.paymentCreated, false);
+  assert.deepEqual(calls, ["reports:11", "draft:11"]);
+  assert.deepEqual(r.rows.map((x) => [x.partyName, x.documentId, x.draft]), [["作者A", 601, true]]);
+});
+
+test("止める理由：取引モデルが違う条件・作者のいない許諾先", async () => {
+  const calls: string[] = [];
+  const base = new FakeDatabase((text) => {
+    if (text.includes("FROM conditions oc") && text.includes("WHERE oc.id = $1")) return [{ ...outRow, usage_type: "pub_print" }];
+    return [];
+  });
+  const p = await new ReceiptSettleService(base, deps(calls, { r: receipt({ ins: [] }) }) as any).preview({ outConditionId: 20, amount: 1 });
+  assert.ok(p.blockers.some((b) => b.includes("取引モデル")));
+  assert.ok(p.blockers.some((b) => b.includes("作者の条件（IN）が見つかりません")));
+  await assert.rejects(() => new ReceiptSettleService(base, deps(calls, { r: receipt({ ins: [] }) }) as any)
+    .settle({ outConditionId: 20, amount: 1 }, "t"), /取引モデル/);
+});
+
+test("自社製造・自社販売：OUT 先なし。作品の in_house の作者に 数量 × 基準価格 の報告を立てて計算書", async () => {
+  const calls: string[] = [];
+  const base = new FakeDatabase((text, params) => {
+    if (text.includes("FROM works WHERE id = $1")) return [{ id: 3, title: "ito" }];
+    if (text.includes("c.usage_type = 'in_house'")) {
+      assert.equal(params[0], 3);
+      return [{ id: 13, condition_no: "IN-H", name: "作者A 自社販売", counterparty_id: 101, party_name: "作者A", work_id: 3, work_title: "ito", rate_ppm: 30000, target_party_id: null }];
+    }
+    return [];
+  });
+  const svc = new ReceiptSettleService(base, deps(calls, { r: receipt() }) as any);
+  const p = await svc.preview({ usageType: "in_house", workId: 3, quantity: 100, unitAmount: 5000 });
+  assert.equal(p.mode, "in_house"); assert.equal(p.amount, 500_000);
+  assert.deepEqual(p.authors.map((a) => [a.partyName, a.ratePct, a.estimate]), [["作者A", 3, 15_000]]);
+  await assert.rejects(() => svc.settle({ usageType: "in_house", workId: 3, amount: 500_000 }, "t"), /数量/);
+  const r = await svc.settle({ usageType: "in_house", workId: 3, quantity: 100, unitAmount: 5000, paidOn: "2026-11-02" }, "t");
+  assert.equal(r.paymentCreated, false);
+  assert.deepEqual(calls, ["event:13:100x5000", "issue:13:95:2026-11-02", "pay.fromDoc:600"]);
+});

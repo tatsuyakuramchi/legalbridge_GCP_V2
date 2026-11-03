@@ -235,6 +235,17 @@ export class RoyaltyReceiptService {
     };
   }
 
+  /**
+   * 許諾先（OUT 条件）に効く作者（IN 条件）。入金を記録する前の下見（入金から計算書）が使う。
+   * 入金 1 件の組み立て（assemble）と同じ決まり。
+   */
+  async authorsFor(outConditionId: number) {
+    try {
+      const media = (await publicationOuts(this.database)).get(outConditionId) ?? null;
+      return { media, authors: await this.insFor(this.database, outConditionId, media) };
+    } catch (error) { throw translate(error); }
+  }
+
   /** OUT 条件に効く IN 条件（作者）。 */
   private async insFor(q: Queryable, outConditionId: number, media: PublicationMedia | null) {
     const rows = (await q.query(
