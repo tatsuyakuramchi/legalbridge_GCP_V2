@@ -199,6 +199,7 @@ DB：`infra/v3/192_event_source_payment.sql`（戻しは `_rollback`）。「入
 
 支払文書の「入金から計算書」タブ（`client/ReceiptSettle.tsx`、`server/royalty/receipt-settle.ts`）。イベント式（再許諾・自社製造・他社販売：入金 1 件＝報告 1 件＝計算書 1 枚）だけ。時限式は従来どおり台帳の回から。
 
+- **複数の入金を 1 枚に**：画面の「＋ 入金を足す」で前金と後金、別の取引先の入金を並べる（`POST /royalty-settle` の `receipts[]`、下見は `receipts[]` を渡すと作者ごとに合計）。入金ごとに 記録 → 報告 を済ませてから、作者ごとに全部の報告を 1 枚の計算書に並べる（入金 1 件が 1 行。前金・後金・取引先は行の算定方法・対象契約に出る）。決定日はいちばん遅い入金日。入力の不足は何も書く前に全部の入金で確かめる。
 - 言語：許諾先が複数の言語を持つときは複数選択（既定は全部）。まとめて来る入金は全部のまま、言語ごとに来るならその言語だけ。報告の `scope_languages` に選んだ言語が入る。
 - 入口：取引モデル → OUT 先（`GET /royalty-settle/licensees?q=`：再許諾・自社製造・他社販売の OUT 条件を持つ取引先。未処理の入金の数つき）→ その社の条件と記録済みの入金（`GET /royalty-settle/outs?partyId=`）→ 入金の情報 → 下見（`POST /royalty-settle/preview`：払うべき作者と 受領額 × 料率 の見込み、止める理由）→ 実行（`POST /royalty-settle`）。
 - 実行の中身：入金が未記録なら `PaymentService.create`（OUT 条件に割り当て）→ `markPaid`。未報告の作者だけ `createReports`。作者ごと（共著の取り分があれば受取人ごと）に `StatementIssuer.issue`（決定日は入金日）→ `createFromStatementDocument` で支払。「下書きで止める」は `StatementIssuer.draft`（行を焼き付けた下書きまで。決定は文書の画面）。

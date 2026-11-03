@@ -3328,11 +3328,29 @@ export function createRoutes(database: Transactable) {
     const { partyId } = z.object({ partyId: z.coerce.number().int().positive() }).parse(req.query);
     res.json(await receiptSettle.outsOf(partyId));
   }));
+  // 複数の入金（前金と後金、別の取引先）を作者ごとに 1 枚へ。receipts が無ければ 1 件として扱う。
+  const settleManySchema = z.object({
+    receipts: z.array(settleSchema).min(1).max(20),
+    authors: z.array(z.coerce.number().int().positive()).max(30).nullable().optional(),
+    draftOnly: z.coerce.boolean().nullable().optional(),
+    withPayment: z.coerce.boolean().nullable().optional(),
+    dueOn: z.string().date().nullable().optional()
+  });
+  const manyOf = (body: unknown) => {
+    const b = (body ?? {}) as { receipts?: unknown };
+    if (Array.isArray(b.receipts)) return settleManySchema.parse(b);
+    const one = settleSchema.parse(b);
+    return { receipts: [one], authors: one.authors, draftOnly: one.draftOnly, withPayment: one.withPayment, dueOn: one.dueOn };
+  };
   router.post("/royalty-settle/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
-    res.json(await receiptSettle.preview(settleSchema.parse(req.body ?? {})));
+    const input = manyOf(req.body);
+    const many = await receiptSettle.previewMany(input);
+    // 1 件のときは従来の形（受け手の互換）。
+    res.json(input.receipts.length === 1 && !Array.isArray((req.body as any)?.receipts)
+      ? many.receipts[0] : many);
   }));
   router.post("/royalty-settle", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
-    res.status(201).json(await receiptSettle.settle(settleSchema.parse(req.body ?? {}), actor(res)));
+    res.status(201).json(await receiptSettle.settleMany(manyOf(req.body), actor(res)));
   }));
   router.post("/royalty-receipts/reports", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
