@@ -1,3 +1,4 @@
+import { voidSuccessors } from "./void-successors.js";
 import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
@@ -79,7 +80,7 @@ export interface DocumentDetail extends DocumentSummary {
   eventIds: number[];
   conditions: Array<{ id: number; conditionNo: string | null; name: string; lineNo: number;
     /** 改訂で旧版になっていれば、いまの版の id（そうでなければ id と同じ）。 */
-    currentId: number }>;
+    currentId: number; status?: string; successorId?: number | null }>;
   /**
    * この文書の実績にもう立っている支払（取消済みを除く）。
    *
@@ -359,11 +360,21 @@ export class DocumentRepository {
       eventIds: (events.rows as Array<{ id: number }>).map((e) => Number(e.id)),
       renderedValues: (row.rendered_values as Record<string, unknown>) ?? {},
       manualInputs: (row.manual_inputs as Record<string, unknown>) ?? {},
-      conditions: conditions.rows.map((c: Record<string, any>) => ({
-        id: Number(c.id), conditionNo: str(c.condition_no),
-        name: String(c.name), lineNo: Number(c.line_no),
-        currentId: Number(c.current_id ?? c.id)
-      })),
+      conditions: await (async () => {
+        // 無効にした条件は「新しい方」（同じ作品と相手先の生きている条件）があればそれに置き換える。無ければ外す。
+        const successors = await voidSuccessors(this.database,
+          conditions.rows.map((c: Record<string, any>) => Number(c.current_id ?? c.id)));
+        return conditions.rows.map((c: Record<string, any>) => {
+          const currentId = Number(c.current_id ?? c.id);
+          return {
+            id: Number(c.id), conditionNo: str(c.condition_no),
+            name: String(c.name), lineNo: Number(c.line_no),
+            currentId,
+            status: String(c.status ?? ""),
+            successorId: successors.get(currentId) ?? null
+          };
+        });
+      })(),
       payments: (payments.rows as Array<Record<string, any>>).map((y) => ({
         id: Number(y.id), paymentNo: str(y.payment_no), status: String(y.status),
         amount: Number(y.amount ?? 0), dueOn: dateStr(y.due_on)

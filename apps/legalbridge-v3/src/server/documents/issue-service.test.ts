@@ -224,7 +224,7 @@ test("条件を指定しなければ、これまでどおり引き継ぐ", async
     return [];
   });
   await new DocumentIssueService(db).reissue(1, "誤字", "a");
-  assert.ok(db.find("SELECT $2, condition_id, line_no FROM document_conditions"));
+  assert.ok(db.find("SELECT $2, dc.condition_id, dc.line_no"), "条件を引き継ぐ（旧版・無効は新しい方へ）");
 });
 
 // ---- 差し込み用の部分テンプレート ----
@@ -478,4 +478,15 @@ test("改訂されていなければ繋ぎは張り直さない", async () => {
   });
   await new DocumentIssueService(db).issue(1, "kuramochi");
   assert.equal(db.find("DELETE FROM document_conditions WHERE document_id = $1"), undefined);
+});
+
+test("決定のとき、無効にした条件は新しい方（同じ作品と相手先の生きている条件）に付け替えてから出す", async () => {
+  const { DocumentIssueService } = await import("./issue-service.js");
+  const db = new FakeDatabase((text) => {
+    if (text.includes("WITH RECURSIVE chain")) return [{ start_id: 11, id: 11 }, { start_id: 12, id: 12 }];
+    if (text.includes("c.status = 'void'")) return [{ id: 11, successor_id: 31 }];
+    return undefined;
+  });
+  const svc = new DocumentIssueService(db) as unknown as { followRevisions(client: unknown, ids: number[]): Promise<number[]> };
+  assert.deepEqual(await svc.followRevisions(db, [11, 12]), [31, 12]);
 });

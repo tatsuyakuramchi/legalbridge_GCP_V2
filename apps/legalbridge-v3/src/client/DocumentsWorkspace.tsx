@@ -324,6 +324,8 @@ export function DocumentsWorkspace(
   // 決定した結果。番号だけでなく id も持つ（そのまま開けるように）。
   /** 決定した文書。again は「作成のフォームから決定した」（続けてもう1枚作れる）。 */
   const [issued, setIssued] = useState<{ id: number; documentNo: string; again?: boolean; writeBack?: WriteBack | null } | null>(null);
+  /** 下書きを開き直したときに外した無効の条件（番号）。 */
+  const [droppedVoid, setDroppedVoid] = useState<string[] | null>(null);
   // 決定したことに気づかず同じ画面を見続けないよう、結果まで運ぶ。
   const issuedRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1080,10 +1082,17 @@ export function DocumentsWorkspace(
         id: number; documentNo: string | null; templateKey: string | null;
         matterId: number | null; agreementId: number | null;
         manualInputs: Record<string, unknown>;
-        conditions: Array<{ id: number; currentId?: number }>;
+        conditions: Array<{ id: number; currentId?: number; conditionNo?: string | null; status?: string; successorId?: number | null }>;
         eventIds: number[];
         supersedesId: number | null; supersedeReason: string | null;
       }>(`/documents/${id}`);
+      // 無効にした条件は外す（載せたままだと決定で「無効または旧版の条件は文書にできません」と止まり、
+      // 一覧に無効の条件は出ないので外しようがなかった）。旧版は currentId で今の版に選び直す。
+      // 無効の条件に「新しい方」（同じ作品と相手先の生きている条件）があればそれに置き換え、無ければ外す。
+      const voided = d.conditions.filter((c) => c.status === "void");
+      setDroppedVoid(voided.length
+        ? voided.map((c) => `${c.conditionNo ?? `#${c.id}`}${c.successorId ? `（新しい条件 #${c.successorId} に置き換え）` : "（外しました）"}`)
+        : null);
       setDraftMatterId(d.matterId ?? null);
       // 訂正版の下書きなら、退かせる元の版を持ち直す（試算と決定で元の版の実績を空きとして扱う）。
       const extra = Array.isArray(d.manualInputs?._supersedesExtra)
@@ -1114,7 +1123,9 @@ export function DocumentsWorkspace(
       setDraft({ id: d.id, no: d.documentNo });
       setTemplateKey(d.templateKey);
       // 改訂で旧版になった条件は、いまの版を選び直す（実績は系列で突き合わせるので残る）。
-      setPicked([...new Set(d.conditions.map((c) => c.currentId ?? c.id))]);
+      setPicked([...new Set(d.conditions
+        .map((c) => (c.status === "void" ? c.successorId ?? null : c.currentId ?? c.id))
+        .filter((id): id is number => id !== null))]);
       // 実績も戻す。訂正版の下書きなら、前の版が結んでいた実績が返ってくる。
       // ここを空にすると、直して発行するたびに実績を選び直す羽目になる。
       // 実績は 前の版のもの（訂正版）→ 下書きに控えたもの の順で戻す。
@@ -1217,6 +1228,12 @@ export function DocumentsWorkspace(
           フォームを開いているときはボタンの下に出す。 */}
       {working && !(composing || draft) && <Working what={working.what} hint={working.hint} />}
       {error && <div className="alert">{error}</div>}
+      {droppedVoid && (
+        <div className="note warn">
+          無効にした条件：{droppedVoid.join("、")}。同じ作品と相手先の生きている条件があればそれに置き換え、無ければ外しています。このまま決定できます。
+          <button className="linky" style={{ marginLeft: 8 }} onClick={() => setDroppedVoid(null)}>閉じる</button>
+        </div>
+      )}
       {issued && (
         <div ref={issuedRef} className="note ok done-note">
           <div className="row">
