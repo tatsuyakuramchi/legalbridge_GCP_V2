@@ -1,0 +1,253 @@
+/**
+ * 支払報告書（payment_report）のひな形の既定の本文。
+ *
+ * 正は infra/v3/templates/payment_report.html（198_payment_report.sql で DB に登録する）。
+ * DB に登録済みなら DB の現行版を使い、未登録の環境（ローカル・検証）ではこれで描く。
+ * 本文を直したら templates/ の方を直し、ここへ写す（payment-report-doc.test.ts が食い違いを止める）。
+ */
+export const PAYMENT_REPORT_TEMPLATE_KEY = "payment_report";
+
+export const PAYMENT_REPORT_TEMPLATE_HTML = String.raw`<!DOCTYPE html>
+{{!-- 支払報告書（payment_report）。許諾者・受注者ごとに、一定期間の支払を 1 通にまとめて報告する。
+     検収書 v2（170・189）の件数が多い版の組み方（概要の表 → 明細の表 → 右寄せの合計）を下敷きにし、
+     決定済みの検収書・役務提供完了通知書・利用許諾料計算書を「支払日ごとの一覧」と「文書ごとの明細」に並べる。
+     値は apps/legalbridge-v3/src/server/paydocs/payment-report-doc.ts が組み立てる（金額は文字列で渡る）。
+     本文は infra/v3/templates/payment_report.html（198 で登録）。 --}}
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>支払報告書</title>
+<style>
+  @page { size: A4; margin: 12mm 12mm 14mm; }
+  body { font-family: "Noto Sans CJK JP", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif; font-size: 9.5pt; line-height: 1.5; color: #222; margin: 0; padding: 16px; }
+  h1.doc-title { font-size: 18pt; margin: 0 0 2px; letter-spacing: .3em; font-weight: 700; text-align: center; border: 0; }
+  .doc-head { text-align: center; margin-bottom: 6px; }
+  .doc-sub { font-size: 8.5pt; color: #555; }
+  .doc-meta { font-size: 8.5pt; text-align: right; margin: 0 0 6px; }
+  .doc-meta b { font-family: "IBM Plex Mono", Menlo, Consolas, monospace; font-weight: 500; }
+  hr.rule { border: none; border-top: 1px solid #333; margin: 0 0 10px; }
+  table { border-collapse: collapse; }
+  table.party { width: 100%; margin-bottom: 10px; }
+  table.party td { vertical-align: top; border: 0; }
+  table.party td + td { border-left: 1px solid #d9d9d9; }
+  .vlabel { font-size: 8pt; font-weight: 700; color: #555; margin-bottom: 3px; letter-spacing: .04em; }
+  .vendor-name { font-size: 13pt; font-weight: 700; border-bottom: 1px solid #333; padding-bottom: 3px; margin-bottom: 4px; }
+  .muted { font-size: 8.5pt; color: #555; }
+  .company-name { font-weight: 700; font-size: 10.5pt; margin-bottom: 2px; }
+  p.lead { font-size: 9pt; margin: 0 0 6px; }
+  p.section-mark { font-size: 9.5pt; font-weight: 700; margin: 10px 0 4px; padding: 0 0 2px; border: 0; border-bottom: 1px solid #bdbdbd; page-break-after: avoid; }
+  table.summary { width: 100%; font-size: 8.5pt; margin: 0; }
+  table.summary th, table.summary td { border: 1px solid #d9d9d9; padding: 4px 7px; vertical-align: top; text-align: left; }
+  table.summary th { background: #f4f4f2; width: 16%; font-weight: 600; color: #333; white-space: nowrap; }
+  table.summary td { width: 34%; }
+  table.items { width: 100%; font-size: 8.5pt; margin: 0; }
+  table.items th, table.items td { border: 1px solid #d9d9d9; padding: 3px 6px; vertical-align: top; line-height: 1.4; }
+  table.items th { background: #f4f4f2; font-weight: 600; color: #333; text-align: center; white-space: nowrap; }
+  table.items thead { display: table-header-group; }
+  table.items tr { page-break-inside: avoid; }
+  table.items tr.date-head td { background: #fafaf8; font-weight: 700; }
+  table.items tr.subtotal td { background: #fafaf8; font-weight: 600; }
+  td.center { text-align: center; white-space: nowrap; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .no { font-family: "IBM Plex Mono", Menlo, Consolas, monospace; font-weight: 500; }
+  .item-name { font-weight: 600; }
+  .item-spec { font-size: 8pt; color: #555; margin-top: 1px; }
+  .tag { display: inline-block; font-size: 7.5pt; padding: 0 4px; border: 1px solid #bbb; border-radius: 2px; color: #444; margin-right: 4px; }
+  table.totals { width: auto; min-width: 46%; margin: 6px 0 0 auto; font-size: 8.5pt; }
+  table.totals th { text-align: left; font-weight: 400; background: transparent; border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 10px 2px 2px; white-space: nowrap; }
+  table.totals td { border: 0; border-bottom: 1px solid #d9d9d9; padding: 2px 2px 2px 16px; min-width: 9em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  table.totals tr.grand th, table.totals tr.grand td { font-weight: 700; font-size: 10pt; border-top: 2px solid #333; border-bottom: 0; padding-top: 4px; }
+  table.totals tr.cur th { font-weight: 700; color: #333; border-bottom: 0; padding-top: 6px; }
+  .page-break { page-break-before: always; break-before: page; }
+  table.sheet-title { width: 100%; margin-bottom: 8px; }
+  table.sheet-title td { border: 0; border-bottom: 1px solid #333; padding: 0 0 3px; vertical-align: bottom; }
+  table.sheet-title td.t { font-size: 14pt; font-weight: 700; letter-spacing: .2em; }
+  table.sheet-title td.doc-sub { text-align: right; font-size: 8.5pt; color: #555; }
+  .doc-block { margin-top: 10px; page-break-inside: auto; }
+  table.doc-head { width: 100%; font-size: 8.5pt; margin: 0; }
+  table.doc-head td { border: 1px solid #bdbdbd; background: #f4f4f2; padding: 4px 7px; vertical-align: top; }
+  table.doc-head td.r { text-align: right; white-space: nowrap; }
+  table.doc-sum { width: auto; margin: 3px 0 0 auto; font-size: 8pt; }
+  table.doc-sum th, table.doc-sum td { border: 0; padding: 1px 2px 1px 14px; text-align: right; white-space: nowrap; font-weight: 400; color: #444; font-variant-numeric: tabular-nums; }
+  table.doc-sum td.b { font-weight: 700; color: #222; }
+  table.pays { width: 100%; font-size: 8pt; margin: 3px 0 0; }
+  table.pays td { border: 0; border-top: 1px dotted #ccc; padding: 2px 6px; color: #555; }
+  .remarks { font-size: 8pt; color: #555; margin-top: 10px; }
+  .remarks ol { margin: 2px 0 0; padding-left: 1.4em; }
+  .remarks li { margin: 1px 0; }
+</style>
+</head>
+<body data-layout="prp-v1-2026-11">
+
+<!-- ===== ヘッダ ===== -->
+<div class="doc-head">
+  <h1 class="doc-title">支払報告書</h1>
+  <div class="doc-sub">対象期間 {{formatDate PERIOD_FROM}} 〜 {{formatDate PERIOD_TO}}（{{BASIS_LABEL}}）</div>
+</div>
+<div class="doc-meta">{{#if DOC_NO}}文書番号: <b>{{DOC_NO}}</b>　　{{/if}}作成日: {{formatDate documentDate}}</div>
+<hr class="rule">
+
+<!-- ===== 宛先 ＋ 当社 ===== -->
+<table class="party">
+  <tr>
+    <td style="width:50%; padding-right:12px;">
+      <div class="vlabel">{{PAYEE_ROLE}}</div>
+      <div class="vendor-name">{{VENDOR_NAME}}　{{VENDOR_SUFFIX}}</div>
+      {{#if VENDOR_ADDRESS}}<div class="muted" style="white-space:pre-wrap;">{{VENDOR_ADDRESS}}</div>{{/if}}
+      <div class="muted">登録番号: {{#if INVOICE_REGISTRATION_NUMBER}}{{INVOICE_REGISTRATION_NUMBER}}{{else}}未登録{{/if}}</div>
+    </td>
+    <td style="width:50%; padding-left:12px;">
+      <div class="vlabel">支払者</div>
+      <div class="company-name">{{COMPANY_NAME}}</div>
+      {{#if COMPANY_ADDRESS}}<div class="muted" style="white-space:pre-wrap;">{{#if COMPANY_POSTAL_CODE}}〒{{COMPANY_POSTAL_CODE}} {{/if}}{{COMPANY_ADDRESS}}</div>{{/if}}
+      {{#if COMPANY_INVOICE_NO}}<div class="muted">登録番号: {{COMPANY_INVOICE_NO}}</div>{{/if}}
+      {{#if COMPANY_TEL}}<div class="muted">TEL {{COMPANY_TEL}}</div>{{/if}}
+    </td>
+  </tr>
+</table>
+
+<p class="lead">下記の期間における当社からのお支払いについて、支払日と明細を次のとおりご報告いたします。</p>
+
+<!-- ===== 報告概要 ===== -->
+<p class="section-mark">■ 報告概要</p>
+<table class="summary">
+  <tr>
+    <th>対象期間</th><td>{{formatDate PERIOD_FROM}} 〜 {{formatDate PERIOD_TO}}</td>
+    <th>期間の基準</th><td>{{BASIS_LABEL}}</td>
+  </tr>
+  <tr>
+    <th>対象文書</th><td>{{docCount}} 件{{#if kindSummary}}（{{kindSummary}}）{{/if}}</td>
+    <th>支払日</th><td>{{payDateCount}} 日{{#if payDateRange}}（{{payDateRange}}）{{/if}}</td>
+  </tr>
+</table>
+
+<!-- ===== 支払日ごとの一覧 ===== -->
+<p class="section-mark">■ 支払日ごとの一覧</p>
+{{#if payDates.length}}
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:4%">No.</th>
+      <th style="width:15%">文書番号</th>
+      <th>文書・件名</th>
+      <th style="width:9%">状態</th>
+      <th style="width:12%">金額（税抜）</th>
+      <th style="width:10%">消費税</th>
+      {{#if hasWithholding}}<th style="width:10%">源泉徴収</th>{{/if}}
+      <th style="width:13%">お支払額</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#each payDates}}
+    <tr class="date-head"><td colspan="{{../payColspan}}">支払日　{{#if date}}{{formatDate date}}{{else}}未定{{/if}}</td></tr>
+    {{#each docs}}
+    <tr>
+      <td class="center">{{index}}</td>
+      <td class="center"><span class="no">{{#if documentNo}}{{documentNo}}{{else}}—{{/if}}</span></td>
+      <td><span class="tag">{{kindLabel}}</span>{{title}}{{#if period}}<div class="item-spec">{{period}}</div>{{/if}}</td>
+      <td class="center">{{statusLabel}}</td>
+      <td class="num">{{amountStr}}</td>
+      <td class="num">{{taxStr}}</td>
+      {{#if ../../hasWithholding}}<td class="num">{{withholdingStr}}</td>{{/if}}
+      <td class="num"><b>{{netStr}}</b></td>
+    </tr>
+    {{/each}}
+    {{#if multiple}}
+    <tr class="subtotal">
+      <td colspan="4" style="text-align:right">小計（{{docs.length}} 件）</td>
+      <td class="num">{{amountStr}}</td>
+      <td class="num">{{taxStr}}</td>
+      {{#if ../hasWithholding}}<td class="num">{{withholdingStr}}</td>{{/if}}
+      <td class="num">{{netStr}}</td>
+    </tr>
+    {{/if}}
+    {{/each}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">この期間に対象となる支払はありません。</p>
+{{/if}}
+
+<!-- ===== 合計 ===== -->
+{{#each totals}}
+<table class="totals">
+  {{#if ../multiCurrency}}<tr class="cur"><th colspan="2">{{currency}}</th></tr>{{/if}}
+  <tr><th>金額（税抜）</th><td>{{amountStr}}</td></tr>
+  <tr><th>消費税</th><td>{{taxStr}}</td></tr>
+  {{#if ../hasWithholding}}<tr><th>源泉徴収税額</th><td>△ {{withholdingStr}}</td></tr>{{/if}}
+  <tr class="grand"><th>お支払額合計</th><td>{{netStr}}</td></tr>
+</table>
+{{/each}}
+
+{{#if remarks}}
+<div class="remarks">
+  <b>備考</b>
+  <div style="white-space:pre-wrap;">{{remarks}}</div>
+</div>
+{{/if}}
+
+<!-- ===== 別紙：文書ごとの明細 ===== -->
+{{#if documents.length}}
+<div class="page-break"></div>
+<table class="sheet-title">
+  <tr><td class="t">別紙　明細</td><td class="doc-sub">{{VENDOR_NAME}}　{{VENDOR_SUFFIX}}　／　{{formatDate PERIOD_FROM}} 〜 {{formatDate PERIOD_TO}}</td></tr>
+</table>
+
+{{#each documents}}
+<div class="doc-block">
+  <table class="doc-head">
+    <tr>
+      <td><b>{{index}}.</b> <span class="tag">{{kindLabel}}</span><span class="no">{{#if documentNo}}{{documentNo}}{{else}}—{{/if}}</span>　{{title}}{{#if period}}　<span class="muted">{{period}}</span>{{/if}}</td>
+      <td class="r">発行日 {{#if issuedOn}}{{formatDateCompact issuedOn}}{{else}}—{{/if}}　／　支払日 <b>{{#if payOn}}{{formatDateCompact payOn}}{{else}}未定{{/if}}</b>（{{statusLabel}}）</td>
+    </tr>
+  </table>
+  <table class="items">
+    <thead>
+      <tr>
+        <th style="width:4%">No.</th>
+        <th>品目・内容</th>
+        <th style="width:15%">{{dateHeader}}</th>
+        <th style="width:9%">数量</th>
+        <th style="width:13%">{{unitHeader}}</th>
+        <th style="width:13%">金額（税抜）</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each lines}}
+      <tr>
+        <td class="center">{{index1 @index}}</td>
+        <td><div class="item-name">{{name}}</div>{{#if detail}}<div class="item-spec">{{detail}}</div>{{/if}}{{#if payOn}}<div class="item-spec">支払日 {{formatDateCompact payOn}}</div>{{/if}}</td>
+        <td class="center">{{#if dateText}}{{dateText}}{{else}}—{{/if}}</td>
+        <td class="num">{{#if quantityStr}}{{quantityStr}}{{else}}—{{/if}}</td>
+        <td class="num">{{#if unitStr}}{{unitStr}}{{else}}—{{/if}}</td>
+        <td class="num">{{amountStr}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" class="muted">明細の記録がありません（文書の本文をご確認ください）。</td></tr>
+      {{/each}}
+    </tbody>
+  </table>
+  <table class="doc-sum">
+    <tr><th>金額（税抜）</th><td>{{amountStr}}</td><th>消費税</th><td>{{taxStr}}</td>{{#if hasWithholding}}<th>源泉徴収</th><td>△ {{withholdingStr}}</td>{{/if}}<th>お支払額</th><td class="b">{{netStr}}</td></tr>
+  </table>
+  {{#if payments.length}}
+  <table class="pays">
+    {{#each payments}}
+    <tr><td>支払 <span class="no">{{#if paymentNo}}{{paymentNo}}{{else}}—{{/if}}</span></td><td>期日 {{#if dueOn}}{{formatDateCompact dueOn}}{{else}}—{{/if}}</td><td>支払日 {{#if paidOn}}{{formatDateCompact paidOn}}{{else}}未払い{{/if}}</td><td style="text-align:right">{{netStr}}</td></tr>
+    {{/each}}
+  </table>
+  {{/if}}
+</div>
+{{/each}}
+{{/if}}
+
+<div class="remarks">
+  <ol>
+    <li>本報告書は、当社が決定・送付した検収書・役務提供完了通知書・利用許諾料計算書の内容と、当社の支払記録をもとに作成しています。</li>
+    <li>支払日は、支払済みのものは実際の支払日、未払いのものは支払予定日です。</li>
+    <li>内容に相違がある場合は、本書の作成日から 10 営業日以内にご連絡ください。</li>
+  </ol>
+</div>
+
+</body>
+</html>`;
