@@ -32,10 +32,25 @@ export function getPool(): DatabasePool | null {
     options,
     max: int(process.env.DB_POOL_MAX, 10),
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 5_000
+    // 接続を待つ上限。空きを待つ時間も含む。5 秒だと、起動直後（Cloud SQL への接続を張り直す）や
+    // ホームのように一度に何本も問い合わせる画面で、軽い集計まで「timeout exceeded when trying
+    // to connect」で落ちていた（2026-11-05 11:56 UTC）。
+    connectionTimeoutMillis: int(process.env.DB_CONNECT_TIMEOUT_MS, 15_000)
   });
   return pool;
 }
+
+/** 接続の待ちで落ちたときに、プールがどういう状態だったか（使い切りか、つながらないのか）。 */
+export function poolState(): { total: number; idle: number; waiting: number; max: number } | null {
+  if (!pool) return null;
+  return { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount,
+           max: int(process.env.DB_POOL_MAX, 10) };
+}
+
+/** pg-pool の「接続を待ちきれなかった」。 */
+export const isPoolTimeout = (error: unknown): boolean =>
+  /timeout exceeded when trying to connect|Connection terminated due to connection timeout/i
+    .test(String((error as { message?: unknown })?.message ?? ""));
 
 function int(v: string | undefined, fallback: number) {
   const n = Number(v);
