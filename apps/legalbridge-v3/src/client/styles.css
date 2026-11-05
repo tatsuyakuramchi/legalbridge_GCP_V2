@@ -1095,3 +1095,30 @@ td.dm-docno{font-family:inherit;white-space:normal}
 td.dm-docno td{padding:0;border:0;background:transparent}
 /* 作品台帳の「条件ごと」：作品は 1 点なので左の作品の欄は無く、表だけ。 */
 .wledger.wledger-single{grid-template-columns:minmax(0,1fr)}
+
+/* ── ホーム：今日やること と 作業台（docs/desk-home.md）──────────────────
+   既定は 1 画面に 1 つ（ウィンドウ半分で使う）。広いときだけツリーと中身を左右に並べる。 */
+.desk-today{list-style:none;margin:0;padding:0}
+.desk-today li{display:flex;align-items:center;gap:8px;padding:2px 10px 2px 4px;border-top:1px solid var(--line)}
+.desk-today li:first-child{border-top:0}
+.desk-today li.on{background:var(--accent-soft)}
+.desk-today-pick{flex:1;min-width:0;display:flex;align-items:center;gap:8px;text-align:left;background:none;border:0;
+  border-radius:6px;padding:7px 6px;min-height:40px;cursor:pointer;color:inherit}
+.desk-today-pick:hover{background:var(--sunken)}
+.desk-today-pick .grow{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.45}
+.desk-today-pick .grow b,.desk-today-pick .grow .faint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.desk-dot{flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:var(--line-strong)}
+.desk-dot.over{background:var(--out)} .desk-dot.today{background:var(--warn)} .desk-dot.week{background:var(--accent)}
+.desk-today-more{display:flex;align-items:center;gap:8px;padding:6px 14px;border-top:1px solid var(--line)}
+.desk-body{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:14px;align-items:start}
+@media (min-width:1280px){ .desk-body{grid-template-columns:minmax(260px,340px) minmax(0,1fr)} }
+.desk-tree{display:flex;flex-direction:column;gap:8px;min-width:0}
+.desk-tree .ledger-tree{max-height:60vh;padding:0}
+.desk-node{display:flex;align-items:center;gap:2px}
+.desk-chev{flex:0 0 26px;height:30px;border:0;background:none;border-radius:5px;cursor:pointer;color:var(--muted)}
+.desk-chev:hover{background:var(--sunken)}
+.desk-chev-sp{flex:0 0 26px}
+.desk-kid{padding:4px 8px 4px 46px}
+.desk-tree .ledger-tree .node.child{margin-left:46px;width:calc(100% - 46px)}
+.desk-detail{min-width:0}
+.desk-h3{margin:0 0 6px;font-size:12.5px}

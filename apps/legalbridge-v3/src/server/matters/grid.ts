@@ -62,6 +62,8 @@ export interface GridRow {
   name: string;
   kind: string;
   counterparty: { id: number; name: string } | null;
+  /** 条件が紐づく契約（基本契約・単体契約・補助文書）。作業台で契約ごとに絞るのに使う。 */
+  agreementId?: number | null;
   /**
    * 金額の材料。見出しの作り方（定額／単価／料率）は画面の
    * conditionAmountLabel と同じものを使うので、ここでは素の値を渡す。
