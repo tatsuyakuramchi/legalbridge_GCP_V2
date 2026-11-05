@@ -179,7 +179,7 @@ export class DocumentIssueService {
       // 文案は宣言済みの項目なら bindVariables が入れている（手入力が勝つ）。
       // 本文が宣言の無い名前を差していることがあり、そのぶんがここに残る。
       // 入れないと、料率や帰属先のように台帳から引ける値が空欄で紙に出る。
-      const values = { ...resolveAllLegacyVariables(context), ...suggested,
+      const values = { ...resolveAllLegacyVariables(context, template.templateKey), ...suggested,
                        ...computed, ...binding.values };
       const owner = (context as { owner?: { name?: string } | null }).owner;
       return {
@@ -192,7 +192,7 @@ export class DocumentIssueService {
         candidates: buildCandidates(context, template.templateKey),
         // 宣言済みの項目は binding.missing が別に報告する。重ねない。
         warnings: [
-          ...documentWarnings(template.htmlSource, values, withImpliedVariables(template.templateKey, template.variables).map((v) => v.name)),
+          ...documentWarnings(template.htmlSource, values, withImpliedVariables(template.templateKey, template.variables).map((v) => v.name), template.templateKey),
           // ひな形ごとの警告（出版の条件書：一覧に載せられない条件明細）。
           ...templateWarnings(template.templateKey, context, manual)
         ],
@@ -519,7 +519,7 @@ export class DocumentIssueService {
         // ときに表と合計が消える。
         // 本文は宣言の無い名前も差す（DOC_NO・STAFF_NAME・moneyUnit …）。
         // 対応表が解決できるものを土台に置き、計算結果と束縛した値を上に乗せる。
-        const frozen = { ...resolveAllLegacyVariables(context), ...suggested,
+        const frozen = { ...resolveAllLegacyVariables(context, template.templateKey), ...suggested,
                          ...computed, ...binding.values };
 
         // 発注書の利用許諾条件の表に載った条件（同じ相手先・作品の受注者帰属の利用許諾）は、選んでいなくても

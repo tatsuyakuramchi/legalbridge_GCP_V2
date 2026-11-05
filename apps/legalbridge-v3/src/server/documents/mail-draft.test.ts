@@ -170,6 +170,13 @@ test("送り先の候補：署名者の印が無ければ主担当を署名者�
   assert.equal(r.signersFrom, "primary");
 });
 
+test("送り先の候補：連絡先が無い取引先（個人に多い）は、取引先のメールを署名者の候補にする", async () => {
+  const r = await new MailDraftService(build({ contacts: [] })).recipients(5);
+  assert.deepEqual(r.signers.map((p) => p.email), ["info@kou.example"]);
+  assert.equal(r.signers[0].name, "株式会社甲");
+  assert.equal(r.signersFrom, "party");
+});
+
 test("当社担当者は文書で選んだ担当（_ownerStaffId）が案件の担当より先", async () => {
   const db = new FakeDatabase((t, params) => {
     if (t.includes("FROM documents d")) return [{

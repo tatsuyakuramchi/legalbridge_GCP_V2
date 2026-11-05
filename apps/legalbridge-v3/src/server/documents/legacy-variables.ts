@@ -217,7 +217,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   //
   // PARTY_A_NAME はここに置かない。甲・発注元・委託者・ライセンシーはすべて
   // 自社を指す名前で、ひな形4本（maintenance_spec・service_master・
-  // purchase_order・license_master）のどれも自社の意味で使っている（nda は甲＝取引先。binding.ts で読み替える）。
+  // purchase_order・license_master）は自社の意味で使っている。
+  // NDA（nda）だけは逆で、甲＝取引先・乙＝自社（PARTY_B_*）。TEMPLATE_ALIASES で読み替える。
   // ここに置いていたので相手先のほうが先に当たり、発注書の「発注元 名称」に
   // 取引先の名前が入っていた（住所と代表者は自社なので、社名だけ相手のもの）。
   { names: ["VENDOR_NAME", "LICENSOR_NAME", "Licensor_氏名会社名", "Licensor_名称",
@@ -562,7 +563,40 @@ const segments = (v: string): string[] =>
 const COUNTERPARTY_SIDE =
   /先方|相手先|相手方|相手|取引先|受託者|許諾者|受注者|委託先|発注先|vendor|licensor|counterparty|contractor|party_b/i;
 
-export function resolveLegacyVariable(name: string, context: Ctx, label?: string): unknown {
+/**
+ * ひな形ごとの読み替え。同じ変数名でも、ひな形によって甲乙の向きが違う。
+ *
+ * NDA（nda。V2 の 049 改訂）は 甲＝取引先側（PARTY_A_*）・乙＝自社（PARTY_B_*）。
+ * 共通の表は PARTY_A_* を自社に当てている（発注書・基本契約書の甲は自社）ので、
+ * NDA の甲に自社の名前・住所・代表者が入り、乙（PARTY_B_*）は何にも当たらず空だった。
+ * 値は並べた順に見て、最初に入っているものを使う。
+ */
+const TEMPLATE_ALIASES: Record<string, Record<string, string[]>> = {
+  nda: {
+    PARTY_A_NAME: ["VENDOR_NAME"],
+    PARTY_A_ADDRESS: ["VENDOR_ADDRESS"],
+    // 「肩書込みで記入」の欄。代表者の欄が無ければ（個人など）氏名だけ。
+    PARTY_A_REP: ["representativeLine", "counterpartyRep"],
+    PARTY_B_NAME: ["COMPANY_NAME"],
+    PARTY_B_ADDRESS: ["COMPANY_ADDRESS"],
+    PARTY_B_REP: ["COMPANY_REP"]
+  }
+};
+
+/** このひな形で読み替える名前か（読み替える名前は共通の表で当てない）。 */
+export const templateAliasOf = (templateKey: string | null | undefined, name: string): string[] | undefined =>
+  templateKey ? TEMPLATE_ALIASES[templateKey]?.[String(name ?? "").trim()] : undefined;
+
+export function resolveLegacyVariable(name: string, context: Ctx, label?: string, templateKey?: string | null): unknown {
+  const aliases = templateAliasOf(templateKey, name);
+  if (aliases) {
+    for (const alias of aliases) {
+      const entry = RESOLVERS.find((e) => e.names.includes(alias));
+      const value = entry ? take(entry, context) : undefined;
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
   const keys = [String(name ?? "").trim(), String(label ?? "").trim()].filter(Boolean);
   if (!keys.length) return undefined;
 
@@ -739,7 +773,7 @@ export function resolveLegacyDbField(path: string, context: Ctx): unknown {
  *
  * ここが返すのは既定値。宣言のある変数（手入力を含む）と計算結果が上に乗る。
  */
-export function resolveAllLegacyVariables(context: Ctx): Record<string, unknown> {
+export function resolveAllLegacyVariables(context: Ctx, templateKey?: string | null): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const entry of RESOLVERS) {
     const value = take(entry, context);
@@ -747,6 +781,14 @@ export function resolveAllLegacyVariables(context: Ctx): Record<string, unknown>
     for (const name of entry.names) {
       if (!(name in out)) out[name] = value;
     }
+  }
+  // ひな形ごとの読み替え（NDA の甲乙）。読み替えた名前は共通の表の値を残さない：
+  // 甲（取引先）が空のときに自社の名前が土台から出てしまう。
+  const aliases = templateKey ? TEMPLATE_ALIASES[templateKey] : undefined;
+  for (const name of Object.keys(aliases ?? {})) {
+    delete out[name];
+    const value = resolveLegacyVariable(name, context, undefined, templateKey);
+    if (value !== undefined) out[name] = value;
   }
   return out;
 }

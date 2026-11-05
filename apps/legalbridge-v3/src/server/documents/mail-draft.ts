@@ -41,9 +41,9 @@ interface Origin {
 export interface DocumentRecipients {
   counterparty: { id: number | null; name: string; email: string | null } | null;
   contacts: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
-  /** 署名者の候補。署名者の印が付いた連絡先、無ければ主担当。 */
+  /** 署名者の候補。署名者の印が付いた連絡先、無ければ主担当、それも無ければ取引先そのもののメール。 */
   signers: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
-  signersFrom: "signer" | "primary" | null;
+  signersFrom: "signer" | "primary" | "party" | null;
   /** 事業部の担当者（依頼者）。 */
   requester: Person | null;
   /** 法務の担当（案件の担当かデイリータスクの担当）。 */
@@ -133,12 +133,16 @@ export class MailDraftService {
       }));
       const signers = contacts.filter((x) => x.roles.includes("signer"));
       const primaries = contacts.filter((x) => x.roles.includes("primary"));
+      // 連絡先が無い取引先（個人に多い。メールは取引先の行にだけある）は、取引先のメールを署名者の候補に。
+      // これが無いと CloudSign の署名者が「（なし）」のまま選べず、下書きを作れなかった。
+      const partyOnly = !signers.length && !primaries.length && c.partyEmail
+        ? [{ name: str(c.counterpartyName), email: c.partyEmail, roles: ["party"], department: null }] : [];
       return {
         counterparty: c.counterpartyId || c.counterpartyName
           ? { id: c.counterpartyId, name: c.counterpartyName, email: c.partyEmail } : null,
         contacts,
-        signers: signers.length ? signers : primaries,
-        signersFrom: signers.length ? "signer" : primaries.length ? "primary" : null,
+        signers: signers.length ? signers : primaries.length ? primaries : partyOnly,
+        signersFrom: signers.length ? "signer" : primaries.length ? "primary" : partyOnly.length ? "party" : null,
         requester: person(c.requester),
         owner: person(c.owner),
         origin: c.origin ? { label: c.origin.label, no: c.origin.no, title: c.origin.title } : null

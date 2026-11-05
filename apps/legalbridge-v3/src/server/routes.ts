@@ -6071,19 +6071,30 @@ export function createRoutes(database: Transactable) {
     requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {
       const q = String(req.query.q ?? "").trim();
-      const like = `%${q}%`;
+      // 名前の空白（半角・全角）は見ない。「河上　拓」で「河上 拓」に当たらなかった。
+      const like = `%${q.replace(/[\s\u3000]+/g, "")}%`;
+      const bare = (col: string) => `regexp_replace(COALESCE(${col}, ''), '[[:space:]　]+', '', 'g')`;
       const rows = await database.query(
         `SELECT * FROM (
            SELECT 'contact' AS kind, c.name, c.email,
                   p.name AS belongs_to, array_to_string(c.roles, ',') AS role, c.department
              FROM party_contacts c JOIN parties p ON p.id = c.party_id
             WHERE COALESCE(btrim(c.email), '') <> ''
-              AND ($1 = '' OR c.name ILIKE $2 OR c.email ILIKE $2 OR p.name ILIKE $2)
+              AND ($1 = '' OR ${bare("c.name")} ILIKE $2 OR c.email ILIKE $2 OR ${bare("p.name")} ILIKE $2)
+           UNION ALL
+           -- 取引先そのもののメール（連絡先を登録していない取引先。個人に多い）。
+           -- 同じアドレスが連絡先にあれば連絡先のほうを出す。
+           SELECT 'contact', p.name, btrim(p.email), p.name, 'party', NULL
+             FROM parties p
+            WHERE COALESCE(btrim(p.email), '') <> '' AND p.status <> 'merged'
+              AND NOT EXISTS (SELECT 1 FROM party_contacts c2
+                               WHERE c2.party_id = p.id AND lower(btrim(c2.email)) = lower(btrim(p.email)))
+              AND ($1 = '' OR ${bare("p.name")} ILIKE $2 OR p.email ILIKE $2)
            UNION ALL
            SELECT 'staff', s.name, s.email, '自社', NULL, s.department
              FROM staff s
             WHERE COALESCE(btrim(s.email), '') <> '' AND s.status = 'active'
-              AND ($1 = '' OR s.name ILIKE $2 OR s.email ILIKE $2)
+              AND ($1 = '' OR ${bare("s.name")} ILIKE $2 OR s.email ILIKE $2)
          ) x
          ORDER BY (x.kind = 'staff') DESC, x.belongs_to, x.name
          LIMIT 50`, [q, like]);
