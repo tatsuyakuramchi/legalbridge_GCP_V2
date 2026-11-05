@@ -126,7 +126,7 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
  */
 export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.currency,
                 c.pricing_model, c.flat_amount, c.unit_amount, c.rate_ppm, c.term_end,
-                c.work_id, c.deliverable_ownership, c.quantity, c.unit_label,
+                c.work_id, c.agreement_id, c.deliverable_ownership, c.quantity, c.unit_label,
                 w.title AS work_title,
                 p.id AS party_id, p.name AS party_name,
                 lic.count AS license_count,
@@ -216,6 +216,7 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
   name: String(row.name),
   kind: String(row.kind),
   counterparty: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
+  agreementId: int(row.agreement_id),
   pricingModel: String(row.pricing_model ?? "none"),
   currency: String(row.currency ?? "JPY"),
   flatAmount: int(row.flat_amount),
@@ -257,6 +258,9 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
 
 
 
+/** 取引先の切り口で一度に出す条件の上限。 */
+export const PARTY_ROW_LIMIT = 500;
+
 export class MatterGridService {
   constructor(private readonly database: Transactable) {}
 
@@ -290,6 +294,27 @@ export class MatterGridService {
           WHERE c.work_id = $1
             AND c.status NOT IN ('void', 'superseded')
           ORDER BY p.name NULLS LAST, c.direction, c.condition_no NULLS LAST, c.id`, [workId]);
+      const rows = (r.rows as any[]).map(gridRowOf);
+      const rounds = await this.rounds(rows.map((x) => x.conditionId));
+      for (const row of rows) row.rounds = rounds.get(row.conditionId) ?? [];
+      return rows;
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 取引先 1 社の条件（案件をまたいで全部）。作業台の「取引先」の切り口。列は案件の工程表と同じ。
+   * 大口の取引先で行が膨らまないよう、新しい順に上限を付ける。
+   */
+  async rowsForParty(partyId: number, limit = PARTY_ROW_LIMIT): Promise<GridRow[]> {
+    try {
+      const r = await this.database.query(
+        `SELECT ${GRID_COLUMNS}
+           FROM conditions c
+           ${GRID_JOINS}
+          WHERE c.counterparty_id = $1
+            AND c.status NOT IN ('void', 'superseded')
+          ORDER BY c.updated_at DESC, c.id DESC
+          LIMIT $2`, [partyId, limit]);
       const rows = (r.rows as any[]).map(gridRowOf);
       const rounds = await this.rounds(rows.map((x) => x.conditionId));
       for (const row of rows) row.rounds = rounds.get(row.conditionId) ?? [];

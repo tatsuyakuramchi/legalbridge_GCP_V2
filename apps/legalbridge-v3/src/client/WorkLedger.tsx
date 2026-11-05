@@ -96,11 +96,18 @@ function DocLine({ doc, onOpen }: { doc: { id: number; documentNo: string | null
 }
 
 export function WorkLedger(
-  { matterId = null, workId = null, partyId, reloadKey, onOpenCondition, onOpenDocument, onCompose, onOpenDeals, onFixDrift, onChanged }: {
+  { matterId = null, workId = null, forPartyId = null, agreementFilter = null, partyId, reloadKey, onOpenCondition, onOpenDocument, onCompose, onOpenDeals, onFixDrift, onChanged }: {
     /** 案件の中の条件（案件の「条件ごと」）。 */
     matterId?: number | null;
     /** 作品 1 点の条件（作品台帳の「条件ごと」。案件をまたいで全部）。matterId と一方だけ。 */
     workId?: number | null;
+    /**
+     * 取引先 1 社の条件（作業台の「取引先」の切り口。案件をまたいで全部）。matterId・workId と一方だけ。
+     * partyId（読んだ行の中での絞り込み）とは別物。
+     */
+    forPartyId?: number | null;
+    /** 契約で絞る（作業台で契約を選んだとき）。only＝その契約の行、exclude＝どの契約にも入らない行。 */
+    agreementFilter?: { only: number[] } | { exclude: number[] } | null;
     partyId?: number | null;
     reloadKey?: number;
     onOpenCondition?: (conditionId: number) => void;
@@ -146,12 +153,13 @@ export function WorkLedger(
   }, []);
   useEffect(() => {
     setError(null);
-    api.get<{ rows: GridRow[] }>(workId !== null ? `/works/${workId}/grid` : `/matters/${matterId}/grid`)
+    api.get<{ rows: GridRow[] }>(forPartyId !== null ? `/parties/${forPartyId}/grid`
+      : workId !== null ? `/works/${workId}/grid` : `/matters/${matterId}/grid`)
       .then((r) => setAll(r.rows)).catch((e: ApiError) => { setError(e.message); setAll([]); });
     // 重複は案件の中だけ（法務・管理者だけが引ける。引けなければ印を出さないだけ）。
     if (matterId !== null) api.get<DuplicateView>(`/matters/${matterId}/duplicate-conditions`).then(setDups).catch(() => setDups(null));
     else setDups(null);
-  }, [matterId, workId, reloadKey, version]);
+  }, [matterId, workId, forPartyId, reloadKey, version]);
 
   const startCreate = (w: { id: number | null; title: string | null }) => {
     setNotice(null);
@@ -165,7 +173,12 @@ export function WorkLedger(
     return m;
   }, [dups]);
 
-  const mine = useMemo(() => (all ?? []).filter((r) => !partyId || r.counterparty?.id === partyId), [all, partyId]);
+  const mine = useMemo(() => (all ?? []).filter((r) => {
+    if (partyId && r.counterparty?.id !== partyId) return false;
+    if (agreementFilter && "only" in agreementFilter) return r.agreementId != null && agreementFilter.only.includes(r.agreementId);
+    if (agreementFilter && "exclude" in agreementFilter) return r.agreementId == null || !agreementFilter.exclude.includes(r.agreementId);
+    return true;
+  }), [all, partyId, agreementFilter]);
   const works = useMemo(() => groupByWork(mine), [mine]);
   const inWork = useMemo(() => mine.filter((r) => work === "all" || String(r.workId ?? "none") === work), [mine, work]);
   const rows = useMemo(() => {
@@ -191,7 +204,14 @@ export function WorkLedger(
 
   if (error) return <div className="alert">{error}</div>;
   if (!all) return <div className="faint">読み込んでいます…</div>;
-  if (!all.length) return <div className="faint">この案件には条件明細がありません。一覧の「条件明細」で作るか、すでにある条件を繋いでください。</div>;
+  if (!all.length) {
+    if (forPartyId !== null) return <div className="faint">この取引先には、生きている条件明細がありません。</div>;
+    if (workId !== null) return <div className="faint">この作品には、生きている条件明細がありません。</div>;
+    return <div className="faint">この案件には条件明細がありません。一覧の「条件明細」で作るか、すでにある条件を繋いでください。</div>;
+  }
+  if (agreementFilter && !mine.length) {
+    return <div className="faint">{"only" in agreementFilter ? "この契約に紐づく条件明細は、まだありません。" : "どの契約にも紐づかない条件明細はありません。"}</div>;
+  }
 
   const pickedRows = rows.filter((r) => picked.has(r.conditionId));
   const editRow = editing ? all.find((r) => r.conditionId === editing.conditionId) ?? null : null;

@@ -28,6 +28,7 @@ import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
 import { LeftoverService } from "./ops/leftovers-service.js";
 import { TidyService } from "./ops/tidy-service.js";
 import { HomeStationsService } from "./ops/home-stations.js";
+import { DeskService, type DeskRoot } from "./desk/desk-service.js";
 import { tally } from "./ops/leftovers.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
@@ -881,6 +882,11 @@ export function createRoutes(database: Transactable) {
   // 作品台帳の「条件ごと」：作品 1 点の条件を案件をまたいで 1 行ずつ（列は案件の工程表と同じ）。
   router.get("/works/:id/grid", asyncRoute(async (req, res) => {
     res.json({ rows: await new MatterGridService(database).rowsForWork(Number(req.params.id)) });
+  }));
+
+  // 作業台の「取引先」の切り口：取引先 1 社の条件を案件をまたいで 1 行ずつ（列は案件の工程表と同じ）。
+  router.get("/parties/:id/grid", asyncRoute(async (req, res) => {
+    res.json({ rows: await new MatterGridService(database).rowsForParty(Number(req.params.id)) });
   }));
 
   router.get("/matters/:id/grid", asyncRoute(async (req, res) => {
@@ -4828,6 +4834,23 @@ export function createRoutes(database: Transactable) {
   });
   router.get("/home/stations", asyncRoute(async (_req, res) => {
     res.json(await homeStations.stations());
+  }));
+
+  // ---- ホームの「今日やること」と作業台（docs/desk-home.md）----
+  // 旧ホームの盤面（/home/stations・/summary）は呼ばない。開いたときに読むのはここだけ。
+  const desk = new DeskService(database, { intake: intakeRepo, tasks: dailyTasks, deadlines: ops });
+  router.get("/desk/today", asyncRoute(async (req, res) => {
+    res.json(await desk.today(assigneeOf(req.query.assignee)));
+  }));
+  router.get("/desk/tree", asyncRoute(async (req, res) => {
+    const root = String(req.query.root ?? "party");
+    if (!["party", "matter", "work"].includes(root)) {
+      throw new DomainError("VALIDATION", "root は party / matter / work のいずれかです");
+    }
+    res.json({ nodes: await desk.roots(root as DeskRoot, req.query.q ? String(req.query.q) : null) });
+  }));
+  router.get("/desk/tree/party/:id", asyncRoute(async (req, res) => {
+    res.json({ nodes: await desk.partyChildren(Number(req.params.id)) });
   }));
 
   router.post("/documents/:id/issue",

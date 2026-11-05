@@ -15,6 +15,7 @@ import { PartiesWorkspace } from "./PartiesWorkspace.js";
 import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
+import { DeskHome, type TodayItem } from "./DeskHome.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type BulkMode, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
@@ -105,6 +106,20 @@ export function App() {
     if (!next) return;
     setFocus({ view: next, id });
     setView(next);
+  };
+
+  /** ホームの以前の盤面（10 本の集計）。押したときだけ出す（docs/desk-home.md）。 */
+  const [showBoard, setShowBoard] = useState(false);
+  /** ホームの「今日やること」の行から、元の画面を開く。 */
+  const openTodayItem = (it: TodayItem) => {
+    setConditionId(undefined);
+    if (it.kind === "intake") { setFocus({ view: "intake", id: it.refId }); setView("intake"); return; }
+    if (it.kind === "task") { setFocus({ view: "daily", id: it.refId }); setView("daily"); return; }
+    if (it.source === "matter") return openEntity("matter", it.refId);
+    if (it.source === "agreement") return openEntity("agreement", it.refId);
+    if (it.source === "payment") { setFocus({ view: "money", id: it.refId }); setView("money"); return; }
+    setFocus(null);
+    setView("deals");
   };
 
   /**
@@ -461,6 +476,16 @@ export function App() {
           </div>
         )}
         {view === "home" && (
+          <DeskHome
+            onOpenItem={openTodayItem}
+            onOpen={openEntity}
+            onOpenCondition={openCondition}
+            onOpenDocument={openDocumentAt}
+            onCompose={(conditionIds, eventIds, matterId, templateKey) => startCompose(conditionIds, eventIds, matterId, templateKey)}
+            onOpenDeals={(conditionId) => openCondition(conditionId)}
+            onShowBoard={() => setShowBoard(true)} />
+        )}
+        {view === "home" && showBoard && (
           <HomeWorkspace intakeCount={intakeCount} dailyCount={dailyCount} onGo={(v, tab) => {
             setOpsTab(tab);
             // ホームから開くのは全社ぶん（札の件数と画面の件数を合わせる）。
