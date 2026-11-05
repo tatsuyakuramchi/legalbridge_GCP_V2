@@ -41,6 +41,7 @@ import { MatterGraphService } from "./matters/graph-service.js";
 import { WorkCreditService } from "./works/credits.js";
 import { settlesEvents } from "./documents/settlement-docs.js";
 import { settlementEventRows } from "./documents/settlement-conditions.js";
+import { draftInputFromOrder, OrderSettlementService } from "./documents/from-order.js";
 import { WorkRepository } from "./works/repository.js";
 import { checkAgainstEnvelope } from "./works/envelope.js";
 import { DocumentRepository } from "./documents/repository.js";
@@ -1186,6 +1187,42 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = deriveSchema.parse(req.body ?? {});
       res.status(201).json(await issues.derive(Number(req.params.id), input, actor(res)));
+    }));
+
+  /**
+   * 発注書から検収書・役務提供完了通知書を作る（documents/from-order.ts）。
+   * 載せる条件は発注書に結んだ条件だけ。実費・手数料は、かかった／かからなかったを入れて実額だけを載せる。
+   */
+  const orderSettlement = new OrderSettlementService(database);
+  router.get("/orders/search", asyncRoute(async (req, res) => {
+    res.json({ orders: await orderSettlement.search(String(req.query.q ?? "")) });
+  }));
+  router.get("/orders/:id/settlement-plan", asyncRoute(async (req, res) => {
+    res.json(await orderSettlement.plan(Number(req.params.id)));
+  }));
+  const orderDraftSchema = z.object({
+    templateKey: z.enum(["inspection_certificate", "service_completion_notice", "intl_inspection_certificate"]).nullable().optional(),
+    eventIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
+    extras: z.array(z.object({
+      conditionId: z.coerce.number().int().positive().nullable(),
+      kind: z.enum(["expense", "fee"]),
+      name: z.string().trim().max(200).default(""),
+      status: z.enum(["incurred", "skip", "none"]),
+      amount: z.coerce.number().int().min(0).nullable().optional(),
+      spentOn: z.string().date().nullable().optional(),
+      remarks: z.string().trim().max(1000).nullable().optional()
+    })).max(100).default([])
+  });
+  router.post("/orders/:id/settlement-draft", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = orderDraftSchema.parse(req.body ?? {});
+      const plan = await orderSettlement.plan(Number(req.params.id));
+      const draft = draftInputFromOrder(plan, input);
+      const made = await issues.createDraft({
+        templateKey: draft.templateKey, conditionIds: draft.conditionIds,
+        matterId: draft.matterId, agreementId: draft.agreementId, manualInputs: draft.manualInputs
+      }, actor(res));
+      res.status(201).json({ id: made.id, templateKey: draft.templateKey, conditionIds: draft.conditionIds, eventIds: draft.eventIds });
     }));
 
   // 日次の点検。画面を開かないと気づけないものを決まった時刻に洗い出す。
@@ -4676,8 +4713,9 @@ export function createRoutes(database: Transactable) {
    * 移ってきた実績があれば立てない）。金額は行の額（経費は税込）。
    */
   const settleExtraRows = async (id: number, templateKey: string | null, issuedOn: string | null, who: string) => {
-    const doc = await database.query("SELECT rendered_values, issued_at FROM documents WHERE id = $1", [id]);
-    const head = doc.rows[0] as { rendered_values?: Record<string, unknown>; issued_at?: unknown } | undefined;
+    const doc = await database.query("SELECT rendered_values, manual_inputs, issued_at FROM documents WHERE id = $1", [id]);
+    const head = doc.rows[0] as { rendered_values?: Record<string, unknown>; manual_inputs?: Record<string, unknown>;
+                                  issued_at?: unknown } | undefined;
     const rows = settlementEventRows(templateKey ?? "", head?.rendered_values ?? {});
     const day = issuedOn ?? tokyoToday();
     for (const r of rows) {
@@ -4685,11 +4723,29 @@ export function createRoutes(database: Transactable) {
         `SELECT 1 FROM condition_events
           WHERE condition_id = $1 AND document_id = $2 AND status = 'active' LIMIT 1`, [r.conditionId, id]);
       if (has.rows.length) continue;
+      // 先に記録してあった実績（「実費・手数料を後から足す」で立てたもの）が同じ額で残っていれば、それを結ぶ。
+      // 立て直すと、同じ交通費の実績が 2 件になり、片方が未決済のまま残る。
+      const loose = (await database.query(
+        `SELECT id FROM condition_events
+          WHERE condition_id = $1 AND document_id IS NULL AND status = 'active' AND amount = $2
+          ORDER BY id LIMIT 1`, [r.conditionId, r.amount])).rows[0] as { id: unknown } | undefined;
+      if (loose) {
+        await conditionEvents.linkDocument(r.conditionId, [Number(loose.id)], id, who);
+        continue;
+      }
       const made = await conditionEvents.add(r.conditionId, {
         eventType: "inspection", occurredOn: r.occurredOn ?? day, amount: r.amount,
         note: [r.name, r.remarks].filter(Boolean).join("／") || null
       }, who);
       await conditionEvents.linkDocument(r.conditionId, [made.id], id, who);
+    }
+    // 発注書から作るとき「かからなかった（以後も発生しない）」とした実費・手数料は完了扱いにする（板に残らない）。
+    const closeIds = Array.isArray(head?.manual_inputs?._closeExtrasOnIssue)
+      ? (head!.manual_inputs!._closeExtrasOnIssue as unknown[]).map(Number).filter((n) => Number.isFinite(n) && n > 0) : [];
+    const docNo = str(((await database.query("SELECT document_no FROM documents WHERE id = $1", [id])).rows[0] as any)?.document_no);
+    for (const cid of closeIds) {
+      await conditionWrites.close(cid, `実費・手数料なし（${docNo ?? `文書 ${id}`} の検収で確認）`, who)
+        .catch(() => undefined); // すでに完了扱い・無効なら何もしない
     }
   };
 
