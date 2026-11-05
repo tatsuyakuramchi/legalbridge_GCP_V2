@@ -216,8 +216,8 @@ const RESOLVERS: Array<{ names: string[]; get: (c: Ctx) => unknown; noSuffix?: s
   // ---- 相手先（受注者・許諾者） ----
   //
   // PARTY_A_NAME はここに置かない。甲・発注元・委託者・ライセンシーはすべて
-  // 自社を指す名前で、ひな形5本（nda・maintenance_spec・service_master・
-  // purchase_order・license_master）のどれも自社の意味で使っている。
+  // 自社を指す名前で、ひな形4本（maintenance_spec・service_master・
+  // purchase_order・license_master）のどれも自社の意味で使っている（nda は甲＝取引先。binding.ts で読み替える）。
   // ここに置いていたので相手先のほうが先に当たり、発注書の「発注元 名称」に
   // 取引先の名前が入っていた（住所と代表者は自社なので、社名だけ相手のもの）。
   { names: ["VENDOR_NAME", "LICENSOR_NAME", "Licensor_氏名会社名", "Licensor_名称",

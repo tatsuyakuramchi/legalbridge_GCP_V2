@@ -179,6 +179,26 @@ export function withImpliedVariables(templateKey: string, variables: TemplateVar
   return [...variables, ...implied.filter((v) => !names.has(v.name))];
 }
 
+/**
+ * ひな形ごとに、変数名の意味が全体の対応表と違うもの。全体の対応表では PARTY_A_* は自社を指す
+ * （発注書・基本契約書の甲＝自社）が、秘密保持契約書（nda）は甲＝取引先・乙＝自社で作ってある
+ * （049_nda_template_revision.sql）。対応表どおりに引くと、甲の欄に自社が入り、乙の欄に
+ * 取引先の代表者が当たっていた。ここに書いた名前は、書いた先の名前で引く（名前の推測はしない）。
+ */
+const TEMPLATE_VARIABLE_ALIASES: Record<string, Record<string, string>> = {
+  nda: {
+    PARTY_A_NAME: "VENDOR_NAME", PARTY_A_ADDRESS: "VENDOR_ADDRESS", PARTY_A_REP: "VENDOR_REPRESENTATIVE_LINE",
+    PARTY_B_NAME: "COMPANY_NAME", PARTY_B_ADDRESS: "COMPANY_ADDRESS", PARTY_B_REP: "COMPANY_REP"
+  }
+};
+
+/** ひな形ごとの読み替えを済ませて、対応表から値を引く。 */
+function resolveForTemplate(templateKey: string, variable: TemplateVariable, context: Record<string, unknown>): unknown {
+  const alias = TEMPLATE_VARIABLE_ALIASES[templateKey]?.[variable.name];
+  if (alias) return resolveLegacyVariable(alias, context);
+  return variable.noGuess ? undefined : resolveLegacyVariable(variable.name, context, variable.label);
+}
+
 export function bindVariables(
   variables: TemplateVariable[],
   context: Record<string, unknown>,
@@ -258,7 +278,7 @@ export function bindVariables(
           ? resolveLegacyDbField(variable.dbField, context)
           : undefined;
         const legacy = isEmpty(declared)
-          ? (variable.noGuess ? undefined : resolveLegacyVariable(variable.name, context, variable.label))
+          ? resolveForTemplate(templateKey, variable, context)
           : declared;
         if (!isEmpty(legacy)) {
           value = legacy;

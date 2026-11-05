@@ -301,3 +301,23 @@ test("真偽の欄は、既定値や手入力が文字列でも真偽値にそ�
   assert.equal(coerceBoolean("たぶん"), "たぶん", "読めない文字列は落とさない");
   assert.equal(coerceBoolean(false), false);
 });
+
+test("秘密保持契約書（nda）は甲＝取引先・乙＝自社で引く（PARTY_A_* を自社にしない）", () => {
+  const ctx = {
+    condition: { counterparty: { name: "TSP太陽株式会社", address: "東京都港区", kind: "corporate",
+                                 representativeTitle: "CEO", representativeName: "Pine Sohn" } },
+    company: { name: "株式会社アークライト", address: "東京都千代田区小川町", rep: "代表取締役 青柳 昌行" }
+  };
+  const vars = parseVariables(["PARTY_A_NAME", "PARTY_A_ADDRESS", "PARTY_A_REP", "PARTY_B_NAME", "PARTY_B_ADDRESS", "PARTY_B_REP"]
+    .map((name) => ({ name })));
+  const nda = bindVariables(vars, ctx, {}, { templateKey: "nda" }).values;
+  assert.equal(nda.PARTY_A_NAME, "TSP太陽株式会社");
+  assert.equal(nda.PARTY_A_ADDRESS, "東京都港区");
+  assert.equal(nda.PARTY_A_REP, "CEO Pine Sohn");
+  assert.equal(nda.PARTY_B_NAME, "株式会社アークライト");
+  assert.equal(nda.PARTY_B_ADDRESS, "東京都千代田区小川町");
+  assert.equal(nda.PARTY_B_REP, "代表取締役 青柳 昌行");
+  // ほかのひな形は従来どおり PARTY_A_* ＝自社。
+  const po = bindVariables(vars, ctx, {}, { templateKey: "purchase_order" }).values;
+  assert.equal(po.PARTY_A_NAME, "株式会社アークライト");
+});
