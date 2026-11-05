@@ -50,6 +50,8 @@ const actionLabel = (it: TodayItem) =>
   it.kind === "intake" ? "受付箱で開く" : it.kind === "task" ? "作業を開く" : DEADLINE_ACTION[it.source ?? ""] ?? "開く";
 
 export function DeskHome(props: {
+  /** home＝今日やること + 畳んだ作業台。desk＝作業台だけを全幅で（メニューの「作業台」）。 */
+  mode?: "home" | "desk";
   /** 今日やることの行の「開く」。受付箱・デイリータスク・期限の元の画面へ。 */
   onOpenItem: (item: TodayItem) => void;
   /** 作業台の中身の見出しから、元の画面（案件・取引先・作品・契約）を開く。 */
@@ -59,14 +61,17 @@ export function DeskHome(props: {
   onCompose: (conditionIds: number[], eventIds: number[], matterId: number | null, templateKey: string | null) => void;
   onOpenDeals: (conditionId: number) => void;
   /** 以前のホーム（盤面）を出す。重い集計が走るので、押したときだけ。 */
-  onShowBoard: () => void;
+  onShowBoard?: () => void;
 }) {
+  const isDesk = props.mode === "desk";
   const [today, setToday] = useState<Today | null>(null);
   const [todayError, setTodayError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [active, setActive] = useState<string | null>(null);
 
-  const [open, setOpen] = useState(() => load(OPEN_KEY) === "1");
+  const [openSaved, setOpen] = useState(() => load(OPEN_KEY) === "1");
+  // 全幅の作業台はいつも開いている（開閉は覚えない）。
+  const open = isDesk || openSaved;
   const [root, setRoot] = useState<Root>(() => (["party", "matter", "work"].includes(load(ROOT_KEY) ?? "") ? load(ROOT_KEY) as Root : "party"));
   const [q, setQ] = useState("");
   const query = useDebounced(q, 300);
@@ -79,6 +84,7 @@ export function DeskHome(props: {
 
   // 今日やること：自分（IAP のメール → 担当者）のデイリータスクで絞る。分からなければ全員。
   useEffect(() => {
+    if (isDesk) return;
     let alive = true;
     (async () => {
       let assignee = "";
@@ -99,7 +105,7 @@ export function DeskHome(props: {
       }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [isDesk]);
 
   // 作業台のツリーの一段目：開いているときだけ読む。
   useEffect(() => {
@@ -114,7 +120,7 @@ export function DeskHome(props: {
     return () => { alive = false; };
   }, [open, root, query]);
 
-  const setOpenSaved = (v: boolean) => { setOpen(v); save(OPEN_KEY, v ? "1" : "0"); };
+  const setOpenSaved = (v: boolean) => { if (isDesk) return; setOpen(v); save(OPEN_KEY, v ? "1" : "0"); };
   const switchRoot = (r: Root) => {
     if (r === root) return;
     setRoot(r); save(ROOT_KEY, r); setNodes(null); setSelected(null); setExpanded(new Set());
@@ -165,11 +171,13 @@ export function DeskHome(props: {
   return (
     <section className="workspace desk">
       <div className="workspace-head">
-        <h1>ホーム</h1>
-        <p>今日やることを上に、取引先・案件・作品のツリー（作業台）を下に置いています。作業台は開いたときに読み込みます。</p>
+        <h1>{isDesk ? "作業台" : "ホーム"}</h1>
+        <p>{isDesk
+          ? "取引先・案件・作品のツリーと、その中身。取引先を開くと基本契約が並びます。"
+          : "今日やることを上に、取引先・案件・作品のツリー（作業台）を下に置いています。作業台は開いたときに読み込みます。"}</p>
       </div>
 
-      <div className="panel">
+      {!isDesk && <div className="panel">
         <div className="panel-hd">
           <h2>今日やること</h2>
           {today && (
@@ -210,17 +218,18 @@ export function DeskHome(props: {
             {today && today.counts.total > items.length && <span className="faint">ほか {today.counts.total - items.length} 件は各画面で</span>}
           </div>
         )}
-      </div>
+      </div>}
 
       <div className="panel">
         <div className="panel-hd">
-          <h2>作業台</h2>
-          <span className="faint">取引先・案件・作品のツリーと、その中身</span>
+          {!isDesk && <h2>作業台</h2>}
+          {!isDesk && <span className="faint">取引先・案件・作品のツリーと、その中身</span>}
+          {isDesk && <span className="faint">切り口</span>}
           <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             {open && ROOTS.map(([r, label]) => (
               <button key={r} className="chip" aria-pressed={root === r} onClick={() => switchRoot(r)}>{label}</button>
             ))}
-            <button className="btn btn-sm" aria-expanded={open} onClick={() => setOpenSaved(!open)}>{open ? "畳む" : "作業台を開く"}</button>
+            {!isDesk && <button className="btn btn-sm" aria-expanded={open} onClick={() => setOpenSaved(!open)}>{open ? "畳む" : "作業台を開く"}</button>}
           </span>
         </div>
         {!open && (
@@ -308,10 +317,12 @@ export function DeskHome(props: {
         )}
       </div>
 
-      <div className="row">
-        <button className="linky" onClick={props.onShowBoard}>以前のホーム（盤面）を見る</button>
-        <span className="faint">集計に時間がかかるため、押したときだけ出します</span>
-      </div>
+      {!isDesk && props.onShowBoard && (
+        <div className="row">
+          <button className="linky" onClick={props.onShowBoard}>以前のホーム（盤面）を見る</button>
+          <span className="faint">集計に時間がかかるため、押したときだけ出します</span>
+        </div>
+      )}
     </section>
   );
 }

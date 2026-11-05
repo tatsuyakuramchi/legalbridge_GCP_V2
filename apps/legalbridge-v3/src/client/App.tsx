@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { ReadOnlyContext } from "./read-only.js";
 import { GlobalSearch, type SearchHit } from "./GlobalSearch.js";
@@ -397,7 +397,7 @@ export function App() {
   };
   /** 台帳の画面の「CSV で一括…」から、一括処理 › まとめて登録・更新する をその対象で開く。 */
   const openImport = (preset: ImportPreset) => {
-    setLastHub("bulk-register");
+    setLastHub("bulk");
     go({ view: "ops", sub: "imports" });
     setImportPreset(preset);
   };
@@ -427,10 +427,10 @@ export function App() {
               <button key={hub.key} className="nav-item"
                       aria-current={hubNow?.key === hub.key ? "page" : undefined}
                       onClick={() => openHub(hub)}>{hub.label}
-                      {hub.key === "reception" && intakeCount > 0 && (
+                      {hub.key === "home" && intakeCount > 0 && (
                         <span className="tag warn" style={{ marginLeft: 6 }} title="受付箱の未処理・更新あり">{intakeCount}</span>
                       )}
-                      {hub.key === "reception" && dailyCount > 0 && (
+                      {hub.key === "home" && dailyCount > 0 && (
                         <span className="tag in" style={{ marginLeft: 6 }} title="デイリータスクの終わっていない作業">{dailyCount}</span>
                       )}</button>
             ))}
@@ -459,9 +459,11 @@ export function App() {
         {/* メニューの項目が画面を 2 つ以上束ねているときは、その切り替え（docs/navigation.md）。 */}
         {hubNow && hubTabs.length > 1 && (
           <div className="tabs hub-tabs" role="tablist" aria-label={hubNow.label}>
-            {hubTabs.map((t) => (
-              <button key={`${t.to.view}:${t.to.sub ?? ""}`} role="tab" aria-selected={tabNow === t}
-                      onClick={() => go(t.to)}>{t.label}</button>
+            {hubTabs.map((t, i) => (
+              <Fragment key={`${t.to.view}:${t.to.sub ?? ""}`}>
+                {t.group && t.group !== hubTabs[i - 1]?.group && <span className="hub-tab-group" aria-hidden="true">{t.group}</span>}
+                <button role="tab" aria-selected={tabNow === t} onClick={() => go(t.to)}>{t.label}</button>
+              </Fragment>
             ))}
           </div>
         )}
@@ -484,6 +486,15 @@ export function App() {
             onCompose={(conditionIds, eventIds, matterId, templateKey) => startCompose(conditionIds, eventIds, matterId, templateKey)}
             onOpenDeals={(conditionId) => openCondition(conditionId)}
             onShowBoard={() => setShowBoard(true)} />
+        )}
+        {view === "desk" && (
+          <DeskHome mode="desk"
+            onOpenItem={openTodayItem}
+            onOpen={openEntity}
+            onOpenCondition={openCondition}
+            onOpenDocument={openDocumentAt}
+            onCompose={(conditionIds, eventIds, matterId, templateKey) => startCompose(conditionIds, eventIds, matterId, templateKey)}
+            onOpenDeals={(conditionId) => openCondition(conditionId)} />
         )}
         {view === "home" && showBoard && (
           <HomeWorkspace intakeCount={intakeCount} dailyCount={dailyCount} onGo={(v, tab) => {
@@ -576,7 +587,7 @@ export function App() {
         )}
         {view === "works" && (
           <WorksWorkspace key={`w${focusFor("works") ?? 0}`} onOpenImport={openImport}
-            onOpenCheck={() => { setLastHub("check"); go({ view: "condition-check" }); }}
+            onOpenCheck={() => { setLastHub("audit"); go({ view: "condition-check" }); }}
             onOpenCondition={openCondition} initialId={focusFor("works")}
             onOpenDocument={openDocumentAt}
             onOpen={openEntity} onCompose={startCompose}
@@ -639,7 +650,7 @@ export function App() {
         {view === "condition-check" && <ConditionCheck onOpenCondition={openCondition} onOpenWork={(id) => openEntity("work", id)} />}
         {view === "ops" && <OpsWorkspace key={`${opsTab ?? "quality"}:${importPreset?.kind ?? ""}:${importPreset?.mode ?? ""}`}
                                          initialTab={opsTab} onTabChange={setOpsTab} importPreset={importPreset}
-                                         embedded={hubNow ? { title: hubNow.label, hint: hubNow.hint ?? null } : undefined} />}
+                                         embedded={hubNow ? { title: tabNow?.label ?? hubNow.label, hint: tabNow?.hint ?? hubNow.hint ?? null } : undefined} />}
       </main>
     </div>
     </ReadOnlyContext.Provider>
