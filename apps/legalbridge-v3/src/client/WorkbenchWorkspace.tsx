@@ -48,6 +48,14 @@ const BULK_LABEL: Record<BulkMode, string> = {
   orders: "発注書を CSV でまとめて作る", settled: "検収済みをまとめて入れる（遡及）", missing: "契約書の無い相手先にまとめて起こす"
 };
 
+/**
+ * 条件明細が無いと作れない単位か。本体の文書（条件書・発注書）と決済文書だけが条件から作る。
+ * 基本契約書や、追加で選んだ文書（秘密保持契約書など）は条件なしで作れる。
+ */
+export function needsConditions(u: WorkUnit): boolean {
+  return u.key === "main" || u.key === "settlement";
+}
+
 export type UnitKind = "set" | "single" | "external";
 export interface WorkUnit {
   key: string;
@@ -999,13 +1007,15 @@ function WorkStep(
                 下書きのまま戻ってもよい（「下書き」として残り、あとで続きから作れます）。
               </span>
               <div className="row" style={{ gap: 8 }}>
-                <button className="btn primary" disabled={current.key !== "master" && (current.conditionIds?.length ?? 0) === 0}
+                <button className="btn primary" disabled={needsConditions(current) && (current.conditionIds?.length ?? 0) === 0}
                         onClick={() => onComposeUnit(current)}>文書の画面で作る</button>
                 <button className="btn" onClick={() => onDone(current.key, { status: "draft", documentIds: [] })}>この文書は飛ばして次へ</button>
               </div>
               {current.key !== "master" && (current.conditionIds?.length ?? 0) === 0 && (
-                <div className="note warn stack" style={{ gap: 8 }}>
-                  <span>条件明細が繋がっていません。本体の文書は条件から作るので、ここで登録するか、この相手先の既存の条件を繋いでください（基本契約書は条件なしで作れます）。</span>
+                <div className={`note ${needsConditions(current) ? "warn " : ""}stack`} style={{ gap: 8 }}>
+                  <span>{needsConditions(current)
+                    ? "条件明細が繋がっていません。本体の文書は条件から作るので、ここで登録するか、この相手先の既存の条件を繋いでください（基本契約書は条件なしで作れます）。"
+                    : "条件明細は繋がっていません。この文書（秘密保持契約書など）は条件なしで作れます。載せたい条件があるときだけ、ここで登録するか繋いでください。"}</span>
                   <ConditionsPanel plan={plan} busy={busy} onOpenCondition={onOpenCondition}
                                    onConditionsAdded={onConditionsAdded} onLinkExisting={onLinkExisting} />
                 </div>
