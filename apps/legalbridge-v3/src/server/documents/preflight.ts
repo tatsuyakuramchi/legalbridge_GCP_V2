@@ -99,7 +99,7 @@ const BANK_LABEL: Record<string, string> = {
   accountNo: "口座番号", accountNumber: "口座番号", accountHolder: "口座名義"
 };
 
-const COMPANY_LABEL: Record<string, string> = {
+const BASE_COMPANY_LABEL: Record<string, string> = {
   COMPANY_NAME: "自社名", COMPANY_NAME_KANA: "自社名（カナ）",
   COMPANY_ADDRESS: "自社住所", COMPANY_POSTAL_CODE: "自社郵便番号",
   COMPANY_TEL: "自社電話番号", COMPANY_FAX: "自社FAX",
@@ -107,6 +107,15 @@ const COMPANY_LABEL: Record<string, string> = {
   COMPANY_INVOICE_NO: "自社の登録番号（T番号）",
   COMPANY_BANK_INFO: "自社の振込先", COMPANY_SEAL_NOTE: "捺印・備考",
   PARTY_A_NAME: "自社名", PARTY_A_ADDRESS: "自社住所", PARTY_A_REP: "自社代表者"
+};
+
+/** NDA：乙（PARTY_B_*）が自社、甲（PARTY_A_*）は取引先。 */
+const NDA_COMPANY_LABEL: Record<string, string> = Object.fromEntries([
+  ...Object.entries(BASE_COMPANY_LABEL).filter(([k]) => !k.startsWith("PARTY_A_")),
+  ["PARTY_B_NAME", "自社名"], ["PARTY_B_ADDRESS", "自社住所"], ["PARTY_B_REP", "自社代表者"]
+]);
+const NDA_PARTY_LABEL: Record<string, string> = {
+  PARTY_A_NAME: "甲（取引先）名称", PARTY_A_ADDRESS: "甲（取引先）住所", PARTY_A_REP: "甲（取引先）代表者"
 };
 
 /**
@@ -124,7 +133,7 @@ const STAFF_LABEL: Record<string, string> = {
  * 本文が差す名前の読み方。計算ブロックが出す英名は、そのまま出すと何を直せば
  * いいか読めない（出版条件書の licensorContact など）。項目の見出しに戻す。
  */
-const OTHER_LABEL: Record<string, string> = {
+const BASE_OTHER_LABEL: Record<string, string> = {
   agreementNo: "基本契約番号", agreementTitle: "基本契約名",
   licensorName: "許諾者（甲）名称", licensorAddress: "許諾者（甲）住所",
   licensorRep: "許諾者（甲）代表者名", licensorContact: "許諾者（甲）通知先",
@@ -136,10 +145,14 @@ const OTHER_LABEL: Record<string, string> = {
 
 /** 空欄をひとまとまりの日本語にする。 */
 export function documentWarnings(
-  html: string, values: Record<string, unknown>, declared: Iterable<string> = []
+  html: string, values: Record<string, unknown>, declared: Iterable<string> = [], templateKey?: string | null
 ): Warning[] {
   const blank = blankPlaceholders(html, values, declared);
   const out: Warning[] = [];
+  // NDA は甲＝取引先・乙＝自社（legacy-variables の TEMPLATE_ALIASES）。甲の空欄を「自社情報」と言わない。
+  const nda = templateKey === "nda";
+  const COMPANY_LABEL = nda ? NDA_COMPANY_LABEL : BASE_COMPANY_LABEL;
+  const OTHER_LABEL = nda ? { ...BASE_OTHER_LABEL, ...NDA_PARTY_LABEL } : BASE_OTHER_LABEL;
   const label = (map: Record<string, string>, names: string[]) =>
     [...new Set(names.map((n) => map[n] ?? n))].join("・");
 

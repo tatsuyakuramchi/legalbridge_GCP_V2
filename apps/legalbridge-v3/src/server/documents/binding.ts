@@ -258,7 +258,7 @@ export function bindVariables(
           ? resolveLegacyDbField(variable.dbField, context)
           : undefined;
         const legacy = isEmpty(declared)
-          ? (variable.noGuess ? undefined : resolveLegacyVariable(variable.name, context, variable.label))
+          ? (variable.noGuess ? undefined : resolveLegacyVariable(variable.name, context, variable.label, templateKey))
           : declared;
         if (!isEmpty(legacy)) {
           value = legacy;
