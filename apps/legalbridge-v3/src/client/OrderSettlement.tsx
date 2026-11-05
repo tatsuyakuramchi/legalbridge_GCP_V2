@@ -71,6 +71,8 @@ export function OrderSettlement({ onOpenDraft, initialOrderId }: {
     api.get<Plan>(`/orders/${orderId}/settlement-plan`).then((p) => {
       if (!live) return;
       setPlan(p);
+      // 発注書の画面から来たときは欄に名前が無い（id だけ）。番号と件名を出す。
+      setOrderLabel((prev) => prev ?? `${p.order.documentNo ?? `#${p.order.id}`}　${p.order.title ?? ""}`);
       setTemplateKey(p.templateKey);
       // 選べる実績は既定で全部選ぶ（決済文書に結んでいないもの）。
       setEvents(new Set(p.lines.flatMap((l) => l.events.filter((e) => !e.documentNo).map((e) => e.id))));

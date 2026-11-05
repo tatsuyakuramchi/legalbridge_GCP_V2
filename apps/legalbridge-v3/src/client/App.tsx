@@ -151,7 +151,7 @@ export function App() {
    */
   const [payAuthor, setPayAuthor] = useState<(AuthorTarget & { nonce: number }) | null>(null);
   // 左のメニューから支払文書を開き直したときは一覧から（作家を持ち越さない）。
-  useEffect(() => { if (view !== "paydocs") { setPayAuthor(null); setPayTile(null); } }, [view]);
+  useEffect(() => { if (view !== "paydocs") { setPayAuthor(null); setPayTile(null); setPayOrder(null); } }, [view]);
   const openAuthor = (a: AuthorTarget) => {
     setPayAuthor({ ...a, nonce: Date.now() }); setConditionId(undefined); setFocus(null); setView("paydocs");
   };
@@ -286,6 +286,8 @@ export function App() {
   const [payTile, setPayTile] = useState<PayDocTile | null>(null);
   /** 支払文書を開くときのタブ（旧 回の一覧の URL は「入金と作者への支払」へ）。 */
   const [payPane, setPayPane] = useState<PayDocsPane | null>(null);
+  /** 発注書の詳細画面から「発注書から検収書」へ来たときの発注書。 */
+  const [payOrder, setPayOrder] = useState<number | null>(null);
   /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
   const [pick, setPick] = useState<{ view: View; id: number } | null>(null);
   const pickFor = (v: View) => (id: number | undefined) => setPick(id ? { view: v, id } : null);
@@ -370,7 +372,7 @@ export function App() {
     setDocFlow(null);
     setFocus(null);
     if (to.view === "ops") setOpsTab(to.sub as OpsTab);
-    if (to.view === "paydocs") setPayPane(null);
+    if (to.view === "paydocs") { setPayPane(null); setPayOrder(null); }
     if (to.view === "ops") setImportPreset(null);
     if (to.view === "workbench") {
       if (to.sub) { startWorkbench({ kind: "bulk", mode: to.sub as BulkMode }); return; }
@@ -501,7 +503,7 @@ export function App() {
             onIssueDocument={issueRound} />
         )}
         {view === "paydocs" && (
-          <PayDocsWorkspace key={`pd${payTile ?? ""}${payPane ?? ""}`} initialTile={payTile} initialPane={payPane} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+          <PayDocsWorkspace key={`pd${payTile ?? ""}${payPane ?? ""}${payOrder ?? ""}`} initialTile={payTile} initialPane={payPane} initialOrderId={payOrder} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
             onIssueRound={issueRound}
             onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}
@@ -573,6 +575,8 @@ export function App() {
             onOpenWorkbench={(mode) => { if (mode) startWorkbench({ kind: "bulk", mode }); else { setWorkbench(null); setFocus(null); setView("workbench"); } }}
             // 訂正版・下敷きは作業テーブルの①で決める（文書の画面はそこへ送るだけ）。
             onOpenWorkbenchFor={(documentId, mode) => startWorkbench({ kind: "document", documentId, mode })}
+            // 発注書から検収書：支払文書の「発注書から検収書」を、この発注書を選んだ状態で開く。
+            onSettleFromOrder={(documentId) => { setFocus(null); setPayTile(null); setPayPane("order"); setPayOrder(documentId); setView("paydocs"); }}
             onOpen={openEntity} />
         )}
         {view === "agreements" && (

@@ -29,6 +29,8 @@ const RECEIVED_VIA_LABEL: Record<string, string> = {
 
 export interface DocumentRow {
   id: number; documentNo: string | null; status: string; templateLabel: string | null;
+  /** ひな形の鍵（取込文書は null）。 */
+  templateKey?: string | null;
   /** 紙・メールに出る番号。訂正版は枝番（-R2）を外した本体＋選んだなら「（改訂 n）」。 */
   printedNo?: string | null;
   title: string | null; counterparty: string | null;
@@ -114,8 +116,10 @@ function CounterpartyNo({ doc, busy, onChanged }: { doc: DocumentRow; busy: bool
 
 export function DocumentDetail(
   { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
-    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onPayment,
+    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onPayment, onSettleFromOrder,
     isAdmin, onSelect, openStep }: {
+    /** 決定した発注書から検収書・役務提供完了通知書を作る（支払文書 →「発注書から検収書」へ）。 */
+    onSettleFromOrder?: (id: number) => void;
     /** 送る流れで最初に開く段（URL から）。あれば「送る」も開く。 */
     openStep?: string | null;
     doc: DocumentRow;
@@ -269,6 +273,14 @@ export function DocumentDetail(
                     </span>
                   : <button className="btn" disabled={busy}
                             onClick={() => void onPayment(doc.id)}>支払を立てる</button>
+              )}
+              {onSettleFromOrder && !doc.imported
+                && (doc.templateKey === "purchase_order" || doc.templateKey === "intl_purchase_order") && (
+                <button className="btn primary" disabled={busy}
+                        title="この発注書に結んだ条件だけで検収書・役務提供完了通知書を作る。実費・手数料はかかった額を入れる"
+                        onClick={() => onSettleFromOrder(doc.id)}>
+                  この発注書から検収書を作る
+                </button>
               )}
               <button className="btn" disabled={busy} title="この文書を下敷きに、次の書類（発注書のあとの検収書など）を作業テーブルで作る。この文書は残る"
                       onClick={() => onDerive(doc.id)}>
