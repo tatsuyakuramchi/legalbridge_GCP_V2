@@ -153,7 +153,9 @@ function PayCell({ r }: { r: PayDocRow }) {
 
 export function PayDocsWorkspace(
   { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenClosing,
-    author, onOpenAuthor, onLedgerCompose, onOpenRequest, initialTile, initialPane }: {
+    author, onOpenAuthor, onLedgerCompose, onOpenRequest, initialTile, initialPane, initialOrderId }: {
+    /** 「発注書から検収書」で選んでおく発注書（発注書の詳細画面から来たとき）。 */
+    initialOrderId?: number | null;
     /** 開いたときに押しておく札（ホームの盤面から）。 */
     initialTile?: PayDocTile | null;
     /** 開いたときのタブ（旧 回の一覧の URL から来たときは「入金と作者への支払」）。 */
@@ -225,7 +227,7 @@ export function PayDocsWorkspace(
                     onOpenRequest={onOpenRequest} onLedgerCompose={onLedgerCompose}
                     onOpenList={(partyId) => { setPane("list"); setListParty(partyId); }} />
       )}
-      {pane === "order" && <OrderSettlement onOpenDraft={onOpenDraft} />}
+      {pane === "order" && <OrderSettlement onOpenDraft={onOpenDraft} initialOrderId={initialOrderId} />}
       {pane === "settle" && <ReceiptSettle onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "receipts" && <RoyaltyReceipts onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "imports" && <EbookSalesImport />}

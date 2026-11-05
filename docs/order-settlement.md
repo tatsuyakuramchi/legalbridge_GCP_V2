@@ -1,6 +1,6 @@
 # 発注書から検収書・役務提供完了通知書を作る
 
-画面：支払文書 →「発注書から検収書」。サーバ：`apps/legalbridge-v3/src/server/documents/from-order.ts`。
+画面：支払文書 →「発注書から検収書」、または決定済みの発注書の詳細画面の「この発注書から検収書を作る」。サーバ：`apps/legalbridge-v3/src/server/documents/from-order.ts`。
 
 ## なぜ
 

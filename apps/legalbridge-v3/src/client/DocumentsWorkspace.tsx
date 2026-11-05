@@ -178,7 +178,7 @@ function Refs(
 const NO_DEFAULT_FIELDS = new Set(["基本契約名", "基本契約番号"]);
 
 export function DocumentsWorkspace(
-  { start, openDocumentId, openNonce, openAsDraft, openStep, onSelectDocument, onOpen, onBack, flow, onOpenWorkbench, onOpenWorkbenchFor }: {
+  { start, openDocumentId, openNonce, openAsDraft, openStep, onSelectDocument, onOpen, onBack, flow, onOpenWorkbench, onOpenWorkbenchFor, onSettleFromOrder }: {
     start?: { conditionIds: number[]; eventIds: number[]; matterId?: number | null;
               /** デイリータスクから来たとき、その元の依頼。作った文書を依頼に繋ぐ。 */
               requestId?: number | null;
@@ -214,6 +214,8 @@ export function DocumentsWorkspace(
     onOpenWorkbench?: (bulk?: "orders" | "settled") => void;
     /** 訂正版・下敷きは作業テーブルの①で決める。文書と入り方を渡す。 */
     onOpenWorkbenchFor?: (documentId: number, mode: "revise" | "derive") => void;
+    /** 決定した発注書から検収書を作る（支払文書の「発注書から検収書」へ）。 */
+    onSettleFromOrder?: (documentId: number) => void;
     /** 開く文書を、詳細ではなく「直す」状態（フォーム）で開く（作業テーブルで作った訂正版・下敷きの下書き）。 */
     openAsDraft?: boolean;
   } = {}
@@ -2051,6 +2053,7 @@ export function DocumentsWorkspace(
           {current && (
             <DocumentDetail
               onPayment={createPayment}
+              onSettleFromOrder={onSettleFromOrder}
               doc={current} versions={chainOf(current)} templates={templates}
               integrations={integrations} busy={busy}
               onOpen={onOpen} onChanged={() => void reload()}
