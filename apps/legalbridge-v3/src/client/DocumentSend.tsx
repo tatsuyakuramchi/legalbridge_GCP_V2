@@ -35,7 +35,7 @@ interface DocRecipients {
   counterparty: { id: number | null; name: string; email: string | null } | null;
   contacts: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
   signers: Array<{ name: string | null; email: string; roles: string[]; department: string | null }>;
-  signersFrom: "signer" | "primary" | null;
+  signersFrom: "signer" | "primary" | "party" | null;
   requester: Person | null;
   owner: Person | null;
   origin: { label: string; no: string | null; title: string | null } | null;
@@ -204,7 +204,7 @@ export function DocumentSend(
         return { ...prev, signers: r.signers.map((c) => ({ email: c.email, name: c.name })) };
       });
       setSignNote(r.signers.length
-        ? `署名者に取引先の${r.signersFrom === "signer" ? "署名者" : "主担当"}を入れておきました。違えば外してください`
+        ? `署名者に取引先の${r.signersFrom === "signer" ? "署名者" : r.signersFrom === "primary" ? "主担当" : "メール"}を入れておきました。違えば外してください`
         : r.counterparty ? "取引先に署名者・主担当の連絡先が無いので、探して足してください"
         : "この文書は取引先が決まっていません。署名者を探して足してください");
     }).catch(() => undefined);

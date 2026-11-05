@@ -116,11 +116,14 @@ export function SendMany(
         const mine = r.recipients.filter((c) => c.kind === "contact" && c.belongsTo === onePartyName);
         const has = (c: Candidate, role: string) => (c.role ?? "").split(",").map((x) => x.trim()).includes(role);
         const picked = mine.filter((c) => has(c, "signer"));
-        const fallback = picked.length ? picked : mine.filter((c) => has(c, "primary"));
-        if (!fallback.length) { setPrefilled("取引先に署名者・主担当の連絡先が無いので、探して足してください"); return; }
+        const primary = mine.filter((c) => has(c, "primary"));
+        // 連絡先の無い取引先（個人に多い）は、取引先そのもののメール。
+        const party = mine.filter((c) => has(c, "party"));
+        const fallback = picked.length ? picked : primary.length ? primary : party;
+        if (!fallback.length) { setPrefilled("取引先に署名者・主担当の連絡先もメールも無いので、探して足すか、アドレスを直接入れてください"); return; }
         setSign((prev) => prev.signers.length ? prev
           : { ...prev, signers: fallback.map((c) => ({ email: c.email, name: c.name })) });
-        setPrefilled(`署名者に取引先の${picked.length ? "署名者" : "主担当"}を入れておきました。違えば外してください`);
+        setPrefilled(`署名者に取引先の${picked.length ? "署名者" : primary.length ? "主担当" : "メール"}を入れておきました。違えば外してください`);
       })
       .catch(() => { if (live) setPrefilled(null); });
     return () => { live = false; };

@@ -16,6 +16,11 @@ import { useDebounced } from "./ListTools.js";
  */
 
 export interface Person { email: string; name: string | null }
+
+/** 連絡先の印（signer,primary …）を読める言葉に。party は取引先の行のメール（連絡先が無い取引先）。 */
+const ROLE_LABELS: Record<string, string> = { signer: "署名者", primary: "主担当", billing: "請求先", party: "取引先のメール" };
+const roleLabel = (role: string) =>
+  role.split(",").map((r) => r.trim()).filter(Boolean).map((r) => ROLE_LABELS[r] ?? r).join("・");
 interface Candidate {
   kind: "contact" | "staff"; name: string | null; email: string;
   belongsTo: string | null; role: string | null; department: string | null;
@@ -99,7 +104,7 @@ export function RecipientPicker(
                   </span>
                   {" "}{c.name ?? "（名前なし）"}
                   <span className="code faint">　{c.email}</span>
-                  {c.role && <span className="faint">　{c.role}</span>}
+                  {c.role && <span className="faint">　{roleLabel(c.role)}</span>}
                 </span>
                 <span className="row" style={{ gap: 4 }}>
                   {fields.map((f) => (
