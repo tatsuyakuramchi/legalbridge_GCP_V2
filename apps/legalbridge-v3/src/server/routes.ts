@@ -2,7 +2,7 @@ import express, { Router, type Request, type Response, type NextFunction } from 
 import { z } from "zod";
 import { dateStr, int, inTransaction, str, type Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
-import { isPoolTimeout, poolState } from "./db/pool.js";
+import { isDbTimeout, isPoolTimeout, poolState } from "./db/pool.js";
 import { recordAudit } from "./core/audit.js";
 import { buildZip, safeFileName, type ZipEntry } from "./core/zip.js";
 import { matterLinesText, parseMonthlyReport, reportWarnings } from "./conditions/monthly-report.js";
@@ -6619,6 +6619,17 @@ export function errorHandler(error: unknown, req: Request, res: Response, next: 
     console.error("db pool timeout", JSON.stringify({ path: req.originalUrl, pool: poolState() }));
     return res.status(503).json({
       error: "データベースに接続できませんでした（混み合っているか、サーバの起動直後です）。少し待ってからやり直してください",
+      code: "UNAVAILABLE"
+    });
+  }
+  const dbTimeout = isDbTimeout(error);
+  if (dbTimeout) {
+    console.error("db timeout", JSON.stringify({ kind: dbTimeout, path: req.originalUrl,
+      message: (error as { message?: string })?.message ?? "" }));
+    return res.status(503).json({
+      error: dbTimeout === "lock"
+        ? "ほかの処理がデータを使っているため、待ちきれずに止めました。少し待ってからやり直してください"
+        : "データベースの処理が時間内に終わらなかったため、止めました。少し待ってからやり直してください",
       code: "UNAVAILABLE"
     });
   }
