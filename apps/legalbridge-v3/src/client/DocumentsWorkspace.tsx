@@ -1922,7 +1922,7 @@ export function DocumentsWorkspace(
               const chosen = documents.filter((d) => pickedDocs.has(d.id));
               const partiesOf = [...new Set(chosen.map((d) => d.counterparty ?? "（相手先なし）"))];
               return (
-                <div className="panel-bd stack" style={{ paddingTop: 0, gap: 6 }}>
+                <div className={`panel-bd stack${sendingPicked ? " md-list-send" : ""}`} style={{ paddingTop: 0, gap: 6 }}>
                   <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <button className="btn btn-sm" disabled={!chosen.length || partiesOf.length > 1 || sendingPicked}
                             onClick={() => setSendingPicked(true)}>
