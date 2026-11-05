@@ -1,5 +1,5 @@
 import { DomainError } from "../core/errors.js";
-import { resolveLegacyDbField, resolveLegacyVariable } from "./legacy-variables.js";
+import { resolveLegacyDbField, resolveLegacyVariable, templateAliasOf } from "./legacy-variables.js";
 import { isFieldRequested, type LegacyFieldMeta, type ShowWhenCondition } from "./legacy-fields.js";
 
 /**
@@ -258,7 +258,8 @@ export function bindVariables(
           ? resolveLegacyDbField(variable.dbField, context)
           : undefined;
         const legacy = isEmpty(declared)
-          ? (variable.noGuess ? undefined : resolveLegacyVariable(variable.name, context, variable.label, templateKey))
+          ? (variable.noGuess && !templateAliasOf(templateKey, variable.name)
+              ? undefined : resolveLegacyVariable(variable.name, context, variable.label, templateKey))
           : declared;
         if (!isEmpty(legacy)) {
           value = legacy;
