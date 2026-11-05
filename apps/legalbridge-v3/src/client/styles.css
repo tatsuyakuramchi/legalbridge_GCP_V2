@@ -104,6 +104,11 @@ button,input,select{font:inherit;color:inherit}
   /* 送るのは表の中だけ。桁ごと送ると、絞り込みの欄も列の見出しも一緒に
      消えて、何の一覧を見ているのか分からなくなる。 */
   .split > .md-list .tablewrap{overflow:auto;min-height:0;overscroll-behavior:contain}
+  /* 一覧の中で開く「1 通で送る」は表より背が高い。一覧の桁は画面の高さで切ってあるので、
+     そのままだと下の「下書きを作る」ボタンが画面の外に出て押せなかった。送る欄はそれだけで送る。
+     表は少しだけ残す（どの文書を選んだかの見当がつくように）。 */
+  .split > .md-list .md-list-send{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+  .split > .md-list .md-list-send ~ .tablewrap{flex:0 0 auto;max-height:140px}
 }
 .stack{display:flex;flex-direction:column;gap:12px}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:8px}
