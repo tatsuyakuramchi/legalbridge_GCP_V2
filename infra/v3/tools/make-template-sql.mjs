@@ -34,6 +34,29 @@ const TARGETS = [
 --   ・受注者に登録番号があれば副題「兼 仕入明細書」。確認期限は送付日から 10 営業日。
 --   ・署名欄は金額が発注時の合意と違うとき（超過・未消化の精算、予定と違う額）だけ出る。
 --   ・採番は SC（ARC-SC-年-連番）。分類は国内の検収書と同じ。`
+  },
+  {
+    no: "198", key: "payment_report", label: "支払報告書",
+    body: "templates/payment_report.html", mark: 'data-layout="prp-v1',
+    prefix: "PRP",
+    // 分類は利用許諾料計算書と同じ（支払の帳票）。文書の作成のひな形一覧には出さない（documents/repository.ts）。
+    categoryFrom: "royalty_statement",
+    out: "198_payment_report.sql",
+    variables: [
+      { name: "remarks", label: "備考", type: "textarea", group: "備考",
+        helpText: "合計の下に出る。画面（支払・お金 → 支払報告書（文書））で入れる" }
+    ],
+    title: "支払報告書（payment_report）の登録",
+    intro: `--   許諾者・受注者 1 件の、一定期間の支払を 1 通にまとめて報告する帳票。検収書 v2（170・189）の
+--   件数が多い版の組み方（概要の表 → 明細の表 → 右寄せの合計）を下敷きにしている。
+--
+--   ・載るのは決定済みの検収書・役務提供完了通知書・利用許諾料計算書（相手先で集める）。
+--   ・「支払日ごとの一覧」（文書 1 件 = 1 行、支払日の見出しで区切る）と、別紙「明細」
+--     （検収書は紙に刷った明細の行、計算書は計算書の明細）に並べる。
+--   ・支払日は支払の記録（支払済みは支払日、未払いは期日）。支払が無ければ文書に刷った支払予定日。
+--   ・値は apps/legalbridge-v3/src/server/paydocs/payment-report-doc.ts が組み立てる。
+--   ・登録しなくても画面は既定の本文（paydocs/payment-report-template.ts）で描ける。
+--     登録すると DB の現行版で描く（本文の手直しを版で残せる）。`
   }
 ];
 

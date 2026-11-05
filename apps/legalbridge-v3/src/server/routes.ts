@@ -116,6 +116,8 @@ import { buildXlsx } from "./exports/xlsx.js";
 import { buildAccountingBundle, combinedAccountingSheets } from "./exports/accounting-bundle.js";
 import { XLS_MIME, toXls, withXlsBom, xlsFilename } from "./exports/xls.js";
 import { PaymentReportRepository } from "./exports/payment-report.js";
+import { PaymentReportDocService } from "./paydocs/payment-report-service.js";
+import { tokyoDate } from "./documents/delivery.js";
 import { ImportService, IMPORT_SPECS, type ImportKind } from "./imports/service.js";
 import { EbookSalesImportService, readRows as readEbookSalesRows } from "./imports/ebook-sales.js";
 import { MonitoringRepository } from "./monitoring/repository.js";
@@ -246,6 +248,7 @@ export function createRoutes(database: Transactable) {
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
   const paymentReport = new PaymentReportRepository(database);
+  const paymentReportDoc = new PaymentReportDocService(database);
   const accounting = new AccountingExportRepository(database);
   const accountingLedger = new AccountingExportLedger(database);
   const imports = new ImportService(database);
@@ -1768,6 +1771,43 @@ export function createRoutes(database: Transactable) {
   router.get("/reports/payments", asyncRoute(async (req, res) => {
     const q = reportSchema.parse(req.query ?? {});
     res.json(await paymentReport.build(q));
+  }));
+
+  // 支払報告書（文書）。許諾者・受注者 1 件の、期間内の検収書・計算書を支払日と明細つきで 1 通に
+  // まとめる（paydocs/payment-report-doc.ts）。読むだけ。番号は振らない。
+  const reportDocSchema = z.object({
+    partyId: z.coerce.number().int().positive(),
+    from: z.string().date(),
+    to: z.string().date(),
+    basis: z.enum(["pay", "paid", "issued"]).optional(),
+    exclude: z.string().regex(/^[0-9,]*$/).optional(),
+    remarks: z.string().max(2000).optional()
+  });
+  const reportDocInput = (query: unknown) => {
+    const q = reportDocSchema.parse(query ?? {});
+    return {
+      partyId: q.partyId, from: q.from, to: q.to, basis: q.basis,
+      excludeIds: (q.exclude ?? "").split(",").filter(Boolean).map(Number),
+      remarks: q.remarks ?? null
+    };
+  };
+  const todayTokyo = () => tokyoDate(new Date()) ?? new Date().toISOString().slice(0, 10);
+  router.get("/reports/payment-statement", asyncRoute(async (req, res) => {
+    res.json(await paymentReportDoc.build(reportDocInput(req.query)));
+  }));
+  router.get("/reports/payment-statement/html", asyncRoute(async (req, res) => {
+    const { html } = await paymentReportDoc.render(reportDocInput(req.query), todayTokyo());
+    res.type("html").send(html);
+  }));
+  router.get("/reports/payment-statement/pdf", asyncRoute(async (req, res) => {
+    const input = reportDocInput(req.query);
+    const { html, report } = await paymentReportDoc.render(input, todayTokyo());
+    const buffer = await pdf.render(html);
+    const name = `支払報告書_${report.party.name}_${input.from}_${input.to}.pdf`;
+    res.type("application/pdf")
+       .setHeader("content-disposition",
+         `attachment; filename="payment-report-${input.partyId}-${input.from}.pdf"; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.send(buffer);
   }));
 
   // 一覧の全件出力。画面の一覧には上限があるので、経理提出や
