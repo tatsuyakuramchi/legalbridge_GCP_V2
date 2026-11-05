@@ -1,3 +1,4 @@
+import { OrderSettlement } from "./OrderSettlement.js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
@@ -25,7 +26,7 @@ export interface PayDocsHandoff {
   conditionId: number; conditionName: string; roundLabel: string; scheduleId: number | null; eventId: number | null;
 }
 
-export type PayDocsPane = "list" | "settle" | "receipts" | "author" | "imports" | "plans" | "past";
+export type PayDocsPane = "list" | "order" | "settle" | "receipts" | "author" | "imports" | "plans" | "past";
 type Pane = PayDocsPane;
 
 /** 作家の報告と計算書を開く先。支払文書の行・作品・デイリータスクから来る。 */
@@ -202,6 +203,8 @@ export function PayDocsWorkspace(
       {!embedded && (
         <div className="tabs" role="tablist" aria-label="支払文書の見出し">
           <button role="tab" aria-selected={pane === "list"} onClick={() => setPane("list")}>一覧</button>
+          {/* 検収書・役務提供完了通知書は発注書から。発注書に結んだ条件だけを載せ、実費はかかった額を入れる。 */}
+          <button role="tab" aria-selected={pane === "order"} onClick={() => setPane("order")}>発注書から検収書</button>
           {/* 取引先からの入金（OUT）ごとに、払うべき作者（IN）の報告と計算書（docs/royalty-ledger.md §10）。 */}
           {/* 入金 1 件から 報告 → 計算書 → 支払 まで 1 回で（イベント式）。 */}
           <button role="tab" aria-selected={pane === "settle"} onClick={() => setPane("settle")}>入金から計算書</button>
@@ -222,6 +225,7 @@ export function PayDocsWorkspace(
                     onOpenRequest={onOpenRequest} onLedgerCompose={onLedgerCompose}
                     onOpenList={(partyId) => { setPane("list"); setListParty(partyId); }} />
       )}
+      {pane === "order" && <OrderSettlement onOpenDraft={onOpenDraft} />}
       {pane === "settle" && <ReceiptSettle onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "receipts" && <RoyaltyReceipts onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "imports" && <EbookSalesImport />}
