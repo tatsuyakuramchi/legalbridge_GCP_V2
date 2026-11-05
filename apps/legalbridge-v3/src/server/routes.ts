@@ -2,6 +2,7 @@ import express, { Router, type Request, type Response, type NextFunction } from 
 import { z } from "zod";
 import { dateStr, int, inTransaction, str, type Transactable } from "./core/db.js";
 import { DomainError, statusFor } from "./core/errors.js";
+import { isPoolTimeout, poolState } from "./db/pool.js";
 import { recordAudit } from "./core/audit.js";
 import { buildZip, safeFileName, type ZipEntry } from "./core/zip.js";
 import { matterLinesText, parseMonthlyReport, reportWarnings } from "./conditions/monthly-report.js";
@@ -6597,7 +6598,7 @@ export function zodSummary(error: z.ZodError): string {
   }).join(" / ");
 }
 
-export function errorHandler(error: unknown, _req: Request, res: Response, next: NextFunction) {
+export function errorHandler(error: unknown, req: Request, res: Response, next: NextFunction) {
   if (res.headersSent) return next(error);
   if (error instanceof DomainError) {
     return res.status(statusFor(error.code)).json({ error: error.message, code: error.code, detail: error.detail });
@@ -6609,6 +6610,16 @@ export function errorHandler(error: unknown, _req: Request, res: Response, next:
     return res.status(400).json({
       error: `入力が正しくありません（${zodSummary(error)}）`,
       issues: error.issues
+    });
+  }
+  if (isPoolTimeout(error)) {
+    // 台帳（Cloud SQL）につながらない。プールの状態を残す：total = max で waiting が多ければ使い切り
+    // （同時の問い合わせが多い・長い処理が握っている）、total が少ないのに落ちるならつながらない（起動直後・
+    // Cloud SQL 側の上限や再起動）。画面には何が起きたかと、どうすればよいかを出す。
+    console.error("db pool timeout", JSON.stringify({ path: req.originalUrl, pool: poolState() }));
+    return res.status(503).json({
+      error: "データベースに接続できませんでした（混み合っているか、サーバの起動直後です）。少し待ってからやり直してください",
+      code: "UNAVAILABLE"
     });
   }
   console.error("unhandled error", error);
