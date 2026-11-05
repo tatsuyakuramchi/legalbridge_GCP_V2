@@ -4,28 +4,29 @@
 
 ## 1. 区分
 
-| 区分 | 項目 | 束ねる画面（view。運用はタブ） |
+2026-11（UI 再構築の手順 2。docs/desk-home.md）から、メニューは 4 項目。今ある画面はどれも消さず、
+どれかの項目のタブとして残す（URL・ほかの画面からの飛び先・ブックマークは変わらない）。
+タブの多い項目は、タブの並びに小見出し（group）を付ける。
+
+| 項目 | 小見出し | タブ（view。運用はタブ sub まで） |
 |---|---|---|
-| — | ホーム | home |
-| 格納情報の登録・編集 | 取引先 | parties |
-| | 作品 | works |
-| | 契約 | agreements ／ agreement-map（取引先⇔基本契約） |
-| | 条件明細 | conditions |
-| | 文書 | documents |
-| 作業 | 受付 | intake（受付箱）／ daily（デイリータスク） |
-| | 取引開始作業 | workbench |
-| | 支払処理作業 | paydocs（支払文書。中のタブ：一覧／入金と作者への支払／作家の報告と計算書／売上の取込／製造予定／過去分の整理）／ deals（入金・取引管理）／ closing（まとめて締める）／ money（支払・お金） |
-| 一括処理 | まとめて登録・更新する | ops/imports |
-| | まとめて作る・送る | workbench（一括：発注書 CSV）／ ops/contracts ／ closing ／ ops/sending |
-| | まとめて直す・整理する | ops/fixes ／ workbench（一括：検収済みの遡及） |
-| | 書き出す | ops/exports |
-| マネージメント | 案件 | matters |
-| | 稟議 | ringi |
-| 監査 | 点検・取り残し | ops/quality ／ drift |
-| | フロー監視・期限 | flows ／ ops/deadlines |
-| | 関連当事者 | rpt |
-| | 監査レポート・記録 | ops/audit-report ／ ops/audit |
-| — | 設定 | ops/snippets ／ statement-models ／ integrations ／ leftovers ／ settings（admin だけ） |
+| ホーム | — | home（今日やること + 畳んだ作業台） |
+| | 受付 | intake（受付箱）／ daily（デイリータスク） |
+| 作業台 | — | desk（取引先・案件・作品のツリーを全幅で） |
+| | 台帳 | matters ／ parties ／ works ／ agreements ／ agreement-map ／ conditions ／ documents ／ ringi |
+| | 作業 | workbench（取引開始作業）／ deals（入金・取引管理）／ money（支払・お金） |
+| 一括処理 | 支払 | paydocs（支払文書）／ closing（まとめて締める） |
+| | 登録・作る・送る | ops/imports ／ workbench（sub=orders。発注書 CSV）／ ops/contracts ／ ops/sending |
+| | 直す・書き出す | ops/fixes ／ workbench（sub=settled。検収済みの遡及）／ ops/exports |
+| 監査・設定 | 点検 | ops/quality ／ condition-check ／ drift |
+| | 監視 | flows ／ ops/deadlines ／ rpt |
+| | 記録 | ops/audit-report ／ ops/audit |
+| | 設定 | ops/snippets ／ statement-models ／ integrations ／ leftovers ／ settings（admin だけ） |
+
+- 同じタブは 2 回並べない（以前は まとめて締める が支払処理作業と一括処理の 2 か所にあった）。
+- 運用の画面の見出しは、開いているタブの名前と、そのタブの一言（hint）。
+- 受付の件数（受付箱の未処理・更新あり／デイリータスクの残り）は「ホーム」に出す。
+- 台帳と作業のタブは、作業台に吸収できたものから外す（docs/desk-home.md §4）。
 
 ## 2. 決まりごと
 
@@ -34,7 +35,6 @@
 - **ホームの盤面（`/home/stations`）** は集計を 2 本ずつ順に回し、結果を 1 分覚える（同時に来た要求は 1 回の計算に相乗り。`ops/home-stations.ts`）。
 - 項目が 2 つ以上の画面を束ねるときは、画面の上にその切り替え（タブ）を出す。運用（ops）の画面は運用のタブを出さず、見出しを項目の名前にする。
 - **光らせる項目** は開いている画面から決める（`activeHub`）。sub（運用のタブ・作業テーブルの一括のモード）まで当たる項目が先、同じ画面が 2 つの項目にあれば最後に押した方、どちらでもなければ先に並ぶ方（まとめて締める → 支払処理作業）。
-- 受付の件数（受付箱の未処理・更新あり／デイリータスクの残り）は「受付」に出す。
 
 - 旧 回の一覧（`#/rounds`）は支払文書の「入金と作者への支払」へ転送する（URL も `#/paydocs` に書き換える）。
 

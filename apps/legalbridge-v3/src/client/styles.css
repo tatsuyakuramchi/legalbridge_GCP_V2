@@ -1122,3 +1122,7 @@ td.dm-docno td{padding:0;border:0;background:transparent}
 .desk-tree .ledger-tree .node.child{margin-left:46px;width:calc(100% - 46px)}
 .desk-detail{min-width:0}
 .desk-h3{margin:0 0 6px;font-size:12.5px}
+/* メニューの項目のタブの小見出し（手順 2。docs/navigation.md）。 */
+.hub-tab-group{align-self:center;margin:0 2px 0 12px;padding-left:12px;border-left:1px solid var(--line);
+  font-size:10px;letter-spacing:.12em;color:var(--faint);white-space:nowrap}
+.hub-tab-group:first-child{margin-left:12px;padding-left:0;border-left:0}
