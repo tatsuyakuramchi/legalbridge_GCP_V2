@@ -35,3 +35,23 @@ test("ほかの想定外のエラーは従来どおり 500", () => {
   finally { console.error = original; }
   assert.equal(res.statusCode, 500);
 });
+
+test("台帳が上限で止めた問い合わせ（lock_timeout・statement_timeout・止まった取引）を見分け、503 で返す", async () => {
+  const { isDbTimeout } = await import("./pool.js");
+  const pgError = (code: string) => Object.assign(new Error("x"), { code });
+  assert.equal(isDbTimeout(pgError("55P03")), "lock");
+  assert.equal(isDbTimeout(pgError("57014")), "statement");
+  assert.equal(isDbTimeout(pgError("25P03")), "idle_tx");
+  assert.equal(isDbTimeout(pgError("23505")), null);
+  const original = console.error; console.error = () => undefined;
+  try {
+    const lock = fakeRes();
+    errorHandler(pgError("55P03"), { originalUrl: "/api/v3/parties" } as any, lock, () => undefined);
+    assert.equal(lock.statusCode, 503);
+    assert.match(lock.body.error, /ほかの処理がデータを使っている/);
+    const slow = fakeRes();
+    errorHandler(pgError("57014"), { originalUrl: "/api/v3/exports" } as any, slow, () => undefined);
+    assert.equal(slow.statusCode, 503);
+    assert.match(slow.body.error, /時間内に終わらなかった/);
+  } finally { console.error = original; }
+});
