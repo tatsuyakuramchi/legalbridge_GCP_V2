@@ -21,6 +21,20 @@ export function splitToTotal(total: number, weights: number[]): number[] {
 import { consumptionTax, resolveWithholdingEnabled, withholdingFor, withholdingPartyOf } from "../royalty/tax.js";
 
 export { withholdingPartyOf };
+
+/**
+ * 源泉の対象額（税込）。立替金（税区分が非課税・不課税の条件＝経費の実費）は源泉の対象にしない。
+ *
+ * 経理提出の帳票（exports/accounting.ts）は 非課税・不課税 を「立替金」の列に出し、源泉の期待値も
+ * 立替金を除いて計算している。支払を立てるときに立替金まで含めて源泉を出していたので、帳票の
+ * 源泉税が（小計＋立替金）× 10.21% になっていた（2026-10・11 の支払Excel で経理から指摘）。
+ * 同じ規則にそろえる。消費税は立替金に掛からないので、そのまま足す。
+ */
+export function withholdingBaseOf(lines: Array<{ amount: number; taxCategory: string | null | undefined }>, tax: number): number {
+  const fee = lines.filter((l) => String(l.taxCategory ?? "taxable") !== "exempt")
+    .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+  return fee + (Number(tax) || 0);
+}
 import { taxRateFor } from "../royalty/economics.js";
 import { taxRoundingOf, taxWithRounding } from "../core/rounding.js";
 
@@ -523,7 +537,9 @@ export class PaymentService {
           ?? dueFromPaymentTerms(basis, rows.map((r) => str(r.payment_terms)), str(rows[0]?.party_kind))
           ?? dueLimitFrom(basis);
         // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。
-        const withholding = withholdingFor(net + tax, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;
+        // 立替金（非課税・不課税）は源泉の対象にしない。
+        const base = withholdingBaseOf(rows.map((r) => ({ amount: Number(r.net_amount ?? 0), taxCategory: str(r.tax_category) })), tax);
+        const withholding = withholdingFor(base, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
@@ -682,7 +698,9 @@ export class PaymentService {
           ?? payDateFromDelivery(delivered, str(rows[0].party_kind))
           ?? dueLimitFrom(basis);
         // 源泉は期日で決まる（租税条約の書類が支払日までに届いているか）。期日の後で計算する。
-        const withholding = withholdingFor(net + tax, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;
+        // 立替金（非課税・不課税の実費）は源泉の対象にしない。
+        const base = withholdingBaseOf(rows.map((r) => ({ amount: Number(r.amount ?? 0), taxCategory: str(r.tax_category) })), tax);
+        const withholding = withholdingFor(base, withholdingEnabled, withholdingPartyOf(rows[0]), dueOn).amount;
 
         return await this.writeWithAllocations(client, {
           direction, partyId: Number(rows[0].counterparty_id), partyKind: str(rows[0].party_kind),
@@ -844,6 +862,75 @@ export class PaymentService {
    * 払い終えたものは取り消せない。お金が出たあとで約束だけ無かったことに
    * すると、帳簿と現金が合わなくなる。返金は別の記録として立てる。
    */
+  /**
+   * 未払いの支払の源泉を、立替金を除いた規則（withholdingBaseOf）で計算し直す。
+   *
+   * 規則を直す前に立てた支払は、源泉が（税込報酬＋立替金）× 10.21% のまま残っていて、経理提出の
+   * 帳票にもその値が出る。まとめて直す口。触るのは次の条件を全部満たす支払だけ：
+   *   ・支払う側（out）で、まだ払っていない（planned／approved）。支払済みは納付の記録と合わなくなる。
+   *   ・割当が支払額と合う（内訳から立替金を分けられる）。
+   *   ・保存されている源泉が、前の規則（立替金込み）の計算値と同じ。手で直した源泉は上書きしない。
+   * dryRun なら何も書かずに、直す予定の一覧だけ返す。
+   */
+  async recomputeWithholding(
+    filter: { dueOn?: string | null; paymentIds?: number[] | null }, actor: string, dryRun = false
+  ): Promise<{
+    changed: Array<{ paymentId: number; paymentNo: string | null; party: string; dueOn: string | null; before: number; after: number; reimbursement: number }>;
+    skipped: Array<{ paymentId: number; paymentNo: string | null; reason: string }>;
+  }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const ids = filter.paymentIds?.length ? filter.paymentIds.map(Number) : null;
+        const rows = (await client.query(
+          `SELECT p.id, p.payment_no, p.amount, p.tax_amount, p.withholding_amount, p.due_on,
+                  pa.name AS party_name, pa.kind AS party_kind, pa.withholding,
+                  pa.residency, pa.treaty_rate_pct, pa.treaty_docs_received_on,
+                  COALESCE((SELECT sum(al.amount) FROM payment_allocations al WHERE al.payment_id = p.id), 0) AS allocated,
+                  COALESCE((SELECT sum(al.amount) FROM payment_allocations al JOIN conditions c ON c.id = al.condition_id
+                             WHERE al.payment_id = p.id AND COALESCE(c.tax_category, 'taxable') = 'exempt'), 0) AS exempt
+             FROM payments p JOIN parties pa ON pa.id = p.party_id
+            WHERE p.direction = 'out' AND p.status IN ('planned', 'approved')
+              AND ($1::date IS NULL OR p.due_on = $1::date)
+              AND ($2::bigint[] IS NULL OR p.id = ANY($2::bigint[]))
+            ORDER BY p.due_on NULLS LAST, p.id
+            LIMIT 2000
+            FOR UPDATE OF p`, [filter.dueOn ?? null, ids])).rows as Array<Record<string, any>>;
+        const changed: Array<{ paymentId: number; paymentNo: string | null; party: string; dueOn: string | null; before: number; after: number; reimbursement: number }> = [];
+        const skipped: Array<{ paymentId: number; paymentNo: string | null; reason: string }> = [];
+        for (const r of rows) {
+          const id = Number(r.id);
+          const no = str(r.payment_no);
+          const amount = Number(r.amount ?? 0);
+          const tax = Number(r.tax_amount ?? 0);
+          const exempt = Number(r.exempt ?? 0);
+          const before = Number(r.withholding_amount ?? 0);
+          if (exempt === 0) continue; // 立替金が無ければ前の規則と同じ値
+          if (Number(r.allocated ?? 0) !== amount) { skipped.push({ paymentId: id, paymentNo: no, reason: "割当が支払額と合わない（内訳が分からない）" }); continue; }
+          const enabled = resolveWithholdingEnabled({
+            vendorWithholdingEnabled: r.withholding === true, entityType: str(r.party_kind), residency: str(r.residency)
+          });
+          const dueOn = dateStr(r.due_on);
+          const party = withholdingPartyOf(r);
+          const old = withholdingFor(amount + tax, enabled, party, dueOn).amount;
+          const after = withholdingFor(withholdingBaseOf([{ amount: amount - exempt, taxCategory: "taxable" }], tax), enabled, party, dueOn).amount;
+          if (before === after) continue;
+          if (before !== old) { skipped.push({ paymentId: id, paymentNo: no, reason: "源泉が手で直されている（計算し直さない）" }); continue; }
+          changed.push({ paymentId: id, paymentNo: no, party: String(r.party_name ?? ""), dueOn, before, after, reimbursement: exempt });
+        }
+        if (!dryRun) {
+          for (const c of changed) {
+            await client.query("UPDATE payments SET withholding_amount = $2, updated_at = now() WHERE id = $1", [c.paymentId, c.after]);
+            await recordAudit(client, {
+              actor, action: "payment.recompute_withholding", targetType: "payment", targetId: c.paymentId,
+              detail: { before: c.before, after: c.after, reimbursement: c.reimbursement, rule: "立替金（非課税・不課税）を源泉の対象から除く" }
+            });
+          }
+        }
+        return { changed, skipped };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async cancel(paymentId: number, reason: string, actor: string) {
     const why = String(reason ?? "").trim();
     if (!why) throw new DomainError("VALIDATION", "取り消しの理由は必須です");
