@@ -1,7 +1,7 @@
 import { type Queryable, type Transactable, inTransaction, dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
-import { KIND_LABEL, checkDirection, directionOf, type AgreementDirection, type AgreementDomain, type AgreementKind } from "./service.js";
+import { DOMAIN_LABELS, KIND_LABEL, checkDirection, directionOf, type AgreementDirection, type AgreementDomain, type AgreementKind } from "./service.js";
 import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { agreementDatedTitle } from "../documents/legacy-variables.js";
 import type { AgreementCsvRow } from "./csv.js";
@@ -186,7 +186,7 @@ const HELD_BY_DOCUMENT_SQL = `EXISTS (
 const isRootKind = (kind: AgreementKind) => kind === "master" || kind === "standalone";
 const isChildKind = (kind: AgreementKind) => kind === "supplement" || kind === "termination";
 
-export const DOMAIN_LABEL: Record<AgreementDomain, string> = { service: "業務委託", license: "ライセンス" };
+export const DOMAIN_LABEL: Record<AgreementDomain, string> = DOMAIN_LABELS;
 const DIRECTION_LABEL = { in: "IN", out: "OUT" } as const;
 
 const tag = (a: Pick<MapAgreement, "agreementNo" | "id">) => a.agreementNo ?? `#${a.id}`;
@@ -216,7 +216,7 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
       }
       if (!a.domain) {
         issues.push({ code: "no_domain", agreementId: a.id,
-          message: `${tag(a)} は種別（業務委託／ライセンス）が未設定です。画面によって拾われたり拾われなかったりします` });
+          message: `${tag(a)} は種別（業務委託／ライセンス／売買／その他）が未設定です。画面によって拾われたり拾われなかったりします` });
       }
       roots.push({ ...a, children: [], primary: false });
     } else if (a.kind === "document") {
@@ -364,7 +364,7 @@ export function planRemap(
       "ぶら下がる補助文書・解除合意があるので、相手先は変えられません（子の相手先とずれます）");
   }
   if (isRootKind(kind) && !domain) {
-    throw new DomainError("VALIDATION", "基本契約・単体契約には種別（業務委託／ライセンス）を選んでください");
+    throw new DomainError("VALIDATION", "基本契約・単体契約には種別（業務委託／ライセンス／売買／その他）を選んでください");
   }
   checkDirection(kind, direction);
   if (direction === null && (current.conditionCount ?? 0) > 0) {

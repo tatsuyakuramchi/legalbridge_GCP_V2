@@ -17,6 +17,8 @@ export const IMPORT_KINDS: ImportKind[] = [
   { kind: "念書", prefix: "LOU" },
   { kind: "通知書", prefix: "NTC" },
   { kind: "利用許諾契約書", prefix: "LIC" },
+  // 契約の番号（ARC-SAL）とは別の頭にする（採番表が別なので、同じ頭だと同じ番号が両方に出る）。
+  { kind: "売買契約書", prefix: "SLS" },
   { kind: "その他", prefix: "IMP" }
 ];
 

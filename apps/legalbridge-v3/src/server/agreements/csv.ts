@@ -37,6 +37,7 @@ const KIND_BY_TEXT: Record<string, AgreementKind> = {
 
 const DOMAIN_BY_TEXT: Record<string, AgreementDomain | null> = {
   業務委託: "service", service: "service", ライセンス: "license", license: "license",
+  売買: "sale", sale: "sale", その他: "other", "その他（覚書など）": "other", other: "other",
   未設定: null, なし: null
 };
 
@@ -87,7 +88,7 @@ export async function agreementCsvPatch(
   const domain = text("種別");
   if (domain) {
     if (!(domain in DOMAIN_BY_TEXT)) throw new DomainError("VALIDATION",
-      `種別は 業務委託・ライセンス・未設定 のいずれかです（"${domain}"）`);
+      `種別は 業務委託・ライセンス・売買・その他・未設定 のいずれかです（"${domain}"）`);
     patch.domain = DOMAIN_BY_TEXT[domain];
   }
   const direction = text("方向");

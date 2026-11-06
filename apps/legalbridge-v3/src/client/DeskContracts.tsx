@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { PartyMapView } from "./AgreementMapWorkspace.js";
 import { AgreementCreate, type CreatePreset } from "./AgreementsWorkspace.js";
 import { DocumentImport } from "./DocumentImport.js";
+import { SignNext, signDocOf, useSignReady, type SignDoc } from "./SignNext.js";
 import type { EntityKind } from "./Relations.js";
 import type { PartyMap } from "../server/agreements/party-map.js";
 
@@ -32,6 +33,9 @@ export function DeskContracts({ partyId, onOpen, onOpenDocument, onChanged }: {
   const [creating, setCreating] = useState<CreatePreset | null>(null);
   /** 登録した直後の契約。続けて契約書（PDF）を登録してクラウドサインへ進む欄を出す。 */
   const [made, setMade] = useState<{ id: number; agreementNo: string | null } | null>(null);
+  /** 契約と一緒に上げた契約書を、そのままクラウドサインで送る（署名者の入力）。 */
+  const [signing, setSigning] = useState<SignDoc | null>(null);
+  const sign = useSignReady(true);
 
   useEffect(() => {
     setError(null);
@@ -51,21 +55,34 @@ export function DeskContracts({ partyId, onOpen, onOpenDocument, onChanged }: {
           ＋ 契約を登録（番号を取る）
         </button>
         <span className="faint">
-          基本契約・単体契約・NDA など。まだ締結していなければ「まだ締結していない」で番号だけ取れます。
-          個別契約は基本契約の行の「＋ 個別契約」、契約書の PDF は契約の行の「文書」から登録してクラウドサインで送ります
+          基本契約・単体契約・NDA など（種別は 業務委託・ライセンス・売買・その他）。まだ締結していなければ「まだ締結していない」で番号だけ取れます。
+          契約書の PDF は登録欄で一緒に上げると、そのままクラウドサインへ進めます（あとからは契約の行の「文書」）。個別契約は基本契約の行の「＋ 個別契約」
         </span>
       </div>
       {error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}
 
       {creating && (
-        <AgreementCreate key={`${creating.kind ?? ""}${creating.parentId ?? ""}`} preset={creating}
+        <AgreementCreate key={`${creating.kind ?? ""}${creating.parentId ?? ""}`} preset={creating} withFile
           onCancel={() => setCreating(null)}
-          onDone={(id, agreementNo) => {
+          onDone={(id, agreementNo, _then, file, fileError) => {
             setCreating(null);
+            const no = agreementNo ?? `#${id}`;
+            if (file) {
+              // 契約書も上がった。送るなら署名者の入力へ。送らないなら済み。
+              setMade(null);
+              changed(`契約 ${no} と契約書（${file.documentNo}）を登録しました${file.sign ? "。続けてクラウドサインの署名者を入れてください（送らないなら「やめる」）" : ""}`);
+              if (file.sign) void signDocOf(file.id, file.documentNo).then(setSigning);
+              return;
+            }
             setMade({ id, agreementNo });
-            changed(`契約 ${agreementNo ?? `#${id}`} を登録しました`);
+            changed(`契約 ${no} を登録しました`);
+            if (fileError) setError(fileError);
           }} />
+      )}
+
+      {signing && (
+        <SignNext doc={signing} channels={sign.channels} onFinish={() => { setSigning(null); changed(`${signing.documentNo ?? ""} の送付を閉じました`); }} />
       )}
 
       {made && (

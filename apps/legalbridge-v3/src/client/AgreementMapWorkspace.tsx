@@ -7,6 +7,7 @@ import { useReadOnly } from "./read-only.js";
 import type { ImportPreset } from "./BulkRegister.js";
 import { CsvBar } from "./CsvBar.js";
 import { DocumentImport } from "./DocumentImport.js";
+import { DOMAIN_LABEL as DOMAINS, DOMAIN_OPTIONS } from "./agreement-domains.js";
 import { TidyFlow } from "./TidyFlow.js";
 import { DocMatter } from "./DocMatter.js";
 import { PartySend } from "./PartySend.js";
@@ -33,7 +34,7 @@ import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapOrder, MapPart
 const KIND_LABEL: Record<AgreementKind, string> = {
   master: "基本契約", standalone: "単体契約", supplement: "個別契約・覚書", termination: "解除合意", document: "文書だけ"
 };
-const DOMAIN_LABEL: Record<AgreementDomain, string> = { service: "業務委託", license: "ライセンス" };
+const DOMAIN_LABEL: Record<AgreementDomain, string> = DOMAINS;
 /** 契約として登録された発注書か（サーバの isOrderAgreement と同じ判定）。 */
 const isOrderAgreement = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title">) =>
   (a.kind === "standalone" || a.kind === "document") && /-E?PO-|発注書|purchase_order/i.test(`${a.agreementNo ?? ""} ${a.title ?? ""}`);
@@ -916,8 +917,7 @@ function RemapForm(
       <label className="field"><span>種別{isRoot ? "（必須）" : ""}</span>
         <select value={domain} onChange={(e) => setDomain(e.target.value)}>
           <option value="">未設定</option>
-          <option value="service">業務委託</option>
-          <option value="license">ライセンス</option>
+          {DOMAIN_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         </select>
       </label>
       <label className="field"><span>方向</span>

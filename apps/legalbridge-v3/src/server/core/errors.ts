@@ -26,7 +26,8 @@ export const statusFor = (code: DomainErrorCode): number =>
 const CHECK_MESSAGES: Record<string, string> = {
   agreements_direction_chk: "向き（IN／OUT）を選んでください。向きなしにできるのは「文書だけ」の契約だけです",
   conditions_agreement_direction_chk: "向き（IN／OUT）の無い契約（NDA・覚書など）には条件明細を載せられません。IN／OUT のある契約を選んでください",
-  agreements_direction_conditions_chk: "条件明細の載った契約は向きなしにできません"
+  agreements_direction_conditions_chk: "条件明細の載った契約は向きなしにできません",
+  agreements_domain_chk: "この種別（売買・その他）はまだ台帳で使えません。infra/v3/200_agreement_domains.sql を先に流してください"
 };
 
 export function translate(error: unknown): unknown {

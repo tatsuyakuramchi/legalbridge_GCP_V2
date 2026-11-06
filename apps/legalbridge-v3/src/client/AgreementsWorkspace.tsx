@@ -8,6 +8,8 @@ import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { useReadOnly } from "./read-only.js";
+import { DOMAIN_OPTIONS, MASTER_PREFIX, STANDALONE_PREFIX } from "./agreement-domains.js";
+import { SignAfterField, useSignReady } from "./SignNext.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
 
@@ -68,8 +70,8 @@ const KindTag = ({ kind }: { kind: AgreementKind }) =>
 /** 番号の見込み。登録前に「こう振られる」と出す。 */
 function previewNumber(kind: AgreementKind, domain: AgreementDomain, parent: AgreementRow | null): string {
   const year = new Date().getFullYear();
-  if (kind === "master") return `${domain === "license" ? "ARC-LIC" : "ARC-SVC"}-${year}-NNNN`;
-  if (kind === "standalone") return `${domain === "license" ? "ARC-ILT" : "ARC-ISA"}-${year}-NNNN`;
+  if (kind === "master") return `${MASTER_PREFIX[domain]}-${year}-NNNN`;
+  if (kind === "standalone") return `${STANDALONE_PREFIX[domain]}-${year}-NNNN`;
   if (kind === "supplement") return `${parent?.agreementNo ?? "（親）"}-Snn`;
   if (kind === "termination") return `${parent?.agreementNo ?? "（親）"}-Tnn`;
   return "番号なし";
@@ -437,12 +439,31 @@ export function AgreementsWorkspace(
 // 登録
 // ---------------------------------------------------------------------------
 
-export function AgreementCreate({ preset, onDone, onCancel }: {
+/** 契約書のファイルを一緒に上げるときの文書の種別（番号は契約番号を使うので、種別は表示と既定の番号用）。 */
+function documentKindFor(kind: AgreementKind, domain: AgreementDomain, title: string): string {
+  if (kind === "document") return /秘密保持|NDA/i.test(title) ? "秘密保持契約書" : "覚書";
+  if (kind === "supplement" || kind === "termination") return "覚書";
+  return ({ service: "業務委託契約書", license: "利用許諾契約書", sale: "売買契約書", other: "覚書" } as const)[domain];
+}
+
+/** 契約と一緒に上げた契約書（文書）。sign なら続けてクラウドサインへ進む。 */
+export interface CreatedFile { id: number; documentNo: string; sign: boolean }
+
+export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: {
   preset: CreatePreset;
-  /** thenConditions：続けて条件明細の登録欄を開く（条件明細がぶら下がる契約のとき）。 */
-  onDone: (id: number, agreementNo: string | null, thenConditions: boolean) => void;
+  /** thenConditions：続けて条件明細の登録欄を開く（条件明細がぶら下がる契約のとき）。file：一緒に上げた契約書。 */
+  onDone: (id: number, agreementNo: string | null, thenConditions: boolean, file?: CreatedFile | null, fileError?: string) => void;
   onCancel: () => void;
+  /**
+   * 契約書のファイル（PDF）を一緒に上げる欄を出す（作業台から）。上げた文書は契約に繋がり、文書番号は契約番号と同じ。
+   * 「そのままクラウドサインで送る」を付けると、登録のあと署名者の入力へ進む（呼んだ側が開く）。
+   */
+  withFile?: boolean;
 }) {
+  const [file, setFile] = useState<File | null>(null);
+  const sign = useSignReady(withFile);
+  const [signAfter, setSignAfter] = useState(true);
+  const signOn = Boolean(file) && sign.canSign && signAfter;
   const [partyId, setPartyId] = useState(preset.partyId ? String(preset.partyId) : "");
   /** none は向きなし（文書だけの契約のときだけ。NDA・覚書など）。 */
   const [direction, setDirection] = useState<"in" | "out" | "none">("in");
@@ -500,8 +521,26 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
         counterpartyRefNo: refNo || null, sourceUrl: sourceUrl || null,
         agreementNo: externalNo.trim() || null
       });
+      // 契約書のファイルを一緒に上げる。番号は契約番号をそのまま使う（契約書に書く番号と 1 つにする）。
+      let uploaded: CreatedFile | null = null;
+      if (withFile && file) {
+        const params = new URLSearchParams({
+          title: title.trim(), documentKind: documentKindFor(effectiveKind, domain, title),
+          agreementId: String(made.id), filename: file.name, inbound: "0", sameNoAsAgreement: "1"
+        });
+        if (!unsigned && executedOn) params.set("receivedOn", executedOn);
+        try {
+          const doc = await api.postRaw<{ id: number; documentNo: string }>(`/documents/import?${params}`, file, file.type || "application/pdf");
+          uploaded = { id: doc.id, documentNo: doc.documentNo, sign: signOn };
+        } catch (e) {
+          // 契約はもうできている。ファイルだけ失敗したことを伝え、契約の「文書」から上げ直してもらう。
+          onDone(made.id, made.agreementNo, false, null,
+            `契約 ${made.agreementNo ?? `#${made.id}`} は登録しましたが、契約書のファイルを上げられませんでした（${(e as ApiError).message}）。下の欄から上げ直してください`);
+          return;
+        }
+      }
       // 条件明細がぶら下がらない契約（文書だけ）には、続けて登録する欄が無い。
-      onDone(made.id, made.agreementNo, thenConditions && effectiveKind !== "document");
+      onDone(made.id, made.agreementNo, thenConditions && effectiveKind !== "document", uploaded);
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -539,8 +578,8 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
           ) : (
             <label className="fld"><span>種別 <em>必須</em></span>
               <select value={domain} onChange={(e) => setDomain(e.target.value as AgreementDomain)}>
-                <option value="service">業務委託</option><option value="license">ライセンス</option>
-              </select><small>番号の頭が決まる（SVC／LIC、単体は ISA／ILT）。NDA など条件の無い契約は下で「いいえ」</small></label>
+                {DOMAIN_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              </select><small>番号の頭が決まる（SVC／LIC／SAL／OTH、単体は ISA／ILT／ISL／IOT）。NDA など条件の無い契約は下で「いいえ」</small></label>
           )}
           <label className="fld"><span>件名 <em>必須</em></span>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="業務委託基本契約・秘密保持契約書 など" /></label>
@@ -576,6 +615,14 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
             <input value={externalNo} onChange={(e) => setExternalNo(e.target.value)}
               placeholder="空ならシステムが採番。移行前の紙の契約は ATT-2026-00069 のように" /></label>
         </div>
+        {withFile && (
+          <div className="stack" style={{ gap: 4 }}>
+            <label className="fld"><span>契約書のファイル（PDF）</span>
+              <input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              <small>上げると契約に繋がった文書になります。文書番号は契約番号と同じ。あとから契約の行の「文書」でも上げられます</small></label>
+            {file && sign.canSign && <SignAfterField checked={signAfter} onChange={setSignAfter} />}
+          </div>
+        )}
         <label className="fld"><span>契約書（Drive）</span>
           <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://drive.google.com/…" />
           <small>現物は Drive に置く。ここにはリンクだけ</small></label>
@@ -625,7 +672,9 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
 
         <div className="row">
           <button className="btn primary" disabled={!ready || busy} onClick={() => void submit(true)}>
-            {effectiveKind === "document" ? "登録する" : "登録して、条件明細の登録へ"}
+            {busy ? "登録しています…"
+              : withFile ? (signOn ? "登録して、クラウドサインへ進む" : file ? "契約と契約書を登録する" : "登録する")
+              : effectiveKind === "document" ? "登録する" : "登録して、条件明細の登録へ"}
           </button>
           <button className="btn" onClick={onCancel}>やめる</button>
           {!ready && <span className="faint">相手先・件名・締結日（未締結なら不要）と、条件明細の要否を入れると登録できます</span>}
