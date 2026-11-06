@@ -7,6 +7,7 @@ import { searchParties } from "./SearchSelect.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { PaymentReport } from "./PaymentReport.js";
 import { PaymentStatementDoc } from "./PaymentStatementDoc.js";
+import { PaidOnDialog } from "./PaidOnDialog.js";
 
 interface Balance {
   conditionId: number; conditionNo: string | null; name: string; direction: string;
@@ -50,6 +51,8 @@ export function MoneyWorkspace() {
   const [dirFilter, setDirFilter] = useState<"all" | "in" | "out">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "unallocated" | "unpaid">("all");
   const [allocating, setAllocating] = useState<AllocationTarget | null>(null);
+  /** 支払済みにする支払（実際の支払日を聞く）。 */
+  const [paying, setPaying] = useState<{ id: number; paymentNo: string | null; dueOn: string | null; direction: string } | null>(null);
   const search = useDebounced(keyword);
 
   useEffect(() => { void reload(); }, []);
@@ -95,14 +98,15 @@ export function MoneyWorkspace() {
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
   }
 
-  async function markPaid(paymentId: number) {
+  /** 押した日ではなく、実際に払った日で支払済みにする（PaidOnDialog で聞く）。 */
+  async function markPaid(paymentId: number, paidOn: string) {
     setError(null); setNotice(null);
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      await api.post(`/payments/${paymentId}/paid`, { paidOn: today });
-      setNotice(`支払 #${paymentId} を支払済みにしました`);
+      await api.post(`/payments/${paymentId}/paid`, { paidOn });
+      setNotice(`支払 #${paymentId} を ${paidOn} の支払済みにしました`);
+      setPaying(null);
       await reload();
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    } catch (e) { throw new Error(e instanceof ApiError ? e.message : String(e)); }
   }
 
   const overLimit = payments.filter((p) => p.due.verdict === "over_limit").length;
@@ -229,6 +233,10 @@ export function MoneyWorkspace() {
 
       {tab === "payments" && (
         <div className="stack">
+        {paying && (
+          <PaidOnDialog label={paying.paymentNo ?? `支払 #${paying.id}`} dueOn={paying.dueOn} incoming={paying.direction === "in"}
+            onConfirm={(paidOn) => markPaid(paying.id, paidOn)} onClose={() => setPaying(null)} />
+        )}
         {allocating && (
           <PaymentAllocation payment={allocating}
             onClose={() => setAllocating(null)}
@@ -292,7 +300,7 @@ export function MoneyWorkspace() {
                         partyName: p.party?.name ?? "—", dueOn: p.dueOn, allocations: p.allocations
                       })}>割当</button>
                       {p.status !== "paid" && p.status !== "canceled" && (
-                        <button className="btn btn-sm" onClick={() => markPaid(p.id)}>支払済みに</button>
+                        <button className="btn btn-sm" onClick={() => setPaying({ id: p.id, paymentNo: p.paymentNo, dueOn: p.dueOn, direction: p.direction })}>支払済みに</button>
                       )}
                       {/* 払い終えたものは取り消せない。お金が出たあとで約束だけ
                           無かったことにすると、帳簿と現金が合わなくなる。 */}

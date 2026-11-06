@@ -134,6 +134,18 @@ test("同じ実績に二重の支払は作らない", async () => {
   assert.equal(db.all("INSERT INTO payments").length, 0);
 });
 
+test("支払済みは実際に払った日で記録する。先の日付・空は受け付けない（押した日ではない）", async () => {
+  const { db, service } = svc();
+  const now = new Date("2026-11-06T03:00:00Z"); // 東京 2026-11-06
+  await service.markPaid(900, "2026-10-31", "kuramochi", now);
+  assert.equal(db.find("SET status = 'paid'")!.params[1], "2026-10-31", "入れた日がそのまま支払日になる");
+  await service.markPaid(900, "2026-11-06", "kuramochi", now);
+  await assert.rejects(() => service.markPaid(900, "2026-11-07", "kuramochi", now),
+    (e: unknown) => e instanceof DomainError && e.code === "VALIDATION" && /先の日付/.test(e.message));
+  await assert.rejects(() => service.markPaid(900, "", "kuramochi", now),
+    (e: unknown) => e instanceof DomainError && e.code === "VALIDATION");
+});
+
 test("相手先が未設定の条件からは支払を作らない", async () => {
   const { service } = svc({ noParty: true });
   await assert.rejects(() => service.createFromStatementDocument(26, "x"),

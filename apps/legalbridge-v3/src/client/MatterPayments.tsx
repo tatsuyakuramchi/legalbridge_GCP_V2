@@ -4,6 +4,7 @@ import { api, ApiError, money } from "./api.js";
 import { CreateForm, int, text } from "./CreateForm.js";
 import { CONDITION_KIND_LABEL, StatusTag } from "./labels.js";
 import { AmendPanel } from "./AmendPanel.js";
+import { PaidOnDialog } from "./PaidOnDialog.js";
 
 /**
  * 案件の画面から支払を立てる。
@@ -35,6 +36,8 @@ export function MatterPayments(
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 支払済みにする支払（実際の支払日を聞くポップアップ）。 */
+  const [paying, setPaying] = useState<MatterDetail["payments"][number] | null>(null);
   const [dueOn, setDueOn] = useState("");
 
   const live = detail.conditions.filter((c) => c.status !== "void" && c.status !== "superseded");
@@ -55,12 +58,11 @@ export function MatterPayments(
     finally { setBusy(false); }
   }
 
-  async function markPaid(p: MatterDetail["payments"][number]) {
-    if (!confirm(`${p.paymentNo ?? `#${p.id}`} を今日（${today()}）の支払済みにします。`)) return;
-    setBusy(true); setError(null);
-    try { await api.post(`/payments/${p.id}/paid`, { paidOn: today() }); onChanged(); }
-    catch (e) { setError((e as ApiError).message); }
-    finally { setBusy(false); }
+  /** 押した日ではなく、実際に払った日で支払済みにする（PaidOnDialog で聞く）。 */
+  function markPaid(p: MatterDetail["payments"][number]) { setError(null); setPaying(p); }
+  async function confirmPaid(p: MatterDetail["payments"][number], paidOn: string) {
+    try { await api.post(`/payments/${p.id}/paid`, { paidOn }); setPaying(null); onChanged(); }
+    catch (e) { throw new Error((e as ApiError).message); }
   }
 
   async function cancel(p: MatterDetail["payments"][number]) {
@@ -74,6 +76,10 @@ export function MatterPayments(
 
   return (
     <div className="stack">
+      {paying && (
+        <PaidOnDialog label={paying.paymentNo ?? `#${paying.id}`} dueOn={paying.dueOn} incoming={paying.direction === "in"}
+          onConfirm={(paidOn) => confirmPaid(paying, paidOn)} onClose={() => setPaying(null)} />
+      )}
       {!mode && (
         <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
           <button className="btn btn-sm primary" disabled={!settleable.length}
@@ -221,7 +227,7 @@ export function MatterPayments(
               <td style={{ whiteSpace: "nowrap" }}>
                 <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
                   {p.status === "planned" && (<>
-                    <button className="btn btn-sm" disabled={busy} title="今日の日付で支払済みにする"
+                    <button className="btn btn-sm" disabled={busy} title="実際に払った日を入れて支払済みにする"
                             onClick={() => void markPaid(p)}>支払済み</button>
                     <button className="btn btn-sm" disabled={busy} title="行は残し、理由を付けて取り消す"
                             onClick={() => void cancel(p)}>取消</button>

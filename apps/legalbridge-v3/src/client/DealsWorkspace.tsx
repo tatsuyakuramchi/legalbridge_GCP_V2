@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ReceiptsForPayment } from "./RoyaltyReceipts.js";
 import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
+import { PaidOnDialog } from "./PaidOnDialog.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { ClosingRun } from "./ClosingRun.js";
 import { EventEntryForm } from "./EventEntryForm.js";
@@ -51,6 +52,8 @@ export function DealsWorkspace(
   const [receiptPayment, setReceiptPayment] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** 支払済み（入金済み）にする回。実際の支払日・入金日を聞く。 */
+  const [paying, setPaying] = useState<DealRow | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [running, setRunning] = useState(false);
   const [recording, setRecording] = useState<DealRow | null>(null);
@@ -88,10 +91,8 @@ export function DealsWorkspace(
         const made = await api.post<{ paymentNo?: string | null; id?: number }>(`/documents/${r.documentId}/payment`, {});
         setNotice(`${r.conditionName}：支払 ${made.paymentNo ?? ""} を立てました`);
       } else if (action === "paid" && r.paymentId) {
-        await api.post(`/payments/${r.paymentId}/paid`, { paidOn: data?.today ?? new Date().toISOString().slice(0, 10) });
-        setNotice(`${r.conditionName}：${r.direction === "out" ? "入金を確認しました" : "支払済みにしました"}`);
-        // 許諾先からの入金なら、その場で作者への報告を起こせるようにする（docs/royalty-ledger.md §10）。
-        if (r.direction === "out") setReceiptPayment(r.paymentId);
+        // 押した日（今日）ではなく、実際の支払日・入金日を聞いてから記録する（PaidOnDialog → confirmPaid）。
+        setPaying(r); setBusy(null); return;
       } else if (action === "revise") {
         onOpenCondition(r.conditionId); setBusy(null); return;
       } else if (action === "schedule") {
@@ -174,6 +175,22 @@ export function DealsWorkspace(
 
       {error && <div className="alert">{error}</div>}
       {notice && <div className="note ok">{notice}</div>}
+      {paying && paying.paymentId && (
+        <PaidOnDialog label={`${paying.conditionName} ${paying.roundLabel ?? ""}`.trim()} dueOn={paying.due.on}
+          incoming={paying.direction === "out"}
+          onConfirm={async (paidOn) => {
+            try {
+              await api.post(`/payments/${paying.paymentId}/paid`, { paidOn });
+            } catch (e) { throw new Error(e instanceof ApiError ? e.message : String(e)); }
+            const r = paying;
+            setPaying(null);
+            setNotice(`${r.conditionName}：${r.direction === "out" ? `${paidOn} の入金を記録しました` : `${paidOn} の支払済みにしました`}`);
+            // 許諾先からの入金なら、その場で作者への報告を起こせるようにする（docs/royalty-ledger.md §10）。
+            if (r.direction === "out") setReceiptPayment(r.paymentId);
+            await load();
+          }}
+          onClose={() => setPaying(null)} />
+      )}
       {receiptPayment && (
         <div className="panel"><div className="panel-bd">
           <ReceiptsForPayment key={receiptPayment} paymentId={receiptPayment} onOpenCondition={onOpenCondition}
