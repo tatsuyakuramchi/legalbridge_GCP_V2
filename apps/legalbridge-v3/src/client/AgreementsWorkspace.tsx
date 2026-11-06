@@ -465,6 +465,11 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
   const [parentId, setParentId] = useState(preset.parentId ? String(preset.parentId) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * まだ締結していない（番号だけ取って、これから契約書を送る）。締結日を求めず、交渉中で登録する。
+   * 締結したら、契約の「編集」で締結日を入れる。
+   */
+  const [unsigned, setUnsigned] = useState(false);
 
   // 相手先が決まったら、その相手の基本契約・単体契約を親の候補に出す。
   useEffect(() => {
@@ -478,7 +483,7 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
   const effectiveKind: AgreementKind = hasConditions === false ? "document" : kind;
   /** 向きなしにできるのは文書だけの契約（条件明細を持たない）。 */
   const directionOk = direction !== "none" || effectiveKind === "document";
-  const ready = partyId && title.trim() && executedOn && hasConditions !== null
+  const ready = partyId && title.trim() && (executedOn || unsigned) && hasConditions !== null
     && (effectiveKind !== "supplement" || parentId) && directionOk;
 
   async function submit(thenConditions: boolean) {
@@ -488,8 +493,8 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
         counterpartyId: Number(partyId), direction: direction === "none" ? null : direction, kind: effectiveKind,
         domain: effectiveKind === "document" ? null : domain,
         parentId: effectiveKind === "supplement" ? Number(parentId) : null,
-        title: title.trim(), executedOn, status: "executed",
-        effectiveOn: effectiveOn || executedOn, expiresOn: expiresOn || null,
+        title: title.trim(), executedOn: unsigned ? null : executedOn, status: unsigned ? "negotiating" : "executed",
+        effectiveOn: effectiveOn || (unsigned ? null : executedOn), expiresOn: expiresOn || null,
         autoRenewal, renewalMonths: renewalMonths ? Number(renewalMonths) : null,
         renewalNoticeMonths: noticeMonths ? Number(noticeMonths) : null,
         counterpartyRefNo: refNo || null, sourceUrl: sourceUrl || null,
@@ -541,8 +546,13 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="業務委託基本契約・秘密保持契約書 など" /></label>
         </div>
         <div className="grid4">
-          <label className="fld"><span>締結日 <em>必須</em></span>
-            <input type="date" value={executedOn} onChange={(e) => setExecutedOn(e.target.value)} /></label>
+          <label className="fld"><span>締結日 {!unsigned && <em>必須</em>}</span>
+            <input type="date" value={unsigned ? "" : executedOn} disabled={unsigned} onChange={(e) => setExecutedOn(e.target.value)} />
+            <label className="row" style={{ gap: 4, marginTop: 4 }}>
+              <input type="checkbox" checked={unsigned} onChange={(e) => setUnsigned(e.target.checked)} />
+              <small>まだ締結していない（番号だけ取って、これから契約書を送る）</small>
+            </label>
+            {unsigned && <small>交渉中で登録します。締結したら「編集」で締結日を入れてください</small>}</label>
           <label className="fld"><span>有効期間</span>
             <span className="row" style={{ gap: 6 }}>
               <input type="date" value={effectiveOn} onChange={(e) => setEffectiveOn(e.target.value)} />
@@ -618,7 +628,7 @@ export function AgreementCreate({ preset, onDone, onCancel }: {
             {effectiveKind === "document" ? "登録する" : "登録して、条件明細の登録へ"}
           </button>
           <button className="btn" onClick={onCancel}>やめる</button>
-          {!ready && <span className="faint">相手先・件名・締結日と、条件明細の要否を入れると登録できます</span>}
+          {!ready && <span className="faint">相手先・件名・締結日（未締結なら不要）と、条件明細の要否を入れると登録できます</span>}
         </div>
       </div>
     </div>

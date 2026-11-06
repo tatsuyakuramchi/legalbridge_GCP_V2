@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { SignSwitch } from "./SignState.js";
 import { useMapLinks } from "./mapLinks.js";
+import { DocumentImport } from "./DocumentImport.js";
+import { SignNext, signDocOf, useSignReady, type SignDoc } from "./SignNext.js";
 import type { ContractRow, ContractStep } from "../server/matters/contract-band.js";
 
 /**
@@ -11,6 +13,8 @@ import type { ContractRow, ContractStep } from "../server/matters/contract-band.
  * 列は 取引先 → 基本契約 → 契約書・番号 → 種類・件名 → 送付 → 締結 → 期限。止まりは前の段から 1 つだけ赤。
  *   - 番号だけ取る：種類（取り込みの種別か、ひな形＝全ジャンル）と件名で番号を取る。
  *     ファイル（PDF）を取り込み、締結を記録するまで止まりのまま（記録を求める）。
+ *   - 外で作った文書を登録：PDF を登録する（取り込みの欄。そのままクラウドサインへ進める）。
+ *   - 取り込んだ文書は、締結がまだならこの段から「クラウドサインで送る」（宛先入力をその行の下に開く）。
  *   - 選んだ行は「案件に入れる」で案件に寄せられる（マップの帯の上の帯から）。
  */
 
@@ -41,6 +45,13 @@ export function ContractBand({ scope, filter, reloadKey, cols, onOpenDocument, c
   const [notice, setNotice] = useState<string | null>(null);
   const [signing, setSigning] = useState<ContractRow | null>(null);
   const [reserving, setReserving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  /** クラウドサインの宛先入力を開いている行（その行の下に出す）。 */
+  const [sending, setSending] = useState<{ key: string; doc: SignDoc } | null>(null);
+  const sign = useSignReady(canWrite);
+  async function openSend(r: ContractRow) {
+    setSending({ key: r.key, doc: await signDocOf(r.id, r.number) });
+  }
 
   const path = "matterId" in scope ? `/matters/${scope.matterId}/contracts`
     : "partyId" in scope ? `/parties/${scope.partyId}/contracts` : `/works/${scope.workId}/contracts`;
@@ -72,9 +83,12 @@ export function ContractBand({ scope, filter, reloadKey, cols, onOpenDocument, c
           <b>契約のみ</b><span>条件の無い契約・番号だけ取った文書</span>
           <span className="faint">{shown.length} 件{stuck ? `・止まり ${stuck}` : ""}</span>
           {canReserve && (
-            <button className="btn btn-sm band-btn" onClick={() => setReserving((v) => !v)}>{reserving ? "閉じる" : "＋ 番号だけ取る"}</button>
+            <button className="btn btn-sm band-btn" onClick={() => { setReserving((v) => !v); setImporting(false); }}>{reserving ? "閉じる" : "＋ 番号だけ取る"}</button>
           )}
-          {canWrite && !canReserve && <span className="faint">（案件か契約を選ぶと番号だけ取れます）</span>}
+          {canReserve && (
+            <button className="btn btn-sm band-btn" onClick={() => { setImporting((v) => !v); setReserving(false); }}>{importing ? "閉じる" : "＋ 外で作った文書を登録（PDF）"}</button>
+          )}
+          {canWrite && !canReserve && <span className="faint">（案件か契約を選ぶと、番号を取る・PDF を登録するがここでできます。取引先の契約は「契約・文書」で）</span>}
         </td>
       </tr>
       {(error || notice) && (
@@ -84,6 +98,13 @@ export function ContractBand({ scope, filter, reloadKey, cols, onOpenDocument, c
         <tr><td colSpan={cols}>
           <ReserveForm matterId={matterId} agreementId={agreementId}
             onDone={(no) => { setReserving(false); reload(`${no} を取りました。PDF を取り込み、締結を記録すると済みになります`); }} />
+        </td></tr>
+      )}
+      {importing && (
+        <tr><td colSpan={cols}>
+          <DocumentImport initialMode="import" matterId={matterId ?? undefined} agreementId={agreementId ?? undefined}
+            onOpenDocument={onOpenDocument}
+            onDone={() => { setImporting(false); reload("文書を登録しました"); }} />
         </td></tr>
       )}
       {shown.length > 0 && (
@@ -102,7 +123,8 @@ export function ContractBand({ scope, filter, reloadKey, cols, onOpenDocument, c
         <tr><td colSpan={cols} className="faint">条件の無い契約はありません。</td></tr>
       )}
       {shown.map((r) => (
-        <tr key={r.key} className={picked.has(r.key) ? "sel" : undefined}>
+        <Fragment key={r.key}>
+        <tr className={picked.has(r.key) ? "sel" : undefined}>
           <td><input type="checkbox" checked={picked.has(r.key)} aria-label={`${r.number ?? r.key} を選ぶ`}
                      onChange={(e) => onPick(r.key, e.target.checked)} /></td>
           {cols === 8 && <td>{r.party ? <b>{r.party.name}</b> : <span className="faint">（会社全体）</span>}</td>}
@@ -126,7 +148,13 @@ export function ContractBand({ scope, filter, reloadKey, cols, onOpenDocument, c
               {r.numberOnly && <span className="tag warn">発番のみ</span>}
             </div>
             <Step step={r.steps.document} />
-            {r.stuck === "document" && canWrite && r.numberOnly && <FileImport documentId={r.id} onDone={() => reload(`${r.number ?? ""} に PDF を取り込みました`)} />}
+            {r.stuck === "document" && canWrite && r.numberOnly && (
+              <FileImport documentId={r.id} onDone={() => {
+                // 取り込んだら、そのままクラウドサインの宛先入力へ（送れる人のときだけ）。
+                if (sign.canSign) { void openSend(r); reload(`${r.number ?? ""} に PDF を取り込みました。続けてクラウドサインの署名者を入れてください（送らないなら「やめる」）`); }
+                else reload(`${r.number ?? ""} に PDF を取り込みました`);
+              }} />
+            )}
             {r.stuck === "document" && !r.numberOnly && onOpenDocument && (
               <button className="btn btn-sm ledger-next" onClick={() => onOpenDocument(r.id)}>→ 開いて決定する</button>
             )}
@@ -135,6 +163,12 @@ export function ContractBand({ scope, filter, reloadKey, cols, onOpenDocument, c
           <td>
             <Step step={r.steps.send} />
             {r.stuck === "send" && onOpenDocument && <button className="btn btn-sm ledger-next" onClick={() => onOpenDocument(r.id)}>→ 送る</button>}
+            {sign.canSign && r.source === "document" && r.external && r.stuck !== "document"
+              && (r.sign.status === "unsent" || r.sign.status === "terminated") && (
+              <button className="btn btn-sm ledger-next" disabled={sending?.key === r.key}
+                      title="登録した PDF をクラウドサインで署名依頼します（CloudSign に下書きを作る）"
+                      onClick={() => void openSend(r)}>クラウドサインで送る</button>
+            )}
           </td>
           <td>
             <Step step={r.steps.sign} />
@@ -151,6 +185,12 @@ export function ContractBand({ scope, filter, reloadKey, cols, onOpenDocument, c
           </td>
           <td><Step step={r.steps.term} /></td>
         </tr>
+        {sending?.key === r.key && (
+          <tr><td colSpan={cols}>
+            <SignNext doc={sending.doc} channels={sign.channels} onFinish={() => { setSending(null); reload(); }} />
+          </td></tr>
+        )}
+        </Fragment>
       ))}
     </>
   );
