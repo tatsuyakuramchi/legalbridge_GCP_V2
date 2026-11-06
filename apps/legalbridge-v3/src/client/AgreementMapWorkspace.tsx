@@ -173,9 +173,11 @@ export function AgreementMapWorkspace(
   );
 }
 
-function PartyMapView(
-  { map, onOpen, onRegisterAgreement, onChanged, onError, sendVersion = 0 }: {
+export function PartyMapView(
+  { map, onOpen, onRegisterAgreement, onAddSupplement, onChanged, onError, sendVersion = 0 }: {
     sendVersion?: number;
+    /** 基本契約の下に個別契約を足す（作業台から。その場で登録欄を開く）。無ければ出さない。 */
+    onAddSupplement?: (parent: MapAgreement) => void;
     map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
     onRegisterAgreement?: (partyId: number, partyName: string | null) => void;
     onChanged: (msg: string) => void; onError: (msg: string) => void;
@@ -226,7 +228,7 @@ function PartyMapView(
       childCount={extra?.childCount ?? 0} orderCount={orders.filter((o) => o.masterId === a.id).length}
       editing={editing === a.id} onEdit={() => setEditing(editing === a.id ? null : a.id)}
       leveling={leveling === a.id} onLevel={() => setLeveling(leveling === a.id ? null : a.id)}
-      onOpen={onOpen} roots={map.roots}
+      onOpen={onOpen} roots={map.roots} onAddSupplement={onAddSupplement}
       onSaved={(msg) => { setEditing(null); setLeveling(null); onChanged(msg); }}
       onDocsChanged={(msg) => onChanged(msg)} onError={onError} />
   );
@@ -609,7 +611,8 @@ function LooseConditions(
 }
 
 function AgreementNode(
-  { a, issues, childCount, orderCount, editing, onEdit, leveling, onLevel, onOpen, roots, onSaved, onDocsChanged, onError }: {
+  { a, issues, childCount, orderCount, editing, onEdit, leveling, onLevel, onOpen, roots, onSaved, onDocsChanged, onError, onAddSupplement }: {
+    onAddSupplement?: (parent: MapAgreement) => void;
     a: MapAgreement; issues: MapIssue[]; editing: boolean; onEdit: () => void;
     /** 基本契約の下の個別契約・発注書の数（基本契約は条件明細ではなく個別契約を持つ）。 */
     childCount: number; orderCount: number;
@@ -712,6 +715,10 @@ function AgreementNode(
                   title="この基本契約を別の契約・文書に置き換える（下の個別契約・条件・文書・案件を移し、この契約は解除扱い）">
             {merging ? "閉じる" : "基本契約を差し替える"}
           </button>
+        )}
+        {onAddSupplement && a.kind === "master" && a.status !== "terminated" && !a.terminatedOn && (
+          <button className="btn btn-sm" disabled={readOnly} onClick={() => onAddSupplement(a)}
+                  title="この基本契約の下に個別契約（個別条件書・覚書・変更合意）を登録します。番号は親の番号＋枝番">＋ 個別契約</button>
         )}
         <button className="btn btn-sm" disabled={readOnly} onClick={onEdit}>
           {editing ? "閉じる" : "編集"}

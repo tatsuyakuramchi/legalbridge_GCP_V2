@@ -79,8 +79,14 @@ export function stepsOf(r: RawRow, today: string): Pick<ContractRow, "steps" | "
   const signedOn = r.sign.status === "executed" ? r.sign.at : r.executedOn;
 
   // 送付の段：ひな形の文書だけ。取り込み・番号だけ・契約の記録は外でやり取りするので「—」。
+  // ただし取り込んだ PDF をこのシステムからクラウドサインで送ったら、送付済みとして出す
+  // （止まりにはしない。外で送ったものと見分けが付かないため）。
   let send: ContractStep;
-  if (r.external || r.source === "agreement") {
+  if (r.external && r.sign.source === "cloudsign" && ["drafted", "sent", "executed"].includes(r.sign.status)) {
+    send = r.sign.status === "drafted"
+      ? { state: "wait", label: "CloudSign 下書き", sub: "CloudSign の画面から送る" }
+      : { state: "ok", label: `CloudSign で送付${r.sign.status === "sent" && r.sign.at ? ` ${md(r.sign.at)}` : ""}` };
+  } else if (r.external || r.source === "agreement") {
     send = { state: "none", label: "—", sub: "外で送付" };
   } else if (r.sentAt || ["sent", "executed", "terminated"].includes(r.sign.status)) {
     send = { state: "ok", label: `送付済${r.sentAt ? ` ${md(r.sentAt)}` : ""}` };

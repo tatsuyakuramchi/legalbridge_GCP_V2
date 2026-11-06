@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { useDebounced } from "./ListTools.js";
 import { WorkLedger } from "./WorkLedger.js";
 import { WorkRounds } from "./RoundsOverview.js";
+import { DeskContracts } from "./DeskContracts.js";
 import type { EntityKind } from "./Relations.js";
 
 /**
@@ -31,6 +32,9 @@ interface Selected { node: DeskNode; partyId: number | null }
 
 const OPEN_KEY = "lb.desk.open";
 const ROOT_KEY = "lb.desk.root";
+const TAB_KEY = "lb.desk.tab";
+/** 取引先の切り口の右の中身：工程表（条件ごと）か、契約・文書（基本契約・個別契約・番号・PDF・クラウドサイン）。 */
+type Tab = "ledger" | "contracts";
 const SHOWN = 5;
 const ROOTS: Array<[Root, string]> = [["party", "取引先"], ["matter", "案件"], ["work", "作品"]];
 const KIND_LABEL: Record<TodayItem["kind"], string> = { intake: "依頼", task: "作業", deadline: "期限" };
@@ -81,6 +85,8 @@ export function DeskHome(props: {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [selected, setSelected] = useState<Selected | null>(null);
   const [version, setVersion] = useState(0);
+  const [tab, setTabState] = useState<Tab>(() => (load(TAB_KEY) === "contracts" ? "contracts" : "ledger"));
+  const setTab = (t: Tab) => { setTabState(t); save(TAB_KEY, t); };
 
   // 今日やること：自分（IAP のメール → 担当者）のデイリータスクで絞る。分からなければ全員。
   useEffect(() => {
@@ -126,8 +132,8 @@ export function DeskHome(props: {
     setRoot(r); save(ROOT_KEY, r); setNodes(null); setSelected(null); setExpanded(new Set());
   };
 
-  const loadKids = (partyId: number) => {
-    if (kids[partyId]) return;
+  const loadKids = (partyId: number, force = false) => {
+    if (kids[partyId] && !force) return;
     setKids((k) => ({ ...k, [partyId]: "loading" }));
     api.get<{ nodes: DeskNode[] }>(`/desk/tree/party/${partyId}`)
       .then((r) => setKids((k) => ({ ...k, [partyId]: r.nodes })))
@@ -290,6 +296,18 @@ export function DeskHome(props: {
                       </button>
                     )}
                   </div>
+                  {/* 取引先の切り口（取引先・その下の契約）では、契約・文書をここで管理できる。 */}
+                  {selected?.partyId != null && (
+                    <div className="chips" role="tablist" style={{ marginBottom: 10 }}>
+                      <button className="chip" role="tab" aria-pressed={tab === "ledger"} onClick={() => setTab("ledger")}>工程表（条件ごと）</button>
+                      <button className="chip" role="tab" aria-pressed={tab === "contracts"} onClick={() => setTab("contracts")}>契約・文書（基本契約・個別契約・番号・PDF・クラウドサイン）</button>
+                    </div>
+                  )}
+                  {selected?.partyId != null && tab === "contracts" ? (
+                    <DeskContracts key={`c${selected.partyId}`} partyId={selected.partyId}
+                      onOpen={props.onOpen} onOpenDocument={props.onOpenDocument}
+                      onChanged={() => { setVersion((v) => v + 1); if (expanded.has(selected.partyId!)) loadKids(selected.partyId!, true); }} />
+                  ) : (<>
                   {selectedNode.kind === "work" && selectedNode.id !== null && (
                     <div style={{ marginBottom: 14 }}>
                       <h3 className="desk-h3">計算書の回</h3>
@@ -310,6 +328,7 @@ export function DeskHome(props: {
                     onCompose={selectedNode.kind === "matter"
                       ? (conditionIds, eventIds, mid, templateKey) => props.onCompose(conditionIds, eventIds, mid ?? selectedNode.id, templateKey ?? null)
                       : undefined} />
+                  </>)}
                 </>
               )}
             </div>

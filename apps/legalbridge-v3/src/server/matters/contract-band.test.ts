@@ -26,6 +26,17 @@ test("番号だけ取った文書：ファイルを取り込むまで止まり�
   assert.deepEqual([signed.steps.sign.label, signed.steps.sign.sub], ["締結済 10/05", "手で記録"]);
 });
 
+test("取り込んだ PDF をクラウドサインで送ったら、送付の段に出す（手で記録した締結は外で送付のまま）", () => {
+  const drafted = stepsOf(raw({ external: true, sign: { status: "drafted", at: "2026-11-06", source: "cloudsign" } }), TODAY);
+  assert.deepEqual([drafted.steps.send.state, drafted.steps.send.label], ["wait", "CloudSign 下書き"]);
+  assert.equal(drafted.steps.sign.label, "署名待ち");
+  assert.equal(drafted.stuck, null);
+  const sent = stepsOf(raw({ external: true, sign: { status: "sent", at: "2026-11-06", source: "cloudsign" } }), TODAY);
+  assert.deepEqual([sent.steps.send.state, sent.steps.send.label], ["ok", "CloudSign で送付 11/06"]);
+  const manual = stepsOf(raw({ external: true, sign: { status: "executed", at: "2026-11-06", source: "manual" } }), TODAY);
+  assert.equal(manual.steps.send.label, "—");
+});
+
 test("ひな形の文書：下書き → 未送付 → 署名待ち → 締結済", () => {
   assert.equal(stepsOf(raw({ status: "draft" }), TODAY).stuck, "document");
   assert.equal(stepsOf(raw({}), TODAY).stuck, "send");
