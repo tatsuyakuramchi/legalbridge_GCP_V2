@@ -2676,6 +2676,15 @@ export function createRoutes(database: Transactable) {
       const input = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body ?? {});
       res.json(await conditionWrites.close(Number(req.params.id), input.reason, actor(res)));
     }));
+  // 過去分として完了（まとめて）。完了扱いとは別の状態（closed_kind = archived。199）。取り消しは reopen。
+  router.post("/conditions/archive", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const b = z.object({
+        conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        reason: z.string().trim().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await conditionWrites.archive(b.conditionIds, b.reason ?? "", actor(res)));
+    }));
   router.post("/conditions/:id/reopen", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await conditionWrites.reopen(Number(req.params.id), actor(res)));

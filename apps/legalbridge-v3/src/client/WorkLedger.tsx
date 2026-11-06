@@ -33,10 +33,13 @@ import type { DuplicateGroup, DuplicateView } from "../server/conditions/duplica
  * その場で無効にできる（どれを残すかは人が決める。最初から選んでおかない）。
  */
 
-type Filter = "all" | "stuck" | "unpaid" | "drift" | "dup" | "settled";
+type Filter = "all" | "stuck" | "unpaid" | "drift" | "dup" | "settled" | "archived";
 const FILTER_LABEL: Record<Filter, string> = {
-  all: "すべて", stuck: "止まっている", unpaid: "未払い", drift: "金額・日付が食い違い", dup: "重複", settled: "払い切り"
+  all: "すべて", stuck: "止まっている", unpaid: "未払い", drift: "金額・日付が食い違い", dup: "重複",
+  settled: "払い切り・完了扱い", archived: "過去分（追跡なし）"
 };
+/** 過去分として閉じた条件（199）。払い切り・完了扱いとは分けて数える。 */
+const isArchived = (r: GridRow) => r.settlement.state === "archived";
 const SETTLE_KEYS = new Set(["inspection_certificate", "intl_inspection_certificate", "service_completion_notice"]);
 const yen = (n: number | null | undefined) => (n === null || n === undefined ? "—" : `¥${Math.round(n).toLocaleString("ja-JP")}`);
 const qty = (n: number | null | undefined) => (n === null || n === undefined ? "—" : n.toLocaleString("ja-JP"));
@@ -132,6 +135,10 @@ export function WorkLedger(
   const [picked, setPicked] = useState<Set<number>>(new Set());
   /** 契約のみの帯で選んだ行（"document:12" / "agreement:108"）。案件に入れるのに使う。 */
   const [pickedContracts, setPickedContracts] = useState<Set<string>>(new Set());
+  /** 過去分として完了：理由を入れている間は文字列（既定の理由から始める）。 */
+  const [archiving, setArchiving] = useState<string | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ conditionId: number; focus: EditFocus } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dups, setDups] = useState<DuplicateView | null>(null);
@@ -193,15 +200,16 @@ export function WorkLedger(
       case "stuck": return inWork.filter(isStuck);
       case "unpaid": return inWork.filter((r) => unpaidPayments(r).length > 0);
       case "drift": return applyFilter(inWork, "drift");
-      case "settled": return applyFilter(inWork, "settled");
+      case "settled": return applyFilter(inWork, "settled").filter((r) => !isArchived(r));
+      case "archived": return inWork.filter(isArchived);
       case "dup": return inWork.filter((r) => dupOf.has(r.conditionId));
     }
   }, [inWork, filter, dupOf]);
   const counts = useMemo(() => ({
     all: inWork.length, stuck: inWork.filter(isStuck).length,
     unpaid: inWork.filter((r) => unpaidPayments(r).length > 0).length,
-    drift: applyFilter(inWork, "drift").length, settled: applyFilter(inWork, "settled").length,
-    dup: inWork.filter((r) => dupOf.has(r.conditionId)).length
+    drift: applyFilter(inWork, "drift").length, settled: applyFilter(inWork, "settled").filter((r) => !isArchived(r)).length,
+    dup: inWork.filter((r) => dupOf.has(r.conditionId)).length, archived: inWork.filter(isArchived).length
   }), [inWork, dupOf]);
 
   useEffect(() => {
@@ -542,7 +550,7 @@ export function WorkLedger(
       <div className="stack" style={{ gap: 10, minWidth: 0 }}>
         <div className="stagefilter">
           <span className="faint">絞る</span>
-          {(Object.keys(FILTER_LABEL) as Filter[]).filter((f) => f !== "dup" || counts.dup > 0).map((f) => (
+          {(Object.keys(FILTER_LABEL) as Filter[]).filter((f) => (f !== "dup" || counts.dup > 0) && (f !== "archived" || counts.archived > 0)).map((f) => (
             <button key={f} className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>{FILTER_LABEL[f]} {counts[f]}</button>
           ))}
           {onFixDrift && counts.drift > 0 && <button className="btn btn-sm" onClick={onFixDrift}>食い違いをまとめて直す画面へ</button>}
@@ -590,7 +598,33 @@ export function WorkLedger(
             {isAdmin && <button className="btn btn-sm" onClick={() => setBulk("due")}>支払日をそろえる</button>}
             {isAdmin && <button className="btn btn-sm danger" disabled={!pickedRows.some((r) => unpaidPayments(r).length)} onClick={() => setBulk("cancel")}>
               未払いの支払を取り消す（{pickedRows.reduce((n, r) => n + unpaidPayments(r).length, 0)}）</button>}
+            {canWrite && pickedRows.some((r) => !r.settlement.done) && archiving === null && (
+              <button className="btn btn-sm" onClick={() => setArchiving("過去分のため検収・支払を追跡しない")}
+                      title="過去の検収・支払を追いきれない条件を、完了扱いとは別の「過去分（追跡なし）」で閉じる。条件の画面で取り消せます">
+                過去分として完了（{pickedRows.filter((r) => !r.settlement.done).length}）</button>
+            )}
             <button className="btn btn-sm" onClick={() => setPicked(new Set())}>選び直す</button>
+            {archiving !== null && (
+              <div className="archive-row">
+                <b>過去分として完了</b>
+                <span className="faint">{pickedRows.filter((r) => !r.settlement.done).length} 本を閉じます（払い切り・完了扱いとは別の状態。止まりから外れます）</span>
+                <input className="inline-input" style={{ maxWidth: 360 }} value={archiving} aria-label="閉じる理由"
+                       onChange={(e) => setArchiving(e.target.value)} />
+                <button className="btn btn-sm primary" disabled={archiveBusy} onClick={async () => {
+                  setArchiveBusy(true); setArchiveError(null);
+                  try {
+                    const ids = pickedRows.filter((r) => !r.settlement.done).map((r) => r.conditionId);
+                    const r = await api.post<{ archived: number[]; skipped: Array<{ conditionId: number; reason: string }> }>(
+                      "/conditions/archive", { conditionIds: ids, reason: archiving });
+                    setArchiving(null); setPicked(new Set());
+                    reload(`${r.archived.length} 本を過去分（追跡なし）で閉じました${r.skipped.length ? `（${r.skipped.length} 本は飛ばしました：${[...new Set(r.skipped.map((x) => x.reason))].join("／")}）` : ""}`);
+                  } catch (e) { setArchiveError(e instanceof ApiError ? e.message : String(e)); }
+                  finally { setArchiveBusy(false); }
+                }}>{archiveBusy ? "閉じています…" : "閉じる"}</button>
+                <button className="btn btn-sm" onClick={() => { setArchiving(null); setArchiveError(null); }}>やめる</button>
+                {archiveError && <div className="alert" style={{ flexBasis: "100%" }}>{archiveError}</div>}
+              </div>
+            )}
             {/* 作品・案件に入れる：選んだ帯に入れて、貼り付いたまま一緒に動かす。 */}
             {assign(pickedRows.map((r) => r.conditionId))}
           </div>

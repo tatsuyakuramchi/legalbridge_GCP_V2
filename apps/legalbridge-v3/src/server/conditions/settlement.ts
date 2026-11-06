@@ -9,6 +9,8 @@ import { renewalOf } from "./renewal.js";
  *
  * ただし V1・V2 の時代に払い終えた条件は V3 に支払の記録が無い。それだけは
  * 人が理由つきで閉じる（closed_at。A-028）。閉じた条件も「完了」として畳む。
+ * 閉じ方は 2 つ：完了扱い（払い終えたことを確かめた）と、過去分（検収・支払を V3 で
+ * 追わないと決めた。closed_kind = 'archived'。199）。どちらも畳むが、札は分ける。
  *
  * 料率・単価×数量の条件には「終わり」が無い。実績か支払があれば「進行中」、
  * 期間が過ぎていれば「期間終了」と出すだけで、完了にはしない（閉じれば完了）。
@@ -21,6 +23,7 @@ export type SettlementState =
   | "partly_paid"     // 一部支払済み
   | "paid"            // 支払済み（定額に達した）
   | "closed"          // 人が完了扱いにした
+  | "archived"        // 過去分として閉じた（検収・支払を追わない）
   | "in_progress"     // 料率などで実績・支払が動いている
   | "expired";        // 料率などで期間が過ぎた
 
@@ -34,7 +37,7 @@ export type SettlementState =
 export const SETTLEMENT_LABEL: Record<SettlementState, string> = {
   open: "未着手", inspected: "検収済み・未払", payment_planned: "支払を立てた",
   partly_paid: "一部払い済み", paid: "払い切り",
-  closed: "完了扱い", in_progress: "進行中", expired: "期間終了"
+  closed: "完了扱い", archived: "過去分（追跡なし）", in_progress: "進行中", expired: "期間終了"
 };
 
 export interface ConditionSettlement {
@@ -49,6 +52,8 @@ export interface ConditionSettlement {
   targetAmount: number | null;
   closedAt: string | null;
   closedReason: string | null;
+  /** 閉じた種類。null＝完了扱い、archived＝過去分（追跡しない）。 */
+  closedKind?: "archived" | null;
 }
 
 export interface SettlementFacts {
@@ -63,6 +68,8 @@ export interface SettlementFacts {
   plannedAmount: number;
   paidAmount: number;
   closedAt?: string | null;
+  /** 閉じた種類（closedAt があるときだけ意味を持つ）。 */
+  closedKind?: "archived" | null;
 }
 
 /** 払い切る額。定額と単価×数量（定額に畳んである）だけが持つ。 */
@@ -73,7 +80,7 @@ export function targetAmountOf(f: { pricingModel?: string | null; flatAmount?: n
 }
 
 export function settlementState(f: SettlementFacts, today = new Date().toISOString().slice(0, 10)): SettlementState {
-  if (f.closedAt) return "closed";
+  if (f.closedAt) return f.closedKind === "archived" ? "archived" : "closed";
   const target = targetAmountOf(f);
   const paid = Number(f.paidAmount ?? 0);
   const planned = Number(f.plannedAmount ?? 0);
@@ -93,7 +100,7 @@ export function settlementState(f: SettlementFacts, today = new Date().toISOStri
   return "open";
 }
 
-export const isSettled = (state: SettlementState): boolean => state === "paid" || state === "closed";
+export const isSettled = (state: SettlementState): boolean => state === "paid" || state === "closed" || state === "archived";
 
 /**
  * 一覧の SQL に足す横結合。条件の系列（改訂の全版）をまとめて数える。実績も
@@ -122,6 +129,8 @@ export const SETTLEMENT_LATERAL_SQL = `
 export const SETTLEMENT_COLUMNS = `
   st.event_count, st.delivered_amount, st.planned_amount, st.paid_amount,
   c.closed_at, c.closed_reason,
+  -- 閉じた種類（199）。列がまだ無い DB でも落ちないように、行を JSON にして引く（閉じた行だけ）。
+  CASE WHEN c.closed_at IS NOT NULL THEN to_jsonb(c) ->> 'closed_kind' END AS closed_kind,
   c.auto_renew AS st_auto_renew, c.renew_months AS st_renew_months, c.renew_stopped_on AS st_renew_stopped_on`;
 
 const dayOf = (v: unknown): string | null =>
@@ -139,7 +148,8 @@ export function settlementOf(row: Record<string, any>): ConditionSettlement {
     eventCount: Number(row.event_count ?? 0),
     plannedAmount: Number(row.planned_amount ?? 0),
     paidAmount: Number(row.paid_amount ?? 0),
-    closedAt
+    closedAt,
+    closedKind: row.closed_kind === "archived" ? "archived" : null
   };
   const state = settlementState(facts);
   return {
@@ -147,6 +157,7 @@ export function settlementOf(row: Record<string, any>): ConditionSettlement {
     eventCount: facts.eventCount, deliveredAmount: Number(row.delivered_amount ?? 0),
     plannedAmount: facts.plannedAmount, paidAmount: facts.paidAmount,
     targetAmount: targetAmountOf(facts),
-    closedAt, closedReason: row.closed_reason ? String(row.closed_reason) : null
+    closedAt, closedReason: row.closed_reason ? String(row.closed_reason) : null,
+    closedKind: facts.closedKind ?? null
   };
 }

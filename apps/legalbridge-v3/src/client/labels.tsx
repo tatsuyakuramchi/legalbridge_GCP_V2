@@ -25,7 +25,7 @@ export type { StatusKind, Tone };
  * こちらは「進み具合」の軸なので、塗りつぶした札で出す（版の札とは形が違う）。
  */
 const SETTLEMENT_TONE: Record<string, string> = {
-  paid: "ok", closed: "ok", partly_paid: "warn", payment_planned: "warn", inspected: "accent", in_progress: "accent"
+  paid: "ok", closed: "ok", archived: "ghost", partly_paid: "warn", payment_planned: "warn", inspected: "accent", in_progress: "accent"
 };
 export function SettlementTag({ settlement, compact }: {
   settlement: ConditionSettlement | null | undefined; compact?: boolean;
@@ -34,7 +34,7 @@ export function SettlementTag({ settlement, compact }: {
   const tone = SETTLEMENT_TONE[settlement.state];
   const label = SETTLEMENT_LABEL[settlement.state] ?? settlement.state;
   const title = [
-    settlement.closedReason ? `完了扱い：${settlement.closedReason}` : "",
+    settlement.closedReason ? `${settlement.state === "archived" ? "過去分" : "完了扱い"}：${settlement.closedReason}` : "",
     settlement.targetAmount !== null ? `定額 ${settlement.targetAmount.toLocaleString()} ／ 支払済み ${settlement.paidAmount.toLocaleString()}` : "",
     settlement.eventCount ? `実績 ${settlement.eventCount} 件` : "実績なし"
   ].filter(Boolean).join("\n");

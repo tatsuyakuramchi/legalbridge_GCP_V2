@@ -141,8 +141,12 @@ export class OpsRepository {
       const r = await this.database.query(
         `SELECT source, ref_id, ref_no, title, due_on, status,
                 (due_on < current_date) AS overdue
-           FROM v_deadlines
+           FROM v_deadlines dl
           WHERE due_on <= current_date + $1::int
+            -- 閉じた条件（完了扱い・過去分）の予定は追わない（今日やることに出さない）。
+            AND NOT (dl.source = 'schedule' AND EXISTS (
+                  SELECT 1 FROM condition_schedules s JOIN conditions c ON c.id = s.condition_id
+                   WHERE s.id = dl.ref_id AND c.closed_at IS NOT NULL))
           ORDER BY due_on LIMIT 200`, [Math.min(Math.max(days, 1), 365)]);
       return r.rows.map((row: Record<string, any>) => ({
         source: String(row.source), refId: Number(row.ref_id), refNo: str(row.ref_no),
