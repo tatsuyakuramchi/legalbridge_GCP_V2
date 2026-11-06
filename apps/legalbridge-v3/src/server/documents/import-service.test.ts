@@ -209,3 +209,27 @@ test("番号だけ取る（全ジャンル）：ひな形を選ぶと、その�
   await assert.rejects(new DocumentImportService(new FakeDatabase(), new MemoryDriveStorage())
     .reserve({ title: "x", documentKind: "", conditionIds: [] }, "legal"), /種別を選んでください/);
 });
+
+test("契約の番号をそのまま文書番号にする（作業台で契約と契約書を一緒に登録）。使われていれば種別の番号", async () => {
+  const database = db({ "SELECT agreement_no FROM agreements": [{ agreement_no: "ARC-SAL-2026-0003" }] });
+  const r = await new DocumentImportService(database, new MemoryDriveStorage())
+    .import(input({ conditionIds: [], agreementId: 12, useAgreementNo: true }), "a");
+  assert.equal(r.documentNo, "ARC-SAL-2026-0003");
+  assert.equal(database.find("INSERT INTO document_sequences"), undefined, "番号は取らない");
+
+  const used = new FakeDatabase((t, params) => {
+    if (t.includes("SELECT agreement_no FROM agreements")) return [{ agreement_no: "ARC-SAL-2026-0003" }];
+    if (t.includes("SELECT 1 FROM documents WHERE document_no")) return params[0] === "ARC-SAL-2026-0003" ? [{ x: 1 }] : [];
+    if (t.includes("INSERT INTO document_sequences")) return [{ current_value: 1 }];
+    if (t.includes("INSERT INTO documents")) return [{ id: 42 }];
+    return [];
+  });
+  const r2 = await new DocumentImportService(used, new MemoryDriveStorage())
+    .import(input({ conditionIds: [], agreementId: 12, useAgreementNo: true }), "a");
+  assert.match(r2.documentNo, /^ARC-SVC-\d{4}-0001$/);
+
+  const plain = db({ "SELECT agreement_no FROM agreements": [{ agreement_no: "ARC-SAL-2026-0003" }] });
+  const r3 = await new DocumentImportService(plain, new MemoryDriveStorage())
+    .import(input({ conditionIds: [], agreementId: 12 }), "a");
+  assert.match(r3.documentNo, /^ARC-SVC-/, "頼まれなければ今までどおり");
+});

@@ -60,6 +60,12 @@ export interface ImportInput {
    * （請求書・発注請書・納品書・見積書・領収書・報告書は受け取ったもの）。
    */
   inbound?: boolean | null;
+  /**
+   * 契約（agreementId）の契約番号をそのまま文書番号にする（作業台で契約を登録して、その契約書を一緒に
+   * 上げるとき）。契約書に書く番号と文書番号を 1 つにする。契約に番号が無いか、その番号の文書が
+   * もうあれば、いつもどおり種別の番号を振る。
+   */
+  useAgreementNo?: boolean;
   file: { filename: string; mimeType: string; data: Buffer };
 }
 
@@ -142,6 +148,17 @@ export class DocumentImportService {
     const prefix = prefixForKind(documentKind);
     const year = currentYearInTokyo();
     return formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
+  }
+
+  /** 契約の番号。番号が無いか、その番号の文書がもうあれば null。 */
+  private async agreementNumberFree(client: Queryable, agreementId: number): Promise<string | null> {
+    const row = (await client.query("SELECT agreement_no FROM agreements WHERE id = $1", [agreementId])).rows[0] as
+      { agreement_no: string | null } | undefined;
+    if (!row) throw new DomainError("NOT_FOUND", `契約 ${agreementId} が見つかりません`);
+    const no = String(row.agreement_no ?? "").trim();
+    if (!no) return null;
+    const used = await client.query("SELECT 1 FROM documents WHERE document_no = $1", [no]);
+    return used.rows[0] ? null : no;
   }
 
   private async linkRequest(client: Queryable, id: number, requestId: number | null | undefined, actor: string) {
@@ -305,7 +322,9 @@ export class DocumentImportService {
 
       return await inTransaction(this.database, async (client) => {
         await this.assertLinkable(client, conditionIds, input.matterId ?? null);
-        const documentNo = await this.assignNumber(client, input.documentKind);
+        const documentNo = (input.useAgreementNo && input.agreementId
+          ? await this.agreementNumberFree(client, input.agreementId) : null)
+          ?? await this.assignNumber(client, input.documentKind);
 
         const inserted = await client.query(
           `INSERT INTO documents

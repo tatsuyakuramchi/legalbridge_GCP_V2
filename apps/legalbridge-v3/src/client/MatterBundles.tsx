@@ -218,7 +218,7 @@ function CellView(
 
 /** 契約の札。側（業務委託／許諾）が分かるものはそれも書く。移行した契約は側が空なので「契約」。 */
 function agreementLabel(a: { kind: string; domain: string | null }): string {
-  const side = a.domain === "service" ? "業務委託" : a.domain === "license" ? "許諾" : null;
+  const side = a.domain === "service" ? "業務委託" : a.domain === "license" ? "許諾" : a.domain === "sale" ? "売買" : a.domain === "other" ? "その他" : null;
   const kind = a.kind === "standalone" ? "単体契約" : a.kind === "master" ? "基本契約" : "契約";
   return side ? `${kind}（${side}）` : a.domain === null ? "契約" : kind;
 }

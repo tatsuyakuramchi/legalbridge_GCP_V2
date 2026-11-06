@@ -4,6 +4,7 @@ import { DocPeek } from "./DocPeek.js";
 import { ListSearch, useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
 import { SendMany } from "./SendMany.js";
+import { DOMAIN_OPTIONS } from "./agreement-domains.js";
 import type { EntityKind } from "./Relations.js";
 import type { DocumentSummary } from "../server/documents/repository.js";
 import type { AgreementDomain, AgreementKind, AgreementRow } from "../server/agreements/service.js";
@@ -367,8 +368,7 @@ function FixForm(
           <label className="field"><span>種別{isRoot ? "（必須）" : ""}</span>
             <select value={domain} onChange={(e) => setDomain(e.target.value)}>
               {!isRoot && <option value="">未設定</option>}
-              <option value="service">業務委託</option>
-              <option value="license">ライセンス</option>
+              {DOMAIN_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
           </label>
           {needsParent && (

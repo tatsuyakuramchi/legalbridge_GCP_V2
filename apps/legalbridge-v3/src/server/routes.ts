@@ -58,7 +58,7 @@ import { SettledExportService } from "./documents/settled-export.js";
 import { diffSettled } from "./documents/settled-diff.js";
 import { rawRows } from "./documents/settled-batch.js";
 import { MatterTeardownService } from "./documents/teardown-service.js";
-import { AgreementService, termInputForCondition } from "./agreements/service.js";
+import { AGREEMENT_DOMAINS, AgreementService, termInputForCondition } from "./agreements/service.js";
 import { PartyAgreementMapService } from "./agreements/party-map.js";
 import { MasterMergeService } from "./agreements/master-merge.js";
 import { AGREEMENT_CSV_HEADERS, agreementCsvValues } from "./agreements/csv.js";
@@ -646,7 +646,7 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const input = z.object({
         kind: z.enum(["master", "standalone", "supplement", "termination", "document"]).optional(),
-        domain: z.enum(["service", "license"]).nullable().optional(),
+        domain: z.enum(AGREEMENT_DOMAINS).nullable().optional(),
         // null は向きなし（文書だけの契約のときだけ。NDA・覚書など）。
         direction: z.enum(["in", "out"]).nullable().optional(),
         parentId: z.coerce.number().int().positive().nullable().optional(),
@@ -664,7 +664,7 @@ export function createRoutes(database: Transactable) {
     // null は向きなし（文書だけの契約のときだけ。NDA・覚書など）。
     direction: z.enum(["in", "out"]).nullable(),
     kind: z.enum(["master", "standalone", "supplement", "termination", "document"]),
-    domain: z.enum(["service", "license"]).nullable().optional(),
+    domain: z.enum(AGREEMENT_DOMAINS).nullable().optional(),
     parentId: z.coerce.number().int().positive().nullable().optional(),
     title: z.string().trim().min(1).max(200),
     // 外部で付けた契約番号（移行前の紙の契約）。空ならシステムが採番する。
@@ -4022,7 +4022,9 @@ export function createRoutes(database: Transactable) {
     filename: z.string().trim().max(300).optional(),
     requestId: z.coerce.number().int().positive().optional(),
     counterpartyDocNo: z.string().trim().max(120).optional(),
-    inbound: z.enum(["0", "1"]).optional()
+    inbound: z.enum(["0", "1"]).optional(),
+    /** 1 なら契約（agreementId）の番号をそのまま文書番号にする。 */
+    sameNoAsAgreement: z.enum(["0", "1"]).optional()
   });
   router.post("/documents/import",
     requireRole("admin", "legal"), requireWritable,
@@ -4037,6 +4039,7 @@ export function createRoutes(database: Transactable) {
         receivedOn: q.receivedOn ?? null, note: q.note ?? null, requestId: q.requestId ?? null,
         counterpartyDocNo: q.counterpartyDocNo ?? null,
         inbound: q.inbound === undefined ? null : q.inbound === "1",
+        useAgreementNo: q.sameNoAsAgreement === "1",
         file: {
           filename: q.filename ?? q.title,
           mimeType: String(req.headers["content-type"] ?? "").split(";")[0].trim(),

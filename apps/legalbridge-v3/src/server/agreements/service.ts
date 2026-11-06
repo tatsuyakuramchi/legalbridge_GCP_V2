@@ -22,7 +22,12 @@ import { termHistory, type TermEvent, type TermHistory, type TermInput } from ".
  */
 
 export type AgreementKind = "master" | "standalone" | "supplement" | "termination" | "document";
-export type AgreementDomain = "service" | "license";
+export type AgreementDomain = "service" | "license" | "sale" | "other";
+/** 種別（番号の頭が決まる）。売買・その他（覚書など）は 2026-11 に足した（infra/v3/200_agreement_domains.sql）。 */
+export const AGREEMENT_DOMAINS = ["service", "license", "sale", "other"] as const;
+export const DOMAIN_LABELS: Record<AgreementDomain, string> = {
+  service: "業務委託", license: "ライセンス", sale: "売買", other: "その他（覚書など）"
+};
 /** 向き。null は向きなし（文書だけの契約：NDA・覚書など。条件明細を持たない）。 */
 export type AgreementDirection = "in" | "out" | null;
 
@@ -48,8 +53,9 @@ export const KIND_LABEL: Record<AgreementKind, string> = {
 
 /** 番号の頭。domain × kind で決まる。 */
 export function numberPrefix(kind: AgreementKind, domain: AgreementDomain | null): string | null {
-  if (kind === "master") return domain === "license" ? "ARC-LIC" : "ARC-SVC";
-  if (kind === "standalone") return domain === "license" ? "ARC-ILT" : "ARC-ISA";
+  // 文書の取り込みの種別（SVC・LIC・MOU…）と同じ頭は使わない（採番表が別なので同じ番号が両方に出る）。
+  if (kind === "master") return ({ service: "ARC-SVC", license: "ARC-LIC", sale: "ARC-SAL", other: "ARC-OTH" } as const)[domain ?? "service"];
+  if (kind === "standalone") return ({ service: "ARC-ISA", license: "ARC-ILT", sale: "ARC-ISL", other: "ARC-IOT" } as const)[domain ?? "service"];
   return null;
 }
 
@@ -217,7 +223,7 @@ export class AgreementService {
     }
     checkDirection(input.kind, input.direction ?? null);
     if ((input.kind === "master" || input.kind === "standalone") && !input.domain) {
-      throw new DomainError("VALIDATION", "種別（業務委託／ライセンス）を選んでください。番号の頭が決まります");
+      throw new DomainError("VALIDATION", "種別（業務委託／ライセンス／売買／その他）を選んでください。番号の頭が決まります");
     }
     if ((input.kind === "supplement" || input.kind === "termination") && !input.parentId) {
       throw new DomainError("VALIDATION", "補助文書・解除合意は親の契約（基本契約か単体契約）を選んでください");
