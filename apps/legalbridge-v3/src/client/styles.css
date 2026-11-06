@@ -1134,3 +1134,12 @@ tr.ledger-sec td .faint{color:inherit;opacity:.75}
 tr.ledger-colhead th{background:var(--sunken);text-align:left;font-weight:400;padding:5px 8px;border-bottom:1px solid var(--line-strong)}
 .ledger-plain{border-left:1px solid var(--line);vertical-align:top}
 .ledger-next{margin-top:4px;white-space:nowrap}
+/* 契約のみの帯（ContractBand）と、選んだ行を作品・案件に入れる帯（AssignBar）。 */
+tr.ledger-sec.band td{background:var(--accent)}
+.band-btn{margin-left:8px;background:var(--ground);color:var(--ink);border-color:var(--ground)}
+.band-form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:6px 0}
+.band-form .field{display:flex;flex-direction:column;gap:2px;font-size:12px}
+.band-form select,.band-form input{border:1px solid var(--line-strong);border-radius:5px;padding:5px 8px;min-height:34px;background:var(--surface);font:inherit}
+.assignbar{flex-basis:100%;display:flex;flex-direction:column;gap:6px;border:1px solid var(--accent);background:var(--accent-soft);border-radius:8px;padding:8px 12px}
+.assign-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px}
+.assign-row > b{min-width:84px}

@@ -2,7 +2,7 @@ import { inTransaction, type Queryable, type Transactable } from "../core/db.js"
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import type { DriveStorage } from "./drive-storage.js";
-import { currentYearInTokyo, formatDocumentNumber, nextSequence } from "./numbering.js";
+import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix } from "./numbering.js";
 import { safeFilename } from "./storage-service.js";
 import { prefixForKind } from "./import-kinds.js";
 
@@ -65,7 +65,13 @@ export interface ImportInput {
 
 export interface ReserveInput {
   title: string;
+  /** 取り込みの種別（業務委託契約書・秘密保持契約書…）。templateKey を渡すときは空でよい。 */
   documentKind: string;
+  /**
+   * ひな形で番号を取る（発番のみ。全ジャンル）。種別の名前と番号の頭はそのひな形のもの。
+   * 本文は作らない（ファイルを取り込むまで「ファイル待ち」）。
+   */
+  templateKey?: string | null;
   conditionIds: number[];
   matterId?: number | null;
   agreementId?: number | null;
@@ -153,27 +159,42 @@ export class DocumentImportService {
     : Promise<{ id: number; documentNo: string; conditionIds: number[] }> {
     const title = String(input.title ?? "").trim();
     if (!title) throw new DomainError("VALIDATION", "文書名は必須です");
-    const documentKind = String(input.documentKind ?? "").trim();
-    if (!documentKind) throw new DomainError("VALIDATION", "種別を選んでください");
+    const templateKey = String(input.templateKey ?? "").trim() || null;
+    let documentKind = String(input.documentKind ?? "").trim();
+    if (!documentKind && !templateKey) throw new DomainError("VALIDATION", "種別を選んでください");
     const conditionIds = DocumentImportService.cleanIds(input.conditionIds ?? []);
     try {
       return await inTransaction(this.database, async (client) => {
         await this.assertLinkable(client, conditionIds, input.matterId ?? null);
-        const documentNo = await this.assignNumber(client, documentKind);
+        let documentNo: string;
+        if (templateKey) {
+          // ひな形の番号の頭で発番する（ひな形で作ったときと同じ帯の番号になる）。
+          const t = (await client.query(
+            "SELECT label, number_prefix FROM document_templates WHERE template_key = $1", [templateKey])).rows[0] as
+            { label: string | null; number_prefix: string | null } | undefined;
+          if (!t) throw new DomainError("VALIDATION", `ひな形 ${templateKey} が見つかりません`);
+          documentKind = documentKind || String(t.label ?? templateKey);
+          const prefix = normalizePrefix(t.number_prefix) ?? prefixForKind(documentKind);
+          const year = currentYearInTokyo();
+          documentNo = formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
+        } else {
+          documentNo = await this.assignNumber(client, documentKind);
+        }
         const inserted = await client.query(
           `INSERT INTO documents
              (document_no, template_version_id, matter_id, agreement_id, status, manual_inputs, counterparty_doc_no)
            VALUES ($1, NULL, $2, $3, 'draft', $4::jsonb, $5)
            RETURNING id`,
           [documentNo, input.matterId ?? null, input.agreementId ?? null,
-           JSON.stringify({ title, documentKind, imported: true, reserved: true, reservedBy: actor }),
+           JSON.stringify({ title, documentKind, imported: true, reserved: true, reservedBy: actor,
+                            ...(templateKey ? { templateKey } : {}) }),
            String(input.counterpartyDocNo ?? "").trim() || null]);
         const id = Number((inserted.rows[0] as { id: number }).id);
         await this.linkConditions(client, id, conditionIds);
         await this.linkRequest(client, id, input.requestId, actor);
         await recordAudit(client, {
           actor, action: "document.reserve", targetType: "document", targetId: id,
-          detail: { documentNo, title, documentKind, conditionIds,
+          detail: { documentNo, title, documentKind, templateKey, conditionIds,
                     matterId: input.matterId ?? null, requestId: input.requestId ?? null }
         });
         return { id, documentNo, conditionIds };

@@ -190,3 +190,22 @@ test("取り込んだ文書の名前・種別を直す。ひな形の文書は�
   await assert.rejects(() => new DocumentImportService(db({ template_version_id: 3 }), new MemoryDriveStorage()).rename(9, { title: "x" }, "k"), /取り込んだ文書だけ/);
   await assert.rejects(() => new DocumentImportService(db({}), new MemoryDriveStorage()).rename(9, { title: " " }, "k"), /空にはできません/);
 });
+
+test("番号だけ取る（全ジャンル）：ひな形を選ぶと、そのひな形の番号の頭で発番し、種別はひな形の名前", async () => {
+  const database = new FakeDatabase((t) => {
+    if (t.includes("FROM document_templates WHERE template_key")) return [{ label: "個別利用許諾条件書V4", number_prefix: "ILT" }];
+    if (t.includes("RETURNING id")) return [{ id: 91 }];
+    if (t.includes("INTO document_sequences")) return [{ current_value: 5 }];
+    return undefined;
+  });
+  const r = await new DocumentImportService(database, new MemoryDriveStorage())
+    .reserve({ title: "原作 利用許諾（紙のみで締結）", documentKind: "", templateKey: "individual_license_terms_v4", conditionIds: [] }, "legal");
+  assert.match(r.documentNo, /^[A-Z-]*ILT[-0-9]+$/, r.documentNo);
+  const insert = database.find("INSERT INTO documents")!;
+  const inputs = JSON.parse(String(insert.params[3]));
+  assert.deepEqual([inputs.documentKind, inputs.templateKey, inputs.reserved], ["個別利用許諾条件書V4", "individual_license_terms_v4", true]);
+  await assert.rejects(new DocumentImportService(new FakeDatabase(), new MemoryDriveStorage())
+    .reserve({ title: "x", documentKind: "", templateKey: "nope", conditionIds: [] }, "legal"), /ひな形 nope が見つかりません/);
+  await assert.rejects(new DocumentImportService(new FakeDatabase(), new MemoryDriveStorage())
+    .reserve({ title: "x", documentKind: "", conditionIds: [] }, "legal"), /種別を選んでください/);
+});

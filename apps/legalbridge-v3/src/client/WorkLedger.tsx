@@ -6,6 +6,8 @@ import { GridRowEdit, type EditFocus } from "./GridRowEdit.js";
 import { EventEntryForm } from "./EventEntryForm.js";
 import { DriftMatrixDialog } from "./DriftMatrix.js";
 import { useMapLinks } from "./mapLinks.js";
+import { ContractBand } from "./ContractBand.js";
+import { AssignBar } from "./AssignBar.js";
 import { ConditionEntryForm, ENTRY_KINDS, type ConditionEntryKind } from "./ConditionEntryForm.js";
 import {
   applyFilter, groupByParty, groupByWork, isStuck, unpaidPayments,
@@ -128,6 +130,8 @@ export function WorkLedger(
   const [filter, setFilter] = useState<Filter>("all");
   const [byParty, setByParty] = useState(workId !== null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  /** 契約のみの帯で選んだ行（"document:12" / "agreement:108"）。案件に入れるのに使う。 */
+  const [pickedContracts, setPickedContracts] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<{ conditionId: number; focus: EditFocus } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dups, setDups] = useState<DuplicateView | null>(null);
@@ -206,13 +210,44 @@ export function WorkLedger(
 
   if (error) return <div className="alert">{error}</div>;
   if (!all) return <div className="faint">読み込んでいます…</div>;
-  if (!all.length) {
-    if (forPartyId !== null) return <div className="faint">この取引先には、生きている条件明細がありません。</div>;
-    if (workId !== null) return <div className="faint">この作品には、生きている条件明細がありません。</div>;
-    return <div className="faint">この案件には条件明細がありません。一覧の「条件明細」で作るか、すでにある条件を繋いでください。</div>;
-  }
-  if (agreementFilter && !mine.length) {
-    return <div className="faint">{"only" in agreementFilter ? "この契約に紐づく条件明細は、まだありません。" : "どの契約にも紐づかない条件明細はありません。"}</div>;
+  const canWrite = isAdmin || Boolean(onOpenDeals);
+  // 契約のみの帯（条件の無い契約）。条件が 1 本も無い案件でも出す（契約だけ管理する案件がある）。
+  const bandScope = forPartyId !== null ? { partyId: forPartyId } : workId !== null ? { workId } : matterId !== null ? { matterId } : null;
+  const pickContract = (key: string, on: boolean) =>
+    setPickedContracts((prev) => { const n = new Set(prev); if (on) n.add(key); else n.delete(key); return n; });
+  const afterAssign = (message: string) => { setPicked(new Set()); setPickedContracts(new Set()); reload(message); };
+  const band = (cols: number) => bandScope && (
+    <ContractBand scope={bandScope} filter={agreementFilter} reloadKey={(reloadKey ?? 0) + version} cols={cols}
+                  onOpenDocument={onOpenDocument} canWrite={canWrite} picked={pickedContracts} onPick={pickContract} />
+  );
+  const assign = (conditionIds: number[]) => {
+    if (!canWrite || (conditionIds.length === 0 && pickedContracts.size === 0)) return null;
+    const parties = new Set((all ?? []).filter((r) => conditionIds.includes(r.conditionId)).map((r) => r.counterparty?.id ?? null));
+    const onlyParty = parties.size === 1 ? [...parties][0] ?? null : null;
+    return <AssignBar conditionIds={conditionIds} contractKeys={[...pickedContracts]} workId={workId}
+                      counterpartyId={onlyParty} onDone={afterAssign} />;
+  };
+
+  const emptyMessage = !all.length
+    ? (forPartyId !== null ? "この取引先には、生きている条件明細がありません。"
+      : workId !== null ? "この作品には、生きている条件明細がありません。"
+      : "この案件には条件明細がありません。一覧の「条件明細」で作るか、すでにある条件を繋いでください。")
+    : agreementFilter && !mine.length
+    ? ("only" in agreementFilter ? "この契約に紐づく条件明細は、まだありません。" : "どの契約にも紐づかない条件明細はありません。")
+    : null;
+  if (emptyMessage) {
+    return (
+      <div className="stack" style={{ gap: 10 }}>
+        <div className="faint">{emptyMessage}</div>
+        {notice && <div className="note ok">{notice}</div>}
+        {assign([])}
+        {bandScope && (
+          <div className="tablewrap grid-wrap">
+            <table className="ledger-table"><tbody>{band(byParty ? 7 : 8)}</tbody></table>
+          </div>
+        )}
+      </div>
+    );
   }
 
   const pickedRows = rows.filter((r) => picked.has(r.conditionId));
@@ -285,7 +320,6 @@ export function WorkLedger(
       </>
     );
   };
-  const canWrite = isAdmin || Boolean(onOpenDeals);
   /** 実績を入れられる行（払い切りでない）。 */
   const takesEvent = (r: GridRow) => !r.settlement.done;
   /** その行の次の回（予定があってまだ実績の無い回）。 */
@@ -557,16 +591,20 @@ export function WorkLedger(
             {isAdmin && <button className="btn btn-sm danger" disabled={!pickedRows.some((r) => unpaidPayments(r).length)} onClick={() => setBulk("cancel")}>
               未払いの支払を取り消す（{pickedRows.reduce((n, r) => n + unpaidPayments(r).length, 0)}）</button>}
             <button className="btn btn-sm" onClick={() => setPicked(new Set())}>選び直す</button>
+            {/* 作品・案件に入れる：選んだ帯に入れて、貼り付いたまま一緒に動かす。 */}
+            {assign(pickedRows.map((r) => r.conditionId))}
           </div>
         )}
 
         {notice && <div className="note ok">{notice}</div>}
+        {pickedRows.length === 0 && assign([])}
 
         <div className="tablewrap grid-wrap">
           <table className="ledger-table">
             <tbody>
               {body}
               {!rows.length && <tr><td colSpan={cols} className="faint">{FILTER_LABEL[filter]} に当てはまる条件はありません。</td></tr>}
+              {band(cols)}
             </tbody>
           </table>
         </div>

@@ -29,6 +29,8 @@ import { LeftoverService } from "./ops/leftovers-service.js";
 import { TidyService } from "./ops/tidy-service.js";
 import { HomeStationsService } from "./ops/home-stations.js";
 import { DeskService, type DeskRoot } from "./desk/desk-service.js";
+import { ContractBandService } from "./matters/contract-band.js";
+import { ConditionWorkService } from "./conditions/work-assign.js";
 import { tally } from "./ops/leftovers.js";
 import { PartyWriteService } from "./parties/write-service.js";
 import { PartyMergeService } from "./parties/merge-service.js";
@@ -883,6 +885,27 @@ export function createRoutes(database: Transactable) {
   router.get("/works/:id/grid", asyncRoute(async (req, res) => {
     res.json({ rows: await new MatterGridService(database).rowsForWork(Number(req.params.id)) });
   }));
+
+  // マップの「契約のみ（条件なし）」の帯（matters/contract-band.ts）。案件・取引先・作品の切り口で同じ形。
+  const contractBand = new ContractBandService(database);
+  router.get("/matters/:id/contracts", asyncRoute(async (req, res) => {
+    res.json({ rows: await contractBand.rows({ matterId: Number(req.params.id) }) });
+  }));
+  router.get("/parties/:id/contracts", asyncRoute(async (req, res) => {
+    res.json({ rows: await contractBand.rows({ partyId: Number(req.params.id) }) });
+  }));
+  router.get("/works/:id/contracts", asyncRoute(async (req, res) => {
+    res.json({ rows: await contractBand.rows({ workId: Number(req.params.id) }) });
+  }));
+  // 選んだ条件を作品に入れる（途中から作品を立ててカテゴライズする。conditions/work-assign.ts）。
+  router.post("/conditions/assign-work", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const b = z.object({
+        conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        workId: z.coerce.number().int().positive()
+      }).parse(req.body ?? {});
+      res.json(await new ConditionWorkService(database).assign(b.conditionIds, b.workId, actor(res)));
+    }));
 
   // 作業台の「取引先」の切り口：取引先 1 社の条件を案件をまたいで 1 行ずつ（列は案件の工程表と同じ）。
   router.get("/parties/:id/grid", asyncRoute(async (req, res) => {
@@ -4008,7 +4031,9 @@ export function createRoutes(database: Transactable) {
    */
   const reserveSchema = z.object({
     title: z.string().trim().min(1).max(300),
-    documentKind: z.string().trim().min(1).max(120),
+    // 取り込みの種別か、ひな形（発番のみ。全ジャンル）のどちらか。
+    documentKind: z.string().trim().max(120).optional(),
+    templateKey: z.string().trim().max(80).nullable().optional(),
     conditionIds: z.array(z.coerce.number().int().positive()).max(50).optional(),
     matterId: z.coerce.number().int().positive().nullable().optional(),
     agreementId: z.coerce.number().int().positive().nullable().optional(),
@@ -4019,7 +4044,7 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       const b = reserveSchema.parse(req.body ?? {});
       res.status(201).json(await documentImports.reserve({
-        title: b.title, documentKind: b.documentKind, conditionIds: b.conditionIds ?? [],
+        title: b.title, documentKind: b.documentKind ?? "", templateKey: b.templateKey ?? null, conditionIds: b.conditionIds ?? [],
         matterId: b.matterId ?? null, agreementId: b.agreementId ?? null, requestId: b.requestId ?? null,
         counterpartyDocNo: b.counterpartyDocNo ?? null
       }, actor(res)));
@@ -4053,6 +4078,17 @@ export function createRoutes(database: Transactable) {
       }, actor(res)));
     }));
 
+  // 番号だけ取るときに選べる種類（全ジャンル）：取り込みの種別と、使っているひな形。
+  router.get("/documents/reserve-kinds", asyncRoute(async (_req, res) => {
+    const t = await database.query(
+      `SELECT template_key, label, number_prefix FROM document_templates
+        WHERE is_active AND current_version_id IS NOT NULL ORDER BY label, template_key`);
+    res.json({
+      kinds: IMPORT_KINDS,
+      templates: (t.rows as Array<Record<string, any>>).map((x) => ({
+        key: String(x.template_key), label: String(x.label ?? x.template_key), prefix: x.number_prefix ?? null }))
+    });
+  }));
   // 取り込みが使える状態か。設定されていないボタンを画面に出さないため。
   // 種別と接頭辞もここで返す（画面と採番で同じ表を使う）。
   router.get("/documents/import-status", (_req, res) => {
