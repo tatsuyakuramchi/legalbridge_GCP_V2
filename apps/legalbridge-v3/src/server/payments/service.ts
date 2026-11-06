@@ -716,7 +716,18 @@ export class PaymentService {
   }
 
   /** 支払の記録（実際に振り込んだ日を入れる）。 */
-  async markPaid(paymentId: number, paidOn: string, actor: string) {
+  /**
+   * 支払済みにする。paidOn は実際に払った日（銀行の明細の日付）で、押した日ではない。
+   * 先の日付は払っていないので受け付けない（東京の今日まで）。
+   */
+  async markPaid(paymentId: number, paidOn: string, actor: string, now = new Date()) {
+    const todayTokyo = new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(paidOn ?? ""))) {
+      throw new DomainError("VALIDATION", "支払日（実際に払った日）を入れてください");
+    }
+    if (paidOn > todayTokyo) {
+      throw new DomainError("VALIDATION", `支払日 ${paidOn} は先の日付です。実際に払った日を入れてください（今日は ${todayTokyo}）`);
+    }
     try {
       return await inTransaction(this.database, async (client) => {
         const updated = await client.query(
