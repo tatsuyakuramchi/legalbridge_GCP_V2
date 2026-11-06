@@ -1224,7 +1224,7 @@ function OrderLinkPanel(
           </div>
           {importing ? (
             ids.length
-              ? <DocumentImport key={ids.join(",")} conditionIds={ids} defaultKind="発注書" initialMode="import"
+              ? <DocumentImport key={ids.join(",")} conditionIds={ids} defaultKind="発注書" initialMode="import" offerSign={false}
                   onDone={() => undefined} onRegistered={(id) => void link(id)} />
               : <span className="faint">取り込む前に ③ で条件明細を選んでください（取り込むと、そのまま紐づけます）</span>
           ) : (

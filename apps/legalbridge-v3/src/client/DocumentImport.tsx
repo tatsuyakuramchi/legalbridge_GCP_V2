@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { SendMany } from "./SendMany.js";
 
 /**
  * システムの外で作られた文書の登録（取込文書）。
@@ -45,6 +46,58 @@ function useImportStatus(open: boolean) {
   return { configured, kinds };
 }
 
+/**
+ * 登録したらそのままクラウドサインで送れるか。送れるのは管理者だけで、連携が止まっていれば出さない。
+ * 開いたときに一度だけ聞く（/integrations と /me）。
+ */
+type Channel = { channel: string; mode: "off" | "dry_run" | "live"; configured: boolean };
+function useSignReady(open: boolean) {
+  const [state, setState] = useState<{ channels: Channel[]; isAdmin: boolean } | null>(null);
+  useEffect(() => {
+    if (!open || state !== null) return;
+    let live = true;
+    Promise.all([
+      api.get<{ channels: Channel[] }>("/integrations").then((r) => r.channels).catch(() => [] as Channel[]),
+      api.get<{ user?: { role: string } }>("/me").then((r) => r.user === undefined || r.user.role === "admin").catch(() => false)
+    ]).then(([channels, isAdmin]) => { if (live) setState({ channels, isAdmin }); });
+    return () => { live = false; };
+  }, [open]);
+  const cloudsign = state?.channels.find((c) => c.channel === "cloudsign");
+  return {
+    channels: state?.channels ?? [],
+    isAdmin: state?.isAdmin ?? false,
+    canSign: Boolean(state?.isAdmin && cloudsign && cloudsign.mode !== "off")
+  };
+}
+
+/** 送る画面に渡す文書。相手先は文書から引く（契約・条件・案件の相手先）。引けなければ署名者は手で入れる。 */
+type SignDoc = { id: number; documentNo: string | null; counterparty: string | null; imported?: boolean; storageUrl?: string | null };
+async function signDocOf(id: number, documentNo: string | null): Promise<SignDoc> {
+  try {
+    const d = await api.get<SignDoc>(`/documents/${id}`);
+    return { id, documentNo: d.documentNo ?? documentNo, counterparty: d.counterparty ?? null, imported: true, storageUrl: d.storageUrl ?? null };
+  } catch { return { id, documentNo, counterparty: null, imported: true }; }
+}
+
+/** 登録の直後に開くクラウドサインの送り先（SendMany をクラウドサインで開く）。 */
+function SignNext({ doc, channels, onFinish }: { doc: SignDoc; channels: Channel[]; onFinish: () => void }) {
+  return (
+    <SendMany key={doc.id} title={`${doc.documentNo ?? `#${doc.id}`} をクラウドサインで送る`}
+      documents={[doc]} channels={channels} isAdmin initialWay="cloudsign" prefillSigners
+      onDone={onFinish} onClose={onFinish} />
+  );
+}
+
+/** 「登録したらそのままクラウドサインで送る」のチェック。 */
+function SignAfterField({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="row" style={{ gap: 6 }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      登録したら、そのままクラウドサインで送る（署名者を入れる画面に進みます）
+    </label>
+  );
+}
+
 function CopyNo({ no }: { no: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -59,7 +112,7 @@ function CopyNo({ no }: { no: string }) {
 }
 
 export function DocumentImport(
-  { conditionId, conditionIds, defaultKind, initialMode, matterId, agreementId, requestId, onDone, onOpenDocument, onRegistered }: {
+  { conditionId, conditionIds, defaultKind, initialMode, matterId, agreementId, requestId, onDone, onOpenDocument, onRegistered, offerSign = true }: {
     conditionId?: number; matterId?: number;
     /** 複数の条件に繋ぐ（取引先の束から、1枚の発注書を何本かの条件に）。 */
     conditionIds?: number[];
@@ -75,6 +128,12 @@ export function DocumentImport(
     onOpenDocument?: (id: number) => void;
     /** ファイル付きで登録できた直後に呼ぶ（そのまま「送る」へ進めたいとき）。 */
     onRegistered?: (id: number) => void;
+    /**
+     * 登録したらそのままクラウドサインへ進めるチェックを出す（既定は出す）。
+     * 進めたときは、送る画面を閉じてから onDone・onRegistered を呼ぶ（先に呼ぶと、呼んだ側が
+     * この欄を閉じて送る画面ごと消えるため）。
+     */
+    offerSign?: boolean;
   }
 ) {
   const [mode, setMode] = useState<"closed" | "import" | "reserve">(initialMode ?? "closed");
@@ -93,6 +152,12 @@ export function DocumentImport(
   const [inbound, setInbound] = useState<boolean | null>(null);
   const inboundOn = inbound ?? INBOUND_KIND.test(v.documentKind);
   const picker = useRef<HTMLInputElement>(null);
+  const sign = useSignReady(open && offerSign);
+  /** そのままクラウドサインで送るか。触るまでは、当社が出す文書なら送る（受け取った文書は送らない）。 */
+  const [signAfter, setSignAfter] = useState<boolean | null>(null);
+  const signOn = offerSign && sign.canSign && (signAfter ?? !inboundOn);
+  /** 登録した直後に開いている送る画面。 */
+  const [signing, setSigning] = useState<SignDoc | null>(null);
 
   function pick(next: File | null) {
     setFile(next);
@@ -122,10 +187,13 @@ export function DocumentImport(
 
       const r = await api.postRaw<{ id: number; documentNo: string }>(
         `/documents/import?${params}`, file, file.type || "application/octet-stream");
+      const next = signOn ? await signDocOf(r.id, r.documentNo) : null;
       setDone(r.documentNo); setReserved(null);
       setMode("closed"); setFile(null);
       setV({ ...v, title: "", note: "", counterpartyDocNo: "" });
+      setSignAfter(null);
       if (picker.current) picker.current.value = "";
+      if (next) { setSigning(next); return; }
       onDone();
       onRegistered?.(r.id);
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
@@ -158,8 +226,12 @@ export function DocumentImport(
         {done && (
           <div className="note ok">
             文書 <span className="code">{done}</span> を登録しました。
-            ファイルは「文書」の画面から開けます。
+            {signing ? "続けてクラウドサインの署名者を入れてください（送らないなら「やめる」）。" : "ファイルは「文書」の画面から開けます。"}
           </div>
+        )}
+        {signing && (
+          <SignNext doc={signing} channels={sign.channels}
+                    onFinish={() => { const id = signing.id; setSigning(null); onDone(); onRegistered?.(id); }} />
         )}
         {reserved && (
           <div className="note ok stack" style={{ gap: 4 }}>
@@ -280,12 +352,13 @@ export function DocumentImport(
           <small className="faint">当社が出した文書（発注書・検収書・計算書など）なら外す。外すと支払文書で送付・受領を追います</small>
         </label>
       </div>
+      {offerSign && sign.canSign && <SignAfterField checked={signOn} onChange={setSignAfter} />}
       {error && <div className="alert">{error}</div>}
       <div className="row">
         <button className="btn primary btn-sm"
                 disabled={busy || !file || !v.title.trim() || configured === false}
                 onClick={() => void save()}>
-          {busy ? "登録中…" : "登録する"}
+          {busy ? "登録中…" : signOn ? "登録して、クラウドサインへ進む" : "登録する"}
         </button>
         <button className="btn btn-sm" onClick={close}>やめる</button>
         <span className="faint">
@@ -310,6 +383,10 @@ export function DocumentAttachFile(
   const [file, setFile] = useState<File | null>(null);
   const [receivedOn, setReceivedOn] = useState(today());
   const [note, setNote] = useState("");
+  const sign = useSignReady(open);
+  const [signAfter, setSignAfter] = useState(true);
+  const signOn = sign.canSign && signAfter;
+  const [signing, setSigning] = useState<SignDoc | null>(null);
 
   async function attach() {
     if (!file) return;
@@ -319,12 +396,23 @@ export function DocumentAttachFile(
       if (note.trim()) params.set("note", note.trim());
       await api.postRaw(`/documents/${documentId}/import-file?${params}`, file,
         file.type || "application/octet-stream");
+      // 送る画面を閉じてから onDone（文書の画面を読み直すと、この欄ごと消えるため）。
+      const next = signOn ? await signDocOf(documentId, documentNo) : null;
       setOpen(false); setFile(null);
+      if (next) { setSigning(next); return; }
       onDone();
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); }
   }
 
+  if (signing) {
+    return (
+      <div className="stack" style={{ gap: 6, flex: "1 1 100%" }}>
+        <div className="note ok">ファイルを付けて決定済みにしました。続けてクラウドサインの署名者を入れてください（送らないなら「やめる」）。</div>
+        <SignNext doc={signing} channels={sign.channels} onFinish={() => { setSigning(null); onDone(); }} />
+      </div>
+    );
+  }
   if (!open) {
     return <button className="btn primary" onClick={() => setOpen(true)}>ファイルを付ける</button>;
   }
@@ -345,10 +433,11 @@ export function DocumentAttachFile(
         <label className="field"><span>備考</span>
           <input value={note} onChange={(e) => setNote(e.target.value)} /></label>
       </div>
+      {sign.canSign && <SignAfterField checked={signOn} onChange={setSignAfter} />}
       {error && <div className="alert">{error}</div>}
       <div className="row">
         <button className="btn primary btn-sm" disabled={busy || !file || configured === false}
-                onClick={() => void attach()}>{busy ? "登録中…" : "付けて決定済みにする"}</button>
+                onClick={() => void attach()}>{busy ? "登録中…" : signOn ? "付けて決定済みにし、クラウドサインへ進む" : "付けて決定済みにする"}</button>
         <button className="btn btn-sm" onClick={() => { setOpen(false); setError(null); }}>やめる</button>
       </div>
     </div>
