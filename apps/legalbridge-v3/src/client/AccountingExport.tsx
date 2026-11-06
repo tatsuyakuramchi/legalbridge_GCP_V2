@@ -191,6 +191,13 @@ export function AccountingExport() {
         </div>
       </div>
 
+      {/*
+        源泉が（税込＋立替金）で立っていた未払いの支払を直す（2026-11 経理の指摘）。直したら帳票を読み直す。
+        束が何十もあると一番下では見つからないので、束の上に置く。
+      */}
+      <WithholdingFix defaultDueOn={basis === "due" && from === to ? from : undefined} onDone={load}
+        gapCount={result ? result.groups.reduce((n, g) => n + g.rows.filter((r) => r.flags.includes("withholdingGap")).length, 0) : 0} />
+
       {result?.groups.map((g) => (
         <div key={g.key} className="panel">
           <div className="panel-hd">
@@ -280,8 +287,6 @@ export function AccountingExport() {
         </div>
       ))}
 
-      {/* 源泉が（税込＋立替金）で立っていた未払いの支払を直す（2026-11 経理の指摘）。直したら帳票を読み直す。 */}
-      <WithholdingFix defaultDueOn={basis === "due" && from === to ? from : undefined} onDone={load} />
 
       {result && !result.groups.length && (
         <div className="panel"><div className="panel-bd faint">

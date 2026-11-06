@@ -14,7 +14,11 @@ interface Skip { paymentId: number; paymentNo: string | null; reason: string }
 
 const yen = (n: number) => `¥${n.toLocaleString("ja-JP")}`;
 
-export function WithholdingFix({ defaultDueOn, onDone }: { defaultDueOn?: string; onDone?: () => void }) {
+export function WithholdingFix({ defaultDueOn, onDone, gapCount = 0 }: {
+  defaultDueOn?: string; onDone?: () => void;
+  /** 帳票の中で「源泉が計算値と不一致」の行の数。あれば見出しに出して気づけるようにする。 */
+  gapCount?: number;
+}) {
   const [dueOn, setDueOn] = useState(defaultDueOn ?? "");
   const [preview, setPreview] = useState<{ changed: Change[]; skipped: Skip[] } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,6 +41,7 @@ export function WithholdingFix({ defaultDueOn, onDone }: { defaultDueOn?: string
       <div className="panel-hd">
         <h2>源泉の計算し直し</h2>
         <span className="faint">未払いの支払の源泉を、立替金（非課税・不課税）を除いて計算し直します</span>
+        {gapCount > 0 && <span className="tag out">源泉が計算値と違う行 {gapCount} 件</span>}
       </div>
       <div className="panel-bd stack" style={{ gap: 8 }}>
         <div className="row">
