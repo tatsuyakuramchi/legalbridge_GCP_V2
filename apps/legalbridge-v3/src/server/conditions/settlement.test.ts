@@ -52,3 +52,15 @@ test("行から組む：pg の bigint 文字列・Date を受ける", () => {
   assert.equal(closed.closedReason, "V2 で支払済み");
   assert.equal(closed.closedAt, "2026-09-01T00:00:00.000Z");
 });
+
+test("過去分（archived）は完了扱いと別の状態。どちらも畳む（done）。列が無い DB の行は完了扱いのまま", () => {
+  const base = { pricingModel: "flat", flatAmount: 100000, eventCount: 0, plannedAmount: 0, paidAmount: 0, closedAt: "2026-11-01T00:00:00Z" };
+  assert.equal(settlementState({ ...base, closedKind: "archived" }), "archived");
+  assert.equal(settlementState(base), "closed");
+  assert.equal(isSettled("archived"), true);
+  const row = { pricing_model: "flat", flat_amount: 100000, event_count: 0, planned_amount: 0, paid_amount: 0,
+                closed_at: "2026-11-01T00:00:00Z", closed_reason: "過去分", closed_kind: "archived" };
+  const s = settlementOf(row);
+  assert.deepEqual([s.state, s.done, s.closedKind], ["archived", true, "archived"]);
+  assert.equal(settlementOf({ ...row, closed_kind: undefined }).state, "closed", "199 前の DB（列なし）は完了扱い");
+});

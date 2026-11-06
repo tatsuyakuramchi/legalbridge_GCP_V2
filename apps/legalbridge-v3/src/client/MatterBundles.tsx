@@ -151,7 +151,7 @@ function cellsOf(
         open: h.onOpenPayments ?? null };
     }
   } else if (done) {
-    payment = { state: "ok", label: "完了扱い", sub: row.settlement.closedReason ?? null };
+    payment = { state: "ok", label: row.settlement.state === "archived" ? "過去分（追跡なし）" : "完了扱い", sub: row.settlement.closedReason ?? null };
   } else if (row.settlementDoc && row.settlementDoc.phase !== "draft") {
     payment = now({ state: "now", label: "未作成",
       action: h.onOpenPayments ? { label: "支払を起こす", run: h.onOpenPayments } : null });

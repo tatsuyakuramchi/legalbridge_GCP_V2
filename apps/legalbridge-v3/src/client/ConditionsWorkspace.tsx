@@ -461,8 +461,9 @@ export function ConditionsWorkspace(
                     <span className="row" style={{ marginLeft: "auto" }}>
                       {/* 支払済みは事実（割当）から出る。V1・V2 で払い終えて V3 に支払の
                           記録が無い条件だけ、理由つきで閉じる。 */}
-                      {detail.settlement?.state === "closed" ? (
-                        <button className="btn btn-sm" onClick={() => void reopenCondition()}>完了扱いを取り消す</button>
+                      {detail.settlement?.state === "closed" || detail.settlement?.state === "archived" ? (
+                        <button className="btn btn-sm" onClick={() => void reopenCondition()}>
+                          {detail.settlement.state === "archived" ? "過去分の完了を取り消す" : "完了扱いを取り消す"}</button>
                       ) : !detail.settlement?.done && (
                         <button className="btn btn-sm" title="V2 で支払済みなど、V3 に支払の記録が無いものを理由つきで閉じる"
                                 onClick={() => void closeCondition()}>完了扱いにする</button>

@@ -1831,13 +1831,69 @@ export class ConditionWriteService {
     } catch (error) { throw translate(error); }
   }
 
-  /** 完了扱いを取り消す。閉じた理由は監査に残る。 */
+  /** 閉じた種類の列（closed_kind。199）があるか。無い DB でも完了扱いと取り消しは動かす。 */
+  private closedKindReady: boolean | null = null;
+  private async hasClosedKind(client: Queryable): Promise<boolean> {
+    if (this.closedKindReady !== null) return this.closedKindReady;
+    const r = await client.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'conditions' AND column_name = 'closed_kind'`);
+    this.closedKindReady = r.rows.length > 0;
+    return this.closedKindReady;
+  }
+
+  /**
+   * 過去分として完了（マップの「過去分として完了」。199）。
+   *
+   * 過去の検収・支払を V3 で追いきれない条件を、まとめて閉じる。完了扱い（払い終えたことを確かめて
+   * 閉じる）とは種類を分ける（closed_kind = 'archived'）。閉じた条件は一覧・候補・止まりから畳まれる。
+   * 無効・改訂済み・もう閉じている条件は飛ばして、理由を返す。取り消しは reopen（完了扱いと同じ口）。
+   */
+  async archive(ids: number[], reason: string, actor: string): Promise<{ archived: number[]; skipped: Array<{ conditionId: number; reason: string }> }> {
+    const why = String(reason ?? "").trim() || "過去分のため検収・支払を追跡しない";
+    const list = [...new Set(ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!list.length) throw new DomainError("VALIDATION", "条件を選んでください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        if (!(await this.hasClosedKind(client))) {
+          throw new DomainError("VALIDATION", "過去分として閉じる列がまだありません。infra/v3/199_condition_archived.sql を先に流してください");
+        }
+        const rows = (await client.query(
+          `SELECT id, condition_no, status, closed_at FROM conditions WHERE id = ANY($1::bigint[]) FOR UPDATE`, [list])).rows as Array<Record<string, any>>;
+        const found = new Map(rows.map((r) => [Number(r.id), r]));
+        const archived: number[] = [];
+        const skipped: Array<{ conditionId: number; reason: string }> = [];
+        for (const id of list) {
+          const r = found.get(id);
+          if (!r) { skipped.push({ conditionId: id, reason: "条件が見つかりません" }); continue; }
+          if (r.status === "void" || r.status === "superseded") { skipped.push({ conditionId: id, reason: "無効・改訂済みの条件" }); continue; }
+          if (r.closed_at) { skipped.push({ conditionId: id, reason: "もう閉じています" }); continue; }
+          archived.push(id);
+        }
+        if (archived.length) {
+          await client.query(
+            `UPDATE conditions SET closed_at = now(), closed_reason = $2, closed_by = $3, closed_kind = 'archived', updated_at = now()
+              WHERE id = ANY($1::bigint[]) AND closed_at IS NULL`, [archived, why, actor]);
+          for (const id of archived) {
+            await recordAudit(client, {
+              actor, action: "condition.archive", targetType: "condition", targetId: id,
+              detail: { reason: why, conditionNo: found.get(id)?.condition_no ?? null }
+            });
+          }
+        }
+        return { archived, skipped };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 完了扱い・過去分の完了を取り消す。閉じた理由は監査に残る。 */
   async reopen(id: number, actor: string): Promise<WriteResult> {
     try {
       return await inTransaction(this.database, async (client) => {
         const before = await this.repository.requireExisting(client, id);
+        const kind = (await this.hasClosedKind(client)) ? ", closed_kind = NULL" : "";
         const r = await client.query(
-          `UPDATE conditions SET closed_at = NULL, closed_reason = NULL, closed_by = NULL, updated_at = now()
+          `UPDATE conditions SET closed_at = NULL, closed_reason = NULL, closed_by = NULL${kind}, updated_at = now()
             WHERE id = $1 AND closed_at IS NOT NULL RETURNING id`, [id]);
         if (!r.rows[0]) throw new DomainError("CONFLICT", "完了扱いになっていません");
         await recordAudit(client, {
