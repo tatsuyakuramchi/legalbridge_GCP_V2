@@ -630,3 +630,69 @@ test("実績から支払を立てる（検収書はまだ無くてよい）。�
   assert.equal(fixed.dueOn, "2026-11-30");
   await assert.rejects(() => new PaymentService(inspectionDb()).createFromEvents([], "k"), /実績を選んで/);
 });
+
+// ---- 立替金（非課税・不課税）は源泉の対象にしない（2026-11 経理からの指摘） ----
+
+const withExpenseDb = () => new FakeDatabase((text) => {
+  const numbered = numbering(text);
+  if (numbered) return numbered;
+  if (text.includes("FROM condition_events e")) {
+    const base = { occurred_on: "2026-10-05", inspected_on: "2026-10-06", direction: "in", currency: "JPY",
+                   counterparty_id: 2, payment_terms: null, party_kind: "individual", withholding: true, schedule_pay_on: null };
+    return [
+      { ...base, event_id: 700, amount: 10000, deliverable: "審判業務", condition_id: 5, tax_category: "taxable" },
+      { ...base, event_id: 701, amount: 500, deliverable: "交通費", condition_id: 6, tax_category: "exempt" }
+    ];
+  }
+  if (text.includes("JOIN payment_allocations a ON a.payment_id = p.id")) return [];
+  if (text.includes("INSERT INTO payments")) return [{ id: 902, payment_no: "PAY-2026-00008" }];
+  if (text.includes("UPDATE payments")) return [{ id: 902, due_on: "2026-11-20", basis_received_on: "2026-10-06" }];
+  return undefined;
+});
+
+test("立替金は源泉の対象にしない：源泉＝（報酬＋消費税）× 10.21%。立替金は振込額にだけ足す", async () => {
+  const db = withExpenseDb();
+  const made = await new PaymentService(db).createFromEvents([700, 701], "k") as any;
+  // 報酬 10,000 ＋ 消費税 1,000 ＝ 11,000 → 1,123。立替金 500 を含めると 1,174 になっていた。
+  assert.equal(made.withholding, Math.floor(11000 * 0.1021));
+  const insert = db.find("INSERT INTO payments")!;
+  assert.ok(insert.params.includes(Math.floor(11000 * 0.1021)), "保存する源泉も立替金を除いた額");
+  assert.ok(!insert.params.includes(Math.floor(11500 * 0.1021)));
+});
+
+const recomputeDb = (rows: Array<Record<string, unknown>>) => new FakeDatabase((text) => {
+  if (text.includes("FROM payments p JOIN parties pa")) return rows;
+  return undefined;
+});
+const unpaid = (over: Record<string, unknown>) => ({
+  id: 900, payment_no: "PAY-1", amount: 12334, tax_amount: 1182, due_on: "2026-11-20",
+  party_name: "鈴木 翔太", party_kind: "individual", withholding: true, residency: null,
+  treaty_rate_pct: null, treaty_docs_received_on: null, allocated: 12334, exempt: 334, ...over
+});
+
+test("未払いの支払の源泉を計算し直す：前の規則（立替金込み）の値だけ直し、手で直した値・割当が合わない支払は触らない", async () => {
+  // 報酬 12,000（税込 13,182）＋ 立替金 334。前の規則：(12334+1182)×10.21% ＝ 1,379。正しくは (12000+1182)×10.21% ＝ 1,345。
+  const old = Math.floor((12334 + 1182) * 0.1021);
+  const right = Math.floor((12000 + 1182) * 0.1021);
+  const db = recomputeDb([
+    unpaid({ id: 900, withholding_amount: old }),
+    unpaid({ id: 901, payment_no: "PAY-2", withholding_amount: 1000 }),
+    unpaid({ id: 902, payment_no: "PAY-3", withholding_amount: old, allocated: 10000 }),
+    unpaid({ id: 903, payment_no: "PAY-4", withholding_amount: Math.floor(13182 * 0.1021), exempt: 0, amount: 12000, allocated: 12000 })
+  ]);
+  const dry = await new PaymentService(db).recomputeWithholding({ dueOn: "2026-11-20" }, "k", true);
+  assert.deepEqual(dry.changed.map((c) => [c.paymentId, c.before, c.after, c.reimbursement]), [[900, old, right, 334]]);
+  assert.deepEqual(dry.skipped.map((s) => [s.paymentId, s.reason]), [
+    [901, "源泉が手で直されている（計算し直さない）"],
+    [902, "割当が支払額と合わない（内訳が分からない）"]
+  ]);
+  assert.equal(db.all("UPDATE payments").length, 0, "dryRun は書かない");
+  const q = db.find("FROM payments p JOIN parties pa")!;
+  assert.ok(q.text.includes("p.status IN ('planned', 'approved')"), "支払済み・取り消しは触らない");
+  assert.deepEqual(q.params, ["2026-11-20", null]);
+
+  const run = await new PaymentService(db).recomputeWithholding({ dueOn: "2026-11-20" }, "k");
+  assert.equal(run.changed.length, 1);
+  assert.deepEqual(db.find("UPDATE payments SET withholding_amount")!.params, [900, right]);
+  assert.equal(db.find("INSERT INTO audit_events")!.params[1], "payment.recompute_withholding");
+});

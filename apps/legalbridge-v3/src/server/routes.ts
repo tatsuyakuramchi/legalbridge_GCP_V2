@@ -2572,6 +2572,17 @@ export function createRoutes(database: Transactable) {
     note: z.string().trim().max(2000).nullable().optional()
   });
   // 実績から支払を立てる（検収書はまだ無くてよい。支払の期日が先に決まり、検収書はそれを印字する）。
+  // 未払いの支払の源泉を、立替金（非課税・不課税）を除く規則で計算し直す（payments/service.ts）。
+  // dryRun で直す予定だけ返す。支払済み・手で直した源泉・割当が合わない支払は触らない。
+  router.post("/payments/recompute-withholding", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const b = z.object({
+        dueOn: z.string().date().nullable().optional(),
+        paymentIds: z.array(z.coerce.number().int().positive()).max(2000).nullable().optional(),
+        dryRun: z.boolean().optional()
+      }).parse(req.body ?? {});
+      res.json(await payments.recomputeWithholding({ dueOn: b.dueOn ?? null, paymentIds: b.paymentIds ?? null }, actor(res), b.dryRun === true));
+    }));
   router.post("/payments/from-events", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
+import { WithholdingFix } from "./WithholdingFix.js";
 
 /**
  * 経理提出用の帳票。経理へ渡すのは V1 形式（種別 × 個人／法人ごとの xlsx と
@@ -278,6 +279,9 @@ export function AccountingExport() {
           </div>
         </div>
       ))}
+
+      {/* 源泉が（税込＋立替金）で立っていた未払いの支払を直す（2026-11 経理の指摘）。直したら帳票を読み直す。 */}
+      <WithholdingFix defaultDueOn={basis === "due" && from === to ? from : undefined} onDone={load} />
 
       {result && !result.groups.length && (
         <div className="panel"><div className="panel-bd faint">
