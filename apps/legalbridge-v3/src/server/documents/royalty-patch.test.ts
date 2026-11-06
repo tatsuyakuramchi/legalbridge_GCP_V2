@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  bundleEntriesFrom, bundleStatementPatch, multiStatementPatch, receiptAmountLabel,
+  bundleEntriesFrom, bundleStatementPatch, editionPatch, multiStatementPatch, receiptAmountLabel, withEdition,
   notesWithStages, payerSummary, receiptConversionLabel, receiptJpyBase, royaltyStatementPatch, singleStatementPatch, stageNotesOf
 } from "./royalty-patch.js";
 import { buildTemplateContext } from "./template-context.js";
@@ -335,4 +335,28 @@ test("前金・後金の組：製品（言語）が違えば別の組。並び�
   assert.equal(g[0].subtotalPayment, 50);
   assert.equal(g[1].methodLabel, "自社製造・他社販売（前金・受領価格）", "1 行だけの組は方式名をそのまま");
   assert.equal(p.linesTotalPaymentStr, "55");
+});
+
+test("版（第●版）は製品名の横に出す。同上・空・もう入っている名前には付けない", () => {
+  assert.equal(withEdition("トーネードスプラッシュ", "第02版"), "トーネードスプラッシュ　第02版");
+  assert.equal(withEdition("同上", "第02版"), "同上");
+  assert.equal(withEdition("トーネードスプラッシュ　第02版", "第02版"), "トーネードスプラッシュ　第02版");
+  assert.equal(withEdition("トーネードスプラッシュ", "  "), "トーネードスプラッシュ");
+  assert.deepEqual(editionPatch({ lineGroups: [] }, ""), {}, "版が空なら何も変えない");
+});
+
+test("計算書の明細（束ね）の製品名に版が付く。本文は版を印字しないので値の側で付ける", () => {
+  const line = (eventId: number, stage: string) => ({
+    conditionId: 9, eventId, contractTitle: "個別利用許諾条件書", contractNumber: "CT-2026-00008-S01",
+    conditionName: "トーネードスプラッシュ", methodLabel: `自社製造・自社販売（${stage}基準価格 × 個数）`,
+    salesJpy: 16032000, ratePct: 5, paymentJpy: 801600, basisNote: "" });
+  const c = buildTemplateContext("royalty_statement", {}, {
+    statementMode: "bundle", rs_bundle_lines: [line(1, ""), line(2, "")], edition: "第02版"
+  });
+  const groups = c.lineGroups as Array<Record<string, any>>;
+  assert.equal(groups[0].lines[0].productName, "トーネードスプラッシュ　第02版");
+  assert.equal(groups[0].lines[1].productName, "同上");
+  const plain = buildTemplateContext("royalty_statement", {}, {
+    statementMode: "bundle", rs_bundle_lines: [line(1, "")] });
+  assert.equal((plain.lineGroups as Array<Record<string, any>>)[0].lines[0].productName, "トーネードスプラッシュ", "版が無ければ今までどおり");
 });
