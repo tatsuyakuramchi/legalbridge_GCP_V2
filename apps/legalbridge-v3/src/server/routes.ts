@@ -1219,16 +1219,27 @@ export function createRoutes(database: Transactable) {
       remarks: z.string().trim().max(1000).nullable().optional()
     })).max(100).default([])
   });
+  const settlementDraft = async (plan: Awaited<ReturnType<typeof orderSettlement.plan>>, body: unknown, who: string) => {
+    const draft = draftInputFromOrder(plan, orderDraftSchema.parse(body ?? {}));
+    const made = await issues.createDraft({
+      templateKey: draft.templateKey, conditionIds: draft.conditionIds,
+      matterId: draft.matterId, agreementId: draft.agreementId, manualInputs: draft.manualInputs
+    }, who);
+    return { id: made.id, templateKey: draft.templateKey, conditionIds: draft.conditionIds, eventIds: draft.eventIds };
+  };
   router.post("/orders/:id/settlement-draft", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const input = orderDraftSchema.parse(req.body ?? {});
-      const plan = await orderSettlement.plan(Number(req.params.id));
-      const draft = draftInputFromOrder(plan, input);
-      const made = await issues.createDraft({
-        templateKey: draft.templateKey, conditionIds: draft.conditionIds,
-        matterId: draft.matterId, agreementId: draft.agreementId, manualInputs: draft.manualInputs
-      }, actor(res));
-      res.status(201).json({ id: made.id, templateKey: draft.templateKey, conditionIds: draft.conditionIds, eventIds: draft.eventIds });
+      orderDraftSchema.parse(req.body ?? {});
+      res.status(201).json(await settlementDraft(await orderSettlement.plan(Number(req.params.id)), req.body, actor(res)));
+    }));
+  // 単体契約（業務委託契約書に条件が直接付いたもの）から検収書・役務提供完了通知書を作る。中身は発注書からと同じ。
+  router.get("/agreements/:id/settlement-plan", asyncRoute(async (req, res) => {
+    res.json(await orderSettlement.planForAgreement(Number(req.params.id)));
+  }));
+  router.post("/agreements/:id/settlement-draft", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      orderDraftSchema.parse(req.body ?? {});
+      res.status(201).json(await settlementDraft(await orderSettlement.planForAgreement(Number(req.params.id)), req.body, actor(res)));
     }));
 
   // 日次の点検。画面を開かないと気づけないものを決まった時刻に洗い出す。

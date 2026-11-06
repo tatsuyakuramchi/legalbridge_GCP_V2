@@ -3,9 +3,9 @@ import { api, ApiError, money } from "./api.js";
 import { SearchSelect, type SearchOption } from "./SearchSelect.js";
 
 /**
- * 発注書から検収書・役務提供完了通知書を作る（server/documents/from-order.ts）。
+ * 発注書（または単体契約）から検収書・役務提供完了通知書を作る（server/documents/from-order.ts）。
  *
- *   ① 発注書を選ぶ（番号・件名・相手先で探す）
+ *   ① 発注書か単体契約を選ぶ（番号・件名・相手先で探す）。単体契約は業務委託契約書に条件が直接付いたもの
  *   ② 載せる実績（納品・役務の記録）を選ぶ。載る条件は発注書に結んだ条件だけ
  *   ③ 実費・手数料ごとに「かかった（実額）／今回はかからなかった／かからなかった（以後も発生しない）」
  *      発注書に無かった実費（追加の交通費など）も足せる
@@ -26,7 +26,7 @@ interface OrderExtra {
 }
 interface Plan {
   order: { id: number; documentNo: string | null; title: string | null; templateKey: string; issuedOn: string | null;
-           counterparty: { id: number; name: string } | null };
+           counterparty: { id: number; name: string } | null; source?: "order" | "agreement" };
   templateKey: string; templateLabel: string;
   lines: OrderLine[]; extras: OrderExtra[]; warnings: string[];
 }
@@ -42,20 +42,33 @@ const TEMPLATES: Array<{ key: string; label: string }> = [
   { key: "intl_inspection_certificate", label: "検収書（海外）" }
 ];
 
+/** 起点。o:発注書の文書 id ／ a:単体契約の契約 id。 */
+export type SettlementSource = { kind: "order" | "agreement"; id: number };
+const refOf = (s: SettlementSource) => `${s.kind === "agreement" ? "a" : "o"}:${s.id}`;
+const parseRef = (v: string): SettlementSource | null => {
+  const m = /^([oa]):(\d+)$/.exec(v);
+  return m ? { kind: m[1] === "a" ? "agreement" : "order", id: Number(m[2]) } : null;
+};
+const base = (s: SettlementSource) => (s.kind === "agreement" ? `/agreements/${s.id}` : `/orders/${s.id}`);
+
 const searchOrders = async (q: string): Promise<SearchOption[]> => {
-  const r = await api.get<{ orders: Array<{ id: number; documentNo: string | null; title: string | null; counterparty: string | null; issuedOn: string | null }> }>(
+  const r = await api.get<{ orders: Array<{ id: number; documentNo: string | null; title: string | null; counterparty: string | null;
+                                            issuedOn: string | null; source?: "order" | "agreement" }> }>(
     `/orders/search?q=${encodeURIComponent(q)}`);
   return r.orders.map((o) => ({
-    value: String(o.id), label: `${o.documentNo ?? `#${o.id}`}　${o.title ?? ""}`,
-    hint: [o.counterparty, o.issuedOn].filter(Boolean).join("・") || null
+    value: refOf({ kind: o.source === "agreement" ? "agreement" : "order", id: o.id }),
+    label: `${o.source === "agreement" ? "単体契約 " : ""}${o.documentNo ?? `#${o.id}`}　${o.title ?? ""}`,
+    hint: [o.counterparty, o.issuedOn ? `${o.issuedOn}${o.source === "agreement" ? " 締結" : " 決定"}` : null].filter(Boolean).join("・") || null
   }));
 };
 
-export function OrderSettlement({ onOpenDraft, initialOrderId }: {
+export function OrderSettlement({ onOpenDraft, initialOrderId, initialSource }: {
   onOpenDraft: (id: number) => void;
   initialOrderId?: number | null;
+  /** 単体契約から来たとき（マップの「→ 検収書を作る」）。 */
+  initialSource?: SettlementSource | null;
 }) {
-  const [orderId, setOrderId] = useState(initialOrderId ? String(initialOrderId) : "");
+  const [orderId, setOrderId] = useState(initialSource ? refOf(initialSource) : initialOrderId ? refOf({ kind: "order", id: initialOrderId }) : "");
   const [orderLabel, setOrderLabel] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [templateKey, setTemplateKey] = useState("");
@@ -65,14 +78,15 @@ export function OrderSettlement({ onOpenDraft, initialOrderId }: {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!orderId) { setPlan(null); return; }
+    const src = parseRef(orderId);
+    if (!src) { setPlan(null); return; }
     let live = true;
     setError(null);
-    api.get<Plan>(`/orders/${orderId}/settlement-plan`).then((p) => {
+    api.get<Plan>(`${base(src)}/settlement-plan`).then((p) => {
       if (!live) return;
       setPlan(p);
       // 発注書の画面から来たときは欄に名前が無い（id だけ）。番号と件名を出す。
-      setOrderLabel((prev) => prev ?? `${p.order.documentNo ?? `#${p.order.id}`}　${p.order.title ?? ""}`);
+      setOrderLabel((prev) => prev ?? `${p.order.source === "agreement" ? "単体契約 " : ""}${p.order.documentNo ?? `#${p.order.id}`}　${p.order.title ?? ""}`);
       setTemplateKey(p.templateKey);
       // 選べる実績は既定で全部選ぶ（決済文書に結んでいないもの）。
       setEvents(new Set(p.lines.flatMap((l) => l.events.filter((e) => !e.documentNo).map((e) => e.id))));
@@ -106,7 +120,7 @@ export function OrderSettlement({ onOpenDraft, initialOrderId }: {
     if (!plan) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.post<{ id: number }>(`/orders/${plan.order.id}/settlement-draft`, {
+      const r = await api.post<{ id: number }>(`${base({ kind: plan.order.source === "agreement" ? "agreement" : "order", id: plan.order.id })}/settlement-draft`, {
         templateKey, eventIds: [...events],
         extras: extras.filter((x) => x.conditionId !== null || x.status === "incurred").map((x) => ({
           conditionId: x.conditionId, kind: x.kind, name: x.name, status: x.status,
@@ -122,14 +136,14 @@ export function OrderSettlement({ onOpenDraft, initialOrderId }: {
   return (
     <div className="panel">
       <div className="panel-hd">
-        <h2>発注書から検収書・役務提供完了通知書を作る</h2>
-        <span className="faint">載せる条件は発注書に結んだ条件だけ。実費・手数料は、かかった額だけを載せます</span>
+        <h2>発注書・単体契約から検収書・役務提供完了通知書を作る</h2>
+        <span className="faint">載せる条件は発注書（単体契約）に結んだ条件だけ。実費・手数料は、かかった額だけを載せます</span>
       </div>
       <div className="panel-bd stack">
         <label className="field" style={{ maxWidth: 560 }}>
-          <span>① 発注書</span>
+          <span>① 発注書・単体契約</span>
           <SearchSelect value={orderId} valueLabel={orderLabel} search={searchOrders}
-                        placeholder="発注番号・件名・相手先で探す"
+                        placeholder="発注番号・契約番号・件名・相手先で探す"
                         onChange={(v, o) => { setOrderId(v); setOrderLabel(o?.label ?? null); }} />
         </label>
 
@@ -140,7 +154,7 @@ export function OrderSettlement({ onOpenDraft, initialOrderId }: {
             <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
               <b>{plan.order.documentNo}</b>
               <span>{plan.order.title}</span>
-              <span className="faint">{plan.order.counterparty?.name}{plan.order.issuedOn ? `・${plan.order.issuedOn} 決定` : ""}</span>
+              <span className="faint">{plan.order.counterparty?.name}{plan.order.issuedOn ? `・${plan.order.issuedOn} ${plan.order.source === "agreement" ? "締結" : "決定"}` : ""}</span>
               <label className="field" style={{ marginLeft: "auto" }}>
                 <span>作る文書</span>
                 <select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
@@ -173,7 +187,7 @@ export function OrderSettlement({ onOpenDraft, initialOrderId }: {
             </div>
 
             <p className="section-mark" style={{ margin: "6px 0 0", fontWeight: 700 }}>③ 実費・手数料（かかったかどうか）</p>
-            {!extras.length && <p className="faint" style={{ margin: 0 }}>この発注書に未精算の実費・手数料はありません。かかった実費があれば足してください。</p>}
+            {!extras.length && <p className="faint" style={{ margin: 0 }}>この{plan.order.source === "agreement" ? "単体契約" : "発注書"}に未精算の実費・手数料はありません。かかった実費があれば足してください。</p>}
             {extras.map((x) => (
               <div key={x.key} className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end", borderBottom: "1px solid var(--line)", paddingBottom: 6 }}>
                 <label className="field" style={{ minWidth: 180 }}>

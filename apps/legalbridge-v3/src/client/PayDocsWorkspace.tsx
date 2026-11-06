@@ -1,4 +1,4 @@
-import { OrderSettlement } from "./OrderSettlement.js";
+import { OrderSettlement, type SettlementSource } from "./OrderSettlement.js";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError, money } from "./api.js";
 import { useReadOnly } from "./read-only.js";
@@ -153,9 +153,11 @@ function PayCell({ r }: { r: PayDocRow }) {
 
 export function PayDocsWorkspace(
   { scope, onOpenCondition, onOpenDocument, onOpenDraft, onIssueRound, onComposeEvents, onOpenClosing,
-    author, onOpenAuthor, onLedgerCompose, onOpenRequest, initialTile, initialPane, initialOrderId }: {
+    author, onOpenAuthor, onLedgerCompose, onOpenRequest, initialTile, initialPane, initialOrderId, initialSource }: {
     /** 「発注書から検収書」で選んでおく発注書（発注書の詳細画面から来たとき）。 */
     initialOrderId?: number | null;
+    /** 「発注書から検収書」で選んでおく起点（単体契約を含む。マップから来たとき）。 */
+    initialSource?: SettlementSource | null;
     /** 開いたときに押しておく札（ホームの盤面から）。 */
     initialTile?: PayDocTile | null;
     /** 開いたときのタブ（旧 回の一覧の URL から来たときは「入金と作者への支払」）。 */
@@ -227,7 +229,7 @@ export function PayDocsWorkspace(
                     onOpenRequest={onOpenRequest} onLedgerCompose={onLedgerCompose}
                     onOpenList={(partyId) => { setPane("list"); setListParty(partyId); }} />
       )}
-      {pane === "order" && <OrderSettlement onOpenDraft={onOpenDraft} initialOrderId={initialOrderId} />}
+      {pane === "order" && <OrderSettlement onOpenDraft={onOpenDraft} initialOrderId={initialOrderId} initialSource={initialSource} />}
       {pane === "settle" && <ReceiptSettle onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "receipts" && <RoyaltyReceipts onOpenCondition={onOpenCondition} onOpenDocument={onOpenDocument} />}
       {pane === "imports" && <EbookSalesImport />}
