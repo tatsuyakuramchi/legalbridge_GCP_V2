@@ -632,6 +632,44 @@ export function bundleLinesPatch(
 }
 
 // ---------------------------------------------------------------------------
+// 版（第●版）
+// ---------------------------------------------------------------------------
+
+/**
+ * 製品名の横に版を付ける（「トーネードスプラッシュ　第02版」）。
+ *
+ * 計算書のフォームには「版」（IV. 製造内容）があるが、ひな形の本文はどの版もそれを
+ * 印字していなかった（出版利用許諾条件書だけが作品名の下に版を出す）。本文には触らず、
+ * 製品名の値に付けて出す。版は計算書に 1 つなので、明細のどの行にも同じ版が付く。
+ * 「同上」（2 行目以降）と、もう版が入っている製品名には付けない。
+ */
+export function withEdition(name: unknown, edition: unknown): string {
+  const n = String(name ?? "");
+  const e = String(edition ?? "").trim();
+  if (!e || !n.trim() || n === "同上" || n.includes(e)) return n;
+  return `${n}　${e}`;
+}
+
+/** 本文の変数に版を付ける：明細の行（lineGroups[].lines[].productName）と単票の製品名。 */
+export function editionPatch(values: Data, edition: unknown): Data {
+  const e = String(edition ?? "").trim();
+  if (!e) return {};
+  const out: Data = {};
+  if (Array.isArray(values.lineGroups)) {
+    out.lineGroups = (values.lineGroups as Data[]).map((g) => ({
+      ...g,
+      lines: Array.isArray(g.lines)
+        ? (g.lines as Data[]).map((l) => ({ ...l, productName: withEdition(l.productName, e) }))
+        : g.lines
+    }));
+  }
+  if (typeof values.productName === "string" && values.productName.trim()) {
+    out.productName = withEdition(values.productName, e);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // 入口
 // ---------------------------------------------------------------------------
 

@@ -16,7 +16,7 @@ import {
   aggregateItemDates, computeInspectionTotals, inspectionTaxBreakdown,
   num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row, pickRow } from "./legacy-totals.js";
 import { foldPeriodicLines } from "./periodic-fold.js";
-import { royaltyStatementPatch } from "./royalty-patch.js";
+import { editionPatch, royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
 import { PUB_TITLES_FIELD, isPubTermsTemplate, pubTermsPatch, pubTermsSuggestions,
@@ -750,7 +750,9 @@ export function buildTemplateContext(
   }
   if (isStatementTemplate(templateKey)) {
     const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
-    return patch ? { ...common, ...patch } : common;
+    const values = patch ? { ...common, ...patch } : common;
+    // 「版」（第●版）を製品名の横に出す。本文は版を印字しないので値の側で付ける。
+    return { ...values, ...editionPatch(values, manual.edition ?? common.edition) };
   }
   return common;
 }
