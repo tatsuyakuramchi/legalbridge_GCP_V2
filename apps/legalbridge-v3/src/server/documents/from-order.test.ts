@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildOrderPlan, draftInputFromOrder, type RawOrderCondition } from "./from-order.js";
+import { buildOrderPlan, draftInputFromOrder, OrderSettlementService, type RawOrderCondition } from "./from-order.js";
+import { FakeDatabase } from "../core/fake-db.js";
 
 const order = { id: 50, documentNo: "ARC-PO-2026-0050", title: "イベント運営", templateKey: "purchase_order", issuedOn: "2026-10-01",
                 matterId: 9, agreementId: null, counterparty: { id: 3, name: "株式会社サンプル" } };
@@ -78,4 +79,66 @@ test("実額の無い「かかった」・ほかの発注書の条件・検収�
 test("実績を選ばなければ、実績の残っている委託料を載せる", () => {
   const p = buildOrderPlan(order, raw());
   assert.deepEqual(draftInputFromOrder(p, { eventIds: [], extras: [] }).conditionIds, [1]);
+});
+
+// ---- 単体契約（業務委託契約書に条件が直接付いたもの）から作る ----
+
+const standalone = { ...order, id: 77, documentNo: "ARC-SV-2026-0077", templateKey: "standalone", agreementId: 77, source: "agreement" as const };
+
+test("単体契約から：組の作り方は発注書と同じで、注意と目印は単体契約の言葉になる", () => {
+  const p = buildOrderPlan(standalone, raw());
+  assert.equal(p.templateKey, "inspection_certificate");
+  assert.match(buildOrderPlan(standalone, []).warnings.join(), /この単体契約には委託料の条件が結ばれていません/);
+  const d = draftInputFromOrder(p, { eventIds: [101], extras: [] });
+  assert.equal(d.manualInputs._fromAgreementId, 77, "起点は単体契約");
+  assert.equal(d.manualInputs._fromOrderId, undefined);
+  assert.equal(d.agreementId, 77, "検収書は単体契約に結ぶ（発注番号は単体契約の番号になる）");
+  assert.throws(() => draftInputFromOrder(p, { eventIds: [999], extras: [] }), /この単体契約の条件のものではありません/);
+});
+
+const agreementDb = (head: Record<string, unknown> | null, conds: Array<Record<string, unknown>> = [], events: Array<Record<string, unknown>> = []) =>
+  new FakeDatabase((t) => {
+    if (t.includes("FROM agreements a LEFT JOIN parties p")) return head ? [head] : [];
+    if (t.includes("WHERE c.agreement_id = $1")) return conds;
+    if (t.includes("FROM condition_events e")) return events;
+    return undefined;
+  });
+const head = { id: 77, agreement_no: "ARC-SV-2026-0077", title: "店舗内装デザイン業務委託契約", status: "executed", direction: "in",
+               executed_on: "2026-09-01", kind: "standalone", parent_id: null, order_document_id: null, counterparty_id: 3, counterparty: "株式会社サンプル" };
+
+test("単体契約から：契約に直接載った条件と、系列ぜんぶの実績を引く", async () => {
+  const db = agreementDb(head, [
+    { id: 11, condition_no: "CL-11", name: "デザイン業務", kind: "service", currency: "JPY", flat_amount: 500000, unit_amount: null, quantity: null,
+      time_settlement: false, contract_form: "請負", status: "active", closed: false, lineage: [10, 11], settled_on_issued: false, matter_id: 9 },
+    { id: 12, condition_no: "CL-12", name: "交通費", kind: "expense", currency: "JPY", flat_amount: 8000, unit_amount: null, quantity: null,
+      time_settlement: false, contract_form: null, status: "active", closed: false, lineage: [12], settled_on_issued: false, matter_id: null }
+  ], [{ id: 201, condition_id: 10, occurred_on: "2026-10-01", amount: 500000, quantity: 1, label: "納品", document_no: null }]);
+  const p = await new OrderSettlementService(db).planForAgreement(77);
+  assert.equal(p.order.source, "agreement");
+  assert.equal(p.order.agreementId, 77);
+  assert.equal(p.order.matterId, 9, "案件は条件の繋がりから");
+  assert.deepEqual(p.lines.map((l) => [l.conditionId, l.events.map((e) => e.id)]), [[11, [201]]], "前の版（10）の実績も載る");
+  assert.deepEqual(p.extras.map((x) => x.conditionId), [12]);
+  const q = db.find("WHERE c.agreement_id = $1")!;
+  assert.ok(q.text.includes("c.kind IN ('service', 'expense', 'fee')"), "利用許諾の条件は載せない");
+});
+
+test("単体契約から：基本契約・未締結・受け取る側は断る", async () => {
+  const svc = (over: Record<string, unknown>) => new OrderSettlementService(agreementDb({ ...head, ...over }));
+  await assert.rejects(svc({ kind: "master" }).planForAgreement(77), /単体契約を選んでください/);
+  await assert.rejects(svc({ order_document_id: 5 }).planForAgreement(77), /単体契約を選んでください/, "発注書の器は発注書から");
+  await assert.rejects(svc({ status: "negotiating" }).planForAgreement(77), /締結済みの単体契約/);
+  await assert.rejects(svc({ direction: "out" }).planForAgreement(77), /支払う側/);
+  await assert.rejects(new OrderSettlementService(agreementDb(null)).planForAgreement(77), /見つかりません/);
+});
+
+test("作る画面の候補：決定した発注書と、締結済みの単体契約の両方", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM documents d")) return [{ id: 50, document_no: "ARC-PO-2026-0050", title: "イベント運営", counterparty: "A社", issued_on: "2026-10-01", template_key: "purchase_order" }];
+    if (t.includes("FROM agreements a")) return [{ id: 77, agreement_no: "ARC-SV-2026-0077", title: "業務委託契約", counterparty: "B社", executed_on: "2026-09-01" }];
+    return undefined;
+  });
+  const r = await new OrderSettlementService(db).search("");
+  assert.deepEqual(r.map((x) => [x.source, x.id]), [["order", 50], ["agreement", 77]]);
+  assert.ok(db.find("FROM agreements a")!.text.includes("a.status = 'executed' AND a.direction = 'in'"));
 });

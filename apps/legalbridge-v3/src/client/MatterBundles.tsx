@@ -7,6 +7,8 @@ import { SendMany } from "./SendMany.js";
 import { exportDocumentsZip, type ExportProgress } from "./exportZip.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { OrderLinker } from "./OrderLinker.js";
+import { useMapLinks } from "./mapLinks.js";
+import type { SettlementSource } from "./OrderSettlement.js";
 import type { GridDocument, GridParty, GridRow } from "../server/matters/grid.js";
 import type { MatterDetail } from "../server/core/model.js";
 
@@ -51,6 +53,10 @@ function cellsOf(
     onOpenPayments?: () => void;
     /** 発注書を紐づける（既存を紐づける・取り込む・新しく作る）。 */
     onLinkOrder?: (row: GridRow) => void;
+    /** 発注書・単体契約 → 検収書（支払文書 › 発注書から検収書）。 */
+    onSettle?: (source: SettlementSource) => void;
+    /** 利用許諾条件書 → 利用許諾計算書（作家 × 作品の台帳）。 */
+    onRoyalty?: (target: { partyId: number; workId: number | null }) => void;
   }
 ): { order: Cell; delivery: Cell; settlement: Cell; payment: Cell } {
   const done = row.settlement.done;
@@ -64,8 +70,20 @@ function cellsOf(
 
   // 発注書。無ければ紐づける（既存の発注書・取り込み・新しく作る）、下書きなら決定する。
   // 発注書は文書として持つ。紙・旧システムの発注書は、取り込むか番号を控えてあれば済。
+  const license = row.kind === "license" || row.pricingModel === "rate";
   let order: Cell;
-  if (!row.order && row.orderRef) {
+  if (license) {
+    // 利用許諾は発注書ではなく条件書（個別利用許諾条件書・出版利用許諾条件書）。
+    order = row.terms
+      ? { state: row.terms.phase === "draft" ? "wait" : "ok", label: row.terms.documentNo ?? `#${row.terms.id}`,
+          sub: row.terms.phase === "draft" ? "条件書の下書き" : "利用許諾条件書",
+          open: h.onOpenDocument ? () => h.onOpenDocument!(row.terms!.id) : null,
+          doc: row.terms.phase === "draft" ? null : row.terms }
+      : { state: "none", label: "—", sub: "条件書なし" };
+  } else if (!row.order && row.onStandalone) {
+    // 単体契約（業務委託契約書に条件が直接付いたもの）は、その契約が発注書を兼ねる。
+    order = { state: "ok", label: `単体契約 ${row.contract?.agreementNo ?? ""}`.trim(), sub: "契約書が発注書を兼ねる" };
+  } else if (!row.order && row.orderRef) {
     order = { state: "ok", label: row.orderRef, sub: "番号の控え（紙を取り込むと文書になります）",
       action: h.onLinkOrder ? { label: "取り込む", run: () => h.onLinkOrder!(row) } : null };
   } else if (!row.order) {
@@ -106,8 +124,15 @@ function cellsOf(
       open: h.onOpenDocument ? () => h.onOpenDocument!(row.settlementDoc!.id) : null,
       doc: row.settlementDoc.phase === "draft" ? null : row.settlementDoc };
   } else if (row.events.count) {
-    settlement = now({ state: "now", label: "実績はあるが未作成",
-      action: h.onRecordEvent ? { label: "検収書を作る", run: () => h.onRecordEvent!(id) } : null });
+    // 次の文書：発注書・単体契約 → 検収書、利用許諾条件書 → 計算書。行き先が無ければ実績の画面。
+    const partyId = row.counterparty?.id ?? null;
+    const source: SettlementSource | null = row.order && row.order.phase !== "draft" ? { kind: "order", id: row.order.id }
+      : !row.order && row.onStandalone && row.agreementId ? { kind: "agreement", id: row.agreementId } : null;
+    const action = license && row.direction !== "out" && partyId !== null && h.onRoyalty
+      ? { label: "計算書を作る", run: () => h.onRoyalty!({ partyId, workId: row.workId }) }
+      : !license && source && h.onSettle ? { label: "検収書を作る", run: () => h.onSettle!(source) }
+      : h.onRecordEvent ? { label: license ? "計算書を作る" : "検収書を作る", run: () => h.onRecordEvent!(id) } : null;
+    settlement = now({ state: "now", label: "実績はあるが未作成", action });
   } else {
     settlement = { state: "none", label: "—" };
   }
@@ -251,8 +276,10 @@ export function MatterBundles(
   }, [matterId, reloadKey, bump]);
   useEffect(() => { setOpened(null); setFilter("all"); setQ(""); setChecked(new Set()); }, [matterId]);
 
+  const links = useMapLinks();
   const h = { onOpenDocument, onCompose, onRecordEvent, onOpenPayments,
-              onLinkOrder: readOnly ? undefined : (row: GridRow) => setLinkingOrder(row) };
+              onLinkOrder: readOnly ? undefined : (row: GridRow) => setLinkingOrder(row),
+              onSettle: readOnly ? undefined : links.settle, onRoyalty: readOnly ? undefined : links.royalty };
   const sign = {
     editing: signEditing, readOnly,
     open: (id: number) => setSignEditing(id),
@@ -374,6 +401,7 @@ export function MatterBundles(
     const cells = cellsOf(row, matterId, h);
     return (
       <div key={row.conditionId} className={`bchain${last ? " last" : ""}`}>
+        <CellView cell={cells.order} sign={sign} />
         <div className="name">
           {onOpenCondition
             ? <button type="button" className="linky" style={{ fontWeight: 600 }}
@@ -395,7 +423,6 @@ export function MatterBundles(
             </span>
           )}
         </div>
-        <CellView cell={cells.order} sign={sign} />
         <CellView cell={cells.delivery} />
         <CellView cell={cells.settlement} sign={sign} />
         <CellView cell={cells.payment} />
@@ -578,7 +605,7 @@ export function MatterBundles(
             {open && (
               <div className="bchain-wrap">
                 <div className="bchain cols">
-                  <div>条件（品目）</div><div>発注書</div><div>納品</div><div>検収書</div><div>支払</div><div>備考</div>
+                  <div>発注書・条件書</div><div>条件（品目）</div><div>実績</div><div>支払文書</div><div>支払</div><div>備考</div>
                 </div>
                 {b.rows.map((r, i) => rowView(r, i === b.rows.length - 1))}
               </div>

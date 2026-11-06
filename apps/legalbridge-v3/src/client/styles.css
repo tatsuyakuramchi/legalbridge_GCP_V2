@@ -830,7 +830,7 @@ table.compact th,table.compact td{padding:4px 8px}
 .bundle-hd .sum{display:flex;gap:16px;font-size:12px;color:var(--muted);flex-wrap:wrap;justify-content:flex-end;align-items:center}
 .bundle-hd .sum b{color:var(--ink);font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500}
 .bchain-wrap{overflow-x:auto}
-.bchain{display:grid;grid-template-columns:minmax(170px,1.3fr) repeat(4,minmax(120px,1fr)) minmax(120px,.9fr);min-width:780px}
+.bchain{display:grid;grid-template-columns:minmax(120px,1fr) minmax(170px,1.3fr) repeat(3,minmax(120px,1fr)) minmax(120px,.9fr);min-width:780px}
 .bchain > div{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;min-height:44px}
 .bchain.cols > div{padding:5px 10px;min-height:0;color:var(--faint);font-size:11px;background:var(--sunken);letter-spacing:.02em}
 .bchain > div + div{border-left:1px dotted var(--line)}
@@ -1126,3 +1126,20 @@ td.dm-docno td{padding:0;border:0;background:transparent}
 .hub-tab-group{align-self:center;margin:0 2px 0 12px;padding-left:12px;border-left:1px solid var(--line);
   font-size:10px;letter-spacing:.12em;color:var(--faint);white-space:nowrap}
 .hub-tab-group:first-child{margin-left:12px;padding-left:0;border-left:0}
+/* マップ（工程表）：上段 IN・下段 OUT の見出しと、段ごとの列の見出し。 */
+tr.ledger-sec td{background:var(--ink);color:var(--ground);padding:6px 12px;font-size:12px}
+tr.ledger-sec td b{margin-right:8px;letter-spacing:.06em}
+tr.ledger-sec td span{margin-right:10px}
+tr.ledger-sec td .faint{color:inherit;opacity:.75}
+tr.ledger-colhead th{background:var(--sunken);text-align:left;font-weight:400;padding:5px 8px;border-bottom:1px solid var(--line-strong)}
+.ledger-plain{border-left:1px solid var(--line);vertical-align:top}
+.ledger-next{margin-top:4px;white-space:nowrap}
+/* 契約のみの帯（ContractBand）と、選んだ行を作品・案件に入れる帯（AssignBar）。 */
+tr.ledger-sec.band td{background:var(--accent)}
+.band-btn{margin-left:8px;background:var(--ground);color:var(--ink);border-color:var(--ground)}
+.band-form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:6px 0}
+.band-form .field{display:flex;flex-direction:column;gap:2px;font-size:12px}
+.band-form select,.band-form input{border:1px solid var(--line-strong);border-radius:5px;padding:5px 8px;min-height:34px;background:var(--surface);font:inherit}
+.assignbar{flex-basis:100%;display:flex;flex-direction:column;gap:6px;border:1px solid var(--accent);background:var(--accent-soft);border-radius:8px;padding:8px 12px}
+.assign-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12.5px}
+.assign-row > b{min-width:84px}

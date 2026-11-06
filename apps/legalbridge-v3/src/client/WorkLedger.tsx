@@ -5,6 +5,9 @@ import { conditionAmountLabel } from "./ConditionLabel.js";
 import { GridRowEdit, type EditFocus } from "./GridRowEdit.js";
 import { EventEntryForm } from "./EventEntryForm.js";
 import { DriftMatrixDialog } from "./DriftMatrix.js";
+import { useMapLinks } from "./mapLinks.js";
+import { ContractBand } from "./ContractBand.js";
+import { AssignBar } from "./AssignBar.js";
 import { ConditionEntryForm, ENTRY_KINDS, type ConditionEntryKind } from "./ConditionEntryForm.js";
 import {
   applyFilter, groupByParty, groupByWork, isStuck, unpaidPayments,
@@ -118,6 +121,7 @@ export function WorkLedger(
     onChanged?: () => void;
   }
 ) {
+  const flow = useMapLinks();
   const [all, setAll] = useState<GridRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -126,6 +130,8 @@ export function WorkLedger(
   const [filter, setFilter] = useState<Filter>("all");
   const [byParty, setByParty] = useState(workId !== null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  /** 契約のみの帯で選んだ行（"document:12" / "agreement:108"）。案件に入れるのに使う。 */
+  const [pickedContracts, setPickedContracts] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<{ conditionId: number; focus: EditFocus } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dups, setDups] = useState<DuplicateView | null>(null);
@@ -204,13 +210,44 @@ export function WorkLedger(
 
   if (error) return <div className="alert">{error}</div>;
   if (!all) return <div className="faint">読み込んでいます…</div>;
-  if (!all.length) {
-    if (forPartyId !== null) return <div className="faint">この取引先には、生きている条件明細がありません。</div>;
-    if (workId !== null) return <div className="faint">この作品には、生きている条件明細がありません。</div>;
-    return <div className="faint">この案件には条件明細がありません。一覧の「条件明細」で作るか、すでにある条件を繋いでください。</div>;
-  }
-  if (agreementFilter && !mine.length) {
-    return <div className="faint">{"only" in agreementFilter ? "この契約に紐づく条件明細は、まだありません。" : "どの契約にも紐づかない条件明細はありません。"}</div>;
+  const canWrite = isAdmin || Boolean(onOpenDeals);
+  // 契約のみの帯（条件の無い契約）。条件が 1 本も無い案件でも出す（契約だけ管理する案件がある）。
+  const bandScope = forPartyId !== null ? { partyId: forPartyId } : workId !== null ? { workId } : matterId !== null ? { matterId } : null;
+  const pickContract = (key: string, on: boolean) =>
+    setPickedContracts((prev) => { const n = new Set(prev); if (on) n.add(key); else n.delete(key); return n; });
+  const afterAssign = (message: string) => { setPicked(new Set()); setPickedContracts(new Set()); reload(message); };
+  const band = (cols: number) => bandScope && (
+    <ContractBand scope={bandScope} filter={agreementFilter} reloadKey={(reloadKey ?? 0) + version} cols={cols}
+                  onOpenDocument={onOpenDocument} canWrite={canWrite} picked={pickedContracts} onPick={pickContract} />
+  );
+  const assign = (conditionIds: number[]) => {
+    if (!canWrite || (conditionIds.length === 0 && pickedContracts.size === 0)) return null;
+    const parties = new Set((all ?? []).filter((r) => conditionIds.includes(r.conditionId)).map((r) => r.counterparty?.id ?? null));
+    const onlyParty = parties.size === 1 ? [...parties][0] ?? null : null;
+    return <AssignBar conditionIds={conditionIds} contractKeys={[...pickedContracts]} workId={workId}
+                      counterpartyId={onlyParty} onDone={afterAssign} />;
+  };
+
+  const emptyMessage = !all.length
+    ? (forPartyId !== null ? "この取引先には、生きている条件明細がありません。"
+      : workId !== null ? "この作品には、生きている条件明細がありません。"
+      : "この案件には条件明細がありません。一覧の「条件明細」で作るか、すでにある条件を繋いでください。")
+    : agreementFilter && !mine.length
+    ? ("only" in agreementFilter ? "この契約に紐づく条件明細は、まだありません。" : "どの契約にも紐づかない条件明細はありません。")
+    : null;
+  if (emptyMessage) {
+    return (
+      <div className="stack" style={{ gap: 10 }}>
+        <div className="faint">{emptyMessage}</div>
+        {notice && <div className="note ok">{notice}</div>}
+        {assign([])}
+        {bandScope && (
+          <div className="tablewrap grid-wrap">
+            <table className="ledger-table"><tbody>{band(byParty ? 7 : 8)}</tbody></table>
+          </div>
+        )}
+      </div>
+    );
   }
 
   const pickedRows = rows.filter((r) => picked.has(r.conditionId));
@@ -235,7 +272,10 @@ export function WorkLedger(
     return (
       <>
         <div className="ledger-name">{r.name}</div>
-        <div className="faint code">{r.conditionNo ?? `#${r.conditionId}`}</div>
+        {onOpenCondition
+          ? <button className="linky code" onClick={(e) => { e.stopPropagation(); onOpenCondition(r.conditionId); }}
+                    title="条件明細の画面で開く">{r.conditionNo ?? `#${r.conditionId}`}</button>
+          : <div className="faint code">{r.conditionNo ?? `#${r.conditionId}`}</div>}
         <div className="ledger-num">
           {r.pricingModel === "unit_rate" && r.unitAmount !== null && r.quantity != null
             ? <>{yen(total(r))}<span className="faint">（{yen(r.unitAmount)} × {qty(r.quantity)}{r.unitLabel ?? ""}）</span></>
@@ -280,7 +320,6 @@ export function WorkLedger(
       </>
     );
   };
-  const canWrite = isAdmin || Boolean(onOpenDeals);
   /** 実績を入れられる行（払い切りでない）。 */
   const takesEvent = (r: GridRow) => !r.settlement.done;
   /** その行の次の回（予定があってまだ実績の無い回）。 */
@@ -363,22 +402,95 @@ export function WorkLedger(
     return <><span className="faint">{r.settlementDoc ? "まだ" : "—"}</span>{addPayButton(r)}</>;
   };
 
-  const head = (
-    <tr>
+  /** 次の文書へ。セルを押すと「まとめて直す」が開くので、押したことを外へ伝えない。 */
+  const next = (label: string, go: () => void, title: string) => (
+    <button className="btn btn-sm ledger-next" onClick={(e) => { e.stopPropagation(); go(); }} title={title}>→ {label}</button>
+  );
+  /** 基本契約の段：条件が載っている契約の根（基本契約・単体契約）。 */
+  const contractCell = (r: GridRow) => {
+    const c = r.contract;
+    if (!c) return <td className="ledger-plain"><span className="faint">{isLicense(r) ? "なし" : "なし（発注書の約款）"}</span></td>;
+    return (
+      <td className="ledger-plain">
+        <div className="ledger-line">
+          {flow.agreement
+            ? <button className="linky code" onClick={() => flow.agreement!(c.id)} title="契約の画面で開く">{c.agreementNo ?? `#${c.id}`}</button>
+            : <span className="code">{c.agreementNo ?? `#${c.id}`}</span>}
+          <span className="tag">{c.kind === "standalone" ? "単体契約" : "基本契約"}</span>
+        </div>
+        {c.title && <div className="faint" style={{ fontSize: 11.5 }}>{c.title}</div>}
+      </td>
+    );
+  };
+  /**
+   * 個別の契約の段：業務委託は発注書（単体契約ならその契約が兼ねる）、利用許諾は条件書。
+   * 次の文書（発注書・単体契約 → 検収書、条件書 → 計算書）へ行くボタンもここに出す。
+   */
+  const docCell = (r: GridRow) => {
+    if (isLicense(r)) {
+      const partyId = r.counterparty?.id ?? null;
+      return <>
+        {r.terms ? <DocLine doc={r.terms} onOpen={onOpenDocument} /> : <span className="faint">まだ</span>}
+        {r.direction !== "out" && r.terms && r.terms.phase !== "draft" && partyId !== null && flow.royalty
+          && next("計算書を作る", () => flow.royalty!({ partyId, workId: r.workId }),
+                  "作品 › 利用許諾計算の台帳（作家 × 作品）を開いて、回ごとに計算書を作る")}
+      </>;
+    }
+    const settleable = r.events.count > 0 && !r.settlement.done;
+    if (r.order) {
+      const order = r.order;
+      return <>
+        <DocLine doc={order} onOpen={onOpenDocument} /><DriftTags drift={driftOf(r)} part="order" />
+        {settleable && order.phase !== "draft" && flow.settle
+          && next("検収書を作る", () => flow.settle!({ kind: "order", id: order.id }), "支払文書 › 発注書から検収書 を、この発注書を選んだ状態で開く")}
+      </>;
+    }
+    if (r.onStandalone && r.agreementId) {
+      const agreementId = r.agreementId;
+      return <>
+        <div className="ledger-line"><span className="tag">単体契約</span><span className="code">{r.contract?.agreementNo ?? `#${agreementId}`}</span></div>
+        <div className="faint" style={{ fontSize: 11.5 }}>契約書が発注書を兼ねる</div>
+        {settleable && flow.settle
+          && next("検収書を作る", () => flow.settle!({ kind: "agreement", id: agreementId }), "支払文書 › 発注書から検収書 を、この単体契約を選んだ状態で開く")}
+      </>;
+    }
+    if (r.orderRef) return <span className="faint code">{r.orderRef}（外部）</span>;
+    return <span className="faint">まだ</span>;
+  };
+
+  /** 上段＝IN（当社が払う）、下段＝OUT（当社が受け取る）。段ごとに列の呼び名を変える。 */
+  const SECTIONS = [
+    { key: "in" as const, title: "IN", sub: "当社が払う（発注・取得）",
+      doc: ["発注書・利用許諾条件書", "単体契約は契約書が兼ねる"], event: ["実績", "納品・検収／報告部数"],
+      settle: ["支払文書", "検収書・計算書"], pay: ["支払", "回ごと"] },
+    { key: "out" as const, title: "OUT", sub: "当社が受け取る（許諾）",
+      doc: ["利用許諾条件書", "相手と結ぶ条件書"], event: ["実績", "利用報告"],
+      settle: ["計算書", "回ごと"], pay: ["入金", "回ごと"] }
+  ];
+  const cols = byParty ? 7 : 8;
+  const sectionHead = (sec: (typeof SECTIONS)[number], secRows: GridRow[]) => [
+    <tr key={`s${sec.key}`} className="ledger-sec">
+      <td colSpan={cols}><b>{sec.title}</b><span>{sec.sub}</span><span className="faint">条件 {secRows.length} 本</span></td>
+    </tr>,
+    <tr key={`h${sec.key}`} className="ledger-colhead">
       <th style={{ width: 28 }}>
-        <input type="checkbox" aria-label="表示している条件をすべて選ぶ"
-               checked={rows.length > 0 && rows.every((r) => picked.has(r.conditionId))}
-               onChange={(e) => setPicked(e.target.checked ? new Set(rows.map((r) => r.conditionId)) : new Set())} />
+        <input type="checkbox" aria-label={`${sec.title} の条件をすべて選ぶ`}
+               checked={secRows.length > 0 && secRows.every((r) => picked.has(r.conditionId))}
+               onChange={(e) => setPicked((prev) => {
+                 const n = new Set(prev);
+                 for (const r of secRows) { if (e.target.checked) n.add(r.conditionId); else n.delete(r.conditionId); }
+                 return n;
+               })} />
       </th>
       {!byParty && <th className="stage-hd">取引先</th>}
+      <th className="stage-hd">基本契約<span className="stage-sub">基本契約・単体契約</span></th>
+      <th className="stage-hd">{sec.doc[0]}<span className="stage-sub">{sec.doc[1]}</span></th>
       <th className="stage-hd">条件<span className="stage-sub">番号・金額</span></th>
-      <th className="stage-hd">実績<span className="stage-sub">納品・検収／報告部数</span></th>
-      <th className="stage-hd">発注書<span className="stage-sub">条件の文書</span></th>
-      <th className="stage-hd">検収書・計算書<span className="stage-sub">回ごと</span></th>
-      <th className="stage-hd">支払<span className="stage-sub">回ごと</span></th>
+      <th className="stage-hd">{sec.event[0]}<span className="stage-sub">{sec.event[1]}</span></th>
+      <th className="stage-hd">{sec.settle[0]}<span className="stage-sub">{sec.settle[1]}</span></th>
+      <th className="stage-hd">{sec.pay[0]}<span className="stage-sub">{sec.pay[1]}</span></th>
     </tr>
-  );
-  const cols = byParty ? 6 : 7;
+  ];
   const rowOf = (r: GridRow) => (
     <tr key={r.conditionId} className={`${picked.has(r.conditionId) ? "sel" : ""}${editing?.conditionId === r.conditionId ? " ledger-editing" : ""}`}>
       <td><input type="checkbox" checked={picked.has(r.conditionId)} aria-label={`${r.conditionNo ?? r.conditionId} を選ぶ`}
@@ -387,12 +499,10 @@ export function WorkLedger(
         <td>{r.counterparty ? <b>{r.counterparty.name}</b> : <span className="faint">（相手先なし）</span>}
           <div className="faint" style={{ fontSize: 11.5 }}>{isLicense(r) ? "利用許諾" : "業務委託"}</div></td>
       )}
+      {contractCell(r)}
+      {cell(r, "order", docCell(r), isLicense(r) ? "利用許諾条件書" : "発注書")}
       {cell(r, "condition", condCell(r), "条件")}
       {cell(r, "event", eventCell(r), "実績")}
-      {cell(r, "order", isLicense(r) ? <span className="faint">—</span>
-        : r.order ? <><DocLine doc={r.order} onOpen={onOpenDocument} /><DriftTags drift={driftOf(r)} part="order" /></>
-        : r.orderRef ? <span className="faint code">{r.orderRef}（外部）</span>
-        : <span className="faint">まだ</span>, "発注書")}
       {cell(r, "settlement", <>{settleCell(r)}<DriftTags drift={driftOf(r)} part="settlementDoc" /></>, "検収書・計算書")}
       {cell(r, "payment", <>{payCell(r)}<DriftTags drift={driftOf(r)} part="payment" /></>, "支払")}
     </tr>
@@ -402,12 +512,16 @@ export function WorkLedger(
     <tr key={`g${key}`} className="grid-grp"><td colSpan={cols}><b>{title}</b><span className="faint">　{sub}</span>
       {add && canWrite && <button className="linky" style={{ marginLeft: 10 }} onClick={() => startCreate(add)}>＋ この作品に条件を足す</button>}</td></tr>
   );
-  const body = byParty
-    ? groupByParty(rows).flatMap((g) => [groupHead(`p${g.id}`, g.name, `条件 ${g.tally.conditions} 本`), ...g.rows.map(rowOf)])
-    : groupByWork(rows).flatMap((g) => [groupHead(`w${g.id}`, g.title,
+  const grouped = (secKey: string, secRows: GridRow[]) => byParty
+    ? groupByParty(secRows).flatMap((g) => [groupHead(`${secKey}p${g.id}`, g.name, `条件 ${g.tally.conditions} 本`), ...g.rows.map(rowOf)])
+    : groupByWork(secRows).flatMap((g) => [groupHead(`${secKey}w${g.id}`, g.title,
         `条件 ${g.tally.conditions} 本${g.tally.amount ? `・${yen(g.tally.amount)}` : ""}${g.tally.stuck ? `・止まり ${g.tally.stuck}` : ""}${g.tally.unpaid ? `・未払い ${g.tally.unpaid}` : ""}`,
         { id: g.id, title: g.id === null ? null : g.title }),
         ...g.rows.map(rowOf)]);
+  const body = SECTIONS.flatMap((sec) => {
+    const secRows = rows.filter((r) => (r.direction === "out" ? "out" : "in") === sec.key);
+    return secRows.length ? [...sectionHead(sec, secRows), ...grouped(sec.key, secRows)] : [];
+  });
 
   return (
     <div className={`wledger${workId !== null ? " wledger-single" : ""}`}>
@@ -477,17 +591,20 @@ export function WorkLedger(
             {isAdmin && <button className="btn btn-sm danger" disabled={!pickedRows.some((r) => unpaidPayments(r).length)} onClick={() => setBulk("cancel")}>
               未払いの支払を取り消す（{pickedRows.reduce((n, r) => n + unpaidPayments(r).length, 0)}）</button>}
             <button className="btn btn-sm" onClick={() => setPicked(new Set())}>選び直す</button>
+            {/* 作品・案件に入れる：選んだ帯に入れて、貼り付いたまま一緒に動かす。 */}
+            {assign(pickedRows.map((r) => r.conditionId))}
           </div>
         )}
 
         {notice && <div className="note ok">{notice}</div>}
+        {pickedRows.length === 0 && assign([])}
 
         <div className="tablewrap grid-wrap">
           <table className="ledger-table">
-            <thead>{head}</thead>
             <tbody>
               {body}
               {!rows.length && <tr><td colSpan={cols} className="faint">{FILTER_LABEL[filter]} に当てはまる条件はありません。</td></tr>}
+              {band(cols)}
             </tbody>
           </table>
         </div>

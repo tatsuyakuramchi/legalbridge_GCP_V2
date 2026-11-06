@@ -117,3 +117,11 @@ test("未払いの支払は回ごとに拾い、同じ支払は1回だけ", () =
   assert.deepEqual(unpaidPayments(row({ payment: { id: 9, paymentNo: null, status: "planned", dueOn: null, note: null, amount: null, paidOn: null } })).map((p) => p.id), [9]);
   assert.equal(isStuck(row({ settlement: settlement({ done: true }) })), false);
 });
+
+test("単体契約に直接載った条件は、発注書が無くても『発注書がまだ』にしない（契約書が兼ねる）", () => {
+  const onContract = row({ onStandalone: true, agreementId: 77,
+    contract: { id: 77, agreementNo: "ARC-SV-2026-0077", title: "業務委託契約", kind: "standalone", status: "executed" } });
+  assert.equal(isPending(onContract, "order"), false);
+  assert.equal(isPending(row({}), "order"), true, "発注書の器でも単体契約でもなければ、発注書がまだ");
+  assert.equal(isPending(onContract, "event"), true, "ほかの段は変わらない");
+});

@@ -16,6 +16,8 @@ import { FlowMonitorWorkspace } from "./FlowMonitorWorkspace.js";
 import { DriftWorkspace } from "./DriftWorkspace.js";
 import { OpsWorkspace, HomeWorkspace, type OpsTab } from "./OpsWorkspace.js";
 import { DeskHome, type TodayItem } from "./DeskHome.js";
+import { MapLinksContext, type MapLinks } from "./mapLinks.js";
+import type { SettlementSource } from "./OrderSettlement.js";
 import { IntakeWorkspace } from "./IntakeWorkspace.js";
 import { DailyTasksWorkspace, type TaskCtx } from "./DailyTasksWorkspace.js";
 import { WorkbenchWorkspace, WORKBENCH_STEPS, newWorkbenchState, loadWorkbenchState, type BulkMode, type WorkbenchEntry, type WorkbenchState } from "./WorkbenchWorkspace.js";
@@ -302,7 +304,17 @@ export function App() {
   /** 支払文書を開くときのタブ（旧 回の一覧の URL は「入金と作者への支払」へ）。 */
   const [payPane, setPayPane] = useState<PayDocsPane | null>(null);
   /** 発注書の詳細画面から「発注書から検収書」へ来たときの発注書。 */
-  const [payOrder, setPayOrder] = useState<number | null>(null);
+  const [payOrder, setPayOrder] = useState<SettlementSource | null>(null);
+  /** 支払文書 › 発注書から検収書 を、その発注書・単体契約を選んだ状態で開く。 */
+  const settleFrom = (source: SettlementSource) => {
+    setFocus(null); setPayTile(null); setPayPane("order"); setPayOrder(source); setView("paydocs");
+  };
+  /** マップ（工程表）から次の文書・契約へ（mapLinks.ts）。 */
+  const mapLinks: MapLinks = {
+    settle: settleFrom,
+    royalty: ({ partyId, workId }) => openAuthor({ partyId, workId }),
+    agreement: (id) => openEntity("agreement", id)
+  };
   /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
   const [pick, setPick] = useState<{ view: View; id: number } | null>(null);
   const pickFor = (v: View) => (id: number | undefined) => setPick(id ? { view: v, id } : null);
@@ -409,6 +421,7 @@ export function App() {
 
   return (
     <ReadOnlyContext.Provider value={Boolean(me?.readOnly)}>
+    <MapLinksContext.Provider value={mapLinks}>
     <div className={`app${railSlim ? " rail-slim" : ""}`}>
       <nav className="rail" aria-label="主ナビゲーション">
         {/* ウィンドウを半分にすると、この桁だけで横幅の2割を使う。畳めるようにして
@@ -539,7 +552,7 @@ export function App() {
             onIssueDocument={issueRound} />
         )}
         {view === "paydocs" && (
-          <PayDocsWorkspace key={`pd${payTile ?? ""}${payPane ?? ""}${payOrder ?? ""}`} initialTile={payTile} initialPane={payPane} initialOrderId={payOrder} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
+          <PayDocsWorkspace key={`pd${payTile ?? ""}${payPane ?? ""}${payOrder ? `${payOrder.kind}${payOrder.id}` : ""}`} initialTile={payTile} initialPane={payPane} initialSource={payOrder} onOpenCondition={openCondition} onOpenDocument={openDocumentAt}
             onOpenDraft={(id) => openDocumentAt(id, null, null, true)}
             onIssueRound={issueRound}
             onComposeEvents={(conditionIds, eventIds, templateKey) => startCompose(conditionIds, eventIds, null, templateKey)}
@@ -612,7 +625,7 @@ export function App() {
             // 訂正版・下敷きは作業テーブルの①で決める（文書の画面はそこへ送るだけ）。
             onOpenWorkbenchFor={(documentId, mode) => startWorkbench({ kind: "document", documentId, mode })}
             // 発注書から検収書：支払文書の「発注書から検収書」を、この発注書を選んだ状態で開く。
-            onSettleFromOrder={(documentId) => { setFocus(null); setPayTile(null); setPayPane("order"); setPayOrder(documentId); setView("paydocs"); }}
+            onSettleFromOrder={(documentId) => settleFrom({ kind: "order", id: documentId })}
             onOpen={openEntity} />
         )}
         {view === "agreements" && (
@@ -653,6 +666,7 @@ export function App() {
                                          embedded={hubNow ? { title: tabNow?.label ?? hubNow.label, hint: tabNow?.hint ?? hubNow.hint ?? null } : undefined} />}
       </main>
     </div>
+    </MapLinksContext.Provider>
     </ReadOnlyContext.Provider>
   );
 }

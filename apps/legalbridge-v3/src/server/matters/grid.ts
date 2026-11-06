@@ -64,6 +64,17 @@ export interface GridRow {
   counterparty: { id: number; name: string } | null;
   /** 条件が紐づく契約（基本契約・単体契約・補助文書）。作業台で契約ごとに絞るのに使う。 */
   agreementId?: number | null;
+  /** in＝当社が払う（発注・取得）、out＝当社が受け取る（許諾）。 */
+  direction?: "in" | "out";
+  /**
+   * 条件が載っている契約の根。基本契約（master）か単体契約（standalone）。
+   * 個別契約・補助文書・発注書の器に載っていれば、その親（基本契約）。無ければ null。
+   */
+  contract?: { id: number; agreementNo: string | null; title: string | null; kind: string; status: string } | null;
+  /** 条件が単体契約（業務委託契約書に条件が直接付いたもの）に載っている。発注書の代わりになる。 */
+  onStandalone?: boolean;
+  /** 利用許諾の条件書（個別利用許諾条件書・出版利用許諾条件書）。利用許諾の行の「発注書」の段。 */
+  terms?: GridDocument | null;
   /**
    * 金額の材料。見出しの作り方（定額／単価／料率）は画面の
    * conditionAmountLabel と同じものを使うので、ここでは素の値を渡す。
@@ -185,7 +196,8 @@ export function isPending(row: GridRow, stage: Stage): boolean {
   switch (stage) {
     case "condition": return false;
     case "schedule": return row.schedules.total === 0 || row.schedules.done < row.schedules.total;
-    case "order": return row.order === null && !row.orderRef;
+    // 単体契約に直接載った条件は、その契約が発注書の役目をする。
+    case "order": return row.order === null && !row.orderRef && !row.onStandalone;
     case "event": return row.events.count === 0;
     case "settlementDoc": return row.settlementDoc === null;
     case "payment": return row.payment === null;

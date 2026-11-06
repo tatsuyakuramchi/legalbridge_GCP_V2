@@ -30,6 +30,9 @@ const ORDER_KEYS = "('purchase_order', 'intl_purchase_order')";
  * （単体契約にしない）ので、取り込んだ発注書も作った発注書と同じく「発注書あり」に数える。
  */
 const ORDER_IMPORT_KINDS = "('発注書')";
+/** 利用許諾の条件書（相手と結ぶ個別の契約）。取り込んだ利用許諾契約書も同じ（conditions/contracts.ts）。 */
+const TERMS_KEYS = "('individual_license_terms_v3', 'individual_license_terms_v4', 'pub_license_terms', 'pub_license_terms_v3', 'pub_license_terms_v3_annex')";
+const TERMS_IMPORT_KINDS = "('利用許諾契約書')";
 /** 結果の文書。検収書と計算書。 */
 const RESULT_KEYS = "('inspection_certificate', 'intl_inspection_certificate', 'service_completion_notice', 'royalty_statement', 'royalty_statement_pub')";
 
@@ -126,7 +129,13 @@ const doc = (row: Record<string, any>, prefix: string): GridDocument | null => {
  */
 export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.currency,
                 c.pricing_model, c.flat_amount, c.unit_amount, c.rate_ppm, c.term_end,
-                c.work_id, c.agreement_id, c.deliverable_ownership, c.quantity, c.unit_label,
+                c.work_id, c.agreement_id, c.direction, c.deliverable_ownership, c.quantity, c.unit_label,
+                ctr.id AS contract_id, ctr.agreement_no AS contract_no, ctr.title AS contract_title,
+                ctr.kind AS contract_kind, ctr.status AS contract_status, ctr.on_standalone AS contract_on_standalone,
+                lt.id AS terms_id, lt.document_no AS terms_no, lt.status AS terms_status,
+                lt.sent_at AS terms_sent_at, lt.sign AS terms_sign, lt.amount_ex_tax AS terms_amount_ex_tax,
+                lt.condition_count AS terms_condition_count, lt.sibling_count AS terms_sibling_count,
+                lt.imported AS terms_imported,
                 w.title AS work_title,
                 p.id AS party_id, p.name AS party_name,
                 lic.count AS license_count,
@@ -198,6 +207,18 @@ export const GRID_JOINS = `
            ) ev ON true
            ${documentLateral("po", ORDER_KEYS, ORDER_IMPORT_KINDS)}
            ${documentLateral("rs", RESULT_KEYS)}
+           ${documentLateral("lt", TERMS_KEYS, TERMS_IMPORT_KINDS)}
+           -- 条件が載っている契約の根（基本契約か単体契約）。個別契約・補助文書・発注書の器は親をたどる。
+           -- on_standalone：条件が単体契約（発注書の器ではない独立の契約）に直接載っている。
+           --   その単体契約が発注書の役目もするので、発注書が無くても「まだ」にしない。
+           LEFT JOIN LATERAL (
+             SELECT r.id, r.agreement_no, r.title, COALESCE(r.kind, 'master') AS kind, r.status,
+                    (COALESCE(a0.kind, 'master') = 'standalone' AND a0.parent_id IS NULL
+                     AND a0.order_document_id IS NULL) AS on_standalone
+               FROM agreements a0
+               JOIN agreements r ON r.id = COALESCE(a0.parent_id, a0.id)
+              WHERE a0.id = c.agreement_id
+           ) ctr ON true
            -- 支払。取り消したものは持っていないものとして扱う。
            LEFT JOIN LATERAL (
              SELECT y.id, y.payment_no, y.status, y.due_on, y.note, y.amount, y.paid_on
@@ -217,6 +238,13 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
   kind: String(row.kind),
   counterparty: row.party_id ? { id: Number(row.party_id), name: String(row.party_name ?? "") } : null,
   agreementId: int(row.agreement_id),
+  direction: row.direction === "out" ? "out" : "in",
+  contract: row.contract_id ? {
+    id: Number(row.contract_id), agreementNo: str(row.contract_no), title: str(row.contract_title),
+    kind: String(row.contract_kind ?? "master"), status: String(row.contract_status ?? "")
+  } : null,
+  onStandalone: row.contract_on_standalone === true,
+  terms: doc(row, "terms"),
   pricingModel: String(row.pricing_model ?? "none"),
   currency: String(row.currency ?? "JPY"),
   flatAmount: int(row.flat_amount),

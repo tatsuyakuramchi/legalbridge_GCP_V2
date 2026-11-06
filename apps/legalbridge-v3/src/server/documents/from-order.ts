@@ -17,10 +17,18 @@ import { settlementDocFor, SERVICE_COMPLETION_KEY } from "./settlement-docs.js";
  * を入れ、かかった分だけを検収書の経費・その他手数料の行にする。発注書に無かった実費も足せる
  * （決定のとき条件になり、実績が立つ）。
  *
+ * 単体契約（業務委託契約書に条件が直接付いたもの。発注書の文書は無い）からも同じように作る。
+ * 載せる条件は、その契約に載った委託料・実費・手数料。検収書の発注番号は単体契約の番号になる
+ * （context-repository の orderNo の控え）。
+ *
  * ここ（buildOrderPlan・draftInputFromOrder）は DB を触らない。読み込みは OrderSettlementService。
  */
 
 export const ORDER_TEMPLATE_KEYS = ["purchase_order", "intl_purchase_order"];
+/** 単体契約：基本契約の下ではなく、発注書の器でもない独立の契約（a）。 */
+const STANDALONE_SQL = `COALESCE(a.kind, 'master') = 'standalone' AND a.parent_id IS NULL AND a.order_document_id IS NULL`;
+/** 決済文書に載せる業務委託の条件（委託料・実費・手数料）の生きている版（c）。 */
+const SERVICE_CONDITION_SQL = `c.kind IN ('service', 'expense', 'fee') AND c.status NOT IN ('void', 'superseded', 'draft')`;
 
 export interface OrderEvent {
   id: number; occurredOn: string | null; amount: number; quantity: number | null; label: string | null;
@@ -48,6 +56,8 @@ export interface OrderSettlementPlan {
   order: {
     id: number; documentNo: string | null; title: string | null; templateKey: string; issuedOn: string | null;
     matterId: number | null; agreementId: number | null; counterparty: { id: number; name: string } | null;
+    /** 起点。order＝発注書（文書の id）、agreement＝単体契約（契約の id）。 */
+    source?: "order" | "agreement";
   };
   templateKey: string; templateLabel: string;
   lines: OrderLine[];
@@ -90,8 +100,9 @@ export function buildOrderPlan(order: OrderSettlementPlan["order"], conditions: 
     : settlementDocFor(head ? { kind: head.kind, timeSettlement: head.timeSettlement, contractForm: head.contractForm }
                             : "service");
   const warnings: string[] = [];
-  if (!lines.length) warnings.push("この発注書には委託料の条件が結ばれていません。発注書の条件明細を確かめてください");
-  if (lines.length && lines.every((l) => l.settled)) warnings.push("この発注書の実績はすべて検収済みです");
+  const what = order.source === "agreement" ? "単体契約" : "発注書";
+  if (!lines.length) warnings.push(`この${what}には委託料の条件が結ばれていません。${what}の条件明細を確かめてください`);
+  if (lines.length && lines.every((l) => l.settled)) warnings.push(`この${what}の実績はすべて検収済みです`);
   const noEvents = lines.filter((l) => !l.events.length);
   if (noEvents.length) {
     warnings.push(`納品・役務の実績が無い条件があります（${noEvents.map((l) => l.conditionNo ?? l.name).join("・")}）。`
@@ -128,7 +139,7 @@ export function draftInputFromOrder(plan: OrderSettlementPlan, input: OrderDraft
   const eventIds = [...new Set(input.eventIds.map(Number))];
   for (const id of eventIds) {
     const line = eventToLine.get(id);
-    if (!line) throw new DomainError("VALIDATION", `実績 ${id} はこの発注書の条件のものではありません`);
+    if (!line) throw new DomainError("VALIDATION", `実績 ${id} はこの${plan.order.source === "agreement" ? "単体契約" : "発注書"}の条件のものではありません`);
     if (line.events.find((e) => e.id === id)?.documentNo) {
       throw new DomainError("VALIDATION", `実績 ${id} はもう決済文書に結んであります`);
     }
@@ -146,7 +157,7 @@ export function draftInputFromOrder(plan: OrderSettlementPlan, input: OrderDraft
   const closeIds: number[] = [];
   for (const x of input.extras) {
     if (x.conditionId !== null && !known.has(x.conditionId)) {
-      throw new DomainError("VALIDATION", `実費・手数料の条件 ${x.conditionId} はこの発注書のものではありません`);
+      throw new DomainError("VALIDATION", `実費・手数料の条件 ${x.conditionId} はこの${plan.order.source === "agreement" ? "単体契約" : "発注書"}のものではありません`);
     }
     if (x.status === "none" && x.conditionId) closeIds.push(x.conditionId);
     if (x.status !== "incurred") continue;
@@ -174,7 +185,7 @@ export function draftInputFromOrder(plan: OrderSettlementPlan, input: OrderDraft
       // 空の配列も渡す：渡さないと、検収書は結んだ条件から経費の行を起こす（見込みの額が刷られる）。
       expenses, other_fees: fees,
       _eventIds: eventIds,
-      _fromOrderId: plan.order.id,
+      ...(plan.order.source === "agreement" ? { _fromAgreementId: plan.order.id } : { _fromOrderId: plan.order.id }),
       ...(closeIds.length ? { _closeExtrasOnIssue: closeIds } : {})
     }
   };
@@ -183,9 +194,12 @@ export function draftInputFromOrder(plan: OrderSettlementPlan, input: OrderDraft
 export class OrderSettlementService {
   constructor(private readonly database: Queryable) {}
 
-  /** 決定した発注書を番号・件名・相手先で探す（作る画面の候補）。 */
+  /**
+   * 作る画面の候補：決定した発注書と、締結済みの単体契約（委託料の条件が直接付いたもの）を、
+   * 番号・件名・相手先で探す。source で見分ける。
+   */
   async search(q: string): Promise<Array<{ id: number; documentNo: string | null; title: string | null; counterparty: string | null;
-                                           issuedOn: string | null; templateKey: string }>> {
+                                           issuedOn: string | null; templateKey: string; source: "order" | "agreement" }>> {
     try {
       const like = `%${q.trim()}%`;
       const r = await this.database.query(
@@ -198,11 +212,100 @@ export class OrderSettlementService {
           WHERE d.status = 'issued' AND t.template_key = ANY($1::text[])
             AND ($2 = '%%' OR d.document_no ILIKE $2 OR v.title ILIKE $2 OR v.counterparty ILIKE $2)
           ORDER BY d.issued_at DESC NULLS LAST, d.id DESC LIMIT 30`, [ORDER_TEMPLATE_KEYS, like]);
-      return (r.rows as Array<Record<string, any>>).map((x) => ({
+      const orders = (r.rows as Array<Record<string, any>>).map((x) => ({
         id: Number(x.id), documentNo: str(x.document_no), title: str(x.title), counterparty: str(x.counterparty),
-        issuedOn: str(x.issued_on), templateKey: String(x.template_key)
+        issuedOn: str(x.issued_on), templateKey: String(x.template_key), source: "order" as const
       }));
+      const a = await this.database.query(
+        `SELECT a.id, a.agreement_no, a.title, p.name AS counterparty, a.executed_on::text AS executed_on
+           FROM agreements a
+           JOIN parties p ON p.id = a.counterparty_id
+          WHERE ${STANDALONE_SQL} AND a.status = 'executed' AND a.direction = 'in'
+            AND EXISTS (SELECT 1 FROM conditions c WHERE c.agreement_id = a.id AND ${SERVICE_CONDITION_SQL})
+            AND ($1 = '%%' OR a.agreement_no ILIKE $1 OR a.title ILIKE $1 OR p.name ILIKE $1)
+          ORDER BY a.executed_on DESC NULLS LAST, a.id DESC LIMIT 30`, [like]);
+      const agreements = (a.rows as Array<Record<string, any>>).map((x) => ({
+        id: Number(x.id), documentNo: str(x.agreement_no), title: str(x.title), counterparty: str(x.counterparty),
+        issuedOn: str(x.executed_on), templateKey: "standalone", source: "agreement" as const
+      }));
+      return [...orders, ...agreements];
     } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 単体契約から作る組。載せるのはその契約に直接載った委託料・実費・手数料（生きている版）で、
+   * 実績は条件の系列ぜんぶから引く（改訂しても前の版の実績が消えない）。
+   */
+  async planForAgreement(agreementId: number): Promise<OrderSettlementPlan> {
+    try {
+      const head = (await this.database.query(
+        `SELECT a.id, a.agreement_no, a.title, a.status, a.direction, a.executed_on::text AS executed_on,
+                COALESCE(a.kind, 'master') AS kind, a.parent_id, a.order_document_id,
+                p.id AS counterparty_id, p.name AS counterparty
+           FROM agreements a LEFT JOIN parties p ON p.id = a.counterparty_id
+          WHERE a.id = $1`, [agreementId])).rows[0] as Record<string, any> | undefined;
+      if (!head) throw new DomainError("NOT_FOUND", `契約 ${agreementId} が見つかりません`);
+      if (head.kind !== "standalone" || head.parent_id !== null || head.order_document_id !== null) {
+        throw new DomainError("VALIDATION", "単体契約を選んでください（基本契約の下の取引は、発注書から作ります）");
+      }
+      if (head.status !== "executed") throw new DomainError("VALIDATION", "締結済みの単体契約から作ってください");
+      if (head.direction !== "in") throw new DomainError("VALIDATION", "当社が支払う側（IN）の単体契約から作ってください");
+
+      const conds = (await this.database.query(
+        `SELECT c.id, c.condition_no, c.name, c.kind, c.currency, c.flat_amount, c.unit_amount, c.quantity,
+                c.time_settlement, c.contract_form, c.status, (c.closed_at IS NOT NULL) AS closed,
+                array(SELECT x.id FROM conditions x WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id)) AS lineage,
+                EXISTS (SELECT 1 FROM document_conditions dc2
+                          JOIN documents d2 ON d2.id = dc2.document_id
+                          JOIN document_template_versions tv2 ON tv2.id = d2.template_version_id
+                          JOIN document_templates t2 ON t2.id = tv2.template_id
+                         WHERE dc2.condition_id IN (SELECT x.id FROM conditions x
+                                                     WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id))
+                           AND d2.status = 'issued' AND t2.template_key ~ '(inspection|acceptance|delivery|completion)') AS settled_on_issued,
+                (SELECT ml.matter_id FROM matter_links ml
+                  WHERE ml.target_type = 'condition' AND ml.target_ref = c.id::text ORDER BY ml.matter_id LIMIT 1) AS matter_id
+           FROM conditions c
+          WHERE c.agreement_id = $1 AND ${SERVICE_CONDITION_SQL}
+          ORDER BY c.condition_no NULLS LAST, c.id`, [agreementId])).rows as Array<Record<string, any>>;
+      const raw = await this.withEvents(conds);
+      const matterId = conds.map((c) => c.matter_id).find((m) => m !== null && m !== undefined);
+      return buildOrderPlan({
+        id: Number(head.id), documentNo: str(head.agreement_no), title: str(head.title), templateKey: "standalone",
+        issuedOn: str(head.executed_on), matterId: matterId ? Number(matterId) : null, agreementId: Number(head.id),
+        counterparty: head.counterparty_id ? { id: Number(head.counterparty_id), name: String(head.counterparty ?? "") } : null,
+        source: "agreement"
+      }, raw);
+    } catch (error) { throw translate(error); }
+  }
+
+  /** 条件（lineage＝系列の id を持つ行）に実績を付けて、組を作る材料にする。 */
+  private async withEvents(conds: Array<Record<string, any>>): Promise<RawOrderCondition[]> {
+    const allIds = [...new Set(conds.flatMap((c) => (c.lineage as unknown[]).map(Number)))];
+    const events = allIds.length ? (await this.database.query(
+      `SELECT e.id, e.condition_id, e.occurred_on::text AS occurred_on, e.amount, e.quantity,
+              COALESCE(NULLIF(e.deliverable, ''), s.label, e.period, e.note) AS label,
+              CASE WHEN d.status = 'issued' THEN d.document_no END AS document_no
+         FROM condition_events e
+         LEFT JOIN condition_schedules s ON s.id = e.schedule_id
+         LEFT JOIN documents d ON d.id = e.document_id
+        WHERE e.condition_id = ANY($1::bigint[]) AND e.status = 'active'
+        ORDER BY e.occurred_on, e.id`, [allIds])).rows as Array<Record<string, any>> : [];
+    return conds.map((c) => {
+      const lineage = new Set((c.lineage as unknown[]).map(Number));
+      return {
+        id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""), kind: String(c.kind ?? ""),
+        currency: String(c.currency ?? "JPY"),
+        flatAmount: c.flat_amount === null ? null : Number(c.flat_amount),
+        unitAmount: c.unit_amount === null ? null : Number(c.unit_amount),
+        quantity: c.quantity === null ? null : Number(c.quantity),
+        timeSettlement: c.time_settlement === true, contractForm: str(c.contract_form),
+        closed: c.closed === true, settledOnIssued: c.settled_on_issued === true,
+        events: events.filter((e) => lineage.has(Number(e.condition_id))).map((e) => ({
+          id: Number(e.id), occurredOn: dateStr(e.occurred_on), amount: Number(e.amount ?? 0),
+          quantity: e.quantity === null ? null : Number(e.quantity), label: str(e.label), documentNo: str(e.document_no)
+        }))
+      };
+    });
   }
 
   async plan(orderId: number): Promise<OrderSettlementPlan> {
@@ -247,38 +350,13 @@ export class OrderSettlementService {
           WHERE c.status <> 'void'
           ORDER BY l.line_no`, [orderId])).rows as Array<Record<string, any>>;
 
-      const allIds = [...new Set(conds.flatMap((c) => (c.lineage as unknown[]).map(Number)))];
-      const events = allIds.length ? (await this.database.query(
-        `SELECT e.id, e.condition_id, e.occurred_on::text AS occurred_on, e.amount, e.quantity,
-                COALESCE(NULLIF(e.deliverable, ''), s.label, e.period, e.note) AS label,
-                CASE WHEN d.status = 'issued' THEN d.document_no END AS document_no
-           FROM condition_events e
-           LEFT JOIN condition_schedules s ON s.id = e.schedule_id
-           LEFT JOIN documents d ON d.id = e.document_id
-          WHERE e.condition_id = ANY($1::bigint[]) AND e.status = 'active'
-          ORDER BY e.occurred_on, e.id`, [allIds])).rows as Array<Record<string, any>> : [];
-
-      const raw: RawOrderCondition[] = conds.map((c) => {
-        const lineage = new Set((c.lineage as unknown[]).map(Number));
-        return {
-          id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""), kind: String(c.kind ?? ""),
-          currency: String(c.currency ?? "JPY"),
-          flatAmount: c.flat_amount === null ? null : Number(c.flat_amount),
-          unitAmount: c.unit_amount === null ? null : Number(c.unit_amount),
-          quantity: c.quantity === null ? null : Number(c.quantity),
-          timeSettlement: c.time_settlement === true, contractForm: str(c.contract_form),
-          closed: c.closed === true, settledOnIssued: c.settled_on_issued === true,
-          events: events.filter((e) => lineage.has(Number(e.condition_id))).map((e) => ({
-            id: Number(e.id), occurredOn: dateStr(e.occurred_on), amount: Number(e.amount ?? 0),
-            quantity: e.quantity === null ? null : Number(e.quantity), label: str(e.label), documentNo: str(e.document_no)
-          }))
-        };
-      });
+      const raw = await this.withEvents(conds);
       return buildOrderPlan({
         id: Number(head.id), documentNo: str(head.document_no), title: str(head.title), templateKey: String(head.template_key),
         issuedOn: str(head.issued_on), matterId: head.matter_id ? Number(head.matter_id) : null,
         agreementId: head.agreement_id ? Number(head.agreement_id) : null,
-        counterparty: head.counterparty_id ? { id: Number(head.counterparty_id), name: String(head.counterparty ?? "") } : null
+        counterparty: head.counterparty_id ? { id: Number(head.counterparty_id), name: String(head.counterparty ?? "") } : null,
+        source: "order"
       }, raw);
     } catch (error) { throw translate(error); }
   }
