@@ -83,6 +83,8 @@ export interface CreatePreset {
   parentId?: number | null;
   kind?: AgreementKind;
   domain?: AgreementDomain;
+  /** 向き（工程表の条件から開いたときは条件の向き）。 */
+  direction?: "in" | "out";
 }
 
 export function AgreementsWorkspace(
@@ -466,7 +468,7 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
   const signOn = Boolean(file) && sign.canSign && signAfter;
   const [partyId, setPartyId] = useState(preset.partyId ? String(preset.partyId) : "");
   /** none は向きなし（文書だけの契約のときだけ。NDA・覚書など）。 */
-  const [direction, setDirection] = useState<"in" | "out" | "none">("in");
+  const [direction, setDirection] = useState<"in" | "out" | "none">(preset.direction ?? "in");
   const [domain, setDomain] = useState<AgreementDomain>(preset.domain ?? "service");
   const [title, setTitle] = useState("");
   const [executedOn, setExecutedOn] = useState("");

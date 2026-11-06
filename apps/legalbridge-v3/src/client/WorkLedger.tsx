@@ -8,6 +8,8 @@ import { DriftMatrixDialog } from "./DriftMatrix.js";
 import { useMapLinks } from "./mapLinks.js";
 import { ContractBand } from "./ContractBand.js";
 import { AssignBar } from "./AssignBar.js";
+import { Modal } from "./Modal.js";
+import { ContractDialog, type ContractDialogMode } from "./ContractDialog.js";
 import { ConditionEntryForm, ENTRY_KINDS, type ConditionEntryKind } from "./ConditionEntryForm.js";
 import {
   applyFilter, groupByParty, groupByWork, isStuck, unpaidPayments,
@@ -50,26 +52,6 @@ const total = (r: GridRow): number | null =>
 const isLicense = (r: GridRow) => r.kind === "license" || r.pricingModel === "rate";
 /** 実績のある回（回の情報が無ければ、行の実績を1回として）。 */
 const doneRounds = (r: GridRow): GridRound[] => (r.rounds ?? []).filter((x) => x.eventId !== null);
-
-/** ネイティブの dialog。Esc と外側の押下で閉じる。 */
-function Modal({ title, onClose, children, wide }: { title: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean }) {
-  const ref = useRef<HTMLDialogElement | null>(null);
-  useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
-    return () => { if (d?.open) d.close(); };
-  }, []);
-  return (
-    <dialog ref={ref} className={`lb-modal${wide ? " wide" : ""}`} onCancel={(e) => { e.preventDefault(); onClose(); }}
-            onClick={(e) => { if (e.target === ref.current) onClose(); }}>
-      <div className="lb-modal-hd">
-        <b>{title}</b>
-        <button className="btn btn-sm" onClick={onClose} aria-label="閉じる">閉じる</button>
-      </div>
-      <div className="lb-modal-bd">{children}</div>
-    </dialog>
-  );
-}
 
 /**
  * その段の値が、生きている側（条件・予定・実績）とずれている印。何と比べて何が違うかまで出す
@@ -144,6 +126,8 @@ export function WorkLedger(
   const [dups, setDups] = useState<DuplicateView | null>(null);
   const [dupOpen, setDupOpen] = useState<DuplicateGroup | null>(null);
   const [bulk, setBulk] = useState<"docs" | "cancel" | "due" | "drift" | null>(null);
+  /** 基本契約・個別契約（発注書）の登録・紐づけのポップアップ。 */
+  const [contractDialog, setContractDialog] = useState<{ row: GridRow; mode: ContractDialogMode } | null>(null);
   /** 「文書をまとめて作る」を開くときのひな形（発注書／検収書のボタンから）。 */
   const [bulkTemplate, setBulkTemplate] = useState<string | null>(null);
   /** 実績を入れる（条件と、次の回）／支払を立てる（条件）。 */
@@ -414,10 +398,20 @@ export function WorkLedger(
   const next = (label: string, go: () => void, title: string) => (
     <button className="btn btn-sm ledger-next" onClick={(e) => { e.stopPropagation(); go(); }} title={title}>→ {label}</button>
   );
+  /** 契約の登録・紐づけのポップアップを開くボタン（セルを押したときの「まとめて直す」は開かない）。 */
+  const contractButton = (r: GridRow, mode: ContractDialogMode, label: string, title: string) => canWrite && !r.settlement.done && (
+    <button className="btn btn-sm ledger-next" title={title}
+            onClick={(e) => { e.stopPropagation(); setContractDialog({ row: r, mode }); }}>＋ {label}</button>
+  );
   /** 基本契約の段：条件が載っている契約の根（基本契約・単体契約）。 */
   const contractCell = (r: GridRow) => {
     const c = r.contract;
-    if (!c) return <td className="ledger-plain"><span className="faint">{isLicense(r) ? "なし" : "なし（発注書の約款）"}</span></td>;
+    if (!c) return (
+      <td className="ledger-plain">
+        <span className="faint">{isLicense(r) ? "なし" : "なし（発注書の約款）"}</span>
+        {contractButton(r, "master", "基本契約", "既存の基本契約から選ぶか、新しく登録（ファイル・クラウドサインも）して、この条件を載せる")}
+      </td>
+    );
     return (
       <td className="ledger-plain">
         <div className="ledger-line">
@@ -439,6 +433,7 @@ export function WorkLedger(
       const partyId = r.counterparty?.id ?? null;
       return <>
         {r.terms ? <DocLine doc={r.terms} onOpen={onOpenDocument} /> : <span className="faint">まだ</span>}
+        {!r.terms && contractButton(r, "individual", "個別契約", "既存の文書から選ぶか、条件明細から引用して個別契約（利用許諾条件書）を登録する")}
         {r.direction !== "out" && r.terms && r.terms.phase !== "draft" && partyId !== null && flow.royalty
           && next("計算書を作る", () => flow.royalty!({ partyId, workId: r.workId }),
                   "作品 › 利用許諾計算の台帳（作家 × 作品）を開いて、回ごとに計算書を作る")}
@@ -463,7 +458,7 @@ export function WorkLedger(
       </>;
     }
     if (r.orderRef) return <span className="faint code">{r.orderRef}（外部）</span>;
-    return <span className="faint">まだ</span>;
+    return <><span className="faint">まだ</span>{contractButton(r, "individual", "発注書", "既存の文書から選ぶか、発注書の PDF を登録する（無ければ番号だけ取る）")}</>;
   };
 
   /** 上段＝IN（当社が払う）、下段＝OUT（当社が受け取る）。段ごとに列の呼び名を変える。 */
@@ -645,6 +640,11 @@ export function WorkLedger(
         {isAdmin && <p className="faint" style={{ margin: 0 }}>セルを押すと、その段を開いた「まとめて直す」がポップアップで出ます。右に 発注書・条件明細・実績・支払・検収書 の前後（保存前の試算）。</p>}
       </div>
 
+      {contractDialog && (
+        <ContractDialog row={contractDialog.row} mode={contractDialog.mode}
+          onClose={() => setContractDialog(null)}
+          onDone={(message) => { setContractDialog(null); reload(message); }} />
+      )}
       {editRow && editing && (
         <Modal wide title={<>{editRow.counterparty?.name ?? ""}　{editRow.name}　<span className="faint code">{editRow.conditionNo ?? `#${editRow.conditionId}`}</span></>}
                onClose={() => setEditing(null)}>
