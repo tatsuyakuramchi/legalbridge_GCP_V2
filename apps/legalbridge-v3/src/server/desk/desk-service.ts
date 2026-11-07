@@ -15,6 +15,22 @@ import { translate } from "../core/errors.js";
 export type TodayKind = "intake" | "task" | "deadline";
 export type TodayWhen = "over" | "today" | "week" | "later" | "none";
 export type DeskRoot = "party" | "matter" | "work";
+/** 作品の切り口のカテゴリ。publishing 出版・game ボードゲーム等・other どちらとも決まらないもの。 */
+export type WorkCategory = "publishing" | "game" | "other";
+export const WORK_CATEGORIES: readonly WorkCategory[] = ["publishing", "game", "other"];
+const CATEGORY_LABEL: Record<WorkCategory, string> = { publishing: "出版", game: "ボードゲーム等", other: "その他" };
+/**
+ * 作品のカテゴリ（SQL の式。conditions c と works w を集約した行で使う）。
+ * 作品画面の刊行物・製品の言い分け（editionFamilyOf）と同じ決め方：
+ * 事業区分にゲーム・出版の語があればそれ。無ければ作家との条件（in）の利用形態で、
+ * 出版の利用形態（pub_*）なら出版、自社製造・OEM ならボードゲーム等。
+ */
+const CATEGORY_SQL = `CASE
+    WHEN w.business_line ~* '(ゲーム|game)' THEN 'game'
+    WHEN w.business_line ~* '(出版|書籍|publish)' THEN 'publishing'
+    WHEN bool_or(c.direction = 'in' AND c.usage_type LIKE 'pub\\_%') THEN 'publishing'
+    WHEN bool_or(c.direction = 'in' AND c.usage_type IN ('in_house', 'oem')) THEN 'game'
+    ELSE 'other' END`;
 
 export interface TodayItem {
   key: string;
@@ -73,6 +89,8 @@ export interface DeskNode {
   expandable: boolean;
   /** 契約の行：その契約と補助文書の ID（工程表の行を契約で絞るのに使う）。 */
   agreementIds?: number[];
+  /** 作品の行：カテゴリ（出版・ボードゲーム等・その他）。 */
+  category?: WorkCategory;
 }
 
 /** 覚えておく時間。 */
@@ -208,13 +226,14 @@ export class DeskService {
   }
 
   /** ツリーの一段目。検索語が無いときだけ 1 分覚える。 */
-  roots(root: DeskRoot, q: string | null): Promise<DeskNode[]> {
+  roots(root: DeskRoot, q: string | null, category: WorkCategory | null = null): Promise<DeskNode[]> {
     const like = likeOf(q);
-    if (like) return this.computeRoots(root, like);
-    return this.rootMemo.get(root, () => this.computeRoots(root, null));
+    const cat = root === "work" ? category : null;
+    if (like) return this.computeRoots(root, like, cat);
+    return this.rootMemo.get(`${root}:${cat ?? ""}`, () => this.computeRoots(root, null, cat));
   }
 
-  private async computeRoots(root: DeskRoot, like: string | null): Promise<DeskNode[]> {
+  private async computeRoots(root: DeskRoot, like: string | null, category: WorkCategory | null = null): Promise<DeskNode[]> {
     try {
       if (root === "party") {
         const r = await this.database.query(
@@ -252,18 +271,25 @@ export class DeskService {
       }
       const r = await this.database.query(
         `SELECT w.id, w.work_code, w.title, count(c.id)::int AS n,
-                count(c.id) FILTER (WHERE c.kind = 'license')::int AS licenses
+                count(c.id) FILTER (WHERE c.kind = 'license')::int AS licenses,
+                ${CATEGORY_SQL} AS category
            FROM conditions c JOIN works w ON w.id = c.work_id
           WHERE ${LIVE}
-            AND ($1::text IS NULL OR w.title ILIKE $1 OR w.work_code ILIKE $1 OR w.title_kana ILIKE $1)
-          GROUP BY w.id, w.work_code, w.title
+            AND ($1::text IS NULL OR w.title ILIKE $1 OR w.work_code ILIKE $1 OR w.title_kana ILIKE $1
+                 OR w.source_title ILIKE $1)
+          GROUP BY w.id, w.work_code, w.title, w.business_line
+         HAVING $3::text IS NULL OR ${CATEGORY_SQL} = $3
           ORDER BY max(c.updated_at) DESC, w.id DESC
-          LIMIT $2`, [like, ROOT_LIMIT]);
-      return (r.rows as any[]).map((x) => ({
-        key: `work:${x.id}`, kind: "work" as const, id: Number(x.id), label: String(x.title ?? ""),
-        sub: [str(x.work_code), Number(x.licenses ?? 0) ? `利用許諾 ${Number(x.licenses)} 本` : null].filter(Boolean).join(" ・ ") || null,
-        count: Number(x.n ?? 0), expandable: false
-      }));
+          LIMIT $2`, [like, ROOT_LIMIT, category]);
+      return (r.rows as any[]).map((x) => {
+        const cat = WORK_CATEGORIES.includes(x.category) ? x.category as WorkCategory : "other";
+        return {
+          key: `work:${x.id}`, kind: "work" as const, id: Number(x.id), label: String(x.title ?? ""),
+          sub: [str(x.work_code), CATEGORY_LABEL[cat], Number(x.licenses ?? 0) ? `利用許諾 ${Number(x.licenses)} 本` : null]
+            .filter(Boolean).join(" ・ ") || null,
+          count: Number(x.n ?? 0), expandable: false, category: cat
+        };
+      });
     } catch (error) { throw translate(error); }
   }
 

@@ -27,7 +27,12 @@ interface Today { items: TodayItem[]; counts: { over: number; today: number; wee
 interface DeskNode {
   key: string; kind: "party" | "agreement" | "loose" | "matter" | "work"; id: number | null;
   label: string; sub: string | null; count: number; expandable: boolean; agreementIds?: number[];
+  category?: Category;
 }
+/** 作品の切り口のカテゴリ（事業区分と、作家との条件の利用形態から決まる）。 */
+type Category = "publishing" | "game" | "other";
+const CATEGORIES: Array<[Category | "", string]> = [["", "すべて"], ["publishing", "出版"], ["game", "ボードゲーム等"], ["other", "その他"]];
+const CAT_KEY = "lb.desk.workCategory";
 interface Selected { node: DeskNode; partyId: number | null }
 
 const OPEN_KEY = "lb.desk.open";
@@ -78,6 +83,11 @@ export function DeskHome(props: {
   const open = isDesk || openSaved;
   const [root, setRoot] = useState<Root>(() => (["party", "matter", "work"].includes(load(ROOT_KEY) ?? "") ? load(ROOT_KEY) as Root : "party"));
   const [q, setQ] = useState("");
+  const [category, setCategoryState] = useState<Category | "">(() => {
+    const v = load(CAT_KEY) ?? "";
+    return ["publishing", "game", "other"].includes(v) ? v as Category : "";
+  });
+  const setCategory = (c: Category | "") => { setCategoryState(c); save(CAT_KEY, c); setNodes(null); };
   const query = useDebounced(q, 300);
   const [nodes, setNodes] = useState<DeskNode[] | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
@@ -120,11 +130,12 @@ export function DeskHome(props: {
     setTreeError(null);
     const qs = new URLSearchParams({ root });
     if (query.trim()) qs.set("q", query.trim());
+    if (root === "work" && category) qs.set("category", category);
     api.get<{ nodes: DeskNode[] }>(`/desk/tree?${qs}`)
       .then((r) => { if (alive) setNodes(r.nodes); })
       .catch((e: ApiError) => { if (alive) { setTreeError(e.message); setNodes([]); } });
     return () => { alive = false; };
-  }, [open, root, query]);
+  }, [open, root, query, category]);
 
   const setOpenSaved = (v: boolean) => { if (isDesk) return; setOpen(v); save(OPEN_KEY, v ? "1" : "0"); };
   const switchRoot = (r: Root) => {
@@ -245,8 +256,15 @@ export function DeskHome(props: {
           <div className="desk-body">
             <div className="desk-tree">
               <input className="inline-input" type="search" value={q} onChange={(e) => setQ(e.target.value)}
-                     placeholder={root === "party" ? "取引先の名前・コード" : root === "matter" ? "案件の件名・番号" : "作品の題名・コード"}
+                     placeholder={root === "party" ? "取引先の名前・コード" : root === "matter" ? "案件の件名・番号" : "作品の題名・コード・原作名"}
                      aria-label="ツリーを絞り込む" />
+              {root === "work" && (
+                <div className="chips" role="group" aria-label="作品のカテゴリで絞る" style={{ margin: "6px 0" }}>
+                  {CATEGORIES.map(([c, label]) => (
+                    <button key={c || "all"} className="chip" aria-pressed={category === c} onClick={() => setCategory(c)}>{label}</button>
+                  ))}
+                </div>
+              )}
               {treeError && <div className="alert">{treeError}</div>}
               {nodes === null && !treeError && <div className="faint">読み込み中…</div>}
               {nodes && nodes.length === 0 && !treeError && <div className="faint">見つかりません。</div>}
