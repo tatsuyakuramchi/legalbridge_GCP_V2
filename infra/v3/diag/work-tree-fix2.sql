@@ -25,7 +25,8 @@
 --          PDF の文書がまだ無ければ要確認に出す（画面から上げてから、もう一度流す）。
 --        - それ以外に個別契約に付いている文書は触らずに「要確認」に出す。
 --     4. out の単体契約：PDF の再許諾先の契約締結日を、その相手先の単体契約の締結日に入れる（空のときだけ）。
---        PDF の相手先がシステムに無い・違う名前のときは「要確認」に出す。
+--        PDF の BEP Latam・Glyp Games の地域は、システムでは Detestable Games・Meeple BR Jogos のまま（触らない）。
+--        それ以外で PDF とシステムの相手先が合わないときは「要確認」に出す。
 --     計算書・支払・実績・決定済みの本文は書き換えない。
 --
 --   ★ 使い方：そのまま流す（お試し）→ 一覧を確かめる → dry := false で流す。何度流しても同じ結果。
@@ -65,10 +66,15 @@ BEGIN
   CREATE TEMP TABLE IF NOT EXISTS _sub (label text, name_like text, executed date) ON COMMIT DROP;
   TRUNCATE _sub;
   INSERT INTO _sub VALUES
-    ('Asmodee Asia Limited', 'Asmodee Asia%', '2026-02-06'), ('BEP Latam Licensing & Consulting LLC', 'BEP Latam%', '2026-03-20'),
-    ('Don''t Panic Games', 'Don%t Panic Games%', '2026-03-24'), ('Glyp Games LTDA', 'Glyp Games%', '2026-02-12'),
+    ('Asmodee Asia Limited', 'Asmodee Asia%', '2026-02-06'),
+    ('Don''t Panic Games', 'Don%t Panic Games%', '2026-03-24'),
     ('Hobby Games Trading, LLC.', 'Hobby Games Trading%', '2026-02-11'), ('Magic Store srl', 'Magic Store%', '2026-02-13'),
     ('Meanbook Co., Ltd.', 'Meanbook%', '2026-02-11'), ('MM-Spiele', 'MM-Spiele%', '2026-03-13');
+  -- PDF の BEP Latam（スペイン語圏）・Glyp Games（ポルトガル語圏）の地域は、システムでは実際の販売元
+  -- Detestable Games・Meeple BR Jogos を相手先にしている。このままにする（相手先も締結日も触らない）。
+  CREATE TEMP TABLE IF NOT EXISTS _keep (name_like text) ON COMMIT DROP;
+  TRUNCATE _keep;
+  INSERT INTO _keep VALUES ('Detestable Games%'), ('Meeple BR Jogos%');
 
   -- 1. 基本契約 ---------------------------------------------------------------
   SELECT * INTO m FROM v3.agreements WHERE agreement_no = v_master_no;
@@ -239,6 +245,7 @@ BEGIN
     SELECT DISTINCT pa.name FROM v3.conditions c JOIN v3.parties pa ON pa.id = c.counterparty_id
      WHERE c.direction = 'out' AND c.work_id = v_works[1] AND c.status <> 'void'
        AND NOT EXISTS (SELECT 1 FROM _sub s WHERE pa.name LIKE s.name_like)
+       AND NOT EXISTS (SELECT 1 FROM _keep k WHERE pa.name LIKE k.name_like)
      ORDER BY pa.name
   LOOP
     plan := plan || format('要確認 out 条件の相手先「%s」：PDF の再許諾先の一覧にありません', r.name);
