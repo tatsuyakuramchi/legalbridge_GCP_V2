@@ -1,6 +1,7 @@
 import { DomainError } from "../core/errors.js";
 import { usageBundleLines, type BundleLine } from "../documents/royalty-patch.js";
-import { toMajor } from "./economics.js";
+import { toMajor, toMinor } from "./economics.js";
+import { unitPriceLabel } from "./usage-type.js";
 import type { CalculationPreview } from "./statement-service.js";
 import { withholdingFor } from "./tax.js";
 
@@ -52,7 +53,10 @@ export function basisNoteOf(preview: CalculationPreview): string {
   if (preview.condition.pricingModel === "unit_rate") {
     const quantity = Number(preview.reported.quantity ?? 0);
     const sample = Number(preview.reported.sampleQuantity ?? 0);
-    notes.push(`${Math.max(0, quantity - sample)}個 × 基準価格`);
+    // 単価（条件の基準価格。主単位で持っている）も出す。「基準価格」だけでは紙から検算できない。
+    const price = preview.condition.unitAmount
+      ? unitPriceLabel(toMinor(preview.condition.unitAmount, preview.condition.currency), preview.condition.currency) : "";
+    notes.push(`${Math.max(0, quantity - sample).toLocaleString("ja-JP")}個 × 基準価格${price ? ` ${price}` : ""}`);
   }
   if (preview.fee.mg_floor_applied) notes.push(`MG適用 +${fmtYen(preview.fee.mg_topup_this_time)}`);
   if (preview.fee.ag_offset_this_time > 0) {

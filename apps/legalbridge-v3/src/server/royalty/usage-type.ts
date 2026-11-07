@@ -20,6 +20,20 @@
  */
 
 import { DomainError } from "../core/errors.js";
+import { toMajor } from "./economics.js";
+
+/**
+ * 単価の表示（紙の「N個 × 基準価格 ¥4,000」）。最小通貨単位から主単位に直す。
+ * 円は「¥4,000」、それ以外は「12.50 USD」。
+ */
+export function unitPriceLabel(minor: number | null | undefined, currency: string | null | undefined): string {
+  if (minor === null || minor === undefined || !Number.isFinite(Number(minor))) return "";
+  const cur = String(currency || "JPY").toUpperCase();
+  const major = toMajor(Number(minor), cur);
+  return cur === "JPY"
+    ? `¥${Math.round(major).toLocaleString("ja-JP")}`
+    : `${major.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+}
 
 export type UsageType = "in_house" | "sublicense" | "oem";
 
@@ -225,8 +239,12 @@ export function basisOf(input: UsageBasisInput, tag: string): number {
   return Math.round(unit * billable);
 }
 
-/** 紙に出す「どう出した数字か」の一行。入金区分があれば先に付ける。 */
-export function basisNoteOf(input: UsageBasisInput): string {
+/**
+ * 紙に出す「どう出した数字か」の一行。入金区分があれば先に付ける。
+ * currency を渡すと、単価の名前（基準価格・受領価格）の横に額を出す（「4,002個 × 基準価格 ¥4,000」）。
+ * 「基準価格」とだけ出すと、いくらで計算したのかが紙から読めない。
+ */
+export function basisNoteOf(input: UsageBasisInput, currency?: string | null): string {
   const stage = paymentStageLabel(input.paymentStage);
   const head = stage ? `${stage}　` : "";
   // 割り戻したときは、その式も出す。相手が検算できないと問い合わせになる。
@@ -235,10 +253,12 @@ export function basisNoteOf(input: UsageBasisInput): string {
   const quantity = Number(input.quantity ?? 0);
   const sample = Number(input.sampleQuantity ?? 0);
   const billable = Math.max(0, quantity - sample);
-  const price = input.usageType === "oem" ? "受領価格" : "基準価格";
+  const amount = currency ? unitPriceLabel(input.unitAmount, currency) : "";
+  const price = `${input.usageType === "oem" ? "受領価格" : "基準価格"}${amount ? ` ${amount}` : ""}`;
+  const n = (x: number) => x.toLocaleString("ja-JP");
   return sample > 0
-    ? `${head}${billable}個（${quantity} − 見本 ${sample}）× ${price}${tax}`
-    : `${head}${billable}個 × ${price}${tax}`;
+    ? `${head}${n(billable)}個（${n(quantity)} − 見本 ${n(sample)}）× ${price}${tax}`
+    : `${head}${n(billable)}個 × ${price}${tax}`;
 }
 
 /**
