@@ -83,6 +83,7 @@ import { RoundOverviewService } from "./royalty/round-overview.js";
 import { RoyaltyReceiptService } from "./royalty/receipts.js";
 import { ReceiptSettleService } from "./royalty/receipt-settle.js";
 import { WorkRightsFlowService } from "./works/rights-flow.js";
+import { WorkRightsMatrixService } from "./works/rights-matrix.js";
 import { WorkStructureCheckService } from "./works/structure-check.js";
 import { EDITION_RELATIONS, WorkEditionService, type EditionRelation } from "./works/editions.js";
 import { ConditionCheckService } from "./conditions/check-service.js";
@@ -3415,6 +3416,11 @@ export function createRoutes(database: Transactable) {
   // 作品 › 権利とお金の流れ（docs/navigation.md §5）。作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近 12 か月のお金。
   router.get("/works/:id/rights-flow", asyncRoute(async (req, res) => {
     res.json(await new WorkRightsFlowService(database, royaltyReceipts).forWork(Number(req.params.id)));
+  }));
+  // 作品 › 許諾地域×許諾言語の表。行＝地域・列＝言語・マス＝許諾（OUT）と、作者から取った範囲との照合。
+  router.get("/works/:id/rights-matrix", asyncRoute(async (req, res) => {
+    const includeEnded = req.query.ended === "1" || req.query.ended === "true";
+    res.json(await new WorkRightsMatrixService(database, (id) => works.envelope(id)).forWork(Number(req.params.id), includeEnded));
   }));
   // 作品の刊行物（版元・ISBN・刊行日・本体価格。docs/work-editions.md、infra/v3/193）。
   const workEditions = new WorkEditionService(database);

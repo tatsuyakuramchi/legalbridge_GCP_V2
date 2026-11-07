@@ -1146,3 +1146,34 @@ tr.ledger-sec.band td{background:var(--accent)}
 /* 過去分として完了（WorkLedger の選んだ帯の中）。 */
 .archive-row{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--line-strong);
   background:var(--surface);border-radius:8px;padding:8px 12px;font-size:12.5px}
+
+/* 作品 › 許諾地域 × 許諾言語（WorkRightsMatrix） */
+.rm-scroll{overflow-x:auto;max-width:100%}
+.rm-table{width:auto;min-width:100%;border-collapse:separate;border-spacing:0}
+.rm-table th,.rm-table td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:0;vertical-align:top}
+.rm-table thead th{position:sticky;top:0;background:var(--sunken);padding:5px 8px;white-space:nowrap;font-weight:700;text-align:center}
+.rm-table tbody th{position:sticky;left:0;background:var(--sunken);padding:5px 8px;white-space:nowrap;text-align:left;z-index:1}
+.rm-table .rm-corner{left:0;z-index:2;color:var(--muted);font-weight:400}
+.rm-table th.rm-other{color:var(--muted);font-weight:400;font-style:italic}
+.rm-cell{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:92px;min-height:42px;
+  padding:4px 7px;border:0;background:transparent;cursor:pointer;text-align:left;font-size:11.5px;line-height:1.35}
+.rm-cell[aria-pressed="true"]{outline:2px solid var(--accent);outline-offset:-2px}
+.rm-name{white-space:nowrap}
+.rm-exclusive{background:var(--accent-soft)}
+.rm-exclusive .rm-name{color:var(--accent);font-weight:700}
+.rm-non_exclusive{background:var(--in-soft)}
+.rm-open{background:var(--ok-soft)}
+.rm-open .faint{color:var(--ok)}
+.rm-conflict{background:var(--out-soft)}
+.rm-conflict .rm-name{color:var(--out);font-weight:700}
+.rm-outside{background:var(--warn-soft)}
+.rm-outside .rm-name{color:var(--warn)}
+.rm-none{background:var(--surface)}
+.rm-dim{opacity:.35}
+.rm-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11.5px;color:var(--muted)}
+.rm-swatch{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line-strong)}
+.tag.rm-tag-conflict{background:var(--out-soft);color:var(--out);border-color:transparent}
+.tag.rm-tag-outside{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+.tag.rm-tag-exclusive{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.tag.rm-tag-non_exclusive{background:var(--in-soft);color:var(--in);border-color:transparent}
+.tag.rm-tag-open{background:var(--ok-soft);color:var(--ok);border-color:transparent}
