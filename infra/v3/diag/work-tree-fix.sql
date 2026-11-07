@@ -20,8 +20,8 @@
 --        「（無題の条件）」の in 条件には、1 本目の作品の同じ料率の条件の名前を付ける。
 --        個別契約の前の番号の文書・基本契約の前の番号の文書を、それぞれの契約に付ける。
 --     3. 重複の作品（v_dup_works。原作として立てていた作品を含む）：条件を 1 本目の作品に寄せ、
---        系譜（親子）の行を外してから消す。ほかの表（クレジット・刊行物・案件…）から参照されていれば
---        消さずに「使わない」にする。
+--        系譜（親子）の行を外し、ほかの表（クレジット・刊行物・案件…）の行も 1 本目の作品へ付け替えてから消す。
+--        1 本目の作品に同じ行があってぶつかるときは、消さずに「使わない」にして要確認に出す。
 --     4. 重複の in 条件：作家の、作品の無い有効な in 条件のうち、残す in 条件と「同じ料率・同じ期間開始」のもの。
 --        付帯情報（実績・計算書と明細・支払の割当・文書の繋がり・範囲・取り分・子の条件…）を
 --        残す条件へ付け替えてから無効にする。付け替えでぶつかる行（同じ支払・同じ実績の割当など）があれば、
@@ -58,6 +58,9 @@ DECLARE
   v_works bigint[] := '{}'; v_keep text[] := '{}'; v_main_nos text[]; v_refs text[]; v_cnt bigint; v_ok boolean; v_moved text[];
   v_name text; v_title text; v_first date;
 BEGIN
+  -- 後回しの一意制約（予定の回の番号など）も、その場で確かめる。COMMIT のときに初めてぶつかると
+  -- お試しでは見えず、本番だけ最後に失敗するため。ぶつかれば各段の例外処理で「要確認」に出る。
+  SET CONSTRAINTS ALL IMMEDIATE;
   -- 作品ごとの個別契約と in 条件。1 行目が主の作品（重複の作品の条件はここへ寄せる）。
   CREATE TEMP TABLE IF NOT EXISTS _products (ord int, work_id bigint, indiv_old text, indiv_no text, in_nos text[]) ON COMMIT DROP;
   TRUNCATE _products;
@@ -247,7 +250,7 @@ BEGIN
   END LOOP;
 
   -- 3. 重複の作品を消す ------------------------------------------------------------
-  -- 「使わない」になっていても消す（参照が残っていて消せないものは、2 回目以降は黙って飛ばす）。
+  -- 「使わない」になっていても消す（ほかの表の行は主の作品へ付け替えてから）。
   FOR w IN SELECT * FROM v3.works wk WHERE wk.id = ANY(v_dup_works) ORDER BY wk.id LOOP
     FOR r IN SELECT c.id, c.condition_no, c.direction, c.work_part_id, pa.name AS party FROM v3.conditions c
                JOIN v3.parties pa ON pa.id = c.counterparty_id WHERE c.work_id = w.id ORDER BY c.id LOOP
@@ -261,24 +264,44 @@ BEGIN
       changes := changes || jsonb_build_object('deleted_lineage', to_jsonb(r));
       DELETE FROM v3.work_lineage WHERE parent_work_id = r.parent_work_id AND child_work_id = r.child_work_id AND relation_type = r.relation_type;
     END LOOP;
-    v_refs := '{}';
+    -- 作品を指しているほかの行（クレジット・刊行物・案件…）は、主の作品へ付け替える（原作名は作品の項目に
+    -- 持つので、原作として立てていた作品の付帯情報も主の作品のものにする）。パートは作品と一緒に消える。
+    -- 主の作品に同じ行があってぶつかるものは付け替えず、作品は消さずに「使わない」にして出す。
+    v_refs := '{}'; v_moved := '{}';
     FOR fk IN
       SELECT con.conrelid::regclass AS tbl, att.attname AS col
         FROM pg_constraint con JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
        WHERE con.contype = 'f' AND con.confrelid = 'v3.works'::regclass AND array_length(con.conkey, 1) = 1
+         AND con.conrelid NOT IN ('v3.work_parts'::regclass, 'v3.work_lineage'::regclass)
+       ORDER BY 1, 2
     LOOP
       EXECUTE format('SELECT count(*) FROM %s WHERE %I = $1', fk.tbl, fk.col) INTO v_cnt USING w.id;
-      IF v_cnt > 0 THEN v_refs := v_refs || format('%s %s 行', fk.tbl, v_cnt); END IF;
+      CONTINUE WHEN v_cnt = 0;
+      BEGIN
+        EXECUTE format('UPDATE %s SET %I = $1 WHERE %I = $2', fk.tbl, fk.col, fk.col) USING v_main_work, w.id;
+        v_moved := v_moved || format('%s.%s %s 行', fk.tbl, fk.col, v_cnt);
+      EXCEPTION WHEN unique_violation THEN
+        v_refs := v_refs || format('%s.%s %s 行（#%s に同じ行がある）', fk.tbl, fk.col, v_cnt, v_main_work);
+      END;
     END LOOP;
+    IF array_length(v_moved, 1) IS NOT NULL THEN
+      plan := plan || format('作品 #%s の付帯情報を #%s へ付け替える（%s）', w.id, v_main_work, array_to_string(v_moved, '・'));
+      changes := changes || jsonb_build_object('moved_from_work', w.id, 'to', v_main_work, 'moved', to_jsonb(v_moved));
+    END IF;
     IF array_length(v_refs, 1) IS NULL THEN
-      DELETE FROM v3.works WHERE id = w.id;
-      plan := plan || format('作品 #%s %s「%s」：消す', w.id, COALESCE(w.work_code, ''), w.title);
-      changes := changes || jsonb_build_object('deleted_work', to_jsonb(w));
-    ELSIF w.status = 'archived' THEN
-      NULL;  -- もう「使わない」で、参照があって消せない（前に流したときに済んでいる）
+      BEGIN
+        DELETE FROM v3.works WHERE id = w.id;
+        plan := plan || format('作品 #%s %s「%s」：消す', w.id, COALESCE(w.work_code, ''), w.title);
+        changes := changes || jsonb_build_object('deleted_work', to_jsonb(w));
+      EXCEPTION WHEN foreign_key_violation THEN
+        -- パートを指している行などが残っていた。
+        UPDATE v3.works SET status = 'archived', updated_at = now() WHERE id = w.id;
+        plan := plan || format('要確認 作品 #%s %s：まだ参照されていて消せないので「使わない」にする（%s）', w.id, COALESCE(w.work_code, ''), SQLERRM);
+      END;
     ELSE
       UPDATE v3.works SET status = 'archived', updated_at = now() WHERE id = w.id;
-      plan := plan || format('作品 #%s %s「%s」：参照があるので消さず「使わない」にする（%s）', w.id, COALESCE(w.work_code, ''), w.title, array_to_string(v_refs, '・'));
+      plan := plan || format('要確認 作品 #%s %s「%s」：付け替えるとぶつかる行があるので消さず「使わない」にする（%s）',
+                             w.id, COALESCE(w.work_code, ''), w.title, array_to_string(v_refs, '・'));
       changes := changes || jsonb_build_object('archived_work', w.id, 'status', w.status);
     END IF;
   END LOOP;
