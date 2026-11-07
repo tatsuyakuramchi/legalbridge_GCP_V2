@@ -107,6 +107,8 @@ test("見つけたものを監査に残す。あとから「あの日は出て�
   const detail = JSON.parse(String(audit.params[5]));
   assert.equal(detail.counts.task_overdue, 1);
   assert.equal(detail.findings[0].refNo, "MTR-1");
+  assert.ok(db.find("DELETE FROM document_pdfs"), "差し替え済み・取り消した文書の PDF を捨てる");
+  assert.equal(typeof detail.pdfsPruned, "number");
 });
 
 test("本文は超過が古い順。放っておいた分だけ重い", () => {

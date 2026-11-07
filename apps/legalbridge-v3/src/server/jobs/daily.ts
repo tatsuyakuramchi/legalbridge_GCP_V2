@@ -5,6 +5,7 @@ import { SuccessionService } from "../parties/multi-party.js";
 import { dateStr, int } from "../core/db.js";
 import { translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
+import { prunePdfs } from "../documents/pdf-store.js";
 import type { DispatchService } from "../integrations/dispatch-service.js";
 
 /**
@@ -67,6 +68,9 @@ export class DailyJob {
       // 直ったものは閉じる（運用画面の「未解決の不整合」がそのまま追いつく）。
       const quality = await inTransaction(this.database, (client) => scanWorkParts(client));
 
+      // 差し替え済み・取り消した文書の PDF の作り置きを捨てる（DB の大半を占める。開けばその場で描く）。
+      const pdfsPruned = await this.prunePdfs();
+
       const findings = await inTransaction(this.database, async (client) => {
         const found = await this.collect(client);
         await recordAudit(client, {
@@ -75,6 +79,7 @@ export class DailyJob {
             counts: countBy(found),
             quality,
             successions,
+            pdfsPruned,
             // 何を見つけたかを残す。あとから「あの日は出ていたか」を追える。
             findings: found.map((f) => ({ kind: f.kind, refNo: f.refNo, dueOn: f.dueOn }))
           }
@@ -105,6 +110,16 @@ export class DailyJob {
       }
       return report;
     } catch (error) { throw translate(error); }
+  }
+
+  /** 差し替え済み・取り消した文書の PDF の作り置きを捨てる。失敗しても日次の点検は続ける。 */
+  private async prunePdfs(): Promise<number> {
+    try {
+      return await prunePdfs(this.database);
+    } catch (error) {
+      console.warn(`PDF の作り置きの片付けに失敗：${(error as Error).message}`);
+      return 0;
+    }
   }
 
   /**
