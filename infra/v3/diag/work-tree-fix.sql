@@ -269,6 +269,25 @@ BEGIN
       changes := changes || jsonb_build_object('document', r.id, 'agreement_id', r.agreement_id);
       UPDATE v3.documents SET agreement_id = ind.id WHERE id = r.id;
     END LOOP;
+    -- 個別契約の文書を条件書として数えさせる：in 条件に繋ぎ、取り込んだ文書なら種別を「利用許諾契約書」に。
+    -- （工程表の「利用許諾条件書」の段は、条件に繋がった条件書の文書を出す）
+    FOR r IN SELECT d.id, d.document_no, d.template_version_id, d.manual_inputs->>'documentKind' AS kind FROM v3.documents d
+              WHERE (d.document_no IN (pr.indiv_old, pr.indiv_no) OR d.agreement_id = ind.id) AND d.status <> 'void' ORDER BY d.id LOOP
+      IF r.template_version_id IS NULL AND COALESCE(r.kind, '') NOT IN ('利用許諾契約書', '覚書') THEN
+        plan := plan || format('  文書 %s：種別 %s → 利用許諾契約書（条件書として数える）', r.document_no, COALESCE(NULLIF(r.kind, ''), '空'));
+        changes := changes || jsonb_build_object('document', r.id, 'documentKind', r.kind);
+        UPDATE v3.documents SET manual_inputs = manual_inputs || jsonb_build_object('documentKind', '利用許諾契約書') WHERE id = r.id;
+      END IF;
+      FOR u IN SELECT c.id, c.condition_no FROM v3.conditions c
+                WHERE c.condition_no = ANY(pr.in_nos)
+                  AND NOT EXISTS (SELECT 1 FROM v3.document_conditions dc WHERE dc.document_id = r.id AND dc.condition_id = c.id)
+                ORDER BY c.id LOOP
+        plan := plan || format('  文書 %s：条件 %s に繋ぐ', r.document_no, u.condition_no);
+        changes := changes || jsonb_build_object('linked_document', r.id, 'condition', u.id);
+        INSERT INTO v3.document_conditions (document_id, condition_id, line_no)
+        VALUES (r.id, u.id, COALESCE((SELECT max(line_no) FROM v3.document_conditions WHERE document_id = r.id), 0) + 1);
+      END LOOP;
+    END LOOP;
   END LOOP;
 
   -- 3. 重複の作品を消す ------------------------------------------------------------
