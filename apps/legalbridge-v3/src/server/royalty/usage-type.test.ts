@@ -24,6 +24,14 @@ test("見本は作者に払わない。引いた数に料率が掛かる", () =>
   assert.equal(basisNoteOf({ usageType: "in_house", quantity: 10 }), "10個 × 基準価格");
 });
 
+test("通貨を渡すと、紙の但し書きに単価の額が出る（「基準価格」だけでは検算できない）", () => {
+  assert.equal(basisNoteOf({ usageType: "in_house", unitAmount: 4000, quantity: 4002 }, "JPY"), "4,002個 × 基準価格 ¥4,000");
+  assert.equal(basisNoteOf({ usageType: "in_house", unitAmount: 4000, quantity: 4100, sampleQuantity: 98 }, "JPY"),
+    "4,002個（4,100 − 見本 98）× 基準価格 ¥4,000");
+  assert.equal(basisNoteOf({ usageType: "oem", unitAmount: 1250, quantity: 2000 }, "USD"), "2,000個 × 受領価格 12.50 USD");
+  assert.equal(basisNoteOf({ usageType: "in_house", quantity: 10 }, "JPY"), "10個 × 基準価格", "単価が無ければ名前だけ");
+});
+
 test("足りない数字は 0 で通さず止める。0円の計算書を出さないため", () => {
   const bad = (input: Parameters<typeof basisOf>[0], re: RegExp) =>
     assert.throws(() => basisOf(input, "行"),
@@ -84,8 +92,8 @@ test("前金・後金は方式名と内訳の両方に出す。同じ行が2本�
   const balance = { ...advance, unitAmount: 500, paymentStage: "balance" as const };
   assert.equal(methodLabelOf(advance), "自社製造・他社販売（前金・受領価格 × 製造個数）");
   assert.equal(methodLabelOf(balance), "自社製造・他社販売（後金・受領価格 × 製造個数）");
-  assert.equal(basisNoteOf(advance), "前金　5000個 × 受領価格");
-  assert.equal(basisNoteOf(balance), "後金　5000個 × 受領価格");
+  assert.equal(basisNoteOf(advance), "前金　5,000個 × 受領価格");
+  assert.equal(basisNoteOf(balance), "後金　5,000個 × 受領価格");
   // 定額の前金は形も変えて出す。
   assert.equal(methodLabelOf({ usageType: "oem", grossAmount: 1, paymentStage: "advance" }),
     "自社製造・他社販売（前金・受領価格）");
@@ -142,7 +150,7 @@ test("割り戻したことを紙に出す。相手が検算できないと問�
     "受領価格（税込 ÷ 1.1）");
   assert.equal(basisNoteOf({ usageType: "oem", unitAmount: 1, quantity: 1000,
                              taxIncluded: true }),
-    "1000個 × 受領価格（税込 ÷ 1.1）");
+    "1,000個 × 受領価格（税込 ÷ 1.1）");
   assert.equal(basisNoteOf({ usageType: "sublicense", grossAmount: 1 }), "受領価格");
 });
 

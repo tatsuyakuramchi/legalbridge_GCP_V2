@@ -430,7 +430,8 @@ export class RoyaltyStatementService {
         // 受け取った側はどちらの入金か読めない（数量も二重に見える）。
         methodLabel: methodLabelOf(shape),
         paymentStage: shape.paymentStage,
-        basisNote: basisNoteOf(shape),
+        // 単価は、自社販売ならイン条件（基準価格）、他社販売ならアウト条件の通貨（受領価格）。
+        basisNote: basisNoteOf(shape, usageType === "oem" ? (str(e.out_currency) ?? condition.currency) : condition.currency),
         outConditionId: int(e.out_condition_id),
         outConditionNo: str(e.out_condition_no),
         outAgreementNo: str(e.out_agreement_no),

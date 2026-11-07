@@ -85,6 +85,14 @@ test("但し書きに算定期間・MG・AG が出る", () => {
   assert.match(note, /実績 2 件/);
 });
 
+test("数量ベースの但し書きに、基準価格の額が出る", () => {
+  const note = basisNoteOf(preview({
+    condition: { pricingModel: "unit_rate", unitAmount: 4000, currency: "JPY" },
+    reported: { quantity: 4002, sampleQuantity: 0 }
+  }));
+  assert.match(note, /4,002個 × 基準価格 ¥4,000/);
+});
+
 test("合計：消費税は条件ごとの税額を足す（税区分が違いうる）", () => {
   const totals = bundleTotals([
     preview(),
