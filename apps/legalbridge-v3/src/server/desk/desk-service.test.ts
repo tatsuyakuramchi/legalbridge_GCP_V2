@@ -90,7 +90,7 @@ test("ツリーの一段目：検索語が無いときは 1 分覚え、検索�
 test("ツリーの一段目：案件は終わっていないものだけ、作品は利用許諾の本数を添える", async () => {
   const db = new FakeDatabase((t) => {
     if (t.includes("FROM matters m")) return [{ id: 30, matter_no: "MTR-30", title: "星海のアトラス", due_on: "2026-11-20", n: 5 }];
-    if (t.includes("JOIN works w")) return [{ id: 3, work_code: "WRK-3", title: "星海のアトラス", n: 6, licenses: 2 }];
+    if (t.includes("JOIN works w")) return [{ id: 3, work_code: "WRK-3", title: "星海のアトラス", n: 6, licenses: 2, category: "game" }];
     return undefined;
   });
   const desk = new DeskService(db, tools(), NOW);
@@ -98,7 +98,26 @@ test("ツリーの一段目：案件は終わっていないものだけ、作�
   assert.ok(db.find("FROM matters m")!.text.includes("NOT IN ('done', 'canceled')"));
   assert.deepEqual([m[0]!.label, m[0]!.sub, m[0]!.count], ["星海のアトラス", "MTR-30 ・ 期日 2026-11-20", 5]);
   const w = await desk.roots("work", null);
-  assert.deepEqual([w[0]!.sub, w[0]!.count], ["WRK-3 ・ 利用許諾 2 本", 6]);
+  assert.deepEqual([w[0]!.sub, w[0]!.count, w[0]!.category], ["WRK-3 ・ ボードゲーム等 ・ 利用許諾 2 本", 6, "game"]);
+});
+
+test("ツリーの一段目：作品はカテゴリで絞れ、カテゴリごとに別に覚える（ほかの切り口ではカテゴリを無視）", async () => {
+  const db = new FakeDatabase((t) => t.includes("JOIN works w")
+    ? [{ id: 4, work_code: "W-4", title: "灯台の書", n: 2, licenses: 1, category: "publishing" }] : undefined);
+  const desk = new DeskService(db, tools(), NOW);
+  const all = await desk.roots("work", null);
+  const pub = await desk.roots("work", null, "publishing");
+  await desk.roots("work", null, "publishing");
+  await desk.roots("work", null, "game");
+  const works = db.all("JOIN works w");
+  assert.equal(works.length, 3, "すべて・出版・ボードゲーム等で 3 回、同じカテゴリは覚えた結果");
+  assert.deepEqual(works.map((q) => q.params[2]), [null, "publishing", "game"]);
+  assert.ok(works[0]!.text.includes("HAVING $3::text IS NULL"));
+  assert.ok(works[0]!.text.includes("w.source_title ILIKE $1"), "原作名でも探せる");
+  assert.equal(all[0]!.sub, "W-4 ・ 出版 ・ 利用許諾 1 本");
+  assert.equal(pub[0]!.category, "publishing");
+  await desk.roots("party", null, "game");
+  assert.equal(db.all("JOIN parties p").length, 1);
 });
 
 test("取引先の下：契約（補助文書は親に数える）と、どの契約にも紐づかない条件", async () => {

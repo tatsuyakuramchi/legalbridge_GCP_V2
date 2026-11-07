@@ -28,7 +28,7 @@ import { LegacyCleanupRepository } from "./ops/legacy-cleanup.js";
 import { LeftoverService } from "./ops/leftovers-service.js";
 import { TidyService } from "./ops/tidy-service.js";
 import { HomeStationsService } from "./ops/home-stations.js";
-import { DeskService, type DeskRoot } from "./desk/desk-service.js";
+import { DeskService, WORK_CATEGORIES, type DeskRoot, type WorkCategory } from "./desk/desk-service.js";
 import { ContractBandService } from "./matters/contract-band.js";
 import { ConditionWorkService } from "./conditions/work-assign.js";
 import { tally } from "./ops/leftovers.js";
@@ -4917,7 +4917,11 @@ export function createRoutes(database: Transactable) {
     if (!["party", "matter", "work"].includes(root)) {
       throw new DomainError("VALIDATION", "root は party / matter / work のいずれかです");
     }
-    res.json({ nodes: await desk.roots(root as DeskRoot, req.query.q ? String(req.query.q) : null) });
+    const category = req.query.category ? String(req.query.category) : null;
+    if (category && !(WORK_CATEGORIES as readonly string[]).includes(category)) {
+      throw new DomainError("VALIDATION", "category は publishing / game / other のいずれかです");
+    }
+    res.json({ nodes: await desk.roots(root as DeskRoot, req.query.q ? String(req.query.q) : null, category as WorkCategory | null) });
   }));
   router.get("/desk/tree/party/:id", asyncRoute(async (req, res) => {
     res.json({ nodes: await desk.partyChildren(Number(req.params.id)) });
