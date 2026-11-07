@@ -247,9 +247,8 @@ BEGIN
   END LOOP;
 
   -- 3. 重複の作品を消す ------------------------------------------------------------
-  FOR w IN SELECT * FROM v3.works wk WHERE wk.id = ANY(v_dup_works)
-              AND NOT (wk.status = 'archived' AND NOT EXISTS (SELECT 1 FROM v3.conditions c WHERE c.work_id = wk.id))
-            ORDER BY wk.id LOOP
+  -- 「使わない」になっていても消す（参照が残っていて消せないものは、2 回目以降は黙って飛ばす）。
+  FOR w IN SELECT * FROM v3.works wk WHERE wk.id = ANY(v_dup_works) ORDER BY wk.id LOOP
     FOR r IN SELECT c.id, c.condition_no, c.direction, c.work_part_id, pa.name AS party FROM v3.conditions c
                JOIN v3.parties pa ON pa.id = c.counterparty_id WHERE c.work_id = w.id ORDER BY c.id LOOP
       plan := plan || format('条件 %s（%s・%s）：作品 #%s → #%s', r.condition_no, r.party, r.direction, w.id, v_main_work);
@@ -275,6 +274,8 @@ BEGIN
       DELETE FROM v3.works WHERE id = w.id;
       plan := plan || format('作品 #%s %s「%s」：消す', w.id, COALESCE(w.work_code, ''), w.title);
       changes := changes || jsonb_build_object('deleted_work', to_jsonb(w));
+    ELSIF w.status = 'archived' THEN
+      NULL;  -- もう「使わない」で、参照があって消せない（前に流したときに済んでいる）
     ELSE
       UPDATE v3.works SET status = 'archived', updated_at = now() WHERE id = w.id;
       plan := plan || format('作品 #%s %s「%s」：参照があるので消さず「使わない」にする（%s）', w.id, COALESCE(w.work_code, ''), w.title, array_to_string(v_refs, '・'));
