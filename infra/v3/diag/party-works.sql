@@ -173,7 +173,7 @@ WITH p AS (
 ), c AS (
   SELECT c.* FROM v3.conditions c WHERE c.counterparty_id IN (SELECT id FROM p)
 )
-SELECT 'この人が 2 件以上の取引先として登録されている' AS ずれ, string_agg(pa.name || '#' || pa.id, '・') AS 対象
+SELECT '名前の一部が当たる取引先が 2 件以上（別人か二重登録かを 1 で確かめる）' AS ずれ, string_agg(pa.name || '#' || pa.id, '・') AS 対象
   FROM v3.parties pa WHERE pa.id IN (SELECT id FROM p) AND pa.status <> 'merged' HAVING count(*) > 1
 UNION ALL
 SELECT '作品の無い有効な条件', string_agg(c.condition_no || ' ' || c.name, '・')
