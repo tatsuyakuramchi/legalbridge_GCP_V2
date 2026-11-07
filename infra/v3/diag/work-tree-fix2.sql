@@ -21,7 +21,9 @@
 --          （指しているもの・案件の繋がり・更新の記録を付け替えてから、その契約を消す）。
 --        - その文書を個別契約の条件書にする：種別を「利用許諾契約書」に、in 条件に繋ぎ、
 --          文書番号を PDF のワーク ID（LIC-LO-…）に振り直す（取り込んだ文書だけ。ひな形の文書は番号を変えない）。
---        - 個別契約に付いているほかの文書は触らずに「要確認」に出す（前の版かどうかを人が決める）。
+--        - old_docs（PDF の前の版）は、PDF の文書があれば「差し替え済み」にする（アプリの訂正版と同じ形。消さない）。
+--          PDF の文書がまだ無ければ要確認に出す（画面から上げてから、もう一度流す）。
+--        - それ以外に個別契約に付いている文書は触らずに「要確認」に出す。
 --     4. out の単体契約：PDF の再許諾先の契約締結日を、その相手先の単体契約の締結日に入れる（空のときだけ）。
 --        PDF の相手先がシステムに無い・違う名前のときは「要確認」に出す。
 --     計算書・支払・実績・決定済みの本文は書き換えない。
@@ -49,14 +51,16 @@ DECLARE
   v_cnt bigint; v_ok boolean; v_moved text[]; v_doc bigint;
 BEGIN
   SET CONSTRAINTS ALL IMMEDIATE;
+  --   old_docs … PDF の前の版の文書。PDF の文書があれば、アプリの訂正版と同じく「差し替え済み」にし、
+  --              PDF の文書から前の版として辿れるようにする（実績の文書も PDF の文書へ）。消さない。
   CREATE TEMP TABLE IF NOT EXISTS _indiv (ord int, indiv_no text, src_agreement text, src_document text,
-                                          effective date, executed date, in_nos text[]) ON COMMIT DROP;
+                                          effective date, executed date, in_nos text[], old_docs text[]) ON COMMIT DROP;
   TRUNCATE _indiv;
   INSERT INTO _indiv VALUES
     (1, 'LIC-LO-2026-0001-W-2026-0001', 'ARC-ILT-2026-0014', 'ARC-ILT-2026-0014', '2024-05-13', '2026-05-19',
-        ARRAY['CL-2026-00406', 'CL-2026-00407', 'CL-2026-00408-R2']),
+        ARRAY['CL-2026-00406', 'CL-2026-00407', 'CL-2026-00408-R2'], ARRAY['ARC-ILT-2026-0007']),
     (2, 'LIC-LO-2026-0001-W-2026-0002', 'ARC-ILT-2026-0013', 'ARC-ILT-2026-0013', '2026-04-21', '2026-05-19',
-        ARRAY['CL-2026-00112', 'CL-2026-00113', 'CL-2026-00114']);
+        ARRAY['CL-2026-00112', 'CL-2026-00113', 'CL-2026-00114'], ARRAY[]::text[]);
   -- PDF の再許諾先（相手先名の前方一致）と契約締結日。
   CREATE TEMP TABLE IF NOT EXISTS _sub (label text, name_like text, executed date) ON COMMIT DROP;
   TRUNCATE _sub;
@@ -150,8 +154,10 @@ BEGIN
      WHERE d2.document_no IN (ix.src_document, ix.indiv_no) AND d2.status <> 'void'
      ORDER BY (d2.document_no = ix.indiv_no) DESC, d2.id LIMIT 1;
     IF d.id IS NULL THEN
-      plan := plan || format('要確認 個別契約 %s：PDF の文書（%s）がシステムにありません。工程表の「＋ 条件書を上げる」から PDF を上げてください',
-                             ix.indiv_no, ix.src_document);
+      plan := plan || format('要確認 個別契約 %s：PDF の文書（%s）がシステムにありません。工程表の「＋ 条件書を上げる」から PDF を上げてから、もう一度流してください%s',
+                             ix.indiv_no, ix.src_document,
+                             CASE WHEN array_length(ix.old_docs, 1) IS NULL THEN ''
+                                  ELSE format('（上げたあとに流すと %s を前の版にします）', array_to_string(ix.old_docs, '・')) END);
     ELSE
       IF d.agreement_id IS DISTINCT FROM ind.id THEN
         plan := plan || format('文書 %s：契約 %s → %s', d.document_no,
@@ -184,12 +190,25 @@ BEGIN
           UPDATE v3.documents SET document_no = ix.indiv_no WHERE id = d.id;
         END IF;
       END IF;
+      -- 前の版：PDF の文書が差し替えたことにする（アプリの訂正版と同じ形。issue-service.ts supersede）。
+      FOR r IN SELECT d4.id, d4.document_no, d4.status FROM v3.documents d4
+                WHERE d4.document_no = ANY(ix.old_docs) AND d4.id <> d.id AND d4.status = 'issued' ORDER BY d4.id LOOP
+        plan := plan || format('文書 %s：%s の前の版として「差し替え済み」にする（消さない。%s から前の版として辿れる）',
+                               r.document_no, COALESCE((SELECT document_no FROM v3.documents WHERE id = d.id), ix.indiv_no),
+                               COALESCE((SELECT document_no FROM v3.documents WHERE id = d.id), ix.indiv_no));
+        changes := changes || jsonb_build_object('superseded_document', r.id, 'status', r.status, 'by', d.id,
+                                                 'supersedes_before', (SELECT supersedes_id FROM v3.documents WHERE id = d.id));
+        UPDATE v3.condition_events SET document_id = d.id WHERE document_id = r.id;
+        UPDATE v3.documents SET supersedes_id = r.id WHERE id = d.id AND supersedes_id IS NULL;
+        UPDATE v3.documents SET status = 'superseded' WHERE id = r.id;
+      END LOOP;
     END IF;
     -- 個別契約に付いているほかの文書（前の版かどうかを人が決める）。
     v_doc := d.id;
     FOR r IN SELECT d3.document_no, d3.status, d3.issued_at::date AS on_day,
                     (SELECT count(*) FROM v3.document_conditions dc WHERE dc.document_id = d3.id) AS conds
-               FROM v3.documents d3 WHERE d3.agreement_id = ind.id AND d3.id IS DISTINCT FROM v_doc AND d3.status <> 'void' ORDER BY d3.id LOOP
+               FROM v3.documents d3 WHERE d3.agreement_id = ind.id AND d3.id IS DISTINCT FROM v_doc
+                AND d3.status NOT IN ('void', 'superseded') AND NOT (d3.document_no = ANY(ix.old_docs)) ORDER BY d3.id LOOP
       plan := plan || format('要確認 個別契約 %s に PDF 以外の文書 %s（%s・%s・条件 %s 本に繋がる）も付いている。前の版なら外す',
                              ix.indiv_no, r.document_no, r.status, COALESCE(r.on_day::text, '日付なし'), r.conds);
     END LOOP;
