@@ -73,6 +73,11 @@ export interface GridRow {
   contract?: { id: number; agreementNo: string | null; title: string | null; kind: string; status: string } | null;
   /** 条件が単体契約（業務委託契約書に条件が直接付いたもの）に載っている。発注書の代わりになる。 */
   onStandalone?: boolean;
+  /**
+   * 個別契約：条件が基本契約の下の契約（個別利用許諾条件書・覚書）に載っていれば、その契約。
+   * 条件書の文書がまだ無くても、個別契約そのものは「発注書・利用許諾条件書」の段に出す。
+   */
+  individual?: { id: number; agreementNo: string | null; title: string | null } | null;
   /** 利用許諾の条件書（個別利用許諾条件書・出版利用許諾条件書）。利用許諾の行の「発注書」の段。 */
   terms?: GridDocument | null;
   /**
