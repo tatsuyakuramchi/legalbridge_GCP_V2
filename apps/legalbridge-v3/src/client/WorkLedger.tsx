@@ -52,6 +52,38 @@ const total = (r: GridRow): number | null =>
 const isLicense = (r: GridRow) => r.kind === "license" || r.pricingModel === "rate";
 /** 実績のある回（回の情報が無ければ、行の実績を1回として）。 */
 const doneRounds = (r: GridRow): GridRound[] => (r.rounds ?? []).filter((x) => x.eventId !== null);
+/** 回ごとの 1 行（実績 │ 検収書・計算書 │ 支払）。summary は「済み n 回」に畳んだ行。 */
+interface RoundLine { key: string; event: ReactNode; settle: ReactNode; pay: ReactNode; summary?: boolean }
+
+/**
+ * 同じ条件書・発注書の行を縦につなげる鍵（つながないなら null）。
+ * 利用許諾は条件書（と向き・相手・作品・個別契約。「計算書を作る」の行き先が同じ）。
+ * 発注書は食い違いの札が行ごとに違うので、発注書の食い違いがある行はつながない。
+ * 文書がまだ無い行は、行ごとに「＋ 個別契約」「＋ 発注書」を出すのでつながない。
+ */
+export const docKeyOf = (r: GridRow): string | null => {
+  if (isLicense(r)) {
+    return r.terms ? `t${r.terms.id}:${r.direction}:${r.counterparty?.id ?? ""}:${r.workId ?? ""}:${r.individual?.id ?? ""}` : null;
+  }
+  if (r.order) return driftOf(r)?.flagged.some((e) => e.part === "order") ? null : `o${r.order.id}`;
+  if (r.onStandalone && r.agreementId) return `s${r.agreementId}`;
+  return null;
+};
+
+/**
+ * 縦につなげる高さ。続く行の鍵が同じなら、先頭の行に下の行の高さを足し、下の行は 0（出さない）。
+ * heights は条件ごとの行数（回ごとに分けた行の数）。
+ */
+export function spansOf<T>(list: T[], heights: number[], keyOf: (x: T) => string | null): number[] {
+  const out = [...heights];
+  let start = -1;
+  list.forEach((x, i) => {
+    const k = keyOf(x);
+    if (k !== null && start >= 0 && keyOf(list[start]!) === k) { out[start]! += heights[i]!; out[i] = 0; }
+    else start = i;
+  });
+  return out;
+}
 
 /**
  * その段の値が、生きている側（条件・予定・実績）とずれている印。何と比べて何が違うかまで出す
@@ -115,6 +147,8 @@ export function WorkLedger(
   const [filter, setFilter] = useState<Filter>("all");
   const [byParty, setByParty] = useState(workId !== null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  /** 済んだ回を開いて見ている条件（既定は畳む）。 */
+  const [openRounds, setOpenRounds] = useState<Set<number>>(new Set());
   /** 契約のみの帯で選んだ行（"document:12" / "agreement:108"）。案件に入れるのに使う。 */
   const [pickedContracts, setPickedContracts] = useState<Set<string>>(new Set());
   /** 過去分として完了：理由を入れている間は文字列（既定の理由から始める）。 */
@@ -251,8 +285,9 @@ export function WorkLedger(
     if (focus === "condition") onOpenCondition?.(r.conditionId);
     else onOpenDeals?.(r.conditionId);
   };
-  const cell = (r: GridRow, focus: EditFocus, body: ReactNode, title: string) => (
-    <td className="ledger-cell" onClick={() => press(r, focus)} title={isAdmin ? `${title}を直す（ポップアップ）` : title}
+  const cell = (r: GridRow, focus: EditFocus, body: ReactNode, title: string, rowSpan = 1, extra = "") => (
+    <td className={`ledger-cell${extra ? ` ${extra}` : ""}`} rowSpan={rowSpan > 1 ? rowSpan : undefined}
+        onClick={() => press(r, focus)} title={isAdmin ? `${title}を直す（ポップアップ）` : title}
         onKeyDown={(e) => { if (e.key === "Enter") press(r, focus); }} tabIndex={0}>
       {body}
     </td>
@@ -373,15 +408,16 @@ export function WorkLedger(
       : <span className="faint">—</span>;
   };
 
+  const payLine = (p: NonNullable<GridRound["payment"]>) => (
+    <>
+      <span className="code">{p.paymentNo ?? `#${p.id}`}</span>
+      <span className={`tag ${p.status === "paid" ? "ok" : ""}`}>{PAY_LABEL[p.status] ?? p.status}</span>
+      <span className="faint">{p.status === "paid" ? p.paidOn ?? "" : p.dueOn ? `期日 ${p.dueOn}` : ""}</span>
+    </>
+  );
   const payCell = (r: GridRow) => {
     const rs = doneRounds(r);
-    const line = (p: NonNullable<GridRound["payment"]>) => (
-      <>
-        <span className="code">{p.paymentNo ?? `#${p.id}`}</span>
-        <span className={`tag ${p.status === "paid" ? "ok" : ""}`}>{PAY_LABEL[p.status] ?? p.status}</span>
-        <span className="faint">{p.status === "paid" ? p.paidOn ?? "" : p.dueOn ? `期日 ${p.dueOn}` : ""}</span>
-      </>
-    );
+    const line = payLine;
     if (rs.length > 1) {
       return <>{rs.map((x) => (
         <div key={x.eventId} className="ledger-line">
@@ -394,6 +430,67 @@ export function WorkLedger(
     return <><span className="faint">{r.settlementDoc ? "まだ" : "—"}</span>{addPayButton(r)}</>;
   };
 
+  /**
+   * 複数回の条件は、回ごとに 1 行（実績 │ 検収書・計算書 │ 支払）にそろえる。その回の実績・文書・支払が横に並ぶ。
+   * 支払まで済んだ回は、直近の 1 回を残して「済み n 回」の 1 行に畳む（押すと開く）。
+   * 1 回だけの条件は null（今までどおり 1 行のセル）。
+   */
+  const roundLines = (r: GridRow): RoundLine[] | null => {
+    const rs = doneRounds(r);
+    if (rs.length <= 1) return null;
+    const unit = isLicense(r) ? "部" : r.unitLabel ?? "";
+    const last = rs[rs.length - 1]!;
+    const closed = rs.filter((x) => x !== last && x.payment?.status === "paid");
+    const canFold = closed.length >= 2;
+    const folded = canFold && !openRounds.has(r.conditionId);
+    const lines: RoundLine[] = [];
+    if (canFold) {
+      const toggle = (e: { stopPropagation: () => void }) => {
+        e.stopPropagation();
+        setOpenRounds((prev) => { const n = new Set(prev); if (n.has(r.conditionId)) n.delete(r.conditionId); else n.add(r.conditionId); return n; });
+      };
+      const q = closed.some((x) => x.quantity !== null) ? closed.reduce((n, x) => n + (x.quantity ?? 0), 0) : null;
+      const amount = closed.reduce((n, x) => n + (x.amount ?? 0), 0);
+      const from = closed[0]!.occurredOn, to = closed[closed.length - 1]!.occurredOn;
+      const docs = new Set(closed.map((x) => x.doc?.id).filter((x): x is number => x != null)).size;
+      const paidOn = closed.map((x) => x.payment?.paidOn ?? "").filter(Boolean).sort().at(-1) ?? null;
+      lines.push({
+        key: "fold", summary: true,
+        event: (
+          <div className="ledger-line">
+            <span className="ledger-seq">済み {closed.length} 回</span>
+            <span className="ledger-num">{q !== null ? `${qty(q)}${unit} ` : ""}{yen(amount)}</span>
+            <span className="faint">{from && to ? `${from} 〜 ${to}` : ""}</span>
+            <button className="linky" onClick={toggle} aria-expanded={!folded}>{folded ? "開く" : "畳む"}</button>
+          </div>
+        ),
+        settle: folded ? <span className="faint">{isLicense(r) ? "計算書" : "検収書"} {docs} 枚</span> : null,
+        pay: folded ? <div className="ledger-line"><span className="tag ok">支払済み {closed.length} 件</span>{paidOn && <span className="faint">最終 {paidOn}</span>}</div> : null
+      });
+    }
+    for (const x of rs) {
+      if (folded && closed.includes(x)) continue;
+      lines.push({
+        key: `e${x.eventId}`,
+        event: (
+          <div className="ledger-line">
+            {x.seq ? <span className="ledger-seq">第{x.seq}回</span> : null}
+            <span className="ledger-num">{x.quantity !== null ? `${qty(x.quantity)}${unit} ` : ""}{yen(x.amount)}</span>
+            <span className="faint">{x.occurredOn ?? ""}</span>
+          </div>
+        ),
+        settle: x.doc ? <DocLine doc={x.doc} onOpen={onOpenDocument} /> : <span className="faint">まだ</span>,
+        pay: x.payment ? <div className="ledger-line">{payLine(x.payment)}</div> : <span className="faint">まだ</span>
+      });
+    }
+    // 次の回・実績を入れる・支払を立てる・食い違いは、いちばん下の行に。
+    const tail = lines[lines.length - 1]!;
+    tail.event = <>{tail.event}{pendingRounds(r)}</>;
+    tail.settle = <>{tail.settle}<DriftTags drift={driftOf(r)} part="settlementDoc" /></>;
+    tail.pay = <>{tail.pay}{addPayButton(r)}<DriftTags drift={driftOf(r)} part="payment" /></>;
+    return lines;
+  };
+
   /** 次の文書へ。セルを押すと「まとめて直す」が開くので、押したことを外へ伝えない。 */
   const next = (label: string, go: () => void, title: string) => (
     <button className="btn btn-sm ledger-next" onClick={(e) => { e.stopPropagation(); go(); }} title={title}>→ {label}</button>
@@ -404,16 +501,17 @@ export function WorkLedger(
             onClick={(e) => { e.stopPropagation(); setContractDialog({ row: r, mode }); }}>＋ {label}</button>
   );
   /** 基本契約の段：条件が載っている契約の根（基本契約・単体契約）。 */
-  const contractCell = (r: GridRow) => {
+  const contractCell = (r: GridRow, rowSpan = 1) => {
     const c = r.contract;
+    const span = rowSpan > 1 ? rowSpan : undefined;
     if (!c) return (
-      <td className="ledger-plain">
+      <td className="ledger-plain" rowSpan={span}>
         <span className="faint">{isLicense(r) ? "なし" : "なし（発注書の約款）"}</span>
         {contractButton(r, "master", "基本契約", "既存の基本契約から選ぶか、新しく登録（ファイル・クラウドサインも）して、この条件を載せる")}
       </td>
     );
     return (
-      <td className="ledger-plain">
+      <td className="ledger-plain" rowSpan={span}>
         <div className="ledger-line">
           {flow.agreement
             ? <button className="linky code" onClick={() => flow.agreement!(c.id)} title="契約の画面で開く">{c.agreementNo ?? `#${c.id}`}</button>
@@ -444,7 +542,7 @@ export function WorkLedger(
       </>
     );
   };
-  const docCell = (r: GridRow) => {
+  const docCell = (r: GridRow, run: GridRow[] = [r]) => {
     if (isLicense(r)) {
       const partyId = r.counterparty?.id ?? null;
       return <>
@@ -459,7 +557,8 @@ export function WorkLedger(
                   "作品 › 利用許諾計算の台帳（作家 × 作品）を開いて、回ごとに計算書を作る")}
       </>;
     }
-    const settleable = r.events.count > 0 && !r.settlement.done;
+    // 同じ発注書・単体契約の行をまとめたときは、どれか 1 本でも検収できれば出す。
+    const settleable = run.some((x) => x.events.count > 0 && !x.settlement.done);
     if (r.order) {
       const order = r.order;
       return <>
@@ -515,33 +614,77 @@ export function WorkLedger(
       <th className="stage-hd">{sec.pay[0]}<span className="stage-sub">{sec.pay[1]}</span></th>
     </tr>
   ];
-  const rowOf = (r: GridRow) => (
-    <tr key={r.conditionId} className={`${picked.has(r.conditionId) ? "sel" : ""}${editing?.conditionId === r.conditionId ? " ledger-editing" : ""}`}>
-      <td><input type="checkbox" checked={picked.has(r.conditionId)} aria-label={`${r.conditionNo ?? r.conditionId} を選ぶ`}
-                 onChange={(e) => setPicked((prev) => { const n = new Set(prev); if (e.target.checked) n.add(r.conditionId); else n.delete(r.conditionId); return n; })} /></td>
-      {!byParty && (
-        <td>{r.counterparty ? <b>{r.counterparty.name}</b> : <span className="faint">（相手先なし）</span>}
-          <div className="faint" style={{ fontSize: 11.5 }}>{isLicense(r) ? "利用許諾" : "業務委託"}</div></td>
-      )}
-      {contractCell(r)}
-      {cell(r, "order", docCell(r), isLicense(r) ? "利用許諾条件書" : "発注書")}
-      {cell(r, "condition", condCell(r), "条件")}
-      {cell(r, "event", eventCell(r), "実績")}
-      {cell(r, "settlement", <>{settleCell(r)}<DriftTags drift={driftOf(r)} part="settlementDoc" /></>, "検収書・計算書")}
-      {cell(r, "payment", <>{payCell(r)}<DriftTags drift={driftOf(r)} part="payment" /></>, "支払")}
-    </tr>
-  );
+  /**
+   * 条件 1 本ぶんの行。複数回の条件は回ごとに行を分け（roundLines）、左の列は縦につなげる。
+   * span.contract・span.doc：同じ基本契約・同じ条件書（発注書）が続くとき、最初の行が下の行ぶんまで
+   * 縦につなげる高さ。0 なら上の行につながっているので出さない。
+   */
+  const rowsOf = (r: GridRow, lines: RoundLine[] | null, span: { contract: number; doc: number; run: GridRow[] }) => {
+    const n = lines?.length ?? 1;
+    const cls = `${picked.has(r.conditionId) ? "sel" : ""}${editing?.conditionId === r.conditionId ? " ledger-editing" : ""}`;
+    const left = (
+      <>
+        <td rowSpan={n > 1 ? n : undefined}>
+          <input type="checkbox" checked={picked.has(r.conditionId)} aria-label={`${r.conditionNo ?? r.conditionId} を選ぶ`}
+                 onChange={(e) => setPicked((prev) => { const s = new Set(prev); if (e.target.checked) s.add(r.conditionId); else s.delete(r.conditionId); return s; })} /></td>
+        {!byParty && (
+          <td rowSpan={n > 1 ? n : undefined}>{r.counterparty ? <b>{r.counterparty.name}</b> : <span className="faint">（相手先なし）</span>}
+            <div className="faint" style={{ fontSize: 11.5 }}>{isLicense(r) ? "利用許諾" : "業務委託"}</div></td>
+        )}
+        {span.contract > 0 && contractCell(r, span.contract)}
+        {span.doc > 0 && cell(r, "order", docCell(r, span.run), isLicense(r) ? "利用許諾条件書" : "発注書", span.doc)}
+        {cell(r, "condition", condCell(r), "条件", n)}
+      </>
+    );
+    if (!lines) {
+      return [
+        <tr key={r.conditionId} className={cls}>
+          {left}
+          {cell(r, "event", eventCell(r), "実績")}
+          {cell(r, "settlement", <>{settleCell(r)}<DriftTags drift={driftOf(r)} part="settlementDoc" /></>, "検収書・計算書")}
+          {cell(r, "payment", <>{payCell(r)}<DriftTags drift={driftOf(r)} part="payment" /></>, "支払")}
+        </tr>
+      ];
+    }
+    return lines.map((ln, i) => (
+      <tr key={`${r.conditionId}-${ln.key}`}
+          className={`${cls} wl-round${i === lines.length - 1 ? " wl-round-last" : ""}${ln.summary ? " wl-round-sum" : ""}`}>
+        {i === 0 && left}
+        {cell(r, "event", ln.event, "実績", 1, "wl-rc")}
+        {cell(r, "settlement", ln.settle, "検収書・計算書", 1, "wl-rc")}
+        {cell(r, "payment", ln.pay, "支払", 1, "wl-rc")}
+      </tr>
+    ));
+  };
+  /** 同じ基本契約・同じ条件書（発注書）が続く行を縦につなげて、まとめた行を返す。 */
+  const rowsOfGroup = (list: GridRow[]) => {
+    const lines = list.map(roundLines);
+    const heights = lines.map((l) => l?.length ?? 1);
+    const contractKey = (r: GridRow) => (r.contract ? `c${r.contract.id}` : null);
+    const contract = spansOf(list, heights, contractKey);
+    const doc = spansOf(list, heights, docKeyOf);
+    return list.flatMap((r, i) => {
+      // つなげた条件書のセルの「検収書を作る」は、つないだ行のどれかで検収できれば出す。
+      let run = [r];
+      if (doc[i]! > 0) {
+        const k = docKeyOf(r);
+        run = [r];
+        for (let j = i + 1; k !== null && j < list.length && doc[j] === 0; j++) run.push(list[j]!);
+      }
+      return rowsOf(r, lines[i]!, { contract: contract[i]!, doc: doc[i]!, run });
+    });
+  };
 
   const groupHead = (key: string, title: string, sub: string, add?: { id: number | null; title: string | null }) => (
     <tr key={`g${key}`} className="grid-grp"><td colSpan={cols}><b>{title}</b><span className="faint">　{sub}</span>
       {add && canWrite && <button className="linky" style={{ marginLeft: 10 }} onClick={() => startCreate(add)}>＋ この作品に条件を足す</button>}</td></tr>
   );
   const grouped = (secKey: string, secRows: GridRow[]) => byParty
-    ? groupByParty(secRows).flatMap((g) => [groupHead(`${secKey}p${g.id}`, g.name, `条件 ${g.tally.conditions} 本`), ...g.rows.map(rowOf)])
+    ? groupByParty(secRows).flatMap((g) => [groupHead(`${secKey}p${g.id}`, g.name, `条件 ${g.tally.conditions} 本`), ...rowsOfGroup(g.rows)])
     : groupByWork(secRows).flatMap((g) => [groupHead(`${secKey}w${g.id}`, g.title,
         `条件 ${g.tally.conditions} 本${g.tally.amount ? `・${yen(g.tally.amount)}` : ""}${g.tally.stuck ? `・止まり ${g.tally.stuck}` : ""}${g.tally.unpaid ? `・未払い ${g.tally.unpaid}` : ""}`,
         { id: g.id, title: g.id === null ? null : g.title }),
-        ...g.rows.map(rowOf)]);
+        ...rowsOfGroup(g.rows)]);
   const body = SECTIONS.flatMap((sec) => {
     const secRows = rows.filter((r) => (r.direction === "out" ? "out" : "in") === sec.key);
     return secRows.length ? [...sectionHead(sec, secRows), ...grouped(sec.key, secRows)] : [];
