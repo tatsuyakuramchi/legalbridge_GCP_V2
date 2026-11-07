@@ -1,146 +1,196 @@
 -- =====================================================================
--- 作品 1 本を「基本契約 → 作品 → 個別契約 → in 条件 ／ out 条件は作品に付けて相手先ごとの単体契約」
--- に整える（Cloud SQL Studio 用。DO ブロック 1 つ）。初期値はトーネードスプラッシュ。
+-- 作品の整理（Cloud SQL Studio 用。DO ブロック 1 つ）。初期値はトーネードスプラッシュ（平沢さん）。
+--
+--   最終の形
+--     基本契約 ARC-LIC-2026-0007（作家・ライセンス・IN）
+--       個別契約 LIC-LO-2026-0001-W-2026-0001 → 作品 トーネードスプラッシュ（#50）
+--         in 条件（自社製造・自社販売／再許諾／自社製造・他社販売）
+--       個別契約 LIC-LO-2026-0001-W-2026-0002 → 作品 トーネードスプラッシュ拡張版（#585）
+--         in 条件（同じ 3 種）
+--     out 条件 → それぞれの作品に付け、相手先ごと・作品ごとに 1 本の単体契約（ライセンス・OUT）
+--     原作は作品として立てない。作品の「原作名」（works.source_title）に入れる。
 --
 --   やること
---     1. 基本契約：v_master_no を 基本契約（master）・ライセンスにする。
---     2. 個別契約：v_indiv_no を 基本契約の下の個別契約（supplement）・ライセンスにする。
---     3. in 条件：v_in_nos（と同じ系列の前の版）を個別契約に載せ、作品を v_work にする。
---     4. 文書：個別契約の番号の文書を個別契約に、基本契約の番号の文書を基本契約に付ける。
---     5. 重複の作品（v_dup_works）：付いている条件を v_work に寄せてから消す。
---        ほかの表から参照されていて消せなければ「使わない（archived）」にする。
---     6. 重複の in 条件：作家の「作品の無い条件」のうち、v_in_nos と同じ期間開始・同じ料率のものを
---        無効（void）にする。実績・支払の割当・文書・計算書の行があるものは触らず「要確認」に出す。
---     7. out 条件：作品（v_work と重複の作品）に付いた out 条件を、全版とも作品 v_work に付け、
---        相手先ごとに 1 本の単体契約（standalone・ライセンス・OUT）に載せる。
---        その相手先の契約でこの作品の条件だけを持つものがあれば、それを単体契約にして使う。
---        無ければ新しく立てる（番号 ARC-ILT-年-連番。アプリの採番と同じ表を進める）。
---        中身が空になった前の契約は消さずに一覧に出す。
---     決定済みの計算書・支払・実績は書き換えない（条件の付き先と作品だけ）。
+--     1. 基本契約：v_master_old を v_master_no に番号を付け直し、基本契約・ライセンスにする。
+--     2. 作品ごと（_products）：原作名を入れる。個別契約を用意する（indiv_old があれば番号を付け直して使う。
+--        無ければ立てる）。基本契約の下の個別契約・ライセンスにし、in 条件（同じ系列の前の版も）を載せ、作品を付ける。
+--        「（無題の条件）」の in 条件には、1 本目の作品の同じ料率の条件の名前を付ける。
+--        個別契約の前の番号の文書・基本契約の前の番号の文書を、それぞれの契約に付ける。
+--     3. 重複の作品（v_dup_works。原作として立てていた作品を含む）：条件を 1 本目の作品に寄せ、
+--        系譜（親子）の行を外してから消す。ほかの表（クレジット・刊行物・案件…）から参照されていれば
+--        消さずに「使わない」にする。
+--     4. 重複の in 条件：作家の、作品の無い有効な in 条件のうち、残す in 条件と「同じ料率・同じ期間開始」のもの。
+--        付帯情報（実績・計算書と明細・支払の割当・文書の繋がり・範囲・取り分・子の条件…）を
+--        残す条件へ付け替えてから無効にする。付け替えでぶつかる行（同じ支払・同じ実績の割当など）があれば、
+--        その条件は無効にせず「要確認」に出す（範囲・文書の繋がりは、残す側にもうあれば重複側を外す）。
+--        付け替える表は、データベースの外部キー（conditions を指すもの）から拾う。
+--     5. out 条件：作品（と重複の作品）に付いた out 条件を、相手先ごと・作品ごとに 1 本の単体契約に載せる。
+--        その相手先の契約でその作品の条件だけを持つものがあれば単体契約にして使う。無ければ立てる（ARC-ILT）。
+--     6. 残りは触らずに「要確認」に出す：作品の無い in 条件（整理前に載っていた契約と文書）、
+--        条件の載っていない契約。
+--     決定済みの文書の本文・計算書の金額・支払の金額は書き換えない（付き先・作品・名前・番号だけ）。
 --
 --   ★ 使い方
---     1) そのまま流す（dry := true）。何も書かずに、やることの一覧がエラーとして出る
+--     1) そのまま流す（dry := true）。全部を変えたうえで一覧をエラーとして出し、書き込みは取り消す
 --        （「お試し：書き込みは取り消しました」で始まる）。一覧を確かめる。
---     2) dry := false にして流す。書き込んで、やったことの一覧を監査記録に残す。
+--     2) dry := false にして流す。書き込み、一覧と前の値を監査記録に残す。
 --        あとで見るとき：SELECT detail FROM v3.audit_events WHERE action = 'work.tree_fix' ORDER BY id DESC LIMIT 1;
---     3) diag/work-tree.sql を流し直して形を確かめる。
---
---   戻すとき：監査記録（detail.changes）に前の値が残る。
+--     3) diag/work-tree.sql を流し直して形を確かめる。何度流しても同じ結果。
 -- =====================================================================
 
 DO $fix$
 DECLARE
-  dry          boolean  := true;                      -- ★ false にすると書き込む
-  v_party      bigint   := 505;                       -- 作家（in 側の権利者）
-  v_work       bigint   := 50;                        -- 正にする作品
-  v_dup_works  bigint[] := ARRAY[25, 628]::bigint[];  -- 同じ作品の重複（消す）
-  v_master_no  text     := 'CT-2026-00008';           -- 基本契約
-  v_indiv_no   text     := 'ARC-ILT-2026-0007';       -- 個別契約
-  v_in_nos     text[]   := ARRAY['CL-2026-00406', 'CL-2026-00407', 'CL-2026-00408-R2'];
-  v_actor      text     := 'sql:work-tree-fix';
+  dry           boolean  := true;                        -- ★ false にすると書き込む
+  v_party       bigint   := 505;                         -- 作家（in 側の権利者）
+  v_master_old  text     := 'CT-2026-00008';             -- 基本契約のいまの番号
+  v_master_no   text     := 'ARC-LIC-2026-0007';         -- 基本契約の番号
+  v_source      text     := 'トーネードスプラッシュ';     -- 原作名（作品の原作名に入れる）
+  v_dup_works   bigint[] := ARRAY[25, 628]::bigint[];    -- 消す作品（原作として立てていた #25・重複の #628）
+  v_actor       text     := 'sql:work-tree-fix';
 
-  plan    text[]  := '{}';
-  changes jsonb   := '[]'::jsonb;
-  m record; i record; r record; w record; u record; oa record; p record;
-  v_title text; v_target bigint; v_no text; v_seq int; v_year int; v_works bigint[];
-  fk record; v_refs text[]; v_cnt bigint;
-  n_ev int; n_al int; n_dc int; n_sl int; n int;
+  plan    text[] := '{}';
+  changes jsonb  := '[]'::jsonb;
+  m record; ind record; pr record; r record; w record; u record; oa record; p record; fk record;
+  v_main_work bigint; v_target bigint; v_no text; v_seq int; v_year int;
+  v_works bigint[] := '{}'; v_keep text[] := '{}'; v_main_nos text[]; v_refs text[]; v_cnt bigint; v_ok boolean; v_moved text[];
+  v_name text; v_title text; v_first date;
 BEGIN
-  v_works := ARRAY[v_work] || v_dup_works;
-  SELECT title INTO v_title FROM v3.works WHERE id = v_work;
-  IF v_title IS NULL THEN RAISE EXCEPTION '作品 % が見つかりません', v_work; END IF;
+  -- 作品ごとの個別契約と in 条件。1 行目が主の作品（重複の作品の条件はここへ寄せる）。
+  CREATE TEMP TABLE IF NOT EXISTS _products (ord int, work_id bigint, indiv_old text, indiv_no text, in_nos text[]) ON COMMIT DROP;
+  TRUNCATE _products;
+  INSERT INTO _products VALUES
+    (1, 50,  'ARC-ILT-2026-0007', 'LIC-LO-2026-0001-W-2026-0001', ARRAY['CL-2026-00406', 'CL-2026-00407', 'CL-2026-00408-R2']),
+    (2, 585, NULL,                'LIC-LO-2026-0001-W-2026-0002', ARRAY['CL-2026-00112', 'CL-2026-00113', 'CL-2026-00114']);
+
+  SELECT work_id, in_nos INTO v_main_work, v_main_nos FROM _products ORDER BY ord LIMIT 1;
+  SELECT array_agg(work_id ORDER BY ord) INTO v_works FROM _products;
+  SELECT array_agg(x) INTO v_keep FROM _products, unnest(in_nos) x;
 
   -- 0. 前提 -----------------------------------------------------------------
-  SELECT * INTO m FROM v3.agreements WHERE agreement_no = v_master_no;
-  IF m.id IS NULL THEN RAISE EXCEPTION '基本契約 % が見つかりません', v_master_no; END IF;
+  FOR pr IN SELECT * FROM _products ORDER BY ord LOOP
+    IF NOT EXISTS (SELECT 1 FROM v3.works WHERE id = pr.work_id) THEN RAISE EXCEPTION '作品 #% が見つかりません', pr.work_id; END IF;
+    IF EXISTS (SELECT 1 FROM v3.agreements a WHERE a.agreement_no = pr.indiv_no
+                 AND (a.counterparty_id <> v_party OR a.direction <> 'in')) THEN
+      RAISE EXCEPTION '番号 % はほかの相手先・向きの契約が使っています', pr.indiv_no;
+    END IF;
+    IF pr.indiv_old IS NOT NULL AND EXISTS (SELECT 1 FROM v3.agreements a WHERE a.agreement_no = pr.indiv_no)
+       AND EXISTS (SELECT 1 FROM v3.agreements a WHERE a.agreement_no = pr.indiv_old) THEN
+      RAISE EXCEPTION '個別契約 % と % が両方あります（どちらに寄せるか人が決める）', pr.indiv_old, pr.indiv_no;
+    END IF;
+    SELECT count(*) INTO v_cnt FROM v3.conditions
+     WHERE condition_no = ANY(pr.in_nos) AND counterparty_id = v_party AND direction = 'in';
+    IF v_cnt <> array_length(pr.in_nos, 1) THEN
+      RAISE EXCEPTION '作品 #% の in 条件 % のうち、作家・IN で見つかったのは % 本です', pr.work_id, array_to_string(pr.in_nos, '・'), v_cnt;
+    END IF;
+  END LOOP;
+  SELECT * INTO m FROM v3.agreements WHERE agreement_no IN (v_master_old, v_master_no) ORDER BY (agreement_no = v_master_no) DESC LIMIT 1;
+  IF m.id IS NULL THEN RAISE EXCEPTION '基本契約 %（%）が見つかりません', v_master_no, v_master_old; END IF;
   IF m.counterparty_id <> v_party OR m.direction <> 'in' THEN
-    RAISE EXCEPTION '基本契約 % の相手先・向きが違います（相手先 %、向き %）', v_master_no, m.counterparty_id, m.direction;
+    RAISE EXCEPTION '基本契約 % の相手先・向きが違います（相手先 %、向き %）', m.agreement_no, m.counterparty_id, m.direction;
   END IF;
-  SELECT * INTO i FROM v3.agreements WHERE agreement_no = v_indiv_no;
-  IF i.id IS NULL THEN RAISE EXCEPTION '個別契約 % が見つかりません', v_indiv_no; END IF;
-  IF i.counterparty_id <> v_party OR i.direction <> 'in' THEN
-    RAISE EXCEPTION '個別契約 % の相手先・向きが違います（相手先 %、向き %）', v_indiv_no, i.counterparty_id, i.direction;
-  END IF;
-  SELECT count(*) INTO n FROM v3.conditions
-   WHERE condition_no = ANY(v_in_nos) AND counterparty_id = v_party AND direction = 'in';
-  IF n <> array_length(v_in_nos, 1) THEN
-    RAISE EXCEPTION 'in 条件 % のうち、作家・IN で見つかったのは % 本です', array_to_string(v_in_nos, '・'), n;
+  IF EXISTS (SELECT 1 FROM v3.agreements WHERE agreement_no = v_master_no AND id <> m.id) THEN
+    RAISE EXCEPTION '番号 % はほかの契約が使っています', v_master_no;
   END IF;
 
   -- 1. 基本契約 ---------------------------------------------------------------
-  IF m.kind IS DISTINCT FROM 'master' OR m.domain IS DISTINCT FROM 'license' OR m.parent_id IS NOT NULL THEN
-    plan := plan || format('基本契約 %s：種類 %s → 基本契約、種別 %s → ライセンス', v_master_no, m.kind, COALESCE(m.domain, '空'));
-    changes := changes || jsonb_build_object('agreement', m.id, 'no', v_master_no, 'kind', m.kind, 'domain', m.domain, 'parent_id', m.parent_id);
-    UPDATE v3.agreements SET kind = 'master', domain = 'license', parent_id = NULL, updated_at = now() WHERE id = m.id;
+  IF m.agreement_no IS DISTINCT FROM v_master_no OR m.kind IS DISTINCT FROM 'master' OR m.domain IS DISTINCT FROM 'license' OR m.parent_id IS NOT NULL THEN
+    plan := plan || format('基本契約 %s → %s：種類 %s → 基本契約、種別 %s → ライセンス', m.agreement_no, v_master_no, m.kind, COALESCE(m.domain, '空'));
+    changes := changes || jsonb_build_object('agreement', m.id, 'agreement_no', m.agreement_no, 'kind', m.kind, 'domain', m.domain, 'parent_id', m.parent_id);
+    UPDATE v3.agreements SET agreement_no = v_master_no, kind = 'master', domain = 'license', parent_id = NULL, updated_at = now() WHERE id = m.id;
   END IF;
-
-  -- 2. 個別契約 ---------------------------------------------------------------
-  IF i.kind IS DISTINCT FROM 'supplement' OR i.domain IS DISTINCT FROM 'license' OR i.parent_id IS DISTINCT FROM m.id THEN
-    plan := plan || format('個別契約 %s：種類 %s → 個別契約、種別 %s → ライセンス、親 → %s', v_indiv_no, i.kind, COALESCE(i.domain, '空'), v_master_no);
-    changes := changes || jsonb_build_object('agreement', i.id, 'no', v_indiv_no, 'kind', i.kind, 'domain', i.domain, 'parent_id', i.parent_id);
-    UPDATE v3.agreements SET kind = 'supplement', domain = 'license', parent_id = m.id, updated_at = now() WHERE id = i.id;
-  END IF;
-
-  -- 3. in 条件（同じ系列の前の版も） ----------------------------------------------
-  FOR r IN
-    SELECT c.id, c.condition_no, c.status, c.agreement_id, c.work_id, c.work_part_id, a.agreement_no AS ano
-      FROM v3.conditions c LEFT JOIN v3.agreements a ON a.id = c.agreement_id
-     WHERE COALESCE(c.series_id, c.id) IN (
-       SELECT COALESCE(series_id, id) FROM v3.conditions WHERE condition_no = ANY(v_in_nos))
-     ORDER BY c.id
-  LOOP
-    IF r.agreement_id IS DISTINCT FROM i.id OR r.work_id IS DISTINCT FROM v_work THEN
-      plan := plan || format('in 条件 %s（%s）：契約 %s → %s%s', r.condition_no, r.status, COALESCE(r.ano, 'なし'), v_indiv_no,
-                             CASE WHEN r.work_id IS DISTINCT FROM v_work THEN format('、作品 %s → %s', COALESCE(r.work_id::text, 'なし'), v_work) ELSE '' END);
-      changes := changes || jsonb_build_object('condition', r.id, 'no', r.condition_no, 'agreement_id', r.agreement_id,
-                                               'work_id', r.work_id, 'work_part_id', r.work_part_id);
-      UPDATE v3.conditions
-         SET agreement_id = i.id, work_id = v_work,
-             work_part_id = CASE WHEN work_id = v_work THEN work_part_id END, updated_at = now()
-       WHERE id = r.id;
-    END IF;
+  FOR r IN SELECT id, document_no, agreement_id FROM v3.documents
+            WHERE document_no IN (v_master_old, v_master_no) AND status <> 'void' AND agreement_id IS DISTINCT FROM m.id LOOP
+    plan := plan || format('文書 %s：契約 %s → %s', r.document_no, COALESCE((SELECT agreement_no FROM v3.agreements WHERE id = r.agreement_id), 'なし'), v_master_no);
+    changes := changes || jsonb_build_object('document', r.id, 'agreement_id', r.agreement_id);
+    UPDATE v3.documents SET agreement_id = m.id WHERE id = r.id;
   END LOOP;
 
-  -- 4. 文書の付き先 --------------------------------------------------------------
-  FOR r IN SELECT d.id, d.document_no, d.agreement_id FROM v3.documents d
-            WHERE d.document_no IN (v_indiv_no, v_master_no) AND d.status <> 'void' LOOP
-    v_target := CASE WHEN r.document_no = v_indiv_no THEN i.id ELSE m.id END;
-    IF r.agreement_id IS DISTINCT FROM v_target THEN
-      plan := plan || format('文書 %s：契約 %s → %s', r.document_no,
-                             COALESCE((SELECT agreement_no FROM v3.agreements WHERE id = r.agreement_id), 'なし'), r.document_no);
-      changes := changes || jsonb_build_object('document', r.id, 'no', r.document_no, 'agreement_id', r.agreement_id);
-      UPDATE v3.documents SET agreement_id = v_target WHERE id = r.id;
+  -- 2. 作品ごと：原作名・個別契約・in 条件・文書 ---------------------------------------
+  FOR pr IN SELECT * FROM _products ORDER BY ord LOOP
+    SELECT title INTO v_title FROM v3.works WHERE id = pr.work_id;
+    IF (SELECT source_title FROM v3.works WHERE id = pr.work_id) IS DISTINCT FROM v_source THEN
+      plan := plan || format('作品 #%s「%s」：原作名 → %s', pr.work_id, v_title, v_source);
+      changes := changes || jsonb_build_object('work', pr.work_id, 'source_title', (SELECT source_title FROM v3.works WHERE id = pr.work_id));
+      UPDATE v3.works SET source_title = v_source, updated_at = now() WHERE id = pr.work_id;
     END IF;
+
+    SELECT * INTO ind FROM v3.agreements
+     WHERE agreement_no = pr.indiv_no OR (pr.indiv_old IS NOT NULL AND agreement_no = pr.indiv_old)
+     ORDER BY (agreement_no = pr.indiv_no) DESC LIMIT 1;
+    IF ind.id IS NULL THEN
+      SELECT min(term_start) INTO v_first FROM v3.conditions WHERE condition_no = ANY(pr.in_nos);
+      INSERT INTO v3.agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id, effective_on)
+      VALUES (pr.indiv_no, format('%s 個別利用許諾条件', v_title), v_party, 'in', 'executed', 'supplement', 'license', m.id, v_first)
+      RETURNING * INTO ind;
+      plan := plan || format('個別契約 %s：新しく立てる（%s・%s の下）', pr.indiv_no, v_title, v_master_no);
+      changes := changes || jsonb_build_object('created_agreement', ind.id, 'agreement_no', pr.indiv_no);
+    ELSE
+      IF ind.counterparty_id <> v_party OR ind.direction <> 'in' THEN
+        RAISE EXCEPTION '個別契約 % の相手先・向きが違います', ind.agreement_no;
+      END IF;
+      IF ind.agreement_no IS DISTINCT FROM pr.indiv_no OR ind.kind IS DISTINCT FROM 'supplement' OR ind.domain IS DISTINCT FROM 'license' OR ind.parent_id IS DISTINCT FROM m.id THEN
+        plan := plan || format('個別契約 %s → %s：種類 %s → 個別契約、種別 %s → ライセンス、親 → %s',
+                               ind.agreement_no, pr.indiv_no, ind.kind, COALESCE(ind.domain, '空'), v_master_no);
+        changes := changes || jsonb_build_object('agreement', ind.id, 'agreement_no', ind.agreement_no, 'kind', ind.kind, 'domain', ind.domain, 'parent_id', ind.parent_id);
+        UPDATE v3.agreements SET agreement_no = pr.indiv_no, kind = 'supplement', domain = 'license', parent_id = m.id, updated_at = now() WHERE id = ind.id;
+      END IF;
+    END IF;
+
+    FOR r IN
+      SELECT c.id, c.condition_no, c.name, c.status, c.rate_ppm, c.agreement_id, c.work_id, c.work_part_id, a.agreement_no AS ano
+        FROM v3.conditions c LEFT JOIN v3.agreements a ON a.id = c.agreement_id
+       WHERE COALESCE(c.series_id, c.id) IN (SELECT COALESCE(series_id, id) FROM v3.conditions WHERE condition_no = ANY(pr.in_nos))
+       ORDER BY c.id
+    LOOP
+      v_name := r.name;
+      IF r.name IN ('（無題の条件）', '') THEN
+        -- 1 本目の作品の、同じ料率の in 条件の名前（自社製造・自社販売／再許諾／自社製造・他社販売）。
+        SELECT c1.name INTO v_name FROM v3.conditions c1
+         WHERE c1.condition_no = ANY(v_main_nos) AND c1.rate_ppm IS NOT DISTINCT FROM r.rate_ppm
+           AND c1.name NOT IN ('（無題の条件）', '') LIMIT 1;
+        v_name := COALESCE(v_name, r.name);
+      END IF;
+      IF r.agreement_id IS DISTINCT FROM ind.id OR r.work_id IS DISTINCT FROM pr.work_id OR v_name IS DISTINCT FROM r.name THEN
+        plan := plan || format('  in 条件 %s（%s）：契約 %s → %s%s%s', r.condition_no, r.status, COALESCE(r.ano, 'なし'), pr.indiv_no,
+                               CASE WHEN r.work_id IS DISTINCT FROM pr.work_id THEN format('、作品 %s → #%s', COALESCE('#' || r.work_id, 'なし'), pr.work_id) ELSE '' END,
+                               CASE WHEN v_name IS DISTINCT FROM r.name THEN format('、名前 %s → %s', r.name, v_name) ELSE '' END);
+        changes := changes || jsonb_build_object('condition', r.id, 'agreement_id', r.agreement_id, 'work_id', r.work_id,
+                                                 'work_part_id', r.work_part_id, 'name', r.name);
+        UPDATE v3.conditions
+           SET agreement_id = ind.id, name = v_name, work_id = pr.work_id,
+               work_part_id = CASE WHEN work_id = pr.work_id THEN work_part_id END, updated_at = now()
+         WHERE id = r.id;
+      END IF;
+    END LOOP;
+
+    FOR r IN SELECT id, document_no, agreement_id FROM v3.documents
+              WHERE document_no IN (pr.indiv_old, pr.indiv_no) AND status <> 'void' AND agreement_id IS DISTINCT FROM ind.id LOOP
+      plan := plan || format('  文書 %s：契約 %s → %s', r.document_no, COALESCE((SELECT agreement_no FROM v3.agreements WHERE id = r.agreement_id), 'なし'), pr.indiv_no);
+      changes := changes || jsonb_build_object('document', r.id, 'agreement_id', r.agreement_id);
+      UPDATE v3.documents SET agreement_id = ind.id WHERE id = r.id;
+    END LOOP;
   END LOOP;
 
-  -- 5. 重複の作品 ----------------------------------------------------------------
+  -- 3. 重複の作品を消す ------------------------------------------------------------
   FOR w IN SELECT * FROM v3.works wk WHERE wk.id = ANY(v_dup_works)
-              -- もう「使わない」にしてあり、条件も付いていなければ済み（2 回目に流したとき）。
               AND NOT (wk.status = 'archived' AND NOT EXISTS (SELECT 1 FROM v3.conditions c WHERE c.work_id = wk.id))
             ORDER BY wk.id LOOP
-    SELECT count(*) INTO n FROM v3.conditions WHERE work_id = w.id AND direction = 'in';
-    IF n > 0 THEN
-      plan := plan || format('重複の作品 #%s %s：in 条件 %s 本を #%s に寄せる', w.id, w.work_code, n, v_work);
-      changes := changes || jsonb_build_object('move_in_conditions_from_work', w.id,
-        'ids', (SELECT jsonb_agg(id) FROM v3.conditions WHERE work_id = w.id AND direction = 'in'));
-      UPDATE v3.conditions SET work_id = v_work, work_part_id = NULL, updated_at = now()
-       WHERE work_id = w.id AND direction = 'in';
-    END IF;
-    -- out 条件も作品だけ先に寄せる（契約は 7 で付け替える）。消す前に寄せておく。
-    FOR r IN SELECT c.id, c.condition_no, c.work_part_id, pa.name AS party FROM v3.conditions c
-               JOIN v3.parties pa ON pa.id = c.counterparty_id
-              WHERE c.work_id = w.id AND c.direction = 'out' ORDER BY c.id LOOP
-      plan := plan || format('out 条件 %s（%s）：作品 #%s → #%s', r.condition_no, r.party, w.id, v_work);
-      changes := changes || jsonb_build_object('condition', r.id, 'no', r.condition_no, 'work_id', w.id, 'work_part_id', r.work_part_id);
-      UPDATE v3.conditions SET work_id = v_work, work_part_id = NULL, updated_at = now() WHERE id = r.id;
+    FOR r IN SELECT c.id, c.condition_no, c.direction, c.work_part_id, pa.name AS party FROM v3.conditions c
+               JOIN v3.parties pa ON pa.id = c.counterparty_id WHERE c.work_id = w.id ORDER BY c.id LOOP
+      plan := plan || format('条件 %s（%s・%s）：作品 #%s → #%s', r.condition_no, r.party, r.direction, w.id, v_main_work);
+      changes := changes || jsonb_build_object('condition', r.id, 'work_id', w.id, 'work_part_id', r.work_part_id);
+      UPDATE v3.conditions SET work_id = v_main_work, work_part_id = NULL, updated_at = now() WHERE id = r.id;
     END LOOP;
-    -- ほかの表（パート・親子・クレジット・刊行物・案件…）から参照されていれば消さない。
-    -- 消すと「消したら一緒に消える」表（ON DELETE CASCADE）の行まで黙って消えるため。
+    -- 原作を作品として立てていた系譜（親子）は、原作名に置き換えたので外す。
+    FOR r IN SELECT * FROM v3.work_lineage WHERE parent_work_id = w.id OR child_work_id = w.id LOOP
+      plan := plan || format('作品の系譜 #%s → #%s（%s）：外す', r.parent_work_id, r.child_work_id, r.relation_type);
+      changes := changes || jsonb_build_object('deleted_lineage', to_jsonb(r));
+      DELETE FROM v3.work_lineage WHERE parent_work_id = r.parent_work_id AND child_work_id = r.child_work_id AND relation_type = r.relation_type;
+    END LOOP;
     v_refs := '{}';
     FOR fk IN
       SELECT con.conrelid::regclass AS tbl, att.attname AS col
-        FROM pg_constraint con
-        JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+        FROM pg_constraint con JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
        WHERE con.contype = 'f' AND con.confrelid = 'v3.works'::regclass AND array_length(con.conkey, 1) = 1
     LOOP
       EXECUTE format('SELECT count(*) FROM %s WHERE %I = $1', fk.tbl, fk.col) INTO v_cnt USING w.id;
@@ -148,79 +198,85 @@ BEGIN
     END LOOP;
     IF array_length(v_refs, 1) IS NULL THEN
       DELETE FROM v3.works WHERE id = w.id;
-      plan := plan || format('重複の作品 #%s %s「%s」：消す', w.id, COALESCE(w.work_code, ''), w.title);
+      plan := plan || format('作品 #%s %s「%s」：消す', w.id, COALESCE(w.work_code, ''), w.title);
       changes := changes || jsonb_build_object('deleted_work', to_jsonb(w));
     ELSE
       UPDATE v3.works SET status = 'archived', updated_at = now() WHERE id = w.id;
-      plan := plan || format('重複の作品 #%s %s「%s」：参照があるので消さず「使わない」にする（%s）',
-                             w.id, COALESCE(w.work_code, ''), w.title, array_to_string(v_refs, '・'));
+      plan := plan || format('作品 #%s %s「%s」：参照があるので消さず「使わない」にする（%s）', w.id, COALESCE(w.work_code, ''), w.title, array_to_string(v_refs, '・'));
       changes := changes || jsonb_build_object('archived_work', w.id, 'status', w.status);
     END IF;
   END LOOP;
 
-  -- 6. 重複の in 条件（作品の無い条件のうち、同じ期間開始・同じ料率のもの） -------------
+  -- 4. 重複の in 条件：付帯情報を残す条件へ付け替えてから無効にする -------------------------
   FOR u IN
-    SELECT DISTINCT ON (x.id) x.id, x.condition_no, x.status, x.notes, t.condition_no AS twin
+    SELECT DISTINCT ON (x.id) x.id, x.condition_no, x.status, t.id AS twin_id, t.condition_no AS twin
       FROM v3.conditions x
-      JOIN v3.conditions t ON t.condition_no = ANY(v_in_nos)
-       AND t.rate_ppm IS NOT DISTINCT FROM x.rate_ppm AND t.term_start IS NOT DISTINCT FROM x.term_start
+      JOIN v3.conditions t ON t.condition_no = ANY(v_keep) AND t.counterparty_id = x.counterparty_id
+       AND t.rate_ppm IS NOT DISTINCT FROM x.rate_ppm AND t.term_start = x.term_start
      WHERE x.counterparty_id = v_party AND x.direction = 'in' AND x.work_id IS NULL
-       AND x.status IN ('active', 'scheduled') AND x.term_start IS NOT NULL
+       AND x.status IN ('active', 'scheduled') AND NOT (x.condition_no = ANY(v_keep))
      ORDER BY x.id, t.id
   LOOP
-    SELECT count(*) INTO n_ev FROM v3.condition_events WHERE condition_id = u.id AND status = 'active';
-    SELECT count(*) INTO n_al FROM v3.payment_allocations WHERE condition_id = u.id;
-    SELECT count(*) INTO n_dc FROM v3.document_conditions WHERE condition_id = u.id;
-    SELECT count(*) INTO n_sl FROM v3.statement_lines WHERE condition_id = u.id;
-    IF n_ev + n_al + n_dc + n_sl = 0 THEN
-      plan := plan || format('重複の in 条件 %s：%s の二重登録として無効にする', u.condition_no, u.twin);
-      changes := changes || jsonb_build_object('voided_condition', u.id, 'no', u.condition_no, 'status', u.status);
+    v_ok := true; v_moved := '{}';
+    FOR fk IN
+      SELECT con.conrelid::regclass AS tbl, att.attname AS col
+        FROM pg_constraint con JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+       WHERE con.contype = 'f' AND con.confrelid = 'v3.conditions'::regclass AND array_length(con.conkey, 1) = 1
+       ORDER BY 1, 2
+    LOOP
+      EXECUTE format('SELECT count(*) FROM %s WHERE %I = $1', fk.tbl, fk.col) INTO v_cnt USING u.id;
+      CONTINUE WHEN v_cnt = 0;
+      BEGIN
+        EXECUTE format('UPDATE %s SET %I = $1 WHERE %I = $2', fk.tbl, fk.col, fk.col) USING u.twin_id, u.id;
+        v_moved := v_moved || format('%s.%s %s 行', fk.tbl, fk.col, v_cnt);
+      EXCEPTION WHEN unique_violation THEN
+        -- 範囲・文書の繋がりは残す側にもうある。重複側の行を外す。それ以外は人が見る。
+        IF fk.tbl::text IN ('v3.condition_scopes', 'v3.document_conditions') THEN
+          EXECUTE format('DELETE FROM %s WHERE %I = $1', fk.tbl, fk.col) USING u.id;
+          v_moved := v_moved || format('%s %s 行（残す側にあるので外した）', fk.tbl, v_cnt);
+        ELSE
+          v_ok := false;
+          plan := plan || format('要確認 %s（%s の重複）：%s.%s の %s 行が残す側とぶつかるので付け替えられない', u.condition_no, u.twin, fk.tbl, fk.col, v_cnt);
+        END IF;
+      END;
+    END LOOP;
+    IF v_ok THEN
+      plan := plan || format('重複の in 条件 %s：%s の重複として無効にする%s', u.condition_no, u.twin,
+                             CASE WHEN array_length(v_moved, 1) IS NULL THEN '（付帯情報なし）'
+                                  ELSE '（付け替え：' || array_to_string(v_moved, '・') || '）' END);
+      changes := changes || jsonb_build_object('voided_condition', u.id, 'twin', u.twin_id, 'status', u.status, 'moved', to_jsonb(v_moved));
       UPDATE v3.conditions
          SET status = 'void', updated_at = now(),
-             notes = concat_ws(E'\n', NULLIF(notes, ''), format('作品の整理（%s）：%s の二重登録として無効', current_date, u.twin))
+             notes = concat_ws(E'\n', NULLIF(notes, ''), format('作品の整理（%s）：%s の重複として無効。付帯情報は %s へ', current_date, u.twin, u.twin))
        WHERE id = u.id;
-    ELSE
-      plan := plan || format('要確認 %s（%s の二重登録の疑い）：実績 %s・支払の割当 %s・文書 %s・計算書の行 %s があるので触らない',
-                             u.condition_no, u.twin, n_ev, n_al, n_dc, n_sl);
     END IF;
   END LOOP;
-  -- 作品の無い in 条件で、実績が入っているもの（重複かどうかを人が決める）
-  FOR u IN
-    SELECT c.condition_no, count(e.id) AS ev, sum(e.quantity) AS q, sum(e.amount) AS amt
-      FROM v3.conditions c JOIN v3.condition_events e ON e.condition_id = c.id AND e.status = 'active'
-     WHERE c.counterparty_id = v_party AND c.direction = 'in' AND c.work_id IS NULL AND c.status IN ('active', 'scheduled')
-     GROUP BY c.condition_no ORDER BY c.condition_no
-  LOOP
-    plan := plan || format('要確認 %s：作品の無い条件に実績 %s 件（数量 %s・金額 %s）。この作品のものなら実績を正しい条件へ移す', u.condition_no, u.ev, u.q, u.amt);
-  END LOOP;
 
-  -- 7. out 条件：作品に付け、相手先ごとに 1 本の単体契約へ ---------------------------
+  -- 5. out 条件：作品ごと・相手先ごとに 1 本の単体契約へ ---------------------------------
   v_year := extract(year FROM (now() AT TIME ZONE 'Asia/Tokyo'))::int;
   FOR p IN
-    SELECT c.counterparty_id AS party_id, pa.name AS party_name,
+    SELECT c.work_id, wk.title AS work_title, c.counterparty_id AS party_id, pa.name AS party_name,
            array_agg(DISTINCT c2.id) AS ids, min(c2.term_start) AS first_on
       FROM v3.conditions c
+      JOIN v3.works wk ON wk.id = c.work_id
       JOIN v3.parties pa ON pa.id = c.counterparty_id
       JOIN v3.conditions c2 ON COALESCE(c2.series_id, c2.id) = COALESCE(c.series_id, c.id)
      WHERE c.direction = 'out' AND c.work_id = ANY(v_works) AND c.status <> 'void'
-     GROUP BY c.counterparty_id, pa.name ORDER BY pa.name
+     GROUP BY c.work_id, wk.title, c.counterparty_id, pa.name ORDER BY c.work_id, pa.name
   LOOP
-    -- この相手先の契約で、この作品の条件だけを持っているもの（あれば単体契約にして使う）。
     SELECT a2.* INTO oa FROM v3.agreements a2
      WHERE a2.id IN (SELECT agreement_id FROM v3.conditions WHERE id = ANY(p.ids))
        AND a2.counterparty_id = p.party_id AND a2.direction = 'out'
-       AND NOT EXISTS (SELECT 1 FROM v3.conditions x WHERE x.agreement_id = a2.id
-                         AND (x.work_id IS NULL OR NOT (x.work_id = ANY(v_works))))
+       AND NOT EXISTS (SELECT 1 FROM v3.conditions x WHERE x.agreement_id = a2.id AND x.work_id IS DISTINCT FROM p.work_id)
      ORDER BY (a2.kind = 'standalone') DESC, a2.id LIMIT 1;
     IF oa.id IS NOT NULL THEN
       v_target := oa.id;
       IF oa.kind IS DISTINCT FROM 'standalone' OR oa.domain IS DISTINCT FROM 'license' OR oa.parent_id IS NOT NULL THEN
-        plan := plan || format('out 契約 %s（%s）：種類 %s → 単体契約、種別 %s → ライセンス', oa.agreement_no, p.party_name, oa.kind, COALESCE(oa.domain, '空'));
-        changes := changes || jsonb_build_object('agreement', oa.id, 'no', oa.agreement_no, 'kind', oa.kind, 'domain', oa.domain, 'parent_id', oa.parent_id);
+        plan := plan || format('out 契約 %s（%s・%s）：種類 %s → 単体契約、種別 %s → ライセンス', oa.agreement_no, p.party_name, p.work_title, oa.kind, COALESCE(oa.domain, '空'));
+        changes := changes || jsonb_build_object('agreement', oa.id, 'kind', oa.kind, 'domain', oa.domain, 'parent_id', oa.parent_id);
         UPDATE v3.agreements SET kind = 'standalone', domain = 'license', parent_id = NULL, updated_at = now() WHERE id = oa.id;
       END IF;
     ELSE
-      -- 新しく単体契約を立てる。番号はアプリ（agreements/service.ts）と同じ ARC-ILT の採番表を進める。
       LOOP
         INSERT INTO v3.document_sequences (prefix, year, current_value)
         VALUES ('ARC-ILT', v_year, COALESCE((
@@ -233,48 +289,63 @@ BEGIN
               AND NOT EXISTS (SELECT 1 FROM v3.documents WHERE document_no = v_no);
       END LOOP;
       INSERT INTO v3.agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, effective_on)
-      VALUES (v_no, format('%s 利用許諾（%s）', v_title, p.party_name), p.party_id, 'out', 'executed', 'standalone', 'license', p.first_on)
+      VALUES (v_no, format('%s 利用許諾（%s）', p.work_title, p.party_name), p.party_id, 'out', 'executed', 'standalone', 'license', p.first_on)
       RETURNING id INTO v_target;
-      plan := plan || format('out 契約 %s（%s）：新しく単体契約を立てる（%s 利用許諾）', v_no, p.party_name, v_title);
-      changes := changes || jsonb_build_object('created_agreement', v_target, 'no', v_no);
+      plan := plan || format('out 契約 %s（%s・%s）：新しく単体契約を立てる', v_no, p.party_name, p.work_title);
+      changes := changes || jsonb_build_object('created_agreement', v_target, 'agreement_no', v_no);
     END IF;
-    -- 条件（全版）を作品と単体契約に付ける。
     FOR r IN
-      SELECT c.id, c.condition_no, c.status, c.agreement_id, c.work_id, c.work_part_id, ag.agreement_no AS ano
+      SELECT c.id, c.condition_no, c.status, c.agreement_id, ag.agreement_no AS ano
         FROM v3.conditions c LEFT JOIN v3.agreements ag ON ag.id = c.agreement_id
-       WHERE c.id = ANY(p.ids) ORDER BY c.id
+       WHERE c.id = ANY(p.ids) AND c.agreement_id IS DISTINCT FROM v_target ORDER BY c.id
     LOOP
-      IF r.agreement_id IS DISTINCT FROM v_target OR r.work_id IS DISTINCT FROM v_work THEN
-        plan := plan || format('  out 条件 %s（%s・%s）：契約 %s → %s%s', r.condition_no, p.party_name, r.status,
-                               COALESCE(r.ano, 'なし'), (SELECT agreement_no FROM v3.agreements WHERE id = v_target),
-                               CASE WHEN r.work_id IS DISTINCT FROM v_work THEN format('、作品 %s → %s', COALESCE(r.work_id::text, 'なし'), v_work) ELSE '' END);
-        changes := changes || jsonb_build_object('condition', r.id, 'no', r.condition_no, 'agreement_id', r.agreement_id,
-                                                 'work_id', r.work_id, 'work_part_id', r.work_part_id);
-        UPDATE v3.conditions
-           SET agreement_id = v_target, work_id = v_work,
-               work_part_id = CASE WHEN work_id = v_work THEN work_part_id END, updated_at = now()
-         WHERE id = r.id;
-      END IF;
+      plan := plan || format('  out 条件 %s（%s・%s）：契約 %s → %s', r.condition_no, p.party_name, r.status,
+                             COALESCE(r.ano, 'なし'), (SELECT agreement_no FROM v3.agreements WHERE id = v_target));
+      changes := changes || jsonb_build_object('condition', r.id, 'agreement_id', r.agreement_id);
+      UPDATE v3.conditions SET agreement_id = v_target, updated_at = now() WHERE id = r.id;
     END LOOP;
   END LOOP;
 
-  -- 中身が空になった契約（消さない。文書があれば付いたまま）
+  -- 6. 触らずに出すもの ------------------------------------------------------------
   FOR r IN
-    SELECT DISTINCT a3.agreement_no, (SELECT count(*) FROM v3.documents d WHERE d.agreement_id = a3.id) AS docs
-      FROM jsonb_array_elements(changes) ch
-      JOIN v3.agreements a3 ON a3.id = (ch->>'agreement_id')::bigint
-     WHERE ch ? 'condition'
-       AND NOT EXISTS (SELECT 1 FROM v3.conditions c WHERE c.agreement_id = a3.id)
-       AND NOT EXISTS (SELECT 1 FROM v3.agreements ch2 WHERE ch2.parent_id = a3.id)
+    SELECT c.condition_no, round(c.rate_ppm / 10000.0, 3) AS rate, c.term_start,
+           (SELECT count(*) FROM v3.condition_events e WHERE e.condition_id = c.id AND e.status = 'active') AS ev
+      FROM v3.conditions c
+     WHERE c.counterparty_id = v_party AND c.direction = 'in' AND c.work_id IS NULL AND c.status IN ('active', 'scheduled')
+     ORDER BY c.term_start NULLS LAST, c.condition_no
   LOOP
-    plan := plan || format('空になった契約 %s（文書 %s）：消していない。要らなければ契約の画面で解除するか、文書だけの契約に', r.agreement_no, r.docs);
+    plan := plan || format('要確認 %s（料率 %s%%・期間開始 %s・実績 %s）：作品の無い条件。重複か、ほかの作品の条件かを決める',
+                           r.condition_no, r.rate, COALESCE(r.term_start::text, 'なし'), r.ev);
+  END LOOP;
+  IF to_regclass('v3.condition_holder_190_backup') IS NOT NULL THEN
+    FOR r IN EXECUTE
+      'SELECT a.agreement_no, string_agg(c.condition_no, ''・'' ORDER BY c.condition_no) AS conds,
+              (SELECT string_agg(d.document_no, ''・'') FROM v3.documents d WHERE d.agreement_id = a.id) AS docs
+         FROM v3.conditions c JOIN v3.condition_holder_190_backup b ON b.condition_id = c.id
+         JOIN v3.agreements a ON a.id = b.agreement_id
+        WHERE c.counterparty_id = $1 AND c.work_id IS NULL AND c.status IN (''active'', ''scheduled'')
+        GROUP BY a.id, a.agreement_no ORDER BY a.agreement_no' USING v_party
+    LOOP
+      plan := plan || format('  手がかり：%s は整理前 %s に載っていた（その契約の文書 %s）', r.conds, r.agreement_no, COALESCE(r.docs, 'なし'));
+    END LOOP;
+  END IF;
+  FOR r IN
+    SELECT a.agreement_no, a.kind, (SELECT string_agg(d.document_no, '・') FROM v3.documents d WHERE d.agreement_id = a.id) AS docs
+      FROM v3.agreements a
+     WHERE a.counterparty_id = v_party AND a.id <> m.id
+       AND NOT EXISTS (SELECT 1 FROM v3.conditions c WHERE c.agreement_id = a.id)
+       AND NOT EXISTS (SELECT 1 FROM v3.agreements ch WHERE ch.parent_id = a.id)
+     ORDER BY a.agreement_no
+  LOOP
+    plan := plan || format('要確認 契約 %s（%s・文書 %s）：条件が載っていない。個別契約の版なら文書をその個別契約へ、要らなければ解除',
+                           r.agreement_no, r.kind, COALESCE(r.docs, 'なし'));
   END LOOP;
 
   IF array_length(plan, 1) IS NULL THEN plan := ARRAY['変えるところはありません（もう整っています）']; END IF;
 
   INSERT INTO v3.audit_events (actor, action, target_type, target_id, detail)
-  VALUES (v_actor, 'work.tree_fix', 'work', v_work,
-          jsonb_build_object('master', v_master_no, 'individual', v_indiv_no, 'inConditions', v_in_nos,
+  VALUES (v_actor, 'work.tree_fix', 'work', v_main_work,
+          jsonb_build_object('master', v_master_no, 'products', (SELECT jsonb_agg(to_jsonb(x) ORDER BY ord) FROM _products x),
                              'dupWorks', v_dup_works, 'plan', to_jsonb(plan), 'changes', changes));
 
   IF dry THEN
