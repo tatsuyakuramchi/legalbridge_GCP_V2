@@ -1133,6 +1133,11 @@ tr.ledger-sec td span{margin-right:10px}
 tr.ledger-sec td .faint{color:inherit;opacity:.75}
 tr.ledger-colhead th{background:var(--sunken);text-align:left;font-weight:400;padding:5px 8px;border-bottom:1px solid var(--line-strong)}
 .ledger-plain{border-left:1px solid var(--line);vertical-align:top}
+/* 条件ごと：複数回の条件は回ごとに 1 行（実績 │ 検収書・計算書 │ 支払）。回どうしは点線で区切る。 */
+tr.wl-round > td.wl-rc{padding-top:5px;padding-bottom:5px}
+tr.wl-round:not(.wl-round-last) > td.wl-rc{border-bottom:1px dashed var(--line)}
+tr.wl-round-sum > td.wl-rc{background:var(--sunken)}
+tr.wl-round-sum > td.wl-rc:hover{background:var(--line)}
 .ledger-next{margin-top:4px;white-space:nowrap}
 /* 契約のみの帯（ContractBand）と、選んだ行を作品・案件に入れる帯（AssignBar）。 */
 tr.ledger-sec.band td{background:var(--accent)}
