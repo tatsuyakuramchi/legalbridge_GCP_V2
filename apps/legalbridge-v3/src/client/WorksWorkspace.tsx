@@ -13,6 +13,7 @@ import { PayDocsWorkspace, type PayDocsHandoff, type AuthorTarget } from "./PayD
 import { WorkRounds } from "./RoundsOverview.js";
 import { WorkLedger } from "./WorkLedger.js";
 import { WorkRightsFlow } from "./WorkRightsFlow.js";
+import { WorkRightsMatrix } from "./WorkRightsMatrix.js";
 import { WorkEditions, editionFamilyOf } from "./WorkEditions.js";
 import type { ImportPreset } from "./BulkRegister.js";
 import { ConditionShares } from "./ConditionShares.js";
@@ -183,7 +184,7 @@ export function WorksWorkspace(
   const [selected, setSelected] = useState<number | undefined>(initialId);
   useEffect(() => { onSelectId?.(selected); }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   // 「利用許諾計算」タブは閉じた（A-074）。報告・計算書は支払文書の「作家の報告と計算書」へ。
-  const [pane, setPane] = useState<"work" | "rights" | "paydocs" | "ledger">("work");
+  const [pane, setPane] = useState<"work" | "rights" | "matrix" | "paydocs" | "ledger">("work");
   /** 支払文書のタブの見せ方：進み順（支払文書の表）か、条件ごと（回号・根拠の契約書・計算書）。 */
   const [payView, setPayView] = useState<"progress" | "conditions">("progress");
   /** 作品ごとの支払文書の数（一覧の札）。条件の付いた作品だけ聞く。 */
@@ -810,6 +811,8 @@ export function WorksWorkspace(
               <button role="tab" aria-selected={pane === "work"} onClick={() => setPane("work")}>作品</button>
               {/* 作者（IN）・作品の系譜・許諾先（OUT）とその対応、直近のお金（docs/navigation.md §5）。 */}
               <button role="tab" aria-selected={pane === "rights"} onClick={() => setPane("rights")}>権利とお金の流れ</button>
+              {/* 許諾地域 × 許諾言語。どこを誰に出したか・空き・独占のぶつかりを表で。 */}
+              <button role="tab" aria-selected={pane === "matrix"} onClick={() => setPane("matrix")}>地域×言語</button>
               <button role="tab" aria-selected={pane === "paydocs"} onClick={() => setPane("paydocs")}>支払文書</button>
               {/* 案件の「条件ごと」と同じ表を、作品 1 点で（案件をまたいで）。条件・実績・発注書・検収書・支払を 1 行で直す。 */}
               <button role="tab" aria-selected={pane === "ledger"} onClick={() => setPane("ledger")}>条件ごと</button>
@@ -823,6 +826,9 @@ export function WorksWorkspace(
           {work && pane === "rights" && (
             <WorkRightsFlow workId={work.id} onOpenCondition={onOpenCondition} onOpenWork={(id) => setSelected(id)}
                             onOpenCheck={onOpenCheck} />
+          )}
+          {work && pane === "matrix" && (
+            <WorkRightsMatrix workId={work.id} onOpenCondition={onOpenCondition} onOpenWork={(id) => setSelected(id)} />
           )}
           {work && pane === "paydocs" && (
             <div className="stack">
