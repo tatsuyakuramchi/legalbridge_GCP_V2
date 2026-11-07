@@ -84,6 +84,7 @@ import { RoyaltyReceiptService } from "./royalty/receipts.js";
 import { ReceiptSettleService } from "./royalty/receipt-settle.js";
 import { WorkRightsFlowService } from "./works/rights-flow.js";
 import { WorkRightsMatrixService } from "./works/rights-matrix.js";
+import { RightsOverviewService } from "./works/rights-matrix-overview.js";
 import { WorkStructureCheckService } from "./works/structure-check.js";
 import { EDITION_RELATIONS, WorkEditionService, type EditionRelation } from "./works/editions.js";
 import { ConditionCheckService } from "./conditions/check-service.js";
@@ -3418,6 +3419,21 @@ export function createRoutes(database: Transactable) {
     res.json(await new WorkRightsFlowService(database, royaltyReceipts).forWork(Number(req.params.id)));
   }));
   // 作品 › 許諾地域×許諾言語の表。行＝地域・列＝言語・マス＝許諾（OUT）と、作者から取った範囲との照合。
+  // 作品をまたぐ 許諾地域 × 許諾言語 の一覧。行＝作品・列＝言語、地域は選ぶ（選ばなければ全地域を畳む）。
+  router.get("/works-rights-matrix", asyncRoute(async (req, res) => {
+    const input = z.object({
+      region: z.string().trim().max(80).optional(),
+      q: z.string().trim().max(200).optional(),
+      category: z.enum(["publishing", "game", "other"]).optional(),
+      party: z.coerce.number().int().positive().optional(),
+      show: z.enum(["granted", "issues", "open", "all"]).optional(),
+      ended: z.enum(["0", "1", "true", "false"]).optional()
+    }).parse(req.query ?? {});
+    res.json(await new RightsOverviewService(database).overview({
+      includeEnded: input.ended === "1" || input.ended === "true", region: input.region || null, q: input.q || null,
+      category: input.category ?? null, partyId: input.party ?? null, show: input.show ?? "granted"
+    }));
+  }));
   router.get("/works/:id/rights-matrix", asyncRoute(async (req, res) => {
     const includeEnded = req.query.ended === "1" || req.query.ended === "true";
     res.json(await new WorkRightsMatrixService(database, (id) => works.envelope(id)).forWork(Number(req.params.id), includeEnded));
