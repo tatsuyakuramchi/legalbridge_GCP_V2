@@ -1177,3 +1177,8 @@ tr.ledger-sec.band td{background:var(--accent)}
 .tag.rm-tag-exclusive{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 .tag.rm-tag-non_exclusive{background:var(--in-soft);color:var(--in);border-color:transparent}
 .tag.rm-tag-open{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+/* 作品台帳 › 地域×言語の一覧（RightsMatrixOverview） */
+.rm-scroll-tall{max-height:70vh;overflow:auto}
+.rm-table tbody th.rm-work{min-width:200px;max-width:280px;white-space:normal;font-weight:400}
+.rm-table tbody th.rm-work .linky{font-weight:700;text-align:left}
+.rm-open-mark{font-size:10px;color:var(--ok);white-space:nowrap}

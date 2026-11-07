@@ -93,7 +93,7 @@ const overlaps = (a: { termStart: string | null; termEnd: string | null }, b: { 
   && (b.termStart === null || a.termEnd === null || b.termStart <= a.termEnd);
 
 /** 地域・言語の並び：許諾の多い順、同じなら名前順。日本・日本語は先頭。 */
-function axisOf(values: ScopeValue[][], dim: "region" | "language", head: string): MatrixAxis[] {
+export function axisOf(values: ScopeValue[][], dim: "region" | "language", head: string): MatrixAxis[] {
   const seen = new Map<string, { label: string; n: number }>();
   for (const list of values) {
     for (const v of list) {
@@ -119,6 +119,8 @@ export function buildRightsMatrix(input: {
   includeEnded: boolean;
   grants: MatrixGrant[];
   envelope: Pick<RightsEnvelope, "acquiredCount" | "scopes"> | null;
+  /** 行・列に必ず出す地域・言語（作品をまたぐ一覧で、どの作品も同じ行・列にそろえるため）。 */
+  axes?: { regions: MatrixAxis[]; languages: MatrixAxis[] };
 }): RightsMatrix {
   const known = !!input.envelope && input.envelope.acquiredCount > 0;
   const scopeOf = (t: "region" | "language") =>
@@ -133,8 +135,8 @@ export function buildRightsMatrix(input: {
     }))
     .filter((g) => input.includeEnded || !g.ended);
 
-  const regions = axisOf([...grants.map((g) => g.regions), acquired.regions], "region", "JP");
-  const languages = axisOf([...grants.map((g) => g.languages), acquired.languages], "language", "ja");
+  const regions = input.axes?.regions ?? axisOf([...grants.map((g) => g.regions), acquired.regions], "region", "JP");
+  const languages = input.axes?.languages ?? axisOf([...grants.map((g) => g.languages), acquired.languages], "language", "ja");
 
   const cells: MatrixCell[] = [];
   const counts = { conflict: 0, outside: 0, granted: 0, open: 0 };

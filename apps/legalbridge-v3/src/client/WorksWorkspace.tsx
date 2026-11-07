@@ -14,6 +14,7 @@ import { WorkRounds } from "./RoundsOverview.js";
 import { WorkLedger } from "./WorkLedger.js";
 import { WorkRightsFlow } from "./WorkRightsFlow.js";
 import { WorkRightsMatrix } from "./WorkRightsMatrix.js";
+import { RightsMatrixOverview } from "./RightsMatrixOverview.js";
 import { WorkEditions, editionFamilyOf } from "./WorkEditions.js";
 import type { ImportPreset } from "./BulkRegister.js";
 import { ConditionShares } from "./ConditionShares.js";
@@ -268,6 +269,8 @@ export function WorksWorkspace(
   const [newSource, setNewSource] = useState<{ title: string; titleKana: string } | null>(null);
   const [cleanup, setCleanup] = useState<{ conditions: LegacyCondition[]; works: LegacyWork[] } | null>(null);
   const [cleanupOpen, setCleanupOpen] = useState(false);
+  /** 作品をまたぐ 地域×言語の一覧。 */
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -654,7 +657,10 @@ export function WorksWorkspace(
           {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "license_conditions" })}
                   title="作品に紐づく利用許諾条件を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 条件を一括登録</button>}
         </>)}
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={cleanupOpen}
+        <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={overviewOpen}
+                onClick={() => setOverviewOpen((v) => !v)}
+                title="作品をまたいで、どの言語をどこに許諾しているかを一覧で見る">地域×言語の一覧</button>
+        <button className="btn btn-sm" aria-pressed={cleanupOpen}
                 onClick={() => setCleanupOpen((v) => !v)}>
           移行データの棚卸し{cleanup ? `（条件 ${cleanup.conditions.length}・作品 ${cleanup.works.length}）` : ""}
         </button>
@@ -664,6 +670,11 @@ export function WorksWorkspace(
         <WorkCreateForm onDone={(r) => { setCreating(null); void reloadTree(r.id); }}
                         onCancel={() => setCreating(null)} />
       )}
+      {overviewOpen && (
+        <RightsMatrixOverview onClose={() => setOverviewOpen(false)}
+          onOpenWork={(id) => { setSelected(id); setPane("matrix"); setOverviewOpen(false); }} />
+      )}
+
       {cleanupOpen && (
         <div className="panel">
           <div className="panel-hd">
