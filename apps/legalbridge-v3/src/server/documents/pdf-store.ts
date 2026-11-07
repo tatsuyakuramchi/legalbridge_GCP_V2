@@ -55,11 +55,14 @@ export class PdfStore {
     await this.database.query("DELETE FROM document_pdfs WHERE document_id = $1", [documentId]);
   }
 
-  /** まだ置いていない決定済みの文書（取込文書を除く）。古いものから。 */
+  /**
+   * まだ置いていない決定済みの文書（取込文書を除く）。新しいものから。
+   * 差し替え済み・取り消した文書は作り置かない（開くことが少ない。開けばその場で描く）。
+   */
   async missing(limit = 50): Promise<number[]> {
     const r = await this.database.query(
       `SELECT d.id FROM documents d
-        WHERE d.status IN ('issued', 'superseded') AND d.template_version_id IS NOT NULL
+        WHERE d.status = 'issued' AND d.template_version_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM document_pdfs p WHERE p.document_id = d.id)
         ORDER BY d.id DESC LIMIT $1`, [limit]);
     return (r.rows as Array<{ id: number }>).map((x) => Number(x.id));
@@ -79,4 +82,15 @@ export class PdfStore {
       [documentId, data, data.length, sha256, this.rendererName]);
     return data;
   }
+}
+
+/**
+ * 差し替え済み・取り消した文書の PDF の作り置きを捨てる（日次の点検から）。PDF が DB の大半を占めるので、
+ * 今の版だけを置く。捨てた文書も、開けば PdfStore.ensure がその場で描く（本文は固定なので同じ PDF になる）。
+ */
+export async function prunePdfs(database: Queryable): Promise<number> {
+  const r = await database.query(
+    `DELETE FROM document_pdfs p USING documents d
+      WHERE d.id = p.document_id AND d.status IN ('void', 'superseded')`);
+  return Number(r.rowCount ?? 0);
 }

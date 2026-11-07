@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { PdfStore } from "./pdf-store.js";
+import { PdfStore, prunePdfs } from "./pdf-store.js";
 import { MemoryPdfRenderer } from "./pdf-renderer.js";
 
 const html = async () => ({ html: "<p>x</p>", documentNo: "ARC-PO-2026-0001" });
@@ -41,4 +41,11 @@ test("まだ置いていない決定済みの文書を古い順に引く（取�
   const db = new FakeDatabase((t) => t.includes("NOT EXISTS (SELECT 1 FROM document_pdfs") ? [{ id: 3 }, { id: 2 }] : []);
   assert.deepEqual(await store(db).missing(10), [3, 2]);
   assert.match(db.find("NOT EXISTS")!.text, /template_version_id IS NOT NULL/);
+  assert.match(db.find("NOT EXISTS")!.text, /d\.status = 'issued'/, "差し替え済み・取り消しは作り置かない");
+});
+
+test("差し替え済み・取り消した文書の作り置きを捨てる", async () => {
+  const db = new FakeDatabase();
+  assert.equal(await prunePdfs(db), 0);
+  assert.match(db.find("DELETE FROM document_pdfs")!.text, /status IN \('void', 'superseded'\)/);
 });
