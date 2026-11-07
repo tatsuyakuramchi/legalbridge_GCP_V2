@@ -11,7 +11,10 @@
 --     原作は作品として立てない。作品の「原作名」（works.source_title）に入れる。
 --
 --   やること
---     1. 基本契約：v_master_old を v_master_no に番号を付け直し、基本契約・ライセンスにする。
+--     1. 基本契約：番号 v_master_no の契約があればそれを正にする（移行で「相手先未特定」に付いていたものは
+--        作家に付け直し、件名・締結日・満了を v_master_old から写す）。v_master_old は、指しているもの
+--        （文書・条件・下の契約・案件の繋がり・更新の記録…）を全部付け替えてから消す。
+--        番号 v_master_no の契約が無ければ、v_master_old の番号を付け直す。基本契約・ライセンスにする。
 --     2. 作品ごと（_products）：原作名を入れる。個別契約を用意する（indiv_old があれば番号を付け直して使う。
 --        無ければ立てる）。基本契約の下の個別契約・ライセンスにし、in 条件（同じ系列の前の版も）を載せ、作品を付ける。
 --        「（無題の条件）」の in 条件には、1 本目の作品の同じ料率の条件の名前を付ける。
@@ -50,7 +53,7 @@ DECLARE
 
   plan    text[] := '{}';
   changes jsonb  := '[]'::jsonb;
-  m record; ind record; pr record; r record; w record; u record; oa record; p record; fk record;
+  m record; old record; ind record; pr record; r record; w record; u record; oa record; p record; fk record;
   v_main_work bigint; v_target bigint; v_no text; v_seq int; v_year int;
   v_works bigint[] := '{}'; v_keep text[] := '{}'; v_main_nos text[]; v_refs text[]; v_cnt bigint; v_ok boolean; v_moved text[];
   v_name text; v_title text; v_first date;
@@ -83,20 +86,92 @@ BEGIN
       RAISE EXCEPTION '作品 #% の in 条件 % のうち、作家・IN で見つかったのは % 本です', pr.work_id, array_to_string(pr.in_nos, '・'), v_cnt;
     END IF;
   END LOOP;
-  SELECT * INTO m FROM v3.agreements WHERE agreement_no IN (v_master_old, v_master_no) ORDER BY (agreement_no = v_master_no) DESC LIMIT 1;
-  IF m.id IS NULL THEN RAISE EXCEPTION '基本契約 %（%）が見つかりません', v_master_no, v_master_old; END IF;
-  IF m.counterparty_id <> v_party OR m.direction <> 'in' THEN
-    RAISE EXCEPTION '基本契約 % の相手先・向きが違います（相手先 %、向き %）', m.agreement_no, m.counterparty_id, m.direction;
+  -- 基本契約：番号 v_master_no の契約があればそれを正にし（移行で「相手先未特定」に付いていたものは
+  -- 作家に付け直す）、v_master_old はそこへ統合する。無ければ v_master_old の番号を付け直す。
+  SELECT * INTO m FROM v3.agreements WHERE agreement_no = v_master_no;
+  SELECT * INTO old FROM v3.agreements WHERE agreement_no = v_master_old;
+  IF m.id IS NULL AND old.id IS NULL THEN RAISE EXCEPTION '基本契約 %（%）が見つかりません', v_master_no, v_master_old; END IF;
+  IF m.id IS NOT NULL THEN
+    IF m.counterparty_id <> v_party
+       AND NOT EXISTS (SELECT 1 FROM v3.parties WHERE id = m.counterparty_id AND party_code = 'UNRESOLVED') THEN
+      RAISE EXCEPTION '基本契約 % は別の取引先（#%）の契約です', v_master_no, m.counterparty_id;
+    END IF;
+    IF m.direction <> 'in' THEN RAISE EXCEPTION '基本契約 % の向きが IN ではありません（%）', v_master_no, m.direction; END IF;
+    IF EXISTS (SELECT 1 FROM v3.conditions c WHERE c.agreement_id = m.id AND c.counterparty_id <> v_party) THEN
+      RAISE EXCEPTION '基本契約 % に、ほかの取引先の条件が載っています', v_master_no;
+    END IF;
   END IF;
-  IF EXISTS (SELECT 1 FROM v3.agreements WHERE agreement_no = v_master_no AND id <> m.id) THEN
-    RAISE EXCEPTION '番号 % はほかの契約が使っています', v_master_no;
+  IF old.id IS NOT NULL AND (old.counterparty_id <> v_party OR old.direction <> 'in') THEN
+    RAISE EXCEPTION '基本契約 % の相手先・向きが違います（相手先 %、向き %）', v_master_old, old.counterparty_id, old.direction;
   END IF;
 
   -- 1. 基本契約 ---------------------------------------------------------------
-  IF m.agreement_no IS DISTINCT FROM v_master_no OR m.kind IS DISTINCT FROM 'master' OR m.domain IS DISTINCT FROM 'license' OR m.parent_id IS NOT NULL THEN
-    plan := plan || format('基本契約 %s → %s：種類 %s → 基本契約、種別 %s → ライセンス', m.agreement_no, v_master_no, m.kind, COALESCE(m.domain, '空'));
-    changes := changes || jsonb_build_object('agreement', m.id, 'agreement_no', m.agreement_no, 'kind', m.kind, 'domain', m.domain, 'parent_id', m.parent_id);
-    UPDATE v3.agreements SET agreement_no = v_master_no, kind = 'master', domain = 'license', parent_id = NULL, updated_at = now() WHERE id = m.id;
+  IF m.id IS NULL THEN
+    -- 正の番号が無い：いまの契約の番号を付け直す。
+    m := old;
+    SELECT * INTO old FROM v3.agreements WHERE false;  -- 統合する相手は無い
+  END IF;
+  IF m.agreement_no IS DISTINCT FROM v_master_no OR m.counterparty_id <> v_party OR m.kind IS DISTINCT FROM 'master'
+     OR m.domain IS DISTINCT FROM 'license' OR m.parent_id IS NOT NULL
+     OR (old.id IS NOT NULL AND (m.title = m.agreement_no OR m.executed_on IS NULL)) THEN
+    plan := plan || format('基本契約 %s%s：%s種類 %s → 基本契約、種別 %s → ライセンス%s', m.agreement_no,
+                           CASE WHEN m.agreement_no IS DISTINCT FROM v_master_no THEN ' → ' || v_master_no ELSE '' END,
+                           CASE WHEN m.counterparty_id <> v_party THEN format('相手先 #%s → #%s（作家）、', m.counterparty_id, v_party) ELSE '' END,
+                           m.kind, COALESCE(m.domain, '空'),
+                           CASE WHEN old.id IS NOT NULL THEN format('、件名・締結日・満了を %s から写す', old.agreement_no) ELSE '' END);
+    changes := changes || jsonb_build_object('agreement', m.id, 'before', to_jsonb(m));
+    UPDATE v3.agreements
+       SET agreement_no = v_master_no, counterparty_id = v_party, kind = 'master', domain = 'license', parent_id = NULL,
+           title        = CASE WHEN old.id IS NOT NULL AND (title = agreement_no OR title = '') THEN old.title ELSE title END,
+           executed_on  = COALESCE(executed_on, old.executed_on),
+           effective_on = COALESCE(effective_on, old.effective_on),
+           expires_on   = COALESCE(expires_on, old.expires_on),
+           auto_renewal = auto_renewal OR COALESCE(old.auto_renewal, false),
+           status       = CASE WHEN old.id IS NOT NULL THEN COALESCE(old.status, status) ELSE status END,
+           updated_at   = now()
+     WHERE id = m.id;
+    SELECT * INTO m FROM v3.agreements WHERE id = m.id;
+  END IF;
+
+  -- いまの契約（v_master_old）を正の基本契約へ統合する：指しているものを全部付け替えてから消す。
+  IF old.id IS NOT NULL AND old.id <> m.id THEN
+    v_moved := '{}'; v_ok := true;
+    FOR fk IN
+      SELECT con.conrelid::regclass AS tbl, att.attname AS col
+        FROM pg_constraint con JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+       WHERE con.contype = 'f' AND con.confrelid = 'v3.agreements'::regclass AND array_length(con.conkey, 1) = 1
+       ORDER BY 1, 2
+    LOOP
+      EXECUTE format('SELECT count(*) FROM %s WHERE %I = $1', fk.tbl, fk.col) INTO v_cnt USING old.id;
+      CONTINUE WHEN v_cnt = 0;
+      BEGIN
+        EXECUTE format('UPDATE %s SET %I = $1 WHERE %I = $2', fk.tbl, fk.col, fk.col) USING m.id, old.id;
+        v_moved := v_moved || format('%s.%s %s 行', fk.tbl, fk.col, v_cnt);
+      EXCEPTION WHEN unique_violation THEN
+        v_ok := false;
+        plan := plan || format('要確認 %s の統合：%s.%s の %s 行が %s 側とぶつかる', v_master_old, fk.tbl, fk.col, v_cnt, v_master_no);
+      END;
+    END LOOP;
+    -- 番号ではなく id を文字で持つ繋がり（案件・更新の記録）も付け替える（agreements/master-merge.ts と同じ）。
+    DELETE FROM v3.matter_links ml WHERE ml.target_type = 'agreement' AND ml.target_ref = old.id::text
+       AND EXISTS (SELECT 1 FROM v3.matter_links x WHERE x.matter_id = ml.matter_id AND x.target_type = 'agreement' AND x.target_ref = m.id::text);
+    UPDATE v3.matter_links SET target_ref = m.id::text WHERE target_type = 'agreement' AND target_ref = old.id::text;
+    GET DIAGNOSTICS v_cnt = ROW_COUNT;
+    IF v_cnt > 0 THEN v_moved := v_moved || format('案件の繋がり %s 行', v_cnt); END IF;
+    IF to_regclass('v3.term_events') IS NOT NULL THEN
+      UPDATE v3.term_events SET target_id = m.id WHERE target_type = 'agreement' AND target_id = old.id;
+      GET DIAGNOSTICS v_cnt = ROW_COUNT;
+      IF v_cnt > 0 THEN v_moved := v_moved || format('更新の記録 %s 行', v_cnt); END IF;
+    END IF;
+    changes := changes || jsonb_build_object('merged_agreement', to_jsonb(old), 'into', m.id, 'moved', to_jsonb(v_moved));
+    IF v_ok THEN
+      DELETE FROM v3.agreements WHERE id = old.id;
+      plan := plan || format('契約 %s：%s に統合して消す%s', v_master_old, v_master_no,
+                             CASE WHEN array_length(v_moved, 1) IS NULL THEN '' ELSE '（付け替え：' || array_to_string(v_moved, '・') || '）' END);
+    ELSE
+      UPDATE v3.agreements SET status = 'terminated', updated_at = now() WHERE id = old.id;
+      plan := plan || format('契約 %s：付け替えられない行があるので消さず「解除」にする', v_master_old);
+    END IF;
   END IF;
   FOR r IN SELECT id, document_no, agreement_id FROM v3.documents
             WHERE document_no IN (v_master_old, v_master_no) AND status <> 'void' AND agreement_id IS DISTINCT FROM m.id LOOP
