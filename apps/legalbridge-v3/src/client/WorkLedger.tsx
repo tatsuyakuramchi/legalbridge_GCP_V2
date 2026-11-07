@@ -428,12 +428,32 @@ export function WorkLedger(
    * 個別の契約の段：業務委託は発注書（単体契約ならその契約が兼ねる）、利用許諾は条件書。
    * 次の文書（発注書・単体契約 → 検収書、条件書 → 計算書）へ行くボタンもここに出す。
    */
+  /** 個別契約（基本契約の下の契約）。条件書の文書がまだ無くても、契約そのものを出す。 */
+  const individualLine = (r: GridRow) => {
+    const ind = r.individual;
+    if (!ind) return null;
+    return (
+      <>
+        <div className="ledger-line">
+          <span className="tag">個別契約</span>
+          {flow.agreement
+            ? <button className="linky code" onClick={(e) => { e.stopPropagation(); flow.agreement!(ind.id); }} title="契約の画面で開く">{ind.agreementNo ?? `#${ind.id}`}</button>
+            : <span className="code">{ind.agreementNo ?? `#${ind.id}`}</span>}
+        </div>
+        {ind.title && <div className="faint" style={{ fontSize: 11.5 }}>{ind.title}</div>}
+      </>
+    );
+  };
   const docCell = (r: GridRow) => {
     if (isLicense(r)) {
       const partyId = r.counterparty?.id ?? null;
       return <>
-        {r.terms ? <DocLine doc={r.terms} onOpen={onOpenDocument} /> : <span className="faint">まだ</span>}
-        {!r.terms && contractButton(r, "individual", "個別契約", "既存の文書から選ぶか、条件明細から引用して個別契約（利用許諾条件書）を登録する")}
+        {r.terms ? <DocLine doc={r.terms} onOpen={onOpenDocument} />
+          : r.individual ? <>{individualLine(r)}<div className="faint" style={{ fontSize: 11.5 }}>条件書の文書はまだ</div></>
+          : <span className="faint">まだ</span>}
+        {r.terms && r.individual && <div className="faint" style={{ fontSize: 11.5 }}>個別契約 {r.individual.agreementNo ?? `#${r.individual.id}`}</div>}
+        {!r.terms && contractButton(r, "individual", r.individual ? "条件書を上げる" : "個別契約",
+          r.individual ? "この個別契約の条件書（PDF）を上げる。番号は個別契約の番号のまま" : "既存の文書から選ぶか、条件明細から引用して個別契約（利用許諾条件書）を登録する")}
         {r.direction !== "out" && r.terms && r.terms.phase !== "draft" && partyId !== null && flow.royalty
           && next("計算書を作る", () => flow.royalty!({ partyId, workId: r.workId }),
                   "作品 › 利用許諾計算の台帳（作家 × 作品）を開いて、回ごとに計算書を作る")}
@@ -458,6 +478,7 @@ export function WorkLedger(
       </>;
     }
     if (r.orderRef) return <span className="faint code">{r.orderRef}（外部）</span>;
+    if (r.individual) return <>{individualLine(r)}{contractButton(r, "individual", "発注書", "既存の文書から選ぶか、発注書の PDF を登録する（無ければ番号だけ取る）")}</>;
     return <><span className="faint">まだ</span>{contractButton(r, "individual", "発注書", "既存の文書から選ぶか、発注書の PDF を登録する（無ければ番号だけ取る）")}</>;
   };
 

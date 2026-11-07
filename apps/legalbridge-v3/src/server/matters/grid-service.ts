@@ -132,6 +132,7 @@ export const GRID_COLUMNS = `c.id, c.condition_no, c.name, c.kind, c.status, c.c
                 c.work_id, c.agreement_id, c.direction, c.deliverable_ownership, c.quantity, c.unit_label,
                 ctr.id AS contract_id, ctr.agreement_no AS contract_no, ctr.title AS contract_title,
                 ctr.kind AS contract_kind, ctr.status AS contract_status, ctr.on_standalone AS contract_on_standalone,
+                ctr.individual_id, ctr.individual_no, ctr.individual_title,
                 lt.id AS terms_id, lt.document_no AS terms_no, lt.status AS terms_status,
                 lt.sent_at AS terms_sent_at, lt.sign AS terms_sign, lt.amount_ex_tax AS terms_amount_ex_tax,
                 lt.condition_count AS terms_condition_count, lt.sibling_count AS terms_sibling_count,
@@ -214,7 +215,12 @@ export const GRID_JOINS = `
            LEFT JOIN LATERAL (
              SELECT r.id, r.agreement_no, r.title, COALESCE(r.kind, 'master') AS kind, r.status,
                     (COALESCE(a0.kind, 'master') = 'standalone' AND a0.parent_id IS NULL
-                     AND a0.order_document_id IS NULL) AS on_standalone
+                     AND a0.order_document_id IS NULL) AS on_standalone,
+                    -- 個別契約：条件が基本契約の下の契約（個別条件書・覚書）に載っていれば、その契約。
+                    -- 発注書の器（order_document_id あり）は発注書の段で出すので含めない。
+                    CASE WHEN a0.parent_id IS NOT NULL AND a0.order_document_id IS NULL THEN a0.id END AS individual_id,
+                    CASE WHEN a0.parent_id IS NOT NULL AND a0.order_document_id IS NULL THEN a0.agreement_no END AS individual_no,
+                    CASE WHEN a0.parent_id IS NOT NULL AND a0.order_document_id IS NULL THEN a0.title END AS individual_title
                FROM agreements a0
                JOIN agreements r ON r.id = COALESCE(a0.parent_id, a0.id)
               WHERE a0.id = c.agreement_id
@@ -244,6 +250,9 @@ export const gridRowOf = (row: Record<string, any>): GridRow => ({
     kind: String(row.contract_kind ?? "master"), status: String(row.contract_status ?? "")
   } : null,
   onStandalone: row.contract_on_standalone === true,
+  individual: row.individual_id
+    ? { id: Number(row.individual_id), agreementNo: str(row.individual_no), title: str(row.individual_title) }
+    : null,
   terms: doc(row, "terms"),
   pricingModel: String(row.pricing_model ?? "none"),
   currency: String(row.currency ?? "JPY"),
