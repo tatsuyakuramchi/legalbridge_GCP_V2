@@ -48,6 +48,8 @@ DECLARE
   v_master_old  text     := 'CT-2026-00008';             -- 基本契約のいまの番号
   v_master_no   text     := 'ARC-LIC-2026-0007';         -- 基本契約の番号
   v_source      text     := 'トーネードスプラッシュ';     -- 原作名（作品の原作名に入れる）
+  v_master_title text    := '利用許諾契約書（トーネードスプラッシュ）';  -- 基本契約の名前（文書名にも出る）
+  v_out_title   text     := '利用許諾契約書（%s・%s）';   -- out の単体契約の名前（作品名・相手先名が入る）
   v_dup_works   bigint[] := ARRAY[25, 628]::bigint[];    -- 消す作品（原作として立てていた #25・重複の #628）
   v_actor       text     := 'sql:work-tree-fix';
 
@@ -62,11 +64,15 @@ BEGIN
   -- お試しでは見えず、本番だけ最後に失敗するため。ぶつかれば各段の例外処理で「要確認」に出る。
   SET CONSTRAINTS ALL IMMEDIATE;
   -- 作品ごとの個別契約と in 条件。1 行目が主の作品（重複の作品の条件はここへ寄せる）。
-  CREATE TEMP TABLE IF NOT EXISTS _products (ord int, work_id bigint, indiv_old text, indiv_no text, in_nos text[]) ON COMMIT DROP;
+  --   work_title  … 作品名を直すときだけ入れる（NULL は今のまま）
+  --   indiv_title … 個別契約の名前（契約に付いた文書の名前にも出る）
+  CREATE TEMP TABLE IF NOT EXISTS _products (ord int, work_id bigint, work_title text, indiv_old text, indiv_no text, indiv_title text, in_nos text[]) ON COMMIT DROP;
   TRUNCATE _products;
   INSERT INTO _products VALUES
-    (1, 50,  'ARC-ILT-2026-0007', 'LIC-LO-2026-0001-W-2026-0001', ARRAY['CL-2026-00406', 'CL-2026-00407', 'CL-2026-00408-R2']),
-    (2, 585, NULL,                'LIC-LO-2026-0001-W-2026-0002', ARRAY['CL-2026-00112', 'CL-2026-00113', 'CL-2026-00114']);
+    (1, 50,  NULL,                       'ARC-ILT-2026-0007', 'LIC-LO-2026-0001-W-2026-0001', '個別利用許諾条件書（トーネードスプラッシュ）',
+        ARRAY['CL-2026-00406', 'CL-2026-00407', 'CL-2026-00408-R2']),
+    (2, 585, 'トーネードスプラッシュ拡張版', NULL,               'LIC-LO-2026-0001-W-2026-0002', '個別利用許諾条件書（トーネードスプラッシュ拡張版）',
+        ARRAY['CL-2026-00112', 'CL-2026-00113', 'CL-2026-00114']);
 
   SELECT work_id, in_nos INTO v_main_work, v_main_nos FROM _products ORDER BY ord LIMIT 1;
   SELECT array_agg(work_id ORDER BY ord) INTO v_works FROM _products;
@@ -135,6 +141,11 @@ BEGIN
      WHERE id = m.id;
     SELECT * INTO m FROM v3.agreements WHERE id = m.id;
   END IF;
+  IF v_master_title IS NOT NULL AND m.title IS DISTINCT FROM v_master_title THEN
+    plan := plan || format('基本契約 %s：名前 %s → %s', v_master_no, m.title, v_master_title);
+    changes := changes || jsonb_build_object('agreement', m.id, 'title', m.title);
+    UPDATE v3.agreements SET title = v_master_title, updated_at = now() WHERE id = m.id;
+  END IF;
 
   -- いまの契約（v_master_old）を正の基本契約へ統合する：指しているものを全部付け替えてから消す。
   IF old.id IS NOT NULL AND old.id <> m.id THEN
@@ -186,6 +197,12 @@ BEGIN
   -- 2. 作品ごと：原作名・個別契約・in 条件・文書 ---------------------------------------
   FOR pr IN SELECT * FROM _products ORDER BY ord LOOP
     SELECT title INTO v_title FROM v3.works WHERE id = pr.work_id;
+    IF pr.work_title IS NOT NULL AND v_title IS DISTINCT FROM pr.work_title THEN
+      plan := plan || format('作品 #%s：作品名 %s → %s', pr.work_id, v_title, pr.work_title);
+      changes := changes || jsonb_build_object('work', pr.work_id, 'title', v_title);
+      UPDATE v3.works SET title = pr.work_title, updated_at = now() WHERE id = pr.work_id;
+      v_title := pr.work_title;
+    END IF;
     IF (SELECT source_title FROM v3.works WHERE id = pr.work_id) IS DISTINCT FROM v_source THEN
       plan := plan || format('作品 #%s「%s」：原作名 → %s', pr.work_id, v_title, v_source);
       changes := changes || jsonb_build_object('work', pr.work_id, 'source_title', (SELECT source_title FROM v3.works WHERE id = pr.work_id));
@@ -198,9 +215,9 @@ BEGIN
     IF ind.id IS NULL THEN
       SELECT min(term_start) INTO v_first FROM v3.conditions WHERE condition_no = ANY(pr.in_nos);
       INSERT INTO v3.agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id, effective_on)
-      VALUES (pr.indiv_no, format('%s 個別利用許諾条件', v_title), v_party, 'in', 'executed', 'supplement', 'license', m.id, v_first)
+      VALUES (pr.indiv_no, COALESCE(pr.indiv_title, format('個別利用許諾条件書（%s）', v_title)), v_party, 'in', 'executed', 'supplement', 'license', m.id, v_first)
       RETURNING * INTO ind;
-      plan := plan || format('個別契約 %s：新しく立てる（%s・%s の下）', pr.indiv_no, v_title, v_master_no);
+      plan := plan || format('個別契約 %s：新しく立てる（名前 %s・%s の下）', pr.indiv_no, ind.title, v_master_no);
       changes := changes || jsonb_build_object('created_agreement', ind.id, 'agreement_no', pr.indiv_no);
     ELSE
       IF ind.counterparty_id <> v_party OR ind.direction <> 'in' THEN
@@ -211,6 +228,11 @@ BEGIN
                                ind.agreement_no, pr.indiv_no, ind.kind, COALESCE(ind.domain, '空'), v_master_no);
         changes := changes || jsonb_build_object('agreement', ind.id, 'agreement_no', ind.agreement_no, 'kind', ind.kind, 'domain', ind.domain, 'parent_id', ind.parent_id);
         UPDATE v3.agreements SET agreement_no = pr.indiv_no, kind = 'supplement', domain = 'license', parent_id = m.id, updated_at = now() WHERE id = ind.id;
+      END IF;
+      IF pr.indiv_title IS NOT NULL AND ind.title IS DISTINCT FROM pr.indiv_title THEN
+        plan := plan || format('個別契約 %s：名前 %s → %s', pr.indiv_no, ind.title, pr.indiv_title);
+        changes := changes || jsonb_build_object('agreement', ind.id, 'title', ind.title);
+        UPDATE v3.agreements SET title = pr.indiv_title, updated_at = now() WHERE id = ind.id;
       END IF;
     END IF;
 
@@ -388,9 +410,9 @@ BEGIN
               AND NOT EXISTS (SELECT 1 FROM v3.documents WHERE document_no = v_no);
       END LOOP;
       INSERT INTO v3.agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, effective_on)
-      VALUES (v_no, format('%s 利用許諾（%s）', p.work_title, p.party_name), p.party_id, 'out', 'executed', 'standalone', 'license', p.first_on)
+      VALUES (v_no, format(v_out_title, p.work_title, p.party_name), p.party_id, 'out', 'executed', 'standalone', 'license', p.first_on)
       RETURNING id INTO v_target;
-      plan := plan || format('out 契約 %s（%s・%s）：新しく単体契約を立てる', v_no, p.party_name, p.work_title);
+      plan := plan || format('out 契約 %s：新しく単体契約を立てる（名前 %s）', v_no, format(v_out_title, p.work_title, p.party_name));
       changes := changes || jsonb_build_object('created_agreement', v_target, 'agreement_no', v_no);
     END IF;
     FOR r IN
