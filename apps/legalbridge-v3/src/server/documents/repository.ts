@@ -426,8 +426,9 @@ export class DocumentRepository {
           -- 部分テンプレートは他のひな形に差し込むもので、単独では発行できない。
           AND t.category IS DISTINCT FROM 'partial'
           AND t.template_key NOT LIKE '\\_%'
-          -- 支払報告書は相手先 × 期間で描く帳票（支払・お金 → 支払報告書（文書））。文書の作成からは選ばせない。
-          AND t.template_key <> 'payment_report'
+          -- 支払報告書は相手先 × 期間で描く帳票（支払・お金 → 支払報告書（文書））、許諾地域・許諾言語レポートは
+          -- 作品の地域×言語の表を描く帳票（作品台帳 › 地域×言語）。どちらも文書の作成からは選ばせない。
+          AND t.template_key NOT IN ('payment_report', 'rights_matrix_report')
         ORDER BY t.category NULLS LAST, t.label`);
     return r.rows.map((t: Record<string, any>) => ({
       id: Number(t.id), templateKey: String(t.template_key), label: String(t.label),

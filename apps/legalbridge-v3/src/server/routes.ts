@@ -85,6 +85,7 @@ import { ReceiptSettleService } from "./royalty/receipt-settle.js";
 import { WorkRightsFlowService } from "./works/rights-flow.js";
 import { WorkRightsMatrixService } from "./works/rights-matrix.js";
 import { RightsOverviewService } from "./works/rights-matrix-overview.js";
+import { fileSafe, RightsMatrixReportService } from "./works/rights-matrix-report.js";
 import { WorkStructureCheckService } from "./works/structure-check.js";
 import { EDITION_RELATIONS, WorkEditionService, type EditionRelation } from "./works/editions.js";
 import { ConditionCheckService } from "./conditions/check-service.js";
@@ -3437,6 +3438,55 @@ export function createRoutes(database: Transactable) {
   router.get("/works/:id/rights-matrix", asyncRoute(async (req, res) => {
     const includeEnded = req.query.ended === "1" || req.query.ended === "true";
     res.json(await new WorkRightsMatrixService(database, (id) => works.envelope(id)).forWork(Number(req.params.id), includeEnded));
+  }));
+  // 許諾地域・許諾言語レポート（ひな形 rights_matrix_report。works/rights-matrix-report.ts、docs/rights-matrix-report.md）。
+  // 画面の表と同じ集計・同じ絞り込みを紙にする。読むだけで、番号は振らない。
+  const rightsReport = () => new RightsMatrixReportService(
+    database, new WorkRightsMatrixService(database, (id) => works.envelope(id)), new RightsOverviewService(database));
+  const rightsReportFlags = z.object({
+    ended: z.enum(["0", "1", "true", "false"]).optional(),
+    party: z.coerce.number().int().positive().optional(),
+    remarks: z.string().max(2000).optional()
+  });
+  const sendPdf = async (res: express.Response, html: string, asciiName: string, name: string) => {
+    const buffer = await pdf.render(html);
+    res.type("application/pdf")
+       .setHeader("content-disposition", `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.send(buffer);
+  };
+  const workReport = async (req: express.Request) => {
+    const q = rightsReportFlags.parse(req.query ?? {});
+    return rightsReport().renderWork(Number(req.params.id), {
+      includeEnded: q.ended === "1" || q.ended === "true", partyId: q.party ?? null, remarks: q.remarks ?? null
+    });
+  };
+  router.get("/works/:id/rights-matrix/report/html", asyncRoute(async (req, res) => {
+    res.type("html").send((await workReport(req)).html);
+  }));
+  router.get("/works/:id/rights-matrix/report/pdf", asyncRoute(async (req, res) => {
+    const { html, matrix } = await workReport(req);
+    await sendPdf(res, html, `rights-matrix-${matrix.work.id}-${matrix.today}.pdf`,
+      `許諾地域・許諾言語レポート_${fileSafe(matrix.work.title)}_${matrix.today}.pdf`);
+  }));
+  const overviewReportInput = z.object({
+    region: z.string().trim().max(80).optional(),
+    q: z.string().trim().max(200).optional(),
+    category: z.enum(["publishing", "game", "other"]).optional(),
+    show: z.enum(["granted", "issues", "open", "all"]).optional()
+  }).and(rightsReportFlags);
+  const overviewReport = async (req: express.Request) => {
+    const q = overviewReportInput.parse(req.query ?? {});
+    return rightsReport().renderOverview({
+      includeEnded: q.ended === "1" || q.ended === "true", region: q.region || null, q: q.q || null,
+      category: q.category ?? null, partyId: q.party ?? null, show: q.show ?? "granted", remarks: q.remarks ?? null
+    });
+  };
+  router.get("/works-rights-matrix/report/html", asyncRoute(async (req, res) => {
+    res.type("html").send((await overviewReport(req)).html);
+  }));
+  router.get("/works-rights-matrix/report/pdf", asyncRoute(async (req, res) => {
+    const { html, overview } = await overviewReport(req);
+    await sendPdf(res, html, `rights-matrix-overview-${overview.today}.pdf`, `許諾地域・許諾言語レポート_作品一覧_${overview.today}.pdf`);
   }));
   // 作品の刊行物（版元・ISBN・刊行日・本体価格。docs/work-editions.md、infra/v3/193）。
   const workEditions = new WorkEditionService(database);

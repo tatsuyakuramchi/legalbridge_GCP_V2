@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { useDebounced } from "./ListTools.js";
+import { RightsMatrixReport } from "./RightsMatrixReport.js";
 
 /**
  * 作品台帳 › 地域×言語の一覧（作品をまたぐ。server/works/rights-matrix-overview.ts）。
@@ -56,21 +57,25 @@ export function RightsMatrixOverview({ onOpenWork, onClose }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
+  const qs = useMemo(() => {
     const qs = new URLSearchParams({ show });
     if (query.trim()) qs.set("q", query.trim());
     if (category) qs.set("category", category);
     if (region) qs.set("region", region);
     if (party !== "") qs.set("party", String(party));
     if (ended) qs.set("ended", "1");
+    return qs;
+  }, [query, category, region, party, show, ended]);
+
+  useEffect(() => {
+    let alive = true;
     setLoading(true); setError(null);
     api.get<Overview>(`/works-rights-matrix?${qs}`)
       .then((r) => { if (alive) setData(r); })
       .catch((e: ApiError) => { if (alive) setError(e.message); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [query, category, region, party, show, ended]);
+  }, [qs]);
 
   const regionLabel = data?.regions.find((r) => r.key === data.region)?.label ?? null;
 
@@ -191,6 +196,9 @@ export function RightsMatrixOverview({ onOpenWork, onClose }: {
               地域を選ばないときは、その言語の全地域を畳んで、いちばん気にすべき状態（ぶつかり → 範囲外 → 独占 → 非独占 → 空き）の色で出します。
               派生作品（言語版など）の許諾は元の作品の行にまとめています。作者から取った範囲は元の作品の作者の条件で見ます。
             </small>
+            {/* いまの絞り込み（地域・カテゴリ・取引先・題名・出す作品・終わった許諾）のまま A4 横のレポートに。 */}
+            <RightsMatrixReport path="/works-rights-matrix/report" query={qs}
+                                hint={data.truncated ? `レポートも先頭 ${data.rows.length} 件だけ載せます` : undefined} />
           </>
         )}
       </div>

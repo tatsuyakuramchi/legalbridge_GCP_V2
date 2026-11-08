@@ -57,6 +57,29 @@ const TARGETS = [
 --   ・値は apps/legalbridge-v3/src/server/paydocs/payment-report-doc.ts が組み立てる。
 --   ・登録しなくても画面は既定の本文（paydocs/payment-report-template.ts）で描ける。
 --     登録すると DB の現行版で描く（本文の手直しを版で残せる）。`
+  },
+  {
+    no: "204", key: "rights_matrix_report", label: "許諾地域・許諾言語レポート",
+    body: "templates/rights_matrix_report.html", mark: 'data-layout="rmr-v1',
+    prefix: "RMR",
+    // 分類は支払報告書と同じ（帳票）。文書の作成のひな形一覧には出さない（documents/repository.ts）。
+    categoryFrom: "payment_report",
+    out: "204_rights_matrix_report.sql",
+    variables: [
+      { name: "remarks", label: "備考", type: "textarea", group: "備考",
+        helpText: "表の下に出る。画面（作品台帳 › 地域×言語 → レポート）で入れる" }
+    ],
+    title: "許諾地域・許諾言語レポート（rights_matrix_report）の登録",
+    intro: `--   作品の「地域×言語」の表（ライセンスマトリクス。作品 › 地域×言語、作品台帳 › 地域×言語の一覧）を
+--   紙（HTML・PDF）にする帳票。A4 横。
+--
+--   ・1 通のひな形で 2 つの形を描く：作品 1 点（行＝許諾地域・列＝許諾言語）と、
+--     作品をまたぐ一覧（行＝作品・列＝許諾言語。地域を選ぶか、全地域を畳む）。
+--   ・マス＝そこを覆う OUT の利用許諾（取引先名）。作者から取った範囲と照らし、
+--     独占のぶつかり・範囲外・空きを色と印（✕ △ ◉ ○）で出す。作品 1 点には「要確認」と「許諾の一覧」も付く。
+--   ・値は apps/legalbridge-v3/src/server/works/rights-matrix-report.ts が組み立てる（集計は画面と同じ rights-matrix.ts）。
+--   ・登録しなくても画面は既定の本文（works/rights-matrix-report-template.ts）で描ける。
+--     登録すると DB の現行版で描く（本文の手直しを版で残せる）。`
   }
 ];
 
