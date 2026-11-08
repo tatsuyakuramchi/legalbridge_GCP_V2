@@ -5,6 +5,9 @@ import { DomainError, statusFor } from "./core/errors.js";
 import { isDbTimeout, isPoolTimeout, poolState } from "./db/pool.js";
 import { recordAudit } from "./core/audit.js";
 import { buildZip, safeFileName, type ZipEntry } from "./core/zip.js";
+import { buildBackup } from "./ops/backup.js";
+import { statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { matterLinesText, parseMonthlyReport, reportWarnings } from "./conditions/monthly-report.js";
 import { requireRole, requireWritable } from "./auth.js";
 import { ConditionRepository } from "./conditions/repository.js";
@@ -1509,6 +1512,32 @@ export function createRoutes(database: Transactable) {
     basis: z.enum(["due", "paid"]).optional(),
     includeExported: z.coerce.boolean().optional()
   });
+
+  // ローカル予備系へのバックアップ（ops/backup.ts）。v3 の定義と全部の表の中身、本番のアプリの版を 1 つの ZIP で。
+  // 口座番号・連絡先を含む本番の写しなので admin だけ。読むだけ（予備系の読み取り専用でも落とせる）。
+  router.get("/backup/download", requireRole("admin"), asyncRoute(async (_req, res) => {
+    let clientBuiltAt: string | null = null;
+    try {
+      clientBuiltAt = statSync(fileURLToPath(new URL("../../client/index.html", import.meta.url))).mtime.toISOString();
+    } catch { /* 画面を載せていない（テスト・開発）ときは空 */ }
+    const backup = await buildBackup(database, {
+      schema: config.databaseSchema, actor: actor(res),
+      app: { gitSha: str(process.env.GIT_SHA), revision: str(process.env.K_REVISION), clientBuiltAt }
+    });
+    // 誰がいつ落としたかを残す（中身は書かない）。読み取り専用の予備系では書けないので、残せなくても落とす。
+    try {
+      await inTransaction(database, (client) => recordAudit(client, {
+        actor: actor(res), action: "backup.download", targetType: "job",
+        detail: { filename: backup.filename, bytes: backup.zip.length, gitSha: backup.manifest.app.gitSha,
+                  tables: backup.manifest.tables.length,
+                  rows: backup.manifest.tables.reduce((n, t) => n + t.rows, 0) }
+      }));
+    } catch { /* 読み取り専用 */ }
+    res.setHeader("content-type", "application/zip");
+    res.setHeader("content-disposition", `attachment; filename="${backup.filename}"`);
+    res.setHeader("cache-control", "no-store");
+    res.end(Buffer.from(backup.zip));
+  }));
 
   // 画面で中身を確かめてから出す。要確認が残ったまま出さないため。
   //

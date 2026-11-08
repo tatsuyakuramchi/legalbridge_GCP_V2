@@ -29,7 +29,8 @@ GCP（Cloud Run・Cloud SQL）が止まったときに、手元の PC で前夜�
 | Cloud Storage 経由 | 443 のみ | GCP の契約の都合でバケットを作れない |
 
 自動同期は使えないが、**本番の中身を手作業で持ってくる経路はある**。
-Cloud SQL Studio は使えるので、そこから取り出して取り込む（下の「Studio から本番の中身を入れる」）。
+いちばん簡単なのは、アプリから 1 ファイルで落として取り込む方法（下の「アプリからバックアップを落として入れる」。
+443 番だけで済み、表の定義も本番に合わせる）。Cloud SQL Studio から取り出す方法（「Studio から本番の中身を入れる」）も残してある。
 
 **再開するとき**は、どちらか一方が解ければそのまま動く。
 
@@ -309,6 +310,46 @@ docker compose up -d app
 
 支払は「立てる」まで。払った事実は銀行にしかないので、この画面から
 まとめて支払済みにはしない。
+
+## アプリからバックアップを落として入れる
+
+自動同期が使えない環境で、本番と同じ形・同じ中身にするいちばん簡単な手順。アプリを開ければ（443 番）よい。
+
+**1. 落とす**：本番のアプリで **監査・設定 › 出力 › ローカル予備系へのバックアップ** の
+「バックアップを落とす（ZIP）」を押す（admin だけ）。`legalbridge-backup-YYYYMMDD-HHMM.zip` が落ちる。
+
+ZIP の中身：
+
+| ファイル | 中身 |
+| --- | --- |
+| `manifest.json` | 取った時刻・本番のアプリの版（git のコミット・リビジョン・画面のビルド時刻）・表ごとの行数・ファイルの SHA-256 |
+| `schema.sql` | v3 の定義（表・列・制約・索引・ビュー・関数・引き金・連番・説明）。本番のカタログから組み立てたもの |
+| `rows.csv` | 全部の表の中身（094 と同じ `tbl,data` の形）。PDF の作り置きは入れない |
+| `README.txt` | この手順 |
+
+1 つの読み取り専用のトランザクションで読むので、表どうしの時点がそろう。
+
+**2. アプリの版をそろえる**：取り込みの最後に本番のアプリの版（git のコミット）が出る。PC 側で合わせる。
+
+```powershell
+git fetch
+git checkout <manifest.json の app.gitSha>   # main のままでよければ git pull
+docker compose up -d --build app
+```
+
+**3. 取り込む**
+
+```powershell
+Move-Item "$HOME\Downloads\legalbridge-backup-*.zip" dumps\
+docker compose run --rm ops import-backup /dumps/legalbridge-backup-YYYYMMDD-HHMM.zip
+Remove-Item dumps\legalbridge-backup-*.zip   # 取り込んだら消す（口座番号・連絡先を含む）
+```
+
+`import-backup` は、ZIP が壊れていないか（SHA-256）を確かめてから、手元の v3 を
+**本番の定義（schema.sql）で作り直して**中身を入れ、表ごとの行数を manifest と突き合わせる。
+手元の 001/004 が古くても列が足りなくならない（`import-rows` との違い）。
+入れ替える前の中身は `dumps/before_import_*.dump` に自動で取る（戻すときは `ops restore`）。
+予備系で書いた変更が持ち帰られていなければ、入れ替えずに止まる（`import-rows` と同じ）。
 
 ## Studio から本番の中身を入れる
 

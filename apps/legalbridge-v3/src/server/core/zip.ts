@@ -17,6 +17,12 @@ export interface ZipEntry {
   name: string;
   data: Uint8Array;
   mtime?: Date;
+  /**
+   * data を raw deflate したもの（呼び出し側で作る。サーバなら zlib.deflateRawSync）。
+   * あれば圧縮（method 8）で入れる。CRC と元の大きさは data から取る。文字の多いファイル
+   * （バックアップの行の CSV など）はよく縮む。ここは Node にも画面にも依存させないので、圧縮はしない。
+   */
+  deflated?: Uint8Array;
 }
 
 const CRC_TABLE = (() => {
@@ -59,20 +65,22 @@ export function buildZip(entries: ZipEntry[]): Uint8Array {
     const { date, time } = dosDateTime(entry.mtime ?? new Date());
     const crc = crc32(entry.data);
     const size = entry.data.length;
+    const body = entry.deflated ?? entry.data;
+    const method = entry.deflated ? 8 : 0;
 
     const local = header(30);
     local.view.setUint32(0, 0x04034b50, true);
     local.view.setUint16(4, 20, true);          // version needed
     local.view.setUint16(6, 0x0800, true);      // flags: UTF-8 names
-    local.view.setUint16(8, 0, true);           // method: store
+    local.view.setUint16(8, method, true);      // method: 0 store／8 deflate
     local.view.setUint16(10, time, true);
     local.view.setUint16(12, date, true);
     local.view.setUint32(14, crc, true);
-    local.view.setUint32(18, size, true);
+    local.view.setUint32(18, body.length, true); // compressed size
     local.view.setUint32(22, size, true);
     local.view.setUint16(26, name.length, true);
     local.view.setUint16(28, 0, true);
-    parts.push(local.buf, name, entry.data);
+    parts.push(local.buf, name, body);
 
     const central = header(46);
     central.view.setUint32(0, 0x02014b50, true);
@@ -83,11 +91,11 @@ export function buildZip(entries: ZipEntry[]): Uint8Array {
     central.view.setUint16(4, (3 << 8) | 20, true);
     central.view.setUint16(6, 20, true);        // version needed
     central.view.setUint16(8, 0x0800, true);
-    central.view.setUint16(10, 0, true);
+    central.view.setUint16(10, method, true);
     central.view.setUint16(12, time, true);
     central.view.setUint16(14, date, true);
     central.view.setUint32(16, crc, true);
-    central.view.setUint32(20, size, true);
+    central.view.setUint32(20, body.length, true);
     central.view.setUint32(24, size, true);
     central.view.setUint16(28, name.length, true);
     central.view.setUint16(30, 0, true);        // extra
@@ -100,7 +108,7 @@ export function buildZip(entries: ZipEntry[]): Uint8Array {
     central.view.setUint32(42, offset, true);
     centrals.push(central.buf, name);
 
-    offset += local.buf.length + name.length + size;
+    offset += local.buf.length + name.length + body.length;
   }
   const centralSize = centrals.reduce((n, b) => n + b.length, 0);
   const end = header(22);

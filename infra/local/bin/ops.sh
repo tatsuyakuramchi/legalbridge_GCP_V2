@@ -3,6 +3,9 @@
 #
 #   ops sync              本番 v3 スキーマを写してローカル DB に入れる（平時に毎晩）
 #   ops export-info       エクスポート方式（SYNC_MODE=export）の準備に要る値を出す
+#   ops import-backup <zip>
+#                         アプリ（監査・設定 › 出力）から落としたバックアップの ZIP を取り込む。
+#                         表の定義も本番のものに作り直す（本番のアプリの版も出す）
 #   ops import-rows <dir> Studio から落とした CSV を取り込む（094_export_rows.sql の結果）
 #   ops import-contacts <dir>
 #                         連絡先と口座だけを本番の値にする（098_export_contacts.sql の結果）
@@ -593,58 +596,13 @@ EOF
 }
 
 # ---------------------------------------------------------------------
-# 方式3：Cloud SQL Studio から落とした CSV を取り込む。
-#   自動同期の経路が両方とも塞がれている環境向け。人が Studio で
-#   094_export_rows.sql を流し、結果（tbl, data の2列）を CSV で落として置く。
-#
-#   表の構造は手元の定義（001 + 004）から作り、中身だけを CSV から入れる。
-#   本番にしか無い列があれば取り込まずに止める（黙って落とさない）。
+# 行を入れる（import-rows と import-backup で共通）。
+#   引数は tbl,data の CSV（見出し付き）。v3 の表はもう作ってある前提。
+#   入れる前に、無い表・無い列・同じ行の二重を名指しで止める。入れたあと、参照の欠けを数え、
+#   連番を最大値の次に合わせる。全部 1 トランザクション。
 # ---------------------------------------------------------------------
-import_rows() {
-  assert_no_backup
-  local dir="${1:-}"
-  [ -n "$dir" ] || die "使い方: ops import-rows /dumps/rows"
-  [ -d "$dir" ] || die "フォルダがありません: $dir"
-  local all=()
-  local f
-  for f in "$dir"/*.csv "$dir"/*.CSV; do [ -f "$f" ] && all+=("$f"); done
-  [ "${#all[@]}" -gt 0 ] || die "$dir に CSV がありません"
-
-  # 094 の結果は見出しが tbl,data の2列。それ以外の CSV が混ざっていると、
-  # 文字コードや列数の違いで分かりにくい形で落ちる。先に名指しで止める。
-  local files=() others=()
-  for f in "${all[@]}"; do
-    # 見出しの1行だけを読む。パイプで繋ぐと、後ろが先に閉じたときに
-    # 前が SIGPIPE で落ち、pipefail と set -e で何も出さずに終わる。
-    local head1=""
-    IFS= read -r head1 < "$f" || true
-    head1=${head1#$'\xef\xbb\xbf'}   # BOM
-    head1=${head1%$'\r'}              # CRLF
-    head1=${head1//\"/}                # 引用符
-    head1=${head1// /}                 # 空白
-    if [ "${head1,,}" = "tbl,data" ]; then files+=("$f"); else others+=("$(basename "$f")"); fi
-  done
-  if [ "${#others[@]}" -gt 0 ]; then
-    echo "094_export_rows.sql の結果ではない CSV が混ざっています（${#others[@]} 個）:" >&2
-    printf '  %s\n' "${others[@]:0:10}" >&2
-    [ "${#others[@]}" -gt 10 ] && echo "  … ほか $(( ${#others[@]} - 10 )) 個" >&2
-    die "$dir には取り出した CSV だけを置いてください"
-  fi
-  log "${#files[@]} 個の CSV を取り込む"
-
-  # 入れ替える前に、いまの中身を写しておく。
-  #
-  # import-rows は v3 を丸ごと作り直すので、手元で作った案件も文書も消える。
-  # README には書いてあるが、消えてから気づくと戻せない（実際に案件を1件
-  # 失った）。戻せる形を必ず残してから消す。戻すのは ops restore。
-  backup_before_replace
-
-  log "v3 を手元の定義から作り直す"
-  psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null
-  psql_local -f "$V3/001_schema.sql" >/dev/null
-  psql_local -f "$V3/004_amend.sql" >/dev/null
-
-  log "行を入れる"
+load_rows() {
+  local files=("$@")
   {
     echo "BEGIN;"
     echo "CREATE TEMP TABLE staging (tbl text, data jsonb);"
@@ -779,6 +737,134 @@ $seq$;
 COMMIT;
 SQL
   } | psql_local >/dev/null
+}
+
+# ---------------------------------------------------------------------
+# 方式4：アプリから落としたバックアップの ZIP を取り込む（監査・設定 › 出力）。
+#   443 番だけで済む（アプリを開ければ落とせる）。中身は
+#     manifest.json（時点・本番のアプリの版・表ごとの行数・ファイルの SHA-256）
+#     schema.sql（v3 の定義。本番のカタログから組み立てたもの）
+#     rows.csv（全部の表の中身。094 と同じ tbl,data の形）
+#   表の定義も本番のものに作り直すので、手元の 001/004 が古くても列が足りなくならない。
+#   入れたあと、表ごとの行数を manifest と突き合わせる。
+# ---------------------------------------------------------------------
+import_backup() {
+  assert_no_backup
+  local zip="${1:-}"
+  [ -n "$zip" ] || die "使い方: ops import-backup /dumps/legalbridge-backup-YYYYMMDD-HHMM.zip"
+  [ -f "$zip" ] || die "ファイルがありません: $zip"
+  local work; work=$(mktemp -d)
+  # 途中で止まっても、展開した本番の写しを残さない。
+  trap 'rm -rf "$work"' RETURN
+  unzip -q -o "$zip" -d "$work" || die "ZIP を開けません: $zip"
+  local f
+  for f in manifest.json schema.sql rows.csv; do
+    [ -f "$work/$f" ] || die "バックアップの ZIP ではありません（$f がありません）: $zip"
+  done
+  [ "$(jq -r '.format' "$work/manifest.json")" = "legalbridge-v3-backup" ] || die "バックアップの ZIP ではありません（manifest.json の format が違う）"
+  local version; version=$(jq -r '.formatVersion' "$work/manifest.json")
+  [ "$version" = "1" ] || die "このスクリプトが知らない形式です（formatVersion $version）。git pull してから流してください"
+
+  # ファイルが壊れていないか（落とし損ね・途中で切れた ZIP）。
+  local name want got
+  while IFS=$'\t' read -r name want; do
+    got=$(sha256sum "$work/$name" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || die "$name が壊れています（SHA-256 が manifest と違う）。落とし直してください"
+  done < <(jq -r '.files[] | "\(.name)\t\(.sha256)"' "$work/manifest.json")
+
+  local created sha revision built
+  created=$(jq -r '.createdAt' "$work/manifest.json")
+  sha=$(jq -r '.app.gitSha // "不明"' "$work/manifest.json")
+  revision=$(jq -r '.app.revision // "不明"' "$work/manifest.json")
+  built=$(jq -r '.app.clientBuiltAt // "不明"' "$work/manifest.json")
+  log "バックアップ: $(basename "$zip")（取った時刻 ${created}）"
+  log "本番のアプリ: git ${sha}／リビジョン ${revision}／画面のビルド ${built}"
+
+  backup_before_replace
+
+  log "v3 を本番の定義（schema.sql）で作り直す"
+  psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null
+  psql_local -f "$work/schema.sql" >/dev/null
+
+  log "行を入れる"
+  load_rows "$work/rows.csv"
+  apply_grants
+
+  # 表ごとの行数を manifest と突き合わせる。
+  local bad="" tbl n have
+  while IFS=$'\t' read -r tbl n; do
+    have=$(psql -Atq -c "SELECT count(*) FROM v3.\"$tbl\"" 2>/dev/null || echo '?')
+    [ "$have" = "$n" ] || bad="$bad\n  $tbl: バックアップ $n 行・手元 $have 行"
+  done < <(jq -r '.tables[] | "\(.name)\t\(.rows)"' "$work/manifest.json")
+  [ -z "$bad" ] || die "$(printf '行数が合いません:%b' "$bad")"
+
+  local rows
+  rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo '?')
+  log "取り込み完了（表 $(jq '.tables | length' "$work/manifest.json") 本・案件 ${rows} 件。行数は manifest と一致）"
+  # 取った時刻（UTC）を東京の時刻で印にする。busybox の date は ISO の時刻を読めないので jq で。
+  write_stamp "$(jq -r '.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 + 9*3600 | strftime("%Y-%m-%d %H:%M")' "$work/manifest.json" 2>/dev/null || echo "$created") バックアップ"
+  if [ "$sha" != "不明" ] && [ "$sha" != "unknown" ]; then
+    log "アプリも本番と同じ版にそろえる（PC 側で）: git fetch && git checkout ${sha} && docker compose up -d --build app"
+  else
+    log "本番のアプリの版は記録されていません。git pull で main にそろえて docker compose up -d --build app"
+  fi
+  log "取り込んだ ZIP は消してください（口座番号・連絡先を含む）: $zip"
+}
+
+# ---------------------------------------------------------------------
+# 方式3：Cloud SQL Studio から落とした CSV を取り込む。
+#   自動同期の経路が両方とも塞がれている環境向け。人が Studio で
+#   094_export_rows.sql を流し、結果（tbl, data の2列）を CSV で落として置く。
+#
+#   表の構造は手元の定義（001 + 004）から作り、中身だけを CSV から入れる。
+#   本番にしか無い列があれば取り込まずに止める（黙って落とさない）。
+# ---------------------------------------------------------------------
+import_rows() {
+  assert_no_backup
+  local dir="${1:-}"
+  [ -n "$dir" ] || die "使い方: ops import-rows /dumps/rows"
+  [ -d "$dir" ] || die "フォルダがありません: $dir"
+  local all=()
+  local f
+  for f in "$dir"/*.csv "$dir"/*.CSV; do [ -f "$f" ] && all+=("$f"); done
+  [ "${#all[@]}" -gt 0 ] || die "$dir に CSV がありません"
+
+  # 094 の結果は見出しが tbl,data の2列。それ以外の CSV が混ざっていると、
+  # 文字コードや列数の違いで分かりにくい形で落ちる。先に名指しで止める。
+  local files=() others=()
+  for f in "${all[@]}"; do
+    # 見出しの1行だけを読む。パイプで繋ぐと、後ろが先に閉じたときに
+    # 前が SIGPIPE で落ち、pipefail と set -e で何も出さずに終わる。
+    local head1=""
+    IFS= read -r head1 < "$f" || true
+    head1=${head1#$'\xef\xbb\xbf'}   # BOM
+    head1=${head1%$'\r'}              # CRLF
+    head1=${head1//\"/}                # 引用符
+    head1=${head1// /}                 # 空白
+    if [ "${head1,,}" = "tbl,data" ]; then files+=("$f"); else others+=("$(basename "$f")"); fi
+  done
+  if [ "${#others[@]}" -gt 0 ]; then
+    echo "094_export_rows.sql の結果ではない CSV が混ざっています（${#others[@]} 個）:" >&2
+    printf '  %s\n' "${others[@]:0:10}" >&2
+    [ "${#others[@]}" -gt 10 ] && echo "  … ほか $(( ${#others[@]} - 10 )) 個" >&2
+    die "$dir には取り出した CSV だけを置いてください"
+  fi
+  log "${#files[@]} 個の CSV を取り込む"
+
+  # 入れ替える前に、いまの中身を写しておく。
+  #
+  # import-rows は v3 を丸ごと作り直すので、手元で作った案件も文書も消える。
+  # README には書いてあるが、消えてから気づくと戻せない（実際に案件を1件
+  # 失った）。戻せる形を必ず残してから消す。戻すのは ops restore。
+  backup_before_replace
+
+  log "v3 を手元の定義から作り直す"
+  psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null
+  psql_local -f "$V3/001_schema.sql" >/dev/null
+  psql_local -f "$V3/004_amend.sql" >/dev/null
+
+  log "行を入れる"
+  load_rows "${files[@]}"
 
   log "ビューを作り直す"
   psql_local -f "$V3/002_views.sql" >/dev/null
@@ -1317,6 +1403,7 @@ case "${1:-}" in
   netcheck) shift; netcheck "$@" ;;
   sync) sync ;;
   export-info) export_info ;;
+  import-backup) shift; import_backup "${1:-}" ;;
   import-rows) shift; import_rows "${1:-}" ;;
   import-contacts) shift; import_contacts "${1:-}" ;;
   restore) [ -n "${2:-}" ] || die "使い方: ops restore /dumps/v3_YYYYmmdd_HHMM.dump"; restore "$2" ;;
@@ -1344,5 +1431,5 @@ case "${1:-}" in
   backup-export) backup_export ;;
   backup-close) shift; backup_close "${1:-}" ;;
   status) status ;;
-  *) sed -n '2,32p' "$0"; exit 2 ;;
+  *) sed -n '2,35p' "$0"; exit 2 ;;
 esac
