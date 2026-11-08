@@ -680,6 +680,76 @@ docker compose run --rm ops backup-close merged   # 持ち帰ったら閉じる�
 予備系で書いていなければ何もしなくてよい。翌晩の同期で本番の最新に戻る。すぐ戻したければ
 `docker compose run --rm ops sync`。予備系で書いたなら、先に上の手順で持ち帰る。
 
+## 手元のアプリ＋本番 DB（停止時は写しへ切り替え）
+
+平時は手元の app を **本番（Cloud SQL）** につなぎ、GCP が止まったら **手元の写し** へ切り替えて
+続け、復旧後に書いた分を本番へ戻す構成。考え方と経路の候補は `docs/v3-local-app-cloud-db.md`。
+本番への経路（Proxy・トンネル）ができるまでは、下の「予行」で本番に触らずに一巡できる。
+
+app がつなぐ DB は `data/DB_TARGET` の中身（`primary`＝本番、`standby`＝手元の写し）で決まる。
+`ops target / failover / failback` がこのファイルを書き、`docker compose up -d app` で効く。
+ファイルが無ければ `.env` の `DB_TARGET`、それも無ければ従来どおり手元の DB（上の予備系）。
+
+### 平時の設定（`.env`）
+
+```
+PRIMARY_DB_HOST=host.docker.internal   # 経路の口（PC 側で Proxy・トンネルを動かすとき）
+PRIMARY_DB_PORT=5433
+PRIMARY_DB_USER=legalbridge_v3_runtime
+PRIMARY_DB_PASSWORD=<Secret Manager の legalbridge-v3-runtime-db-password>
+PRIMARY_ADMIN_USER=postgres             # 復旧後の持ち帰り（ops failback apply）で使う
+PRIMARY_ADMIN_PASSWORD=
+READ_ONLY=false
+NUMBER_BAND=auto                        # 本番につないでいるときだけ本番の連番。写しでは 9000 番台
+```
+
+```powershell
+docker compose run --rm ops target primary   # app がつなぐ DB を本番に
+docker compose up -d app
+docker compose run --rm ops target           # いまどちらにつないでいるか
+```
+
+画面左下に「DB：本番」と出る。本番に届かないときは画面の上に「本番 DB に届きません」と出る
+（自動では切り替えない。経路の一時断でも起きるので、人が判断する）。
+写しは平時も毎晩 `ops sync` で取り続ける（同じ経路を使う。「毎晩の同期」）。
+
+### GCP が止まったとき
+
+```powershell
+docker compose run --rm ops failover         # 購読を止め、記録を始め（backup-begin）、写しへ向ける
+docker compose up -d app                     # 画面左下が「DB：手元の写し」になる
+```
+
+以後は「予備系で書いて、本番へ持ち帰る」と同じ（文書番号は 9000 番台。CloudSign・Slack は止まったまま。
+メールは `docs/v3-local-gmail.md`）。本番に届くようになると、画面の上に「本番 DB に届くようになりました」と出る。
+
+### 復旧したら
+
+```powershell
+docker compose run --rm ops failback check   # 持ち帰る SQL を作り、本番で試す（何も変えない）
+docker compose run --rm ops failback apply   # 確定し、記録を閉じ、本番へ向け直す
+docker compose up -d app                     # 「DB：本番」に戻る
+docker compose run --rm ops sync             # 写しを取り直す（持ち帰った分を含む本番の中身に）
+```
+
+ぶつかった行があれば `ops failback check merge_skip=12,57 merge_force=33` のように番号を付けて流し直す
+（`docs/v3-backup-merge.md` の 6 と同じ）。停止中に何も書かなかったなら `ops failback skip`。
+
+### 予行（本番に触らずに一巡する）
+
+もう 1 つの PostgreSQL を「本番役」に立て、手元の写しを入れる。`.env` の `PRIMARY_*` と `SYNC_DB_*` を
+本番役に向ければ、上の 3 つの手順がそのまま動く。
+
+```powershell
+docker compose --profile rehearsal up -d db-primary
+docker compose run --rm ops rehearse-init    # 手元の写しを本番役に入れ、.env に書く値を出す
+```
+
+出た値を `.env` に書いて、`ops target primary` → 書く → `ops sync` → `ops failover` → 書く →
+`ops failback check` → `ops failback apply` → `ops sync` の順に流す。終わったら `.env` を元に戻し、
+`docker compose --profile rehearsal down` で本番役を片付ける（データは `pgdata_rehearsal` に残る。
+消すなら `docker volume rm`）。
+
 ## 開発・実証実験で使うとき（本番データなし）
 
 ```bash

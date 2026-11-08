@@ -36,7 +36,11 @@ type View = NavView;
 interface Me {
   user?: { email: string; role: string };
   readOnly: boolean;
-  site?: { label: string; dataAsOf: string | null };
+  site?: {
+    label: string; dataAsOf: string | null;
+    /** つないでいる DB（手元で動かすアプリ。primary＝本番、standby＝手元の写し、null＝切り替えを使っていない）。 */
+    db?: { target: "primary" | "standby" | null; reachable: boolean | null; primaryReachable: boolean | null };
+  };
 }
 
 const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
@@ -452,16 +456,36 @@ export function App() {
         <div className="rail-foot">
           <div className="faint">{me?.user?.email ?? "未認証"}</div>
           <div className="faint">{me?.user?.role ?? "—"}{me?.readOnly ? " ／ 読み取り専用" : ""}</div>
-          {me?.site?.label && (
-            <div className="site-badge" title={me.site.dataAsOf ? `データは ${me.site.dataAsOf} 時点の写し` : undefined}>
-              <b>{me.site.label}</b>
-              {me.site.dataAsOf && <span>データ {me.site.dataAsOf} 時点</span>}
+          {(me?.site?.label || me?.site?.db?.target) && (
+            <div className={`site-badge${me.site?.db?.target === "primary" ? " site-badge-primary" : ""}`}
+                 title={me.site?.dataAsOf ? `データは ${me.site.dataAsOf} 時点の写し` : undefined}>
+              {me.site?.label && <b>{me.site.label}</b>}
+              {/* つないでいる DB。本番（Cloud SQL）か、手元の写しか。docs/v3-local-app-cloud-db.md */}
+              {me.site?.db?.target === "primary" && <span>DB：本番{me.site.db.reachable === false ? "（届きません）" : ""}</span>}
+              {me.site?.db?.target === "standby" && <span>DB：手元の写し</span>}
+              {me.site?.dataAsOf && me.site.db?.target !== "primary" && <span>データ {me.site.dataAsOf} 時点</span>}
             </div>
           )}
         </div>
       </nav>
 
       <main className="main">
+        {/* 本番 DB につなぐはずが届いていない。自動では切り替えない（経路の一時断でも起きる）ので、人に知らせる。 */}
+        {me?.site?.db?.target === "primary" && me.site.db.reachable === false && (
+          <div className="alert" style={{ marginBottom: 12 }}>
+            本番 DB に届きません。登録・変更はいまはできません。しばらく待っても戻らなければ、管理者が手元の写しへ切り替えます
+            （<span className="code">ops failover</span>。docs/v3-local-app-cloud-db.md）。
+          </div>
+        )}
+        {/* 手元の写しで動いている。書いた分は復旧後に本番へ戻す。本番に届くようになったら戻しを促す。 */}
+        {me?.site?.db?.target === "standby" && (
+          <div className={`note ${me.site.db.primaryReachable ? "ok" : "warn"}`} style={{ marginBottom: 12 }}>
+            手元の写し（ローカル DB）で動いています。ここで書いた分は、復旧後に本番へ戻します（文書番号は 9000 番台）。
+            {me.site.db.primaryReachable
+              ? <> 本番 DB に届くようになりました。管理者は <span className="code">ops failback</span> で戻せます。</>
+              : me.site.dataAsOf ? ` データは ${me.site.dataAsOf} 時点の写しです。` : ""}
+          </div>
+        )}
         {/* 押してから断られると、書いた内容が消える。先に知らせる。 */}
         {me?.readOnly && (
           <div className="note warn" style={{ marginBottom: 12 }}>

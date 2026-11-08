@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { authenticate } from "./auth.js";
 import { checkDatabase, getPool } from "./db/pool.js";
+import { PrimaryProbe } from "./db/probe.js";
 import type { Transactable } from "./core/db.js";
 import { buildUploads, createRoutes, createWebhookRouter, errorHandler } from "./routes.js";
 import { createUploadRouter } from "./intake/upload-page.js";
@@ -13,15 +14,32 @@ import { createGoogleLoginRouter } from "./integrations/google-login-routes.js";
 import { googleLogin } from "./integrations/factory.js";
 
 /**
- * 予備系で「どの環境で、いつ時点のデータを見ているか」を画面に出すための情報。
- * 同期スクリプトが書く印のファイルを毎回読む（同期のたびに変わるので持たない）。
+ * 画面の隅に出す「どの環境で、どの DB を、いつ時点のデータで見ているか」。
+ *
+ *   label / dataAsOf … 予備系の環境名と、同期スクリプトが書く印のファイル（同期のたびに変わるので毎回読む）
+ *   db.target        … つないでいる DB。primary＝本番、standby＝手元の写し、null＝従来（切り替えを使っていない）
+ *   db.reachable     … いまつないでいる DB に届くか
+ *   db.primaryReachable … 写しで動いているとき、本番に届くようになったか（戻しの判断の材料。自動では切り替えない）
+ *
+ * docs/v3-local-app-cloud-db.md §3。
  */
-export function siteInfo(): { label: string; dataAsOf: string | null } {
+export interface SiteInfo {
+  label: string;
+  dataAsOf: string | null;
+  db: { target: "primary" | "standby" | null; reachable: boolean | null; primaryReachable: boolean | null };
+}
+
+const primaryProbe = new PrimaryProbe(config.dbTarget.target === "standby" ? config.dbTarget.primary : null);
+
+export async function siteInfo(database: Transactable | null): Promise<SiteInfo> {
   let dataAsOf: string | null = null;
   if (config.dataStampPath) {
     try { dataAsOf = fs.readFileSync(config.dataStampPath, "utf8").trim() || null; } catch { dataAsOf = null; }
   }
-  return { label: config.siteLabel, dataAsOf };
+  const target = config.dbTarget.target;
+  const reachable = target ? (await checkDatabase(database as never)).reachable : null;
+  const primaryReachable = target === "standby" ? await primaryProbe.reachable() : null;
+  return { label: config.siteLabel, dataAsOf, db: { target, reachable, primaryReachable } };
 }
 
 /**
@@ -67,6 +85,7 @@ export function createApp(database: Transactable | null = getPool() as Transacta
       status: "ok",
       service: "legalbridge-v3",
       readOnly: config.readOnly,
+      dbTarget: config.dbTarget.target,
       database: await checkDatabase(database as never),
       client: clientStamp(clientDir)
     });
@@ -77,8 +96,8 @@ export function createApp(database: Transactable | null = getPool() as Transacta
   // 予備系の「Google にログイン」（認証の内側。state で守る。google-login.ts）。
   app.use("/auth/google", createGoogleLoginRouter(googleLogin));
 
-  app.get("/api/v3/me", (_request, response) => {
-    response.json({ user: response.locals.currentUser, readOnly: config.readOnly, site: siteInfo() });
+  app.get("/api/v3/me", async (_request, response) => {
+    response.json({ user: response.locals.currentUser, readOnly: config.readOnly, site: await siteInfo(database) });
   });
 
   if (database) {
