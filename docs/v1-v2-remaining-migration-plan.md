@@ -21,7 +21,7 @@
 | 6 | サブライセンス条件 | `ledgers/outbound-condition*`＋`OutboundConditionWorkspace.tsx` | ✅ 実装済み。`outbound-conditions` スコープ次第 |
 | 7 | Backlog 書戻し | `integrations/backlog-routes.ts`（コメント投稿） | ✅ 実装済み・**未点火**（`_BACKLOG_COMMENT_WRITE_ENABLED=false`） |
 | 8 | 権利ツリー | `works/work-detail.ts`（receivable/payable 分類まで）＋作品詳細の権利タブ | ⚠️ **部分**。地域サマリー・重複警告・買い切り合計が無い |
-| — | ライセンスマトリクス | 作品 › 地域×言語（`WorkRightsMatrix.tsx`・`server/works/rights-matrix.ts`） | ✅ 2026-11-07 作品単位で実装（作品をまたぐ横断表は未） |
+| — | ライセンスマトリクス | 作品 › 地域×言語（`WorkRightsMatrix.tsx`・`server/works/rights-matrix.ts`）、作品台帳 › 地域×言語の一覧（`RightsMatrixOverview.tsx`）、レポート（`rights_matrix_report`・`docs/rights-matrix-report.md`） | ✅ 2026-11-07 作品単位・横断表、2026-11-08 レポート（HTML/PDF） |
 
 読取系（1・2・3・5、および 4 の閲覧）は**いま既に使える**。使えていないなら点火ではなく
 画面導線の問題なので、そちらを先に確認する（下の「まず確認する」）。

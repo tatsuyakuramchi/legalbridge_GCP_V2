@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiError } from "./api.js";
+import { RightsMatrixReport } from "./RightsMatrixReport.js";
 
 /**
  * 作品 › 許諾地域 × 許諾言語（server/works/rights-matrix.ts）。
@@ -79,6 +80,10 @@ export function WorkRightsMatrix({ workId, onOpenCondition, onOpenWork }: {
   const pickedGrants = (pickedCell?.grantIds ?? []).map((id) => byId.get(id)).filter((g): g is Grant => !!g);
   const regionLabel = (k: string) => data.regions.find((r) => r.key === k)?.label ?? k;
   const languageLabel = (k: string) => data.languages.find((l) => l.key === k)?.label ?? k;
+
+  const reportQuery = new URLSearchParams();
+  if (ended) reportQuery.set("ended", "1");
+  if (party !== "") reportQuery.set("party", String(party));
 
   return (
     <div className="stack">
@@ -171,6 +176,10 @@ export function WorkRightsMatrix({ workId, onOpenCondition, onOpenWork }: {
           </small>
         </div>
       </div>
+
+      {/* いまの表（終わった許諾・取引先の絞り込みのまま）を A4 横のレポートに。要確認と許諾の一覧も付く。 */}
+      <RightsMatrixReport path={`/works/${workId}/rights-matrix/report`} query={reportQuery}
+                          hint={party !== "" ? "選んだ取引先の無いマスは薄く、許諾の一覧はその取引先だけになります" : undefined} />
 
       {pickedCell && (
         <div className="panel">
