@@ -40,6 +40,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: "8080"
+      # 従来の接続先（切り替えを使っていないときはこれ）。手元のローカル DB。
       DB_HOST: db
       DB_PORT: "5432"
       DB_NAME: legalbridge
@@ -47,12 +48,29 @@ services:
       # 本番と同じく、権限を絞ったランタイムロールで接続する。
       DB_USER: legalbridge_v3_runtime
       DB_PASSWORD: ${V3_RUNTIME_PASSWORD}
-      DB_POOL_MAX: "5"
-      # 予備系は読み取り専用が既定。開発で書き込むときは .env で false にする。
+      DB_POOL_MAX: ${DB_POOL_MAX:-5}
+      # DB の接続先の切り替え（docs/v3-local-app-cloud-db.md §3）。/data/DB_TARGET の中身（primary / standby）で
+      # 決める。ops failover / failback が書き換える。ファイルが無ければ DB_TARGET、それも無ければ上の DB_*。
+      DB_TARGET_PATH: /data/DB_TARGET
+      DB_TARGET: ${DB_TARGET:-}
+      # primary＝本番（Cloud SQL）。経路（Proxy・トンネル）が PC 側なら host.docker.internal:5433 など。
+      # 揃っていなければ DB_* に落ちる。
+      PRIMARY_DB_HOST: ${PRIMARY_DB_HOST:-}
+      PRIMARY_DB_PORT: ${PRIMARY_DB_PORT:-5432}
+      PRIMARY_DB_NAME: ${PRIMARY_DB_NAME:-legalbridge}
+      PRIMARY_DB_USER: ${PRIMARY_DB_USER:-legalbridge_v3_runtime}
+      PRIMARY_DB_PASSWORD: ${PRIMARY_DB_PASSWORD:-}
+      # standby＝手元の写し（上の db）。
+      STANDBY_DB_HOST: ${STANDBY_DB_HOST:-db}
+      STANDBY_DB_PORT: ${STANDBY_DB_PORT:-5432}
+      STANDBY_DB_NAME: ${STANDBY_DB_NAME:-legalbridge}
+      STANDBY_DB_USER: ${STANDBY_DB_USER:-legalbridge_v3_runtime}
+      STANDBY_DB_PASSWORD: ${STANDBY_DB_PASSWORD:-${V3_RUNTIME_PASSWORD}}
+      # 予備系は読み取り専用が既定。開発で書き込むとき、本番につなぐ構成、本番停止中に写しで書くときは .env で false にする。
       READ_ONLY: ${READ_ONLY:-true}
-      # 予備系の番号帯。文書番号などを 9000 番台（5 桁なら 90000 番台）から振り、本番の連番と
-      # 重ならないようにする。予備系で書いた分をそのままの番号で本番へ持ち帰るため
-      # （docs/v3-backup-merge.md）。本番（Cloud Run）には付けない。
+      # 番号帯。backup＝予備系の帯（文書番号などを 9000 番台、5 桁なら 90000 番台から振り、本番の連番と重ねない。
+      # 持ち帰っても番号が変わらない。docs/v3-backup-merge.md）。auto＝本番（primary）につないでいるときだけ
+      # 本番の連番、それ以外は backup。本番につなぐ構成では .env で auto にする。本番（Cloud Run）には付けない。
       NUMBER_BAND: ${NUMBER_BAND:-backup}
       # 認証。既定は disabled（全員が LOCAL_USER_* を名乗る）。Cloudflare Tunnel で
       # 社外に出すときは cloudflare にし、Access のトークンを検証して人ごとに役割を決める。
@@ -144,6 +162,22 @@ services:
       PGPASSWORD: ${LOCAL_DB_PASSWORD}
       PGDATABASE: legalbridge
       CLOUD_SQL_INSTANCE: ${CLOUD_SQL_INSTANCE:-}
+      # 経路の確認（ops netcheck）で 3307・5432 を試す宛先。空なら引数か keys/adc.json で調べる。
+      CLOUD_SQL_IP: ${CLOUD_SQL_IP:-}
+      # DB の接続先の切り替え（ops target / failover / failback）。app と同じファイルと接続先。
+      DB_TARGET_PATH: /data/DB_TARGET
+      PRIMARY_DB_HOST: ${PRIMARY_DB_HOST:-}
+      PRIMARY_DB_PORT: ${PRIMARY_DB_PORT:-5432}
+      PRIMARY_DB_NAME: ${PRIMARY_DB_NAME:-legalbridge}
+      PRIMARY_DB_USER: ${PRIMARY_DB_USER:-legalbridge_v3_runtime}
+      PRIMARY_DB_PASSWORD: ${PRIMARY_DB_PASSWORD:-}
+      # 持ち帰りの SQL を本番で流すロール（表の所有者。postgres 相当）。無ければ PRIMARY_DB_USER。
+      PRIMARY_ADMIN_USER: ${PRIMARY_ADMIN_USER:-}
+      PRIMARY_ADMIN_PASSWORD: ${PRIMARY_ADMIN_PASSWORD:-}
+      STANDBY_DB_HOST: ${STANDBY_DB_HOST:-db}
+      STANDBY_DB_PORT: ${STANDBY_DB_PORT:-5432}
+      STANDBY_DB_NAME: ${STANDBY_DB_NAME:-legalbridge}
+      REHEARSAL_DB_HOST: db-primary
       REMOTE_DB_NAME: ${REMOTE_DB_NAME:-legalbridge}
       SYNC_DB_USER: ${SYNC_DB_USER:-legalbridge_v3_backup}
       SYNC_DB_PASSWORD: ${SYNC_DB_PASSWORD:-}
@@ -168,6 +202,30 @@ services:
       - ./keys:/keys:ro
     entrypoint: ["bash", "/usr/local/bin/ops"]
 
+  # 予行用の「本番役」の DB（docs/v3-local-app-cloud-db.md「予行」）。本番に触らずに
+  # 切り替え → 書く → 戻す を一巡するためのもの。普段の up では立たない（profile: rehearsal）。
+  #   docker compose --profile rehearsal up -d db-primary
+  #   docker compose run --rm ops rehearse-init      # 手元の写しを本番役に入れる
+  # 管理者とランタイムロールのパスワードはローカル DB と同じ（.env の LOCAL_DB_PASSWORD / V3_RUNTIME_PASSWORD）。
+  db-primary:
+    image: postgres:17-alpine
+    profiles: ["rehearsal"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD を .env に書いてください}
+      POSTGRES_DB: legalbridge
+      V3_RUNTIME_PASSWORD: ${V3_RUNTIME_PASSWORD:?V3_RUNTIME_PASSWORD を .env に書いてください}
+      TZ: Asia/Tokyo
+    volumes:
+      - pgdata_rehearsal:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d legalbridge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # 同期に使う認証情報を取る。Windows の gcloud が接続エラーで落ちる環境向けに、
   # トークンの引き換えをコンテナ側で行う（PC はブラウザを開く役だけ）。
   #   docker compose run --rm login
@@ -184,3 +242,4 @@ services:
 
 volumes:
   pgdata:
+  pgdata_rehearsal:

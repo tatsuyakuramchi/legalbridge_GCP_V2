@@ -265,6 +265,24 @@ docker compose --profile tunnel up -d
 
 `https://app.arclight-lb.com` を開き、ログインを通ると画面が出る。
 
+### スマホ・PC に「アプリ」として置く（PWA）
+
+画面は PWA になっている（`apps/legalbridge-v3/public/manifest.webmanifest`・`sw.js`、`src/client/pwa.ts`）。
+Tunnel の URL（か社内の `http://<PC>:8080`）をブラウザで開き、
+
+- **iPhone**：Safari の共有 → 「ホーム画面に追加」
+- **Android**：Chrome のメニュー → 「アプリをインストール」（または「ホーム画面に追加」）
+- **PC**：Chrome / Edge のアドレスバー右の「インストール」
+
+で、ホーム画面・デスクトップから単独の窓で開ける。ログインは Access のまま（開くたびに Access の確認が入ることがある）。
+スマホ幅では左の桁が上の帯になり、表は横に送って見る。
+
+- 新しい版の画面が入ると、画面の上に「新しい版の画面があります」と出る。勝手には入れ替えない（入力中の内容を消さないため）ので、
+  保存してから「再読み込み」を押す
+- 回線が切れると「オフラインです」と出る。画面の殻は出るが、台帳の読み書きはできない（台帳の中身は端末に置かない）
+- 画面が変わったのに古いままのときは、ブラウザの「サイトのデータを削除」で service worker とキャッシュを消す。
+  版を上げるときは `public/sw.js` の `VERSION` も上げる（古いキャッシュを捨てるため）
+
 ### 止める・戻す
 
 ```powershell
@@ -529,22 +547,37 @@ docker compose run --rm login            # 届くならこれでログインす�
 
 ### gcloud も Proxy も通らないとき
 
-同期は 2 種類の口を使う。片方だけ塞がれていることがあるので分けて確かめる。
+同期（と、手元のアプリから本番 DB へつなぐ構想 `docs/v3-local-app-cloud-db.md`）は何種類かの口を使う。
+社内ネットワークは番号ごとに止めていることがあるので、`netcheck` が口ごとに分けて確かめ、
+最後に**経路ごとの判定**を出す。
 
-| 行き先 | 番号 | 使いみち |
+| 行き先 | 番号 | 経路 |
 | --- | --- | --- |
-| `oauth2.googleapis.com` / `sqladmin.googleapis.com` | 443 | ログインとインスタンスの情報 |
-| Cloud SQL インスタンスの IP | 3307 | Proxy から DB への通信 |
+| `oauth2.googleapis.com` / `sqladmin.googleapis.com` | 443 | ログインとインスタンスの情報（どの経路でも要る） |
+| Cloud SQL インスタンスの IP | 3307 | A：Cloud SQL Auth Proxy（`SYNC_MODE=proxy`） |
+| Cloud SQL インスタンスの IP | 5432 | B：直結（承認済みネットワーク + SSL） |
+| `tunnel.cloudproxy.app` | 443 | C：IAP の TCP 転送（小さな VM に Proxy を置く） |
+| `api.cloudflare.com` | 443 | D：Cloudflare Access の TCP（VM に Tunnel を置く） |
 
 ```powershell
-docker compose run --rm ops netcheck                        # 443 の 2 つ
-docker compose run --rm ops netcheck 34.146.158.194 3307    # DB への口（IP は proxy log に出る）
+docker compose run --rm ops netcheck                        # 443 の口。IP が分かれば 3307・5432 も
+docker compose run --rm ops netcheck 34.146.158.194         # Cloud SQL の IP を渡して 3307・5432 も確かめる
+docker compose run --rm ops netcheck 34.146.158.194 3307    # 口を 1 つ足して確かめる（従来どおり）
 ```
 
-`connection refused` は社内ネットワークが番号ごとに止めている典型。ネットワークの
-担当者に、この PC からの **外向き TCP 3307 番**（宛先は Cloud SQL の IP）を
-許可してもらうのが本筋。Cloud SQL を社外から使うときの標準的な要件なので、
-依頼としては通りやすい。
+Cloud SQL の IP は Console › SQL › インスタンスの「パブリック IP アドレス」か、Proxy のログに出る。
+`.env` に `CLOUD_SQL_IP=` で書いておけば引数は要らない。`keys/adc.json` があれば Admin API で自動で調べる。
+
+読み方：
+
+- **3307 が「つながりません」** … Cloud SQL 側は常に 3307 を開けているので、社内が番号で止めている。
+  ネットワークの担当者に、この PC からの **外向き TCP 3307 番**（宛先は Cloud SQL の IP）を
+  許可してもらうのが本筋。Cloud SQL を社外から使うときの標準的な要件なので、依頼としては通りやすい
+- **5432 が「つながりません」** … 社内が止めているか、Cloud SQL の承認済みネットワークに事務所の IP が
+  無いか（Cloud SQL は承認済み以外からの 5432 を落とす）。見分けがつかないので、承認済みネットワークに
+  足してからもう一度見る
+- **A・B が NG でも C か D が OK** … 443 だけで本番 DB へ届く経路がある。小さな VM を 1 台置く
+  （`docs/v3-local-app-cloud-db.md` §1）
 
 ### 443 番だけで写す（SYNC_MODE=export）
 
@@ -664,6 +697,76 @@ docker compose run --rm ops backup-close merged   # 持ち帰ったら閉じる�
 
 予備系で書いていなければ何もしなくてよい。翌晩の同期で本番の最新に戻る。すぐ戻したければ
 `docker compose run --rm ops sync`。予備系で書いたなら、先に上の手順で持ち帰る。
+
+## 手元のアプリ＋本番 DB（停止時は写しへ切り替え）
+
+平時は手元の app を **本番（Cloud SQL）** につなぎ、GCP が止まったら **手元の写し** へ切り替えて
+続け、復旧後に書いた分を本番へ戻す構成。考え方と経路の候補は `docs/v3-local-app-cloud-db.md`。
+本番への経路（Proxy・トンネル）ができるまでは、下の「予行」で本番に触らずに一巡できる。
+
+app がつなぐ DB は `data/DB_TARGET` の中身（`primary`＝本番、`standby`＝手元の写し）で決まる。
+`ops target / failover / failback` がこのファイルを書き、`docker compose up -d app` で効く。
+ファイルが無ければ `.env` の `DB_TARGET`、それも無ければ従来どおり手元の DB（上の予備系）。
+
+### 平時の設定（`.env`）
+
+```
+PRIMARY_DB_HOST=host.docker.internal   # 経路の口（PC 側で Proxy・トンネルを動かすとき）
+PRIMARY_DB_PORT=5433
+PRIMARY_DB_USER=legalbridge_v3_runtime
+PRIMARY_DB_PASSWORD=<Secret Manager の legalbridge-v3-runtime-db-password>
+PRIMARY_ADMIN_USER=postgres             # 復旧後の持ち帰り（ops failback apply）で使う
+PRIMARY_ADMIN_PASSWORD=
+READ_ONLY=false
+NUMBER_BAND=auto                        # 本番につないでいるときだけ本番の連番。写しでは 9000 番台
+```
+
+```powershell
+docker compose run --rm ops target primary   # app がつなぐ DB を本番に
+docker compose up -d app
+docker compose run --rm ops target           # いまどちらにつないでいるか
+```
+
+画面左下に「DB：本番」と出る。本番に届かないときは画面の上に「本番 DB に届きません」と出る
+（自動では切り替えない。経路の一時断でも起きるので、人が判断する）。
+写しは平時も毎晩 `ops sync` で取り続ける（同じ経路を使う。「毎晩の同期」）。
+
+### GCP が止まったとき
+
+```powershell
+docker compose run --rm ops failover         # 購読を止め、記録を始め（backup-begin）、写しへ向ける
+docker compose up -d app                     # 画面左下が「DB：手元の写し」になる
+```
+
+以後は「予備系で書いて、本番へ持ち帰る」と同じ（文書番号は 9000 番台。CloudSign・Slack は止まったまま。
+メールは `docs/v3-local-gmail.md`）。本番に届くようになると、画面の上に「本番 DB に届くようになりました」と出る。
+
+### 復旧したら
+
+```powershell
+docker compose run --rm ops failback check   # 持ち帰る SQL を作り、本番で試す（何も変えない）
+docker compose run --rm ops failback apply   # 確定し、記録を閉じ、本番へ向け直す
+docker compose up -d app                     # 「DB：本番」に戻る
+docker compose run --rm ops sync             # 写しを取り直す（持ち帰った分を含む本番の中身に）
+```
+
+ぶつかった行があれば `ops failback check merge_skip=12,57 merge_force=33` のように番号を付けて流し直す
+（`docs/v3-backup-merge.md` の 6 と同じ）。停止中に何も書かなかったなら `ops failback skip`。
+
+### 予行（本番に触らずに一巡する）
+
+もう 1 つの PostgreSQL を「本番役」に立て、手元の写しを入れる。`.env` の `PRIMARY_*` と `SYNC_DB_*` を
+本番役に向ければ、上の 3 つの手順がそのまま動く。
+
+```powershell
+docker compose --profile rehearsal up -d db-primary
+docker compose run --rm ops rehearse-init    # 手元の写しを本番役に入れ、.env に書く値を出す
+```
+
+出た値を `.env` に書いて、`ops target primary` → 書く → `ops sync` → `ops failover` → 書く →
+`ops failback check` → `ops failback apply` → `ops sync` の順に流す。終わったら `.env` を元に戻し、
+`docker compose --profile rehearsal down` で本番役を片付ける（データは `pgdata_rehearsal` に残る。
+消すなら `docker volume rm`）。
 
 ## 開発・実証実験で使うとき（本番データなし）
 

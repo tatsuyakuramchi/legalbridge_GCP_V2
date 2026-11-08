@@ -32,10 +32,19 @@
 #   ops backup-close merged|discard
 #                         予備系の書き込みを閉じる（持ち帰った後か、捨てるとき）
 #   ops status            写しの一覧と、いま入っているデータの時点
-#   ops netcheck [host port]
-#                         同期に要る Google の口へ、コンテナから届くかを見る。
-#                         host port を足すと、そこへの TCP 接続も試す
-#                         （例: ops netcheck 34.146.158.194 3307）
+#   ops target [primary|standby]
+#                         app がつなぐ DB（/data/DB_TARGET）を見る・決める（docs/v3-local-app-cloud-db.md §3）
+#   ops failover          GCP 停止時：購読を止め、記録を始め、app を手元の写し（standby）へ向ける
+#   ops failback [check|apply|skip] [merge_skip=..] [merge_force=..]
+#                         復旧後：書いた分を本番へ戻し（check＝試す、apply＝確定）、app を本番（primary）へ戻す。
+#                         skip は何も書いていないとき
+#   ops rehearse-init     予行：手元の写しを「本番役」の DB（db-primary）に入れる（docker compose --profile rehearsal）
+#   ops netcheck [IP | host port]
+#                         手元から Cloud SQL へ届く経路を切り分ける（docs/v3-local-app-cloud-db.md §1）。
+#                         443 の口（ログイン・Admin API・IAP の TCP 転送・Cloudflare）と、
+#                         Cloud SQL の IP への 3307（Auth Proxy）・5432（直結）を番号ごとに見る。
+#                         IP は引数か .env の CLOUD_SQL_IP。どちらも無ければ keys/adc.json で調べる
+#                         （例: ops netcheck 34.146.158.194）。host port を 2 つ渡すと、その口も足して試す
 #
 # ローカル DB への接続は PGHOST / PGUSER / PGPASSWORD / PGDATABASE（compose が渡す）。
 set -euo pipefail
@@ -1117,41 +1126,96 @@ status() {
   psql -Atq -c "SELECT '案件 ' || count(*) || ' 件' FROM v3.matters" 2>/dev/null || echo "v3 スキーマがまだありません"
 }
 
-# 同期は Google の2つの口を使う。コンテナから届くかをここで切り分ける
-# （Windows の gcloud が塞がれていても、コンテナは通ることがある。逆もある）。
+# 手元から Cloud SQL へ届く経路を切り分ける（docs/v3-local-app-cloud-db.md §1）。
+#
+#   443 の口 … ログイン（oauth2）・インスタンスの情報（sqladmin）・経路 C（IAP の TCP 転送の口
+#              tunnel.cloudproxy.app）・経路 D（Cloudflare）
+#   DB の口  … Cloud SQL の IP への 3307（経路 A：Auth Proxy）と 5432（経路 B：直結）
+#
+# 社内ネットワークは番号ごとに止めていることがある（443 は通るのに 3307 は拒否、など）ので、
+# 口ごとに分けて見て、最後に経路ごとの判定を出す。Windows の gcloud が塞がれていても
+# コンテナは通ることがある（逆もある）ので、コンテナの中から見る。
 netcheck() {
-  local ng=0
-  for host in oauth2.googleapis.com sqladmin.googleapis.com; do
-    printf '%-34s ' "$host:443"
-    local code
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$host/" 2>/dev/null) || code=""
-    if [ -n "$code" ] && [ "$code" != "000" ]; then
-      echo "OK (HTTP $code)"
-    else
-      echo "つながりません"
-      ng=1
-    fi
-  done
+  local ip="${CLOUD_SQL_IP:-}" extra_host="" extra_port=""
+  if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then extra_host="$1"; extra_port="$2"
+  elif [ -n "${1:-}" ]; then ip="$1"; fi
+  ip="${ip%$'\r'}"
 
-  # 追加の TCP 確認。Cloud SQL の実体は 3307 番を使う。443 が通っても
-  # ここが塞がれていると Proxy は使えないので、番号ごとに分けて見る。
-  if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then
-    printf '%-34s ' "$1:$2"
-    if nc -z -w 10 "$1" "$2" 2>/dev/null; then
-      echo "OK (つながる)"
-    else
-      echo "つながりません"
-      ng=1
+  # 結果の記録。OK / NG / 未確認（IP が分からず試せなかった）
+  local r_login=NG r_admin=NG r_iap=NG r_cf=NG r_3307=未確認 r_5432=未確認 r_extra=""
+
+  http_ok() {  # host → 標準出力に判定の文字列。HTTP の応答が何かしら返れば届いている
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$1/" 2>/dev/null) || code=""
+    if [ -n "$code" ] && [ "$code" != "000" ]; then echo "OK (HTTP $code)"; return 0; fi
+    echo "つながりません"; return 1
+  }
+  tcp_ok() {   # host port
+    if nc -z -w 10 "$1" "$2" 2>/dev/null; then echo "OK (つながる)"; return 0; fi
+    echo "つながりません"; return 1
+  }
+  row() { printf '  %-36s %-22s %s\n' "$1" "$2" "$3"; }
+
+  echo "443 の口（社内から外へ 443 が通るか）"
+  local out
+  out=$(http_ok oauth2.googleapis.com)      && r_login=OK; row "oauth2.googleapis.com:443"  "$out" "ログイン"
+  out=$(http_ok sqladmin.googleapis.com)    && r_admin=OK; row "sqladmin.googleapis.com:443" "$out" "インスタンスの情報（Admin API）"
+  out=$(http_ok tunnel.cloudproxy.app)      && r_iap=OK;   row "tunnel.cloudproxy.app:443"   "$out" "経路 C：IAP の TCP 転送の口"
+  out=$(http_ok api.cloudflare.com)         && r_cf=OK;    row "api.cloudflare.com:443"      "$out" "経路 D：Cloudflare（Access の TCP）"
+  echo
+
+  # Cloud SQL の IP。引数 → .env の CLOUD_SQL_IP → keys/adc.json があれば Admin API で調べる。
+  if [ -z "$ip" ] && [ -f /keys/adc.json ] && [ -n "${CLOUD_SQL_INSTANCE:-}" ] && [ "$r_admin" = OK ]; then
+    local tok project instance
+    tok=$(access_token 2>/dev/null) || tok=""
+    if [ -n "$tok" ]; then
+      project=$(GCP_PROJECT_ID); instance=$(INSTANCE_ID)
+      ip=$(curl -s --max-time 30 -H "Authorization: Bearer $tok" -H "x-goog-user-project: $project" \
+             "https://sqladmin.googleapis.com/v1/projects/$project/instances/$instance" 2>/dev/null \
+           | jq -r '[.ipAddresses[]? | select(.type == "PRIMARY") | .ipAddress][0] // empty' 2>/dev/null) || ip=""
+      [ -n "$ip" ] && echo "Cloud SQL の IP を Admin API で調べました: $ip（.env に CLOUD_SQL_IP=$ip と書いておくと次から速い）"
     fi
   fi
 
-  if [ "$ng" = 1 ]; then
-    echo
-    echo "塞がれている口があります。README の「gcloud も Proxy も通らないとき」を見てください。"
-    return 1
+  echo "DB の口（Cloud SQL の IP へ、番号ごとに）"
+  if [ -n "$ip" ]; then
+    out=$(tcp_ok "$ip" 3307) && r_3307=OK || r_3307=NG; row "$ip:3307" "$out" "経路 A：Cloud SQL Auth Proxy"
+    out=$(tcp_ok "$ip" 5432) && r_5432=OK || r_5432=NG; row "$ip:5432" "$out" "経路 B：直結（承認済みネットワーク + SSL）"
+  else
+    row "（IP が分かりません）" "未確認" "ops netcheck <Cloud SQL の IP> か .env の CLOUD_SQL_IP で指定する"
+    echo "  IP は Cloud Console › SQL › インスタンス の「パブリック IP アドレス」か、Proxy のログ（/tmp/proxy.log）に出る。"
+  fi
+  if [ -n "$extra_host" ]; then
+    out=$(tcp_ok "$extra_host" "$extra_port") && r_extra=OK || r_extra=NG; row "$extra_host:$extra_port" "$out" "（追加で確かめた口）"
   fi
   echo
-  echo "確かめた口はすべて通っています。"
+
+  echo "経路ごとの判定（docs/v3-local-app-cloud-db.md §1）"
+  row "A  Auth Proxy（3307）"            "$r_3307" "$([ "$r_3307" = NG ] && echo '社内が 3307 を塞いでいる。Cloud SQL 側は常に 3307 を開けているので、ここが NG なら社内側' || true)"
+  row "B  直結（5432）"                  "$r_5432" "$([ "$r_5432" = NG ] && echo '社内が塞いでいるか、Cloud SQL の承認済みネットワークにこの事務所の IP が無いか（Cloud SQL は承認済み以外の 5432 を落とすので見分けがつかない）' || true)"
+  row "C  IAP の TCP 転送（443）"        "$r_iap"  "$([ "$r_iap" = OK ] && echo '小さな VM に cloud-sql-proxy を置けば、443 だけで本番 DB へ届く' || true)"
+  row "D  Cloudflare Access の TCP（443）" "$r_cf" "$([ "$r_cf" = OK ] && echo 'Cloudflare Tunnel を VM に置けば、443 だけで本番 DB へ届く' || true)"
+  echo
+
+  local ng=0
+  if [ "$r_login" != OK ] || [ "$r_admin" != OK ]; then
+    echo "Google の 443 の口が塞がれています。ログインも Admin API も要るので、まずここを README の「gcloud も Proxy も通らないとき」で確かめてください。"
+    ng=1
+  fi
+  if [ "$r_3307" = OK ]; then
+    echo "経路 A が通ります。.env の SYNC_MODE=proxy のまま、ops sync と本番への接続に進めます。"
+  elif [ "$r_5432" = OK ]; then
+    echo "経路 B が通ります。Cloud SQL の承認済みネットワークに事務所の IP を足し、SSL（クライアント証明書）で直結できます。"
+  elif [ "$r_iap" = OK ] || [ "$r_cf" = OK ]; then
+    echo "DB へ直接は届きませんが、443 の経路（C か D）は通ります。小さな VM を 1 台置けば 443 だけで本番 DB へ届きます。"
+  elif [ "$r_3307" = 未確認 ]; then
+    echo "Cloud SQL の IP を指定すると、経路 A・B も確かめられます。"
+    ng=1
+  else
+    echo "どの経路も通りません。ネットワークの担当者に、外向き TCP 3307（宛先は Cloud SQL の IP）か 443 の許可を相談してください。"
+    ng=1
+  fi
+  return $ng
 }
 
 # 写しの取り方は2通り。3307 番が通るかで決まる（既定は proxy）。
@@ -1358,6 +1422,7 @@ EOF
     cat "$LOCAL_SQL/merge_apply.sql"
   } > "$out"
   chmod 600 "$out"
+  BACKUP_EXPORT_FILE="$out"
   psql -Atq -c "UPDATE backup.sessions SET exported_at = now() WHERE id = $sid" >/dev/null
 
   local size; size=$(du -h "$out" | cut -f1)
@@ -1399,8 +1464,199 @@ SQL
   fi
 }
 
+
+# ---------------------------------------------------------------------------
+# DB の接続先の切り替え（docs/v3-local-app-cloud-db.md §3・§4）
+#
+#   app は DB_TARGET_PATH（/data/DB_TARGET）の中身で、本番（primary＝PRIMARY_DB_*）か
+#   手元の写し（standby＝STANDBY_DB_*）かを決める。app と ops は同じ /data を見ているので、
+#   ここでファイルを書き換え、app を上げ直せば切り替わる（.env は触らない）。
+#   自動では切り替えない。人が ops failover / failback を流す。
+# ---------------------------------------------------------------------------
+TARGET_FILE="${DB_TARGET_PATH:-$DATA/DB_TARGET}"
+
+target_now() { tr -d ' \r\n' < "$TARGET_FILE" 2>/dev/null || true; }
+
+target() {
+  local want="${1:-}"
+  case "$want" in
+    "")
+      local cur; cur=$(target_now)
+      echo "app がつなぐ DB: ${cur:-（未設定＝.env の DB_* をそのまま）}（$TARGET_FILE）"
+      [ -n "${PRIMARY_DB_HOST:-}" ] && echo "  primary（本番）: ${PRIMARY_DB_USER:-?}@${PRIMARY_DB_HOST}:${PRIMARY_DB_PORT:-5432}/${PRIMARY_DB_NAME:-?}" \
+        || echo "  primary（本番）: PRIMARY_DB_* が .env にありません"
+      echo "  standby（写し）: ${STANDBY_DB_HOST:-db}:${STANDBY_DB_PORT:-5432}/${STANDBY_DB_NAME:-legalbridge}"
+      local sid; sid=$(backup_session)
+      [ -n "$sid" ] && echo "  予備系で書いた記録 ${sid} が開いています（ops backup-status）"
+      ;;
+    primary|standby)
+      echo "$want" > "$TARGET_FILE"
+      log "app がつなぐ DB を $want にしました（$TARGET_FILE）。docker compose up -d app で上げ直すと効きます"
+      ;;
+    *) die "使い方: ops target [primary|standby]" ;;
+  esac
+}
+
+# 本番（primary）へ psql。流すのは持ち帰りの SQL なので、表の所有者（postgres 相当）で入る。
+# PRIMARY_ADMIN_USER / PRIMARY_ADMIN_PASSWORD があればそれ、無ければ PRIMARY_DB_USER。
+psql_primary() {
+  PGPASSWORD="${PRIMARY_ADMIN_PASSWORD:-${PRIMARY_DB_PASSWORD:-}}" \
+    psql -h "$PRIMARY_DB_HOST" -p "${PRIMARY_DB_PORT:-5432}" -U "${PRIMARY_ADMIN_USER:-$PRIMARY_DB_USER}" \
+         -d "${PRIMARY_DB_NAME:-legalbridge}" -v ON_ERROR_STOP=1 "$@"
+}
+need_primary() {
+  [ -n "${PRIMARY_DB_HOST:-}" ] && [ -n "${PRIMARY_DB_USER:-}" ] && [ -n "${PRIMARY_DB_PASSWORD:-}" ] \
+    || die "本番の接続先（PRIMARY_DB_HOST / USER / PASSWORD）が .env にありません"
+  pg_isready -h "$PRIMARY_DB_HOST" -p "${PRIMARY_DB_PORT:-5432}" -q \
+    || die "本番 DB（$PRIMARY_DB_HOST:${PRIMARY_DB_PORT:-5432}）に届きません。経路（Proxy・トンネル）は上がっていますか"
+}
+
+# GCP 停止時。手元の写しへ切り替えて、書けるようにする。
+failover() {
+  local cur; cur=$(target_now)
+  [ "$cur" = standby ] && die "もう手元の写し（standby）につないでいます（$TARGET_FILE）"
+  psql -Atq -c "SELECT 1 FROM v3.matters LIMIT 1" >/dev/null 2>&1 \
+    || die "手元の写しに v3 スキーマがありません。先に ops sync か ops restore で写しを入れてください"
+
+  # 論理レプリケーションの購読があれば止める。止めずに書くと、復旧した瞬間に本番の変更が流れ込んでぶつかる。
+  local subs; subs=$(psql -Atq -c "SELECT string_agg(subname, ' ') FROM pg_subscription" 2>/dev/null || true)
+  if [ -n "$subs" ]; then
+    local sname
+    for sname in $subs; do psql_local -c "ALTER SUBSCRIPTION \"$sname\" DISABLE"; done
+    log "購読を止めました: $subs（戻したら ops failback が作り直しを案内します）"
+  fi
+
+  # ここからの変更を記録する（id は 10 億番台、番号は 9000 番台。docs/v3-backup-merge.md）。
+  local sid; sid=$(backup_session)
+  if [ -n "$sid" ]; then log "記録 ${sid} が開いたままなので、続けて使います"; else backup_begin; fi
+
+  echo standby > "$TARGET_FILE"
+  log "切り替えました: app がつなぐ DB → standby（手元の写し。$TARGET_FILE）"
+  cat <<NEXT
+
+次にすること（PC・infra/local で）:
+  docker compose up -d app       # app を上げ直すと手元の写しにつなぐ（画面左下に「DB：手元の写し」）
+  .env の READ_ONLY が true なら false にしてから上げ直す（停止中に書くため）
+停止中の作業: 文書番号は 9000 番台。CloudSign・Slack は止まったまま。メールは docs/v3-local-gmail.md
+戻すとき: ops failback check → ops failback apply（docs/v3-local-app-cloud-db.md §4）
+NEXT
+}
+
+finish_failback() {
+  echo primary > "$TARGET_FILE"
+  log "切り替えました: app がつなぐ DB → primary（本番。$TARGET_FILE）"
+  local subs; subs=$(psql -Atq -c "SELECT string_agg(subname, ' ') FROM pg_subscription" 2>/dev/null || true)
+  cat <<NEXT
+
+次にすること（PC・infra/local で）:
+  docker compose up -d app       # app を上げ直すと本番につなぐ（画面左下に「DB：本番」）
+  写しを取り直す:
+NEXT
+  if [ -n "$subs" ]; then
+    echo "    論理レプリケーションの購読（$subs）を作り直す（止めたまま再開すると、停止中に手元で書いた行とぶつかる）:"
+    echo "      DROP SUBSCRIPTION → 写しを ops sync で入れ直す → CREATE SUBSCRIPTION（docs/v3-local-app-cloud-db.md §2）"
+  else
+    echo "    docker compose run --rm ops sync    # 本番（持ち帰った分を含む）の写しを入れ直す"
+  fi
+}
+
+# 復旧後。書いた分を本番へ戻し、app を本番へ向け直す。
+#   check … 持ち帰る SQL を作り、本番で試す（何も変えない）
+#   apply … 本番で確定し、記録を閉じ、primary へ戻す
+#   skip  … 何も書いていないとき（記録が無い）。primary へ戻すだけ
+# 追加の 名前=値（merge_skip=12,57 merge_force=33）は psql の -v にそのまま渡す。
+failback() {
+  local how="${1:-check}"; shift || true
+  [ "$(target_now)" = standby ] || die "手元の写し（standby）につないでいません。戻すものがありません（ops target で確かめる）"
+  local sid; sid=$(backup_session)
+  local vars=() kv
+  for kv in "$@"; do
+    [[ "$kv" == *=* ]] || die "追加の引数は 名前=値 の形です（例: merge_skip=12,57 merge_force=33）: $kv"
+    vars+=(-v "$kv")
+  done
+
+  case "$how" in
+    skip)
+      [ -z "$sid" ] || die "記録 ${sid} が開いています。書いた分があるなら ops failback check から。捨てるなら先に ops backup-close discard"
+      finish_failback
+      ;;
+    check|apply)
+      [ -n "$sid" ] || die "記録がありません。何も書いていないなら ops failback skip で戻す"
+      need_primary
+      local n; n=$(psql -Atq -c "SELECT count(*) FROM ($(backup_net_sql "$sid")) x")
+      if [ "${n:-0}" = 0 ]; then
+        log "持ち帰る変更がありません（記録 ${sid}）"
+        if [ "$how" = apply ]; then backup_close merged; finish_failback; fi
+        return 0
+      fi
+      backup_export
+      local file="$BACKUP_EXPORT_FILE" out
+      log "本番で $how（$file）"
+      # merge_apply.sql は ROLLBACK しても psql は 0 で終わる。確定したかは本文の印で見る。
+      out=$(psql_primary -v merge_db="${PRIMARY_DB_NAME:-legalbridge}" -v merge_mode="$how" "${vars[@]+"${vars[@]}"}" -f "$file" 2>&1) \
+        || { echo "$out" | tail -n 40 >&2; die "本番で流せませんでした（上のログ）。本番は何も変わっていません"; }
+      echo "$out"
+      if [ "$how" = apply ]; then
+        if echo "$out" | grep -q "持ち帰りました（確定）"; then
+          log "確定しました。記録 ${sid} を閉じます"
+          backup_close merged
+          finish_failback
+        else
+          die "確定できませんでした（ぶつかり・失敗・崩れ）。上の「見てほしいもの」を見て、merge_skip / merge_force を付けて check から流し直してください"
+        fi
+      else
+        echo "$out" | grep -q "ぶつかり・失敗・崩れがあるので" \
+          && log "ぶつかりがあります。番号を選んで ops failback check merge_skip=.. merge_force=.. で流し直す" \
+          || log "問題なし。ops failback apply で確定して戻す"
+      fi
+      ;;
+    *) die "使い方: ops failback [check|apply|skip] [merge_skip=..] [merge_force=..]" ;;
+  esac
+}
+
+# 予行。手元の写しを「本番役」の DB（docker compose --profile rehearsal の db-primary）へ入れ、
+# 本番に触らずに 切り替え → 書く → 戻す を一巡できるようにする（docs/v3-local-app-cloud-db.md「予行」）。
+rehearse_init() {
+  local host="${REHEARSAL_DB_HOST:-db-primary}"
+  pg_isready -h "$host" -p 5432 -q \
+    || die "本番役の DB（$host）が上がっていません。docker compose --profile rehearsal up -d db-primary"
+  psql -Atq -c "SELECT 1 FROM v3.matters LIMIT 1" >/dev/null 2>&1 \
+    || die "手元の写しに v3 スキーマがありません。先に ops sync / restore / fresh で入れてください"
+  assert_no_backup
+  local tmp=/tmp/rehearsal_v3.dump
+  log "手元の v3 を写す → $tmp"
+  pg_dump -n v3 -Fc --no-owner --no-privileges -f "$tmp"
+  log "本番役（$host）の v3 を入れ直す"
+  # ローカルと同じ管理者パスワード（compose が同じ LOCAL_DB_PASSWORD を渡す）。
+  PGPASSWORD="$PGPASSWORD" psql -h "$host" -U postgres -d legalbridge -v ON_ERROR_STOP=1 -q -c "DROP SCHEMA IF EXISTS v3 CASCADE"
+  PGPASSWORD="$PGPASSWORD" pg_restore -h "$host" -U postgres -d legalbridge --no-owner --no-privileges "$tmp"
+  PGPASSWORD="$PGPASSWORD" psql -h "$host" -U postgres -d legalbridge -v ON_ERROR_STOP=1 -q \
+    -c "GRANT USAGE ON SCHEMA v3 TO legalbridge_v3_runtime" \
+    -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA v3 TO legalbridge_v3_runtime" \
+    -c "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA v3 TO legalbridge_v3_runtime"
+  rm -f "$tmp"
+  log "入れました。本番役: postgres@$host:5432/legalbridge（v3 $(PGPASSWORD="$PGPASSWORD" psql -h "$host" -U postgres -d legalbridge -Atq -c "SELECT count(*) FROM v3.matters") 案件）"
+  cat <<NEXT
+
+予行の進め方（.env を本番役に向ける。終わったら元に戻す）:
+  PRIMARY_DB_HOST=$host  PRIMARY_DB_NAME=legalbridge  PRIMARY_DB_USER=legalbridge_v3_runtime  PRIMARY_DB_PASSWORD=<V3_RUNTIME_PASSWORD>
+  PRIMARY_ADMIN_USER=postgres  PRIMARY_ADMIN_PASSWORD=<LOCAL_DB_PASSWORD>
+  SYNC_DB_HOST=$host  SYNC_DB_PORT=5432  SYNC_DB_USER=postgres  SYNC_DB_PASSWORD=<LOCAL_DB_PASSWORD>
+  READ_ONLY=false  NUMBER_BAND=auto
+  1. ops target primary → docker compose up -d app → 画面で本番役に書く（「DB：本番」）
+  2. ops sync                     # 本番役の写しを手元に入れる（平時の毎晩の同期の代わり）
+  3. ops failover → docker compose up -d app → 画面で書く（「DB：手元の写し」、番号は 9000 番台）
+  4. ops failback check → ops failback apply → docker compose up -d app → ops sync
+手順の説明: docs/v3-local-app-cloud-db.md「予行」
+NEXT
+}
+
 case "${1:-}" in
   netcheck) shift; netcheck "$@" ;;
+  target) shift; target "${1:-}" ;;
+  failover) failover ;;
+  failback) shift; failback "$@" ;;
+  rehearse-init) rehearse_init ;;
   sync) sync ;;
   export-info) export_info ;;
   import-backup) shift; import_backup "${1:-}" ;;

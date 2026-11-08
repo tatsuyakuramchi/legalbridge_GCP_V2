@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import { resolveDbTarget, type DbTargetResolution } from "./db/target.js";
+
 // V3 の実行時設定。V2 と違い、DB は v3 スキーマだけを見る。
 const bool = (v: string | undefined, fallback = false) =>
   v === undefined ? fallback : ["1", "true", "yes", "on"].includes(v.trim().toLowerCase());
@@ -8,6 +11,11 @@ const int = (v: string | undefined, fallback: number) => {
 
 export interface Config {
   port: number;
+  /**
+   * DB の接続先の切り替え（手元で動かすアプリ。docs/v3-local-app-cloud-db.md）。
+   * target が primary なら本番、standby なら手元の写し、null なら従来どおり DB_* をそのまま。
+   */
+  dbTarget: DbTargetResolution;
   databaseUrl?: string;
   databaseHost?: string;
   databasePort: number;
@@ -93,14 +101,24 @@ const localRole = (v: string | undefined): "admin" | "legal" | "requester" => {
   throw new Error(`LOCAL_USER_ROLE は admin / legal / requester のどれかにしてください: ${v}`);
 };
 
+// 接続先の切り替え（DB_TARGET_PATH のファイル → DB_TARGET → 従来）。決まった側の接続先が揃っていれば
+// それを DB_* の代わりに使う。URL 指定（DATABASE_URL）より優先する（切り替えたのに URL が勝つと危ない）。
+const dbTarget = resolveDbTarget(process.env, (path) => fs.readFileSync(path, "utf8"));
+for (const w of dbTarget.warnings) console.warn(`[config] ${w}`);
+// 番号帯。NUMBER_BAND=auto なら接続先で決める（本番につないでいるときだけ本番の連番）。core/numbering.ts が
+// 呼ばれるたびに process.env を見るので、ここで値を確定させておく。
+if ((process.env.NUMBER_BAND ?? "").trim().toLowerCase() === "auto") process.env.NUMBER_BAND = dbTarget.numberBand;
+const ep = dbTarget.endpoint;
+
 export const config: Config = {
   port: int(process.env.PORT, 8081),
-  databaseUrl: process.env.DATABASE_URL,
-  databaseHost: process.env.DB_HOST,
-  databasePort: int(process.env.DB_PORT, 5432),
-  databaseName: process.env.DB_NAME,
-  databaseUser: process.env.DB_USER,
-  databasePassword: process.env.DB_PASSWORD,
+  dbTarget,
+  databaseUrl: ep ? undefined : process.env.DATABASE_URL,
+  databaseHost: ep?.host ?? process.env.DB_HOST,
+  databasePort: ep?.port ?? int(process.env.DB_PORT, 5432),
+  databaseName: ep?.database ?? process.env.DB_NAME,
+  databaseUser: ep?.user ?? process.env.DB_USER,
+  databasePassword: ep?.password ?? process.env.DB_PASSWORD,
   databaseSchema: (process.env.DB_SCHEMA ?? "v3").trim(),
   readOnly: bool(process.env.READ_ONLY, false),
   authMode: process.env.AUTH_MODE === "iap" ? "iap"
