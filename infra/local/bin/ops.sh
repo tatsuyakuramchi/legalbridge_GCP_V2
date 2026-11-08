@@ -32,10 +32,12 @@
 #   ops backup-close merged|discard
 #                         予備系の書き込みを閉じる（持ち帰った後か、捨てるとき）
 #   ops status            写しの一覧と、いま入っているデータの時点
-#   ops netcheck [host port]
-#                         同期に要る Google の口へ、コンテナから届くかを見る。
-#                         host port を足すと、そこへの TCP 接続も試す
-#                         （例: ops netcheck 34.146.158.194 3307）
+#   ops netcheck [IP | host port]
+#                         手元から Cloud SQL へ届く経路を切り分ける（docs/v3-local-app-cloud-db.md §1）。
+#                         443 の口（ログイン・Admin API・IAP の TCP 転送・Cloudflare）と、
+#                         Cloud SQL の IP への 3307（Auth Proxy）・5432（直結）を番号ごとに見る。
+#                         IP は引数か .env の CLOUD_SQL_IP。どちらも無ければ keys/adc.json で調べる
+#                         （例: ops netcheck 34.146.158.194）。host port を 2 つ渡すと、その口も足して試す
 #
 # ローカル DB への接続は PGHOST / PGUSER / PGPASSWORD / PGDATABASE（compose が渡す）。
 set -euo pipefail
@@ -1117,41 +1119,96 @@ status() {
   psql -Atq -c "SELECT '案件 ' || count(*) || ' 件' FROM v3.matters" 2>/dev/null || echo "v3 スキーマがまだありません"
 }
 
-# 同期は Google の2つの口を使う。コンテナから届くかをここで切り分ける
-# （Windows の gcloud が塞がれていても、コンテナは通ることがある。逆もある）。
+# 手元から Cloud SQL へ届く経路を切り分ける（docs/v3-local-app-cloud-db.md §1）。
+#
+#   443 の口 … ログイン（oauth2）・インスタンスの情報（sqladmin）・経路 C（IAP の TCP 転送の口
+#              tunnel.cloudproxy.app）・経路 D（Cloudflare）
+#   DB の口  … Cloud SQL の IP への 3307（経路 A：Auth Proxy）と 5432（経路 B：直結）
+#
+# 社内ネットワークは番号ごとに止めていることがある（443 は通るのに 3307 は拒否、など）ので、
+# 口ごとに分けて見て、最後に経路ごとの判定を出す。Windows の gcloud が塞がれていても
+# コンテナは通ることがある（逆もある）ので、コンテナの中から見る。
 netcheck() {
-  local ng=0
-  for host in oauth2.googleapis.com sqladmin.googleapis.com; do
-    printf '%-34s ' "$host:443"
-    local code
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$host/" 2>/dev/null) || code=""
-    if [ -n "$code" ] && [ "$code" != "000" ]; then
-      echo "OK (HTTP $code)"
-    else
-      echo "つながりません"
-      ng=1
-    fi
-  done
+  local ip="${CLOUD_SQL_IP:-}" extra_host="" extra_port=""
+  if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then extra_host="$1"; extra_port="$2"
+  elif [ -n "${1:-}" ]; then ip="$1"; fi
+  ip="${ip%$'\r'}"
 
-  # 追加の TCP 確認。Cloud SQL の実体は 3307 番を使う。443 が通っても
-  # ここが塞がれていると Proxy は使えないので、番号ごとに分けて見る。
-  if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then
-    printf '%-34s ' "$1:$2"
-    if nc -z -w 10 "$1" "$2" 2>/dev/null; then
-      echo "OK (つながる)"
-    else
-      echo "つながりません"
-      ng=1
+  # 結果の記録。OK / NG / 未確認（IP が分からず試せなかった）
+  local r_login=NG r_admin=NG r_iap=NG r_cf=NG r_3307=未確認 r_5432=未確認 r_extra=""
+
+  http_ok() {  # host → 標準出力に判定の文字列。HTTP の応答が何かしら返れば届いている
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://$1/" 2>/dev/null) || code=""
+    if [ -n "$code" ] && [ "$code" != "000" ]; then echo "OK (HTTP $code)"; return 0; fi
+    echo "つながりません"; return 1
+  }
+  tcp_ok() {   # host port
+    if nc -z -w 10 "$1" "$2" 2>/dev/null; then echo "OK (つながる)"; return 0; fi
+    echo "つながりません"; return 1
+  }
+  row() { printf '  %-36s %-22s %s\n' "$1" "$2" "$3"; }
+
+  echo "443 の口（社内から外へ 443 が通るか）"
+  local out
+  out=$(http_ok oauth2.googleapis.com)      && r_login=OK; row "oauth2.googleapis.com:443"  "$out" "ログイン"
+  out=$(http_ok sqladmin.googleapis.com)    && r_admin=OK; row "sqladmin.googleapis.com:443" "$out" "インスタンスの情報（Admin API）"
+  out=$(http_ok tunnel.cloudproxy.app)      && r_iap=OK;   row "tunnel.cloudproxy.app:443"   "$out" "経路 C：IAP の TCP 転送の口"
+  out=$(http_ok api.cloudflare.com)         && r_cf=OK;    row "api.cloudflare.com:443"      "$out" "経路 D：Cloudflare（Access の TCP）"
+  echo
+
+  # Cloud SQL の IP。引数 → .env の CLOUD_SQL_IP → keys/adc.json があれば Admin API で調べる。
+  if [ -z "$ip" ] && [ -f /keys/adc.json ] && [ -n "${CLOUD_SQL_INSTANCE:-}" ] && [ "$r_admin" = OK ]; then
+    local tok project instance
+    tok=$(access_token 2>/dev/null) || tok=""
+    if [ -n "$tok" ]; then
+      project=$(GCP_PROJECT_ID); instance=$(INSTANCE_ID)
+      ip=$(curl -s --max-time 30 -H "Authorization: Bearer $tok" -H "x-goog-user-project: $project" \
+             "https://sqladmin.googleapis.com/v1/projects/$project/instances/$instance" 2>/dev/null \
+           | jq -r '[.ipAddresses[]? | select(.type == "PRIMARY") | .ipAddress][0] // empty' 2>/dev/null) || ip=""
+      [ -n "$ip" ] && echo "Cloud SQL の IP を Admin API で調べました: $ip（.env に CLOUD_SQL_IP=$ip と書いておくと次から速い）"
     fi
   fi
 
-  if [ "$ng" = 1 ]; then
-    echo
-    echo "塞がれている口があります。README の「gcloud も Proxy も通らないとき」を見てください。"
-    return 1
+  echo "DB の口（Cloud SQL の IP へ、番号ごとに）"
+  if [ -n "$ip" ]; then
+    out=$(tcp_ok "$ip" 3307) && r_3307=OK || r_3307=NG; row "$ip:3307" "$out" "経路 A：Cloud SQL Auth Proxy"
+    out=$(tcp_ok "$ip" 5432) && r_5432=OK || r_5432=NG; row "$ip:5432" "$out" "経路 B：直結（承認済みネットワーク + SSL）"
+  else
+    row "（IP が分かりません）" "未確認" "ops netcheck <Cloud SQL の IP> か .env の CLOUD_SQL_IP で指定する"
+    echo "  IP は Cloud Console › SQL › インスタンス の「パブリック IP アドレス」か、Proxy のログ（/tmp/proxy.log）に出る。"
+  fi
+  if [ -n "$extra_host" ]; then
+    out=$(tcp_ok "$extra_host" "$extra_port") && r_extra=OK || r_extra=NG; row "$extra_host:$extra_port" "$out" "（追加で確かめた口）"
   fi
   echo
-  echo "確かめた口はすべて通っています。"
+
+  echo "経路ごとの判定（docs/v3-local-app-cloud-db.md §1）"
+  row "A  Auth Proxy（3307）"            "$r_3307" "$([ "$r_3307" = NG ] && echo '社内が 3307 を塞いでいる。Cloud SQL 側は常に 3307 を開けているので、ここが NG なら社内側' || true)"
+  row "B  直結（5432）"                  "$r_5432" "$([ "$r_5432" = NG ] && echo '社内が塞いでいるか、Cloud SQL の承認済みネットワークにこの事務所の IP が無いか（Cloud SQL は承認済み以外の 5432 を落とすので見分けがつかない）' || true)"
+  row "C  IAP の TCP 転送（443）"        "$r_iap"  "$([ "$r_iap" = OK ] && echo '小さな VM に cloud-sql-proxy を置けば、443 だけで本番 DB へ届く' || true)"
+  row "D  Cloudflare Access の TCP（443）" "$r_cf" "$([ "$r_cf" = OK ] && echo 'Cloudflare Tunnel を VM に置けば、443 だけで本番 DB へ届く' || true)"
+  echo
+
+  local ng=0
+  if [ "$r_login" != OK ] || [ "$r_admin" != OK ]; then
+    echo "Google の 443 の口が塞がれています。ログインも Admin API も要るので、まずここを README の「gcloud も Proxy も通らないとき」で確かめてください。"
+    ng=1
+  fi
+  if [ "$r_3307" = OK ]; then
+    echo "経路 A が通ります。.env の SYNC_MODE=proxy のまま、ops sync と本番への接続に進めます。"
+  elif [ "$r_5432" = OK ]; then
+    echo "経路 B が通ります。Cloud SQL の承認済みネットワークに事務所の IP を足し、SSL（クライアント証明書）で直結できます。"
+  elif [ "$r_iap" = OK ] || [ "$r_cf" = OK ]; then
+    echo "DB へ直接は届きませんが、443 の経路（C か D）は通ります。小さな VM を 1 台置けば 443 だけで本番 DB へ届きます。"
+  elif [ "$r_3307" = 未確認 ]; then
+    echo "Cloud SQL の IP を指定すると、経路 A・B も確かめられます。"
+    ng=1
+  else
+    echo "どの経路も通りません。ネットワークの担当者に、外向き TCP 3307（宛先は Cloud SQL の IP）か 443 の許可を相談してください。"
+    ng=1
+  fi
+  return $ng
 }
 
 # 写しの取り方は2通り。3307 番が通るかで決まる（既定は proxy）。

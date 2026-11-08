@@ -144,6 +144,8 @@ services:
       PGPASSWORD: ${LOCAL_DB_PASSWORD}
       PGDATABASE: legalbridge
       CLOUD_SQL_INSTANCE: ${CLOUD_SQL_INSTANCE:-}
+      # 経路の確認（ops netcheck）で 3307・5432 を試す宛先。空なら引数か keys/adc.json で調べる。
+      CLOUD_SQL_IP: ${CLOUD_SQL_IP:-}
       REMOTE_DB_NAME: ${REMOTE_DB_NAME:-legalbridge}
       SYNC_DB_USER: ${SYNC_DB_USER:-legalbridge_v3_backup}
       SYNC_DB_PASSWORD: ${SYNC_DB_PASSWORD:-}

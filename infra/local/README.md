@@ -529,22 +529,37 @@ docker compose run --rm login            # 届くならこれでログインす�
 
 ### gcloud も Proxy も通らないとき
 
-同期は 2 種類の口を使う。片方だけ塞がれていることがあるので分けて確かめる。
+同期（と、手元のアプリから本番 DB へつなぐ構想 `docs/v3-local-app-cloud-db.md`）は何種類かの口を使う。
+社内ネットワークは番号ごとに止めていることがあるので、`netcheck` が口ごとに分けて確かめ、
+最後に**経路ごとの判定**を出す。
 
-| 行き先 | 番号 | 使いみち |
+| 行き先 | 番号 | 経路 |
 | --- | --- | --- |
-| `oauth2.googleapis.com` / `sqladmin.googleapis.com` | 443 | ログインとインスタンスの情報 |
-| Cloud SQL インスタンスの IP | 3307 | Proxy から DB への通信 |
+| `oauth2.googleapis.com` / `sqladmin.googleapis.com` | 443 | ログインとインスタンスの情報（どの経路でも要る） |
+| Cloud SQL インスタンスの IP | 3307 | A：Cloud SQL Auth Proxy（`SYNC_MODE=proxy`） |
+| Cloud SQL インスタンスの IP | 5432 | B：直結（承認済みネットワーク + SSL） |
+| `tunnel.cloudproxy.app` | 443 | C：IAP の TCP 転送（小さな VM に Proxy を置く） |
+| `api.cloudflare.com` | 443 | D：Cloudflare Access の TCP（VM に Tunnel を置く） |
 
 ```powershell
-docker compose run --rm ops netcheck                        # 443 の 2 つ
-docker compose run --rm ops netcheck 34.146.158.194 3307    # DB への口（IP は proxy log に出る）
+docker compose run --rm ops netcheck                        # 443 の口。IP が分かれば 3307・5432 も
+docker compose run --rm ops netcheck 34.146.158.194         # Cloud SQL の IP を渡して 3307・5432 も確かめる
+docker compose run --rm ops netcheck 34.146.158.194 3307    # 口を 1 つ足して確かめる（従来どおり）
 ```
 
-`connection refused` は社内ネットワークが番号ごとに止めている典型。ネットワークの
-担当者に、この PC からの **外向き TCP 3307 番**（宛先は Cloud SQL の IP）を
-許可してもらうのが本筋。Cloud SQL を社外から使うときの標準的な要件なので、
-依頼としては通りやすい。
+Cloud SQL の IP は Console › SQL › インスタンスの「パブリック IP アドレス」か、Proxy のログに出る。
+`.env` に `CLOUD_SQL_IP=` で書いておけば引数は要らない。`keys/adc.json` があれば Admin API で自動で調べる。
+
+読み方：
+
+- **3307 が「つながりません」** … Cloud SQL 側は常に 3307 を開けているので、社内が番号で止めている。
+  ネットワークの担当者に、この PC からの **外向き TCP 3307 番**（宛先は Cloud SQL の IP）を
+  許可してもらうのが本筋。Cloud SQL を社外から使うときの標準的な要件なので、依頼としては通りやすい
+- **5432 が「つながりません」** … 社内が止めているか、Cloud SQL の承認済みネットワークに事務所の IP が
+  無いか（Cloud SQL は承認済み以外からの 5432 を落とす）。見分けがつかないので、承認済みネットワークに
+  足してからもう一度見る
+- **A・B が NG でも C か D が OK** … 443 だけで本番 DB へ届く経路がある。小さな VM を 1 台置く
+  （`docs/v3-local-app-cloud-db.md` §1）
 
 ### 443 番だけで写す（SYNC_MODE=export）
 
