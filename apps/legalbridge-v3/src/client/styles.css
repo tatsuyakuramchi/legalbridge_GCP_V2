@@ -1189,3 +1189,35 @@ tr.ledger-sec.band td{background:var(--accent)}
 .rm-table tbody th.rm-work{min-width:200px;max-width:280px;white-space:normal;font-weight:400}
 .rm-table tbody th.rm-work .linky{font-weight:700;text-align:left}
 .rm-open-mark{font-size:10px;color:var(--ok);white-space:nowrap}
+
+/* ── スマホ幅（PWA でホーム画面から開いたとき）──────────────────────
+   末尾に置く：同じ強さの既定の規則（.search など）より後ろにして上書きを効かせる。
+   左の桁を上の帯にする。見出しの段は消し、項目を横に流して折り返す。
+   畳む（rail-slim）は PC 用なので、ここでは効かせない。 */
+.pwa-note{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+@media (max-width:760px){
+  /* 上下 2 段。上の帯は中身の高さだけにし、余りは下（main）へ。これが無いと .app の min-height:100vh の
+     余りが両方の段に配られ、帯が間延びする（短いページで帯が 150px になった）。 */
+  .app,.app.rail-slim{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .rail{position:sticky;top:0;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;align-content:flex-start;gap:2px 4px;
+    padding:6px 8px;border-right:0;border-bottom:1px solid var(--line);overflow:visible;z-index:40;
+    padding-top:max(6px,env(safe-area-inset-top))}
+  .rail-toggle,.app.rail-slim .rail-toggle{display:none}
+  .app.rail-slim .rail > *:not(.rail-toggle){display:revert}
+  .rail > div:not(.wordmark):not(.rail-foot):not(.search){display:contents}
+  .wordmark{flex-direction:row;align-items:baseline;padding:0 8px 0 2px}
+  .wordmark b{font-size:13px}
+  .wordmark span{display:none}
+  /* 検索は 2 段目に全幅で。1 段目は名前・項目・環境の札だけにして、1 行に収める。 */
+  .search{padding:4px 0 0;flex:1 0 100%;order:9}
+  .search input{padding:4px 8px;font-size:12px}
+  .nav-sec{display:none}
+  .nav-item{width:auto;padding:3px 6px;border-left:0;border-bottom:2px solid transparent;white-space:nowrap;font-size:12px;border-radius:4px 4px 0 0}
+  .nav-item[aria-current="page"]{border-left-color:transparent;border-bottom-color:var(--accent)}
+  .rail-foot{margin:0 0 0 auto;padding:0;border:0;display:flex;gap:6px;align-items:center;font-size:11px}
+  .rail-foot > .faint{display:none}
+  .site-badge{margin:0;padding:1px 6px;flex-direction:row;gap:6px;font-size:11px}
+  .workspace{padding:12px 12px 48px;gap:12px}
+  .workspace-head h1{font-size:18px}
+  .tablewrap,.rm-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+}

@@ -137,7 +137,7 @@ app がつなぐ DB は **`/data/DB_TARGET` のファイル**（`primary`＝本�
 
 | 形 | 向く用途 | 所見 |
 |---|---|---|
-| ウェブ画面（いま） + PWA | 全部 | 置き場所を変えずに、スマホのホーム画面・PC の「アプリとしてインストール」に出せる。manifest と service worker を足すだけ。**まずこれ** |
+| ウェブ画面（いま） + PWA | 全部 | 置き場所を変えずに、スマホのホーム画面・PC の「アプリとしてインストール」に出せる。**実装済み（2026-11-08）**：`public/manifest.webmanifest`・`public/sw.js`・`client/pwa.ts`。台帳（/api）は端末に置かず、index.html はネットワーク優先、資材（/assets）だけキャッシュ。新しい版は知らせて人が入れ替える。スマホ幅（760px 以下）は左の桁を上の帯に。入れ方は `infra/local/README.md`「スマホ・PC に「アプリ」として置く」 |
 | Chrome 拡張 | Backlog・Gmail の画面から案件を開く、文書を作るボタン | 画面の置き換えではなく**足し物**。サーバは要る。配布（ストアか組織ポリシー）と Manifest V3 の手間 |
 | デスクトップアプリ（Electron / Tauri） | 各 PC で単独に動かしたいとき | サーバと DB を抱き込めるが、「皆で 1 つの写しへ切り替える」設計と相性が悪い（どの PC の写しが正か）。Electron なら Chromium を同梱できるのは利点 |
 | ネイティブのモバイルアプリ | 外出先の閲覧・承認 | 開発・配布の手間に見合う差が PWA と比べて小さい |
@@ -148,3 +148,5 @@ app がつなぐ DB は **`/data/DB_TARGET` のファイル**（`primary`＝本�
 - 2026-11-08：接続先の切り替え（`/data/DB_TARGET`・`PRIMARY_DB_*`・`STANDBY_DB_*`・`NUMBER_BAND=auto`）、画面の「DB：本番／手元の写し」と
   届かない・届くようになった知らせ、`ops target / failover / failback / rehearse-init`、本番役の DB（`--profile rehearsal`）。
   手元での予行はこれから（Docker のある PC で）
+- 2026-11-08：PWA 化（manifest・service worker・アイコン・スマホ幅の帯・新しい版の知らせ・オフラインの知らせ）。ビルドした版を
+  DB なしで立てて、Chromium で登録・manifest・オフラインの殻・390px/360px の見た目を確認

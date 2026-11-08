@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { ReadOnlyContext } from "./read-only.js";
 import { GlobalSearch, type SearchHit } from "./GlobalSearch.js";
+import { applyUpdate, usePwaStatus } from "./pwa.js";
 import { MattersWorkspace } from "./MattersWorkspace.js";
 import { ConditionsWorkspace } from "./ConditionsWorkspace.js";
 import { AgreementsWorkspace } from "./AgreementsWorkspace.js";
@@ -86,6 +87,8 @@ export function App() {
   }, [view]);
 
   /** 左の桁を畳んでいるか。畳んだ状態はこの端末に覚えておく。 */
+  // PWA：新しい版の入れ替え待ちと、回線の有無（pwa.ts）。
+  const pwa = usePwaStatus();
   const [railSlim, setRailSlim] = useState(() => {
     try { return localStorage.getItem("lb.railSlim") === "1"; } catch { return false; }
   });
@@ -470,6 +473,19 @@ export function App() {
       </nav>
 
       <main className="main">
+        {/* 新しい版の画面が入った。入力中の内容を消さないよう、勝手には入れ替えず、押してもらう（pwa.ts）。 */}
+        {pwa.updateReady && (
+          <div className="note ok pwa-note" style={{ marginBottom: 12 }}>
+            <span>新しい版の画面があります。入力中のものを保存してから入れ替えてください。</span>
+            <button className="btn btn-sm" onClick={applyUpdate}>再読み込み</button>
+          </div>
+        )}
+        {/* 回線が切れている。画面の殻は出るが、台帳は読めない・書けない。 */}
+        {!pwa.online && (
+          <div className="alert" style={{ marginBottom: 12 }}>
+            オフラインです。回線がつながるまで、台帳の読み書きはできません（表示は切れる前のものです）。
+          </div>
+        )}
         {/* 本番 DB につなぐはずが届いていない。自動では切り替えない（経路の一時断でも起きる）ので、人に知らせる。 */}
         {me?.site?.db?.target === "primary" && me.site.db.reachable === false && (
           <div className="alert" style={{ marginBottom: 12 }}>
