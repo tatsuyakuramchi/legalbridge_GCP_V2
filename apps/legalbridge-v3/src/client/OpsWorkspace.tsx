@@ -201,6 +201,22 @@ export function OpsWorkspace({ initialTab, onTabChange, embedded, importPreset }
 
       {tab === "exports" && (
         <div className="stack">
+        <div className="panel">
+          <div className="panel-hd">
+            <h2>ローカル予備系へのバックアップ</h2>
+            <span className="faint">本番のアプリの版・DB の定義・全部の表の中身を 1 つの ZIP で（admin）</span>
+          </div>
+          <div className="panel-bd stack" style={{ gap: 8 }}>
+            <p className="faint" style={{ margin: 0 }}>
+              手元の予備系（infra/local）を本番と同じ形・同じ中身にするためのファイルです。ZIP を infra/local/dumps/ に置いて
+              <code> docker compose run --rm ops import-backup /dumps/（ファイル名）</code> で取り込みます。
+              中に入っている README.txt に、アプリの版のそろえ方と取り込み方を書いています。
+              PDF の作り置きは入れません（手元で文書を開けば作り直されます）。
+            </p>
+            <p className="note warn" style={{ margin: 0 }}>口座番号・連絡先を含む本番の写しです。取り込んだら ZIP を消してください。</p>
+            <div><a className="btn btn-sm primary" href="/api/v3/backup/download" download>バックアップを落とす（ZIP）</a></div>
+          </div>
+        </div>
         <AccountingExport />
         <div className="panel">
           <div className="panel-hd">
