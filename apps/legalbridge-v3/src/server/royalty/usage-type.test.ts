@@ -60,7 +60,8 @@ test("再許諾・他社販売はアウト条件が要る。自社販売には�
 });
 
 test("画面に出す欄は形ごとに決まっている", () => {
-  assert.deepEqual(usageTypeSpec("sublicense")?.fields, ["grossAmount"]);
+  // 再許諾は受領額のほか、相手の報告が部数建てなら（部数 − 非加算部数）× 基準価格 でも入れられる。
+  assert.deepEqual(usageTypeSpec("sublicense")?.fields, ["unitAmount", "quantity", "sampleQuantity", "grossAmount"]);
   // 自社製造・他社販売は「個数×単価」でも「受領額そのもの」でも入れられる。
   assert.deepEqual(usageTypeSpec("oem")?.fields,
     ["unitAmount", "quantity", "sampleQuantity", "grossAmount"]);
@@ -182,4 +183,22 @@ test("画面が形を指定していれば、数字が揃う前でもその形�
 test("指定が無ければ、保存した行は入っている数字から読む", () => {
   assert.equal(basisKindOf({ usageType: "oem", grossAmount: 100000 }), "lump");
   assert.equal(basisKindOf({ usageType: "oem", unitAmount: 500, quantity: 10 }), "per_unit");
+});
+
+
+test("再許諾の部数建て：（部数 − 非加算部数）× 基準価格。基準価格は相手の定価なので税込でも割り戻さない", () => {
+  const row = { usageType: "sublicense" as const, unitAmount: 1800, quantity: 4009, sampleQuantity: 100 };
+  assert.equal(basisKindOf(row), "per_unit");
+  assert.equal(basisOf(row, "行"), 7_036_200);
+  assert.equal(basisOf({ ...row, taxIncluded: true }, "行"), 7_036_200);
+  assert.equal(basisNoteOf(row, "JPY"), "3,909部（4,009 − 非加算 100）× 基準価格 ¥1,800");
+  assert.equal(basisNoteOf({ ...row, sampleQuantity: null }, "JPY"), "4,009部 × 基準価格 ¥1,800");
+  assert.equal(methodLabelOf(row), "再許諾（基準価格 × 部数）");
+  assert.equal(methodLabelOf({ ...row, paymentStage: "advance" }), "再許諾（前金・基準価格 × 部数）");
+  // 受領額だけなら今までどおり。両方は入れられない。部数だけ・基準価格だけも止める。
+  assert.equal(methodLabelOf({ usageType: "sublicense", grossAmount: 1 }), "再許諾（受領価格）");
+  assert.throws(() => basisOf({ ...row, grossAmount: 1 }, "行"), /受領額と「部数 × 基準価格」の両方/);
+  assert.throws(() => basisOf({ usageType: "sublicense", quantity: 100 }, "行"), /基準価格を入れてください/);
+  assert.throws(() => basisOf({ usageType: "sublicense", unitAmount: 1000 }, "行"), /部数を入れてください/);
+  assert.throws(() => basisOf({ ...row, sampleQuantity: 4009 }, "行"), /非加算部数を引くと0部/);
 });

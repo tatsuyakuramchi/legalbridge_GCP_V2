@@ -411,6 +411,11 @@ export function ConditionEvents(
     // 形を選べる場合は、選んだ形で使う欄だけを出す。両方入れた行は保存できない。
     return lumpSum ? name === "grossAmount" : name !== "grossAmount";
   };
+  // 欄の呼び名。再許諾の部数建て（版元の刷り部数など）は 部数・非加算部数・基準価格（本体価格）。
+  const sublicense = usage?.value === "sublicense";
+  const unitLabel = usage?.value === "oem" ? "受領価格（1個あたり）" : sublicense ? "基準価格（本体価格）" : "基準価格";
+  const quantityLabel = usage?.value === "oem" ? "製造個数" : sublicense ? "部数" : "数量";
+  const sampleLabel = sublicense ? "非加算部数" : "見本（無償分）";
   const pickedOut = outFound.find((o) => String(o.id) === (v.outConditionId ?? ""));
   /**
    * 保存する前に、その実績の許諾料を見せる。式はサーバと同じ。
@@ -433,7 +438,7 @@ export function ConditionEvents(
     taxIncluded ? Math.floor((amount * 100) / (100 + RECEIPT_TAX_RATE_PCT)) : amount;
   const usageBasis = (() => {
     if (!usage) return null;
-    if (usage.value === "sublicense" || lumpSum) {
+    if (lumpSum) {
       const gross = numOf("grossAmount");
       return gross && gross > 0 ? net(Math.round(gross)) : null;
     }
@@ -461,9 +466,9 @@ export function ConditionEvents(
    */
   const badNumberField = (() => {
     const shownFields: Array<[string, string]> = [
-      ["quantity", usage?.value === "oem" ? "製造個数" : "数量"],
-      ["sampleQuantity", "見本（無償分）"],
-      ["unitAmount", usage?.value === "oem" ? "受領価格（1個あたり）" : "基準価格"],
+      ["quantity", quantityLabel],
+      ["sampleQuantity", sampleLabel],
+      ["unitAmount", unitLabel],
       ["grossAmount", usage ? (lumpSum ? "受領額" : "受領価格") : "報告売上・受領額"],
       ["deductions", "控除"],
       ["ratePct", "料率（%）"],
@@ -487,9 +492,9 @@ export function ConditionEvents(
         return `どの言語の報告かを選んでください（許諾先は ${pickedOut!.languages!.join("・")}）`;
       }
       if (usageBasis === null) {
-        return usage.value === "sublicense" || lumpSum
+        return lumpSum
           ? "受領額を入れてください"
-          : `${usage.value === "oem" ? "受領価格と製造個数" : "基準価格と数量"}を入れてください`;
+          : `${unitLabel}と${quantityLabel}を入れてください${sublicense ? "（非加算部数は部数より少なく）" : ""}`;
       }
       if (usageAmount === null) return "料率を入れてください";
       return "";
@@ -799,12 +804,15 @@ export function ConditionEvents(
                     // 形を変えたら前の形の数字を消す。両方入った行は保存できない。
                     unitAmount: "", quantity: "", sampleQuantity: "", grossAmount: ""
                   })}>
-                  <option value="lump">受領額 × 料率（個数は出さない）</option>
-                  <option value="per_unit">受領価格（1個あたり）× 製造個数</option>
+                  <option value="lump">受領額 × 料率（{sublicense ? "部数" : "個数"}は出さない）</option>
+                  {sublicense
+                    ? <option value="per_unit">（部数 − 非加算部数）× 基準価格</option>
+                    : <option value="per_unit">受領価格（1個あたり）× 製造個数</option>}
                 </select>
                 <small className="faint">
-                  海外から売上が入ってくる取引は受領額のまま。
-                  個数建ての契約のときだけ下を選ぶ
+                  {sublicense
+                    ? "相手（版元など）の報告が部数建てなら下を選ぶ。受け取った額で来るなら受領額のまま"
+                    : "海外から売上が入ってくる取引は受領額のまま。個数建ての契約のときだけ下を選ぶ"}
                 </small>
               </label>
             )}
@@ -893,7 +901,7 @@ export function ConditionEvents(
               * 料率を掛けて出すので、税込のまま掛けると 10% 多く払う。
               * 入っている額はそのまま残し、算定のときに割り戻す。
               */}
-            {usage && (usage.value === "sublicense" || usage.value === "oem") && (
+            {usage && (usage.value === "oem" || (sublicense && lumpSum)) && (
               <label className="field">
                 <span>受領額の税</span>
                 <select value={f("taxIncluded")}
@@ -909,7 +917,7 @@ export function ConditionEvents(
             )}
             {usageField("unitAmount") && (
               <label className="field">
-                <span>{usage?.value === "oem" ? "受領価格（1個あたり）" : "基準価格"}</span>
+                <span>{unitLabel}</span>
                 <input inputMode="numeric" value={f("unitAmount")}
                   onChange={(e) => set("unitAmount", e.target.value)} />
                 <small className="faint">税抜・{currency}</small>
@@ -917,7 +925,7 @@ export function ConditionEvents(
             )}
             {(!usage || usageField("quantity")) && (
               <label className="field">
-                <span>{usage?.value === "oem" ? "製造個数" : "数量"}</span>
+                <span>{quantityLabel}</span>
                 <input inputMode="numeric" value={f("quantity")} onChange={(e) => set("quantity", e.target.value)} />
                 {inspecting && !usage && (
                   <small className="faint">検収書の「今回数量」に出ます。1回分なら 1</small>
@@ -926,10 +934,10 @@ export function ConditionEvents(
             )}
             {usageField("sampleQuantity") && (
               <label className="field">
-                <span>見本（無償分）</span>
+                <span>{sampleLabel}</span>
                 <input inputMode="numeric" value={f("sampleQuantity")}
                   onChange={(e) => set("sampleQuantity", e.target.value)} />
-                <small className="faint">引いた数に料率が掛かります</small>
+                <small className="faint">{sublicense ? "献本・見本など。部数から引いた数に基準価格と料率が掛かります" : "引いた数に料率が掛かります"}</small>
               </label>
             )}
             {usage && (
