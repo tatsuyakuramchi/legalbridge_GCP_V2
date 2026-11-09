@@ -342,6 +342,15 @@ export class RoyaltyStatementService {
         // 発行部数の X% は非加算（献本等）。報告額 × （部数 − 非加算）÷ 部数。端数は四捨五入。
         return Math.round((gross * (exempt.copies - exempt.exempt)) / exempt.copies);
       }
+      if (model === "fixed") {
+        // 一括の利用料（イラストなどを定額で使う）。料率は掛けず、実績の金額をそのまま払う。
+        // 実績は「検収」で入れることが多い（料率の条件ではないので売上の形にならない）。分けて払うなら実績ごとに。
+        const amount = Number(e.gross_amount ?? 0) > 0 ? Number(e.gross_amount) : Number(e.amount ?? 0);
+        if (!(amount > 0)) {
+          throw new DomainError("VALIDATION", `実績 #${e.id} に金額が入っていません（一括の利用料は実績の金額をそのまま払います）`);
+        }
+        return amount;
+      }
       if (model === "unit_rate") {
         if (type !== "manufacturing" && type !== "sales") {
           throw new DomainError("VALIDATION",
@@ -384,10 +393,14 @@ export class RoyaltyStatementService {
       }) || null,
       workTitle: str(e.event_work_title) ?? str(e.in_work_title),
       conditionUsageType: str(e.in_usage_type),
-      ...(perEvent ? { ratePct: conditionRatePct, amount: floorRoyalty((basis[i] * conditionRatePct) / 100) } : {})
+      ...(perEvent ? { ratePct: conditionRatePct, amount: floorRoyalty((basis[i] * conditionRatePct) / 100) } : {}),
+      ...(model === "fixed" ? { amount: basis[i], basisNote: "一括の利用料（定額）" } : {})
     }));
 
-    const reported: ReportedResult = model === "revenue_rate"
+    const reported: ReportedResult = model === "fixed"
+      // 一括の利用料：払うのは実績の金額の合計（条件の定額ではなく。分けて払う回もある）。
+      ? { grossOverrideMinor: total }
+      : model === "revenue_rate"
       ? { salesInput: total,
           ...(perEvent ? { grossOverrideMinor: events.reduce((a, e) => a + (e.amount ?? 0), 0) } : {}) }
       : { quantity: total,

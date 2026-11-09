@@ -392,7 +392,8 @@ export function ConditionEvents(
    * 実績に基づいて作る決済文書。出どころは発注書だが、実績が結びつくのは
    * 検収書（業務委託）か計算書（許諾）だけ。発注書は実績を占有しない。
    */
-  const settlementDoc = !serviceFlow && royalty && !rewardLabel
+  // 一括の利用料（許諾で定額。イラストなど）も計算書（料率は掛けず、実績の金額をそのまま払う）。
+  const settlementDoc = !serviceFlow && (royalty || kind === "license") && !rewardLabel
     ? { label: "計算書", templateKey: "royalty_statement" }
     : { label: "検収書", templateKey: "inspection_certificate" };
   const chosen = openSchedules.find((s) => String(s.id) === (v.scheduleId ?? ""));
