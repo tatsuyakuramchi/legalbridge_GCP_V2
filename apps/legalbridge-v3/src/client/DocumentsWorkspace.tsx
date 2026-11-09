@@ -1701,6 +1701,21 @@ export function DocumentsWorkspace(
                     <input value={stmtPeriod} onChange={(e) => setStmtPeriod(e.target.value)}
                            placeholder="2026上期（空なら選んだ実績の期間から決めます）" />
                   </label>
+                  {/* 「■ 取引モデル」の取引モデル概要。空なら取引モデルから自動（自社版／◯◯再許諾分／◯◯版）。
+                      出版は自動の値が無いので、ここで書く。対象契約・製品名は下の「計算書の行の見出し」で直す。 */}
+                  <label className="field">
+                    <span>取引モデル概要</span>
+                    <input value={String(manual.rs_model_summary ?? "")}
+                           onChange={(e) => {
+                             const value = e.target.value;
+                             setManual((prev) => {
+                               const next = { ...prev };
+                               if (value.trim() === "") delete next.rs_model_summary; else next.rs_model_summary = value;
+                               return next;
+                             });
+                           }}
+                           placeholder="例：アークライト版（空なら取引モデルから自動。出版は空欄のまま）" />
+                  </label>
                   {/* 共著の取り分（A-068）。取り分のある条件は受取人ごとに 1 枚。 */}
                   {(stmt?.shares?.length ?? 0) > 0 && (
                     <PayeePicker shares={stmt!.shares!} value={payeePartyId} onChange={setPayeePartyId} />

@@ -137,8 +137,10 @@ export const rewardLabelOf = (condition: Ctx): string | null =>
  * 計算した金額のどちらが紙に出るのか読めなくなる。
  */
 export function statementLabelRows(context: Ctx): Row[] {
+  // 出版（利用形態の無い報告）も含める。以前は利用形態の付いた報告だけで、出版の計算書は
+  // 対象契約・製品名を直す欄が 1 行も出なかった。
   return ((context.events ?? []) as Ctx[])
-    .filter((event) => event.usageType)
+    .filter((event) => event.id)
     .map((event) => {
       const condition = (context.conditions ?? []).find((c: Ctx) => c.id === event.conditionId)
         ?? context.condition ?? {};

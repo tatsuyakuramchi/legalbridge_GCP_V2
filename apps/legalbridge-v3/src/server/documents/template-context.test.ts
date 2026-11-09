@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountTypeLabel, bankInfoLine, buildTemplateContext, calcMethodOf, deliveryLinesFrom,
-  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, splitSpec, suggestionsFor, summarizeDates, taxRateFor, templateWarnings
+  lineFieldsFor, orderLinesFrom, rewardLabelOf, seedLines, splitSpec, suggestionsFor, summarizeDates, taxRateFor, templateWarnings, statementLabelRows
 } from "./template-context.js";
 import { computeInspectionTotals, inspectionTaxBreakdown, purchaseOrderTotals } from "./legacy-totals.js";
 
@@ -1364,4 +1364,17 @@ test("検収書の行の単価：条件の単価 × 数量 が実績の金額と
     events: [{ id: 9, conditionId: 1, occurredOn: "2026-09-28", quantity: 87, amount: 217500 }]
   })) as Array<Record<string, any>>;
   assert.equal(ok[0].unit_price, 2500, "合っていれば条件の単価");
+});
+
+
+test("計算書の行の見出し：出版（利用形態の無い報告）の行も出す。対象契約・契約番号は空（空ならイン側の契約）", () => {
+  const rows = statementLabelRows({
+    condition: { work: { title: "クトゥルフ神話怪物図鑑" } },
+    events: [
+      { id: 41, conditionId: 5, usageType: null },
+      { id: 42, conditionId: 5, usageType: "in_house", productName: "製品A" }
+    ]
+  } as any);
+  assert.deepEqual(rows.map((r) => [r.eventId, r.productName, r.contractTitle, r.contractNumber]),
+    [[41, "クトゥルフ神話怪物図鑑", "", ""], [42, "製品A", "", ""]]);
 });
