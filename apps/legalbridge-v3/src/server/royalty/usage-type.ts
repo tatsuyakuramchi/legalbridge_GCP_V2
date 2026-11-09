@@ -89,9 +89,12 @@ export const USAGE_TYPES: UsageTypeSpec[] = [
     label: "再許諾",
     methodLabel: "再許諾（受領価格）",
     needsOutCondition: true,
-    fields: ["grossAmount"],
-    hasStages: true, choosableBasis: false,
-    hint: "相手に許諾して、相手から受け取った額が算定の基礎になる"
+    // 受領額のほか、相手（版元など）の報告が部数建てなら（部数 − 非加算部数）× 基準価格 でも入れられる。
+    // どちらで入れたかは「基準価格と部数が入っているか、受領額が入っているか」で読み分ける。
+    fields: ["unitAmount", "quantity", "sampleQuantity", "grossAmount"],
+    hasStages: true, choosableBasis: true,
+    hint: "相手に許諾して、相手から受け取った額が算定の基礎になる。"
+        + "相手の報告が部数建て（版元の刷り部数など）なら（部数 − 非加算部数）× 基準価格"
   },
   {
     value: "oem",
@@ -183,7 +186,6 @@ export function netOfTax(amount: number, taxIncluded: boolean | null | undefined
  * あとからでも一意に決まる）。
  */
 export function basisKindOf(input: UsageBasisInput): "per_unit" | "lump" {
-  if (input.usageType === "sublicense") return "lump";
   if (input.usageType === "in_house") return "per_unit";
   // 画面が形を指定しているならそれに従う。数字はまだ揃っていないことがある。
   if (input.basisKind) return input.basisKind;
@@ -201,19 +203,17 @@ export function basisKindOf(input: UsageBasisInput): "per_unit" | "lump" {
  */
 export function basisOf(input: UsageBasisInput, tag: string): number {
   const gross = Number(input.grossAmount ?? 0);
-  if (input.usageType === "sublicense") {
-    if (!(gross > 0)) {
-      throw new DomainError("VALIDATION", `${tag}：再許諾は受領価格を入れてください`);
-    }
-    return netOfTax(Math.round(gross), input.taxIncluded);
+  const sublicense = input.usageType === "sublicense";
+  if (sublicense && !(gross > 0) && !(Number(input.unitAmount ?? 0) > 0) && !(Number(input.quantity ?? 0) > 0)) {
+    throw new DomainError("VALIDATION", `${tag}：再許諾は受領価格（または部数と基準価格）を入れてください`);
   }
-  if (input.usageType === "oem") {
+  if (input.usageType === "oem" || sublicense) {
     // 個数×単価と受領額の両方が入っている行は、どちらで計算したのか決められない。
     // 片方を勝たせると、人が見ていない側の数字が紙に出ないまま残る。
     const hasPerUnit = Number(input.unitAmount ?? 0) > 0 || Number(input.quantity ?? 0) > 0;
     if (gross > 0 && hasPerUnit) {
       throw new DomainError("VALIDATION",
-        `${tag}：受領額と「個数 × 単価」の両方は入れられません。どちらかにしてください`);
+        `${tag}：受領額と「${sublicense ? "部数 × 基準価格" : "個数 × 単価"}」の両方は入れられません。どちらかにしてください`);
     }
     if (gross > 0) return netOfTax(Math.round(gross), input.taxIncluded);
   }
@@ -229,12 +229,12 @@ export function basisOf(input: UsageBasisInput, tag: string): number {
   }
   if (!(quantity > 0)) {
     throw new DomainError("VALIDATION",
-      `${tag}：${input.usageType === "oem" ? "製造個数" : "個数"}を入れてください`);
+      `${tag}：${input.usageType === "oem" ? "製造個数" : sublicense ? "部数" : "個数"}を入れてください`);
   }
-  // 見本は作者に払わない。引いた数が0以下なら、その回は算定の対象が無い。
+  // 見本（再許諾では非加算部数）は作者に払わない。引いた数が0以下なら、その回は算定の対象が無い。
   const billable = Math.max(0, quantity - sample);
   if (billable <= 0) {
-    throw new DomainError("VALIDATION", `${tag}：見本を引くと0個になります`);
+    throw new DomainError("VALIDATION", sublicense ? `${tag}：非加算部数を引くと0部になります` : `${tag}：見本を引くと0個になります`);
   }
   return Math.round(unit * billable);
 }
@@ -256,6 +256,12 @@ export function basisNoteOf(input: UsageBasisInput, currency?: string | null): s
   const amount = currency ? unitPriceLabel(input.unitAmount, currency) : "";
   const price = `${input.usageType === "oem" ? "受領価格" : "基準価格"}${amount ? ` ${amount}` : ""}`;
   const n = (x: number) => x.toLocaleString("ja-JP");
+  // 再許諾の部数建て（版元の刷り部数など）。基準価格は相手の定価なので割り戻さない（税の式は付けない）。
+  if (input.usageType === "sublicense") {
+    return sample > 0
+      ? `${head}${n(billable)}部（${n(quantity)} − 非加算 ${n(sample)}）× ${price}`
+      : `${head}${n(billable)}部 × ${price}`;
+  }
   return sample > 0
     ? `${head}${n(billable)}個（${n(quantity)} − 見本 ${n(sample)}）× ${price}${tax}`
     : `${head}${n(billable)}個 × ${price}${tax}`;
@@ -269,11 +275,13 @@ export function methodLabelOf(input: UsageBasisInput): string {
   const spec = usageTypeSpec(input.usageType);
   if (!spec) return "";
   const stage = paymentStageLabel(input.paymentStage);
+  const perUnit = basisKindOf(input) === "per_unit";
   if (!stage) {
-    return input.usageType === "oem" && basisKindOf(input) === "lump"
+    if (input.usageType === "sublicense") return perUnit ? "再許諾（基準価格 × 部数）" : spec.methodLabel;
+    return input.usageType === "oem" && !perUnit
       ? "自社製造・他社販売（受領価格）" : spec.methodLabel;
   }
-  const shape = basisKindOf(input) === "lump" ? "受領価格" : "受領価格 × 製造個数";
+  const shape = !perUnit ? "受領価格" : input.usageType === "sublicense" ? "基準価格 × 部数" : "受領価格 × 製造個数";
   return `${spec.label}（${stage}・${shape}）`;
 }
 

@@ -55,16 +55,23 @@ export const isPrintRun = (c: { usageType: string | null; pricingModel: string; 
   c.usageType === "pub_print" && c.pricingModel === "revenue_rate" && c.priceBasis !== "receipts";
 
 /** 利用形態ごとに、どの欄を使うか。 */
-function fieldsFor(usage: string | null, pricingModel: string, basis: "per_unit" | "lump" = "per_unit",
+function fieldsFor(usage: string | null, pricingModel: string, basis?: "per_unit" | "lump",
                    cond?: { usageType: string | null; pricingModel: string; priceBasis?: string | null }) {
-  const plain = { sample: false, printRun: false };
+  // sample：非加算部数の欄。copies：部数・非加算部数・基準価格の欄（PrintRunFields）。
+  // printRun：紙出版（利用形態なし）。報告額 ＝ 部数 × 基準価格 で記録する。
+  const plain = { sample: false, printRun: false, copies: false };
   if (!usage && cond && isPrintRun(cond)) {
-    return { quantity: true, unit: true, gross: false, tax: false, grossLabel: "", sample: true, printRun: true };
+    return { quantity: true, unit: true, gross: false, tax: false, grossLabel: "", sample: true, printRun: true, copies: true };
   }
   return { ...plain, ...fieldsForUsage(usage, pricingModel, basis) };
 }
-function fieldsForUsage(usage: string | null, pricingModel: string, basis: "per_unit" | "lump") {
-  if (usage === "sublicense") return { quantity: false, unit: false, gross: true, tax: true, grossLabel: "受領額" };
+function fieldsForUsage(usage: string | null, pricingModel: string, basis?: "per_unit" | "lump") {
+  // 再許諾は受領額が既定。相手（版元など）の報告が部数建てなら（部数 − 非加算部数）× 基準価格。
+  if (usage === "sublicense") {
+    return basis === "per_unit"
+      ? { quantity: true, unit: true, gross: false, tax: false, grossLabel: "", sample: true, copies: true }
+      : { quantity: false, unit: false, gross: true, tax: true, grossLabel: "受領額" };
+  }
   // 自社製造・他社販売は契約により「受領価格 × 製造個数」か「受領額 × 料率」。
   // 両方入れた行はサーバが断るので、選んだ形の欄だけ出す。
   if (usage === "oem") {
@@ -116,14 +123,17 @@ function PrintRunFields({ draft, setDraft, ratePpm, currency }: { draft: Draft; 
 }
 
 /** 自社製造・他社販売の「算定の形」。受領額×料率を選べる（為替の都合で個数建てにできない取引）。 */
-function BasisSelect({ draft, setDraft }: { draft: Draft; setDraft: (d: Draft) => void }) {
+function BasisSelect({ draft, setDraft, usage = "oem" }: { draft: Draft; setDraft: (d: Draft) => void; usage?: string | null }) {
+  // 再許諾は受領額が既定、他社販売は個数建てが既定。
+  const sublicense = usage === "sublicense";
   return (
-    <select className="inline-input" aria-label="算定の形" value={draft.basis ?? "per_unit"}
+    <select className="inline-input" aria-label="算定の形" value={draft.basis ?? (sublicense ? "lump" : "per_unit")}
             onChange={(e) => setDraft({ ...draft, basis: e.target.value as "per_unit" | "lump",
                                         // 形を変えたら前の形の数字を消す（両方入った行は保存できない）。
-                                        quantity: "", unit: "", gross: "" })}>
-      <option value="per_unit">受領価格 × 製造個数</option>
-      <option value="lump">受領額 × 料率</option>
+                                        quantity: "", unit: "", gross: "", sample: "" })}>
+      {sublicense
+        ? <><option value="lump">受領額 × 料率</option><option value="per_unit">（部数 − 非加算部数）× 基準価格</option></>
+        : <><option value="per_unit">受領価格 × 製造個数</option><option value="lump">受領額 × 料率</option></>}
     </select>
   );
 }
@@ -255,9 +265,12 @@ export function RoundReport(
     const lastUnit = view.rounds.concat(view.history).flatMap((r) => r.parts).flatMap((p) => p.events)
       .filter((e) => e.conditionId === l.condition.id && e.unitAmount).slice(-1)[0]?.unitAmount ?? null;
     // 自社製造・他社販売：前回の報告が受領額建てなら今回もそれで出す。
-    const lastOem = usage === "oem" ? view.rounds.concat(view.history).flatMap((r) => r.parts).flatMap((p) => p.events)
+    // 再許諾：前回の報告が部数建てなら今回もそれで出す（既定は受領額）。
+    const lastOem = usage === "oem" || usage === "sublicense" ? view.rounds.concat(view.history).flatMap((r) => r.parts).flatMap((p) => p.events)
       .filter((e) => e.conditionId === l.condition.id).slice(-1)[0] : null;
-    const basis: Draft["basis"] = lastOem && lastOem.grossAmount && !lastOem.unitAmount ? "lump" : "per_unit";
+    const basis: Draft["basis"] = usage === "sublicense"
+      ? (lastOem && lastOem.unitAmount && !lastOem.grossAmount ? "per_unit" : "lump")
+      : lastOem && lastOem.grossAmount && !lastOem.unitAmount ? "lump" : "per_unit";
     setDraft({ quantity: "", sample: "", unit: basis === "lump" ? "" : String(l.condition.unitAmount ?? lastUnit ?? ""), gross: "", taxIncluded: false,
                on: l.part.closeOn ?? new Date().toISOString().slice(0, 10), note: "", basis, stage: "" });
     setEditing(l.key);
@@ -289,7 +302,7 @@ export function RoundReport(
     const f = fieldsFor(usage, c.pricingModel, draft.basis, c);
     if (!correcting.reason.trim()) { onError("修正の理由を書いてください（監査に残ります）"); return; }
     const pr = f.printRun ? printRunOf(numOf(draft.quantity), numOf(draft.sample ?? ""), numOf(draft.unit)) : null;
-    if (f.printRun) {
+    if (f.copies) {
       const problem = printRunProblem(numOf(draft.quantity), numOf(draft.sample ?? ""), numOf(draft.unit));
       if (problem) { onError(problem); return; }
     }
@@ -300,7 +313,8 @@ export function RoundReport(
         ...(f.quantity ? { quantity: numOf(draft.quantity) || null } : {}),
         ...(f.unit ? { unitAmount: numOf(draft.unit) || null } : {}),
         ...(f.gross ? { grossAmount: numOf(draft.gross) || null } : {}),
-        ...(pr ? { grossAmount: pr.gross, sampleQuantity: numOf(draft.sample ?? "") || null } : {}),
+        ...(pr ? { grossAmount: pr.gross } : {}),
+        ...(f.sample ? { sampleQuantity: numOf(draft.sample ?? "") || null } : {}),
         occurredOn: draft.on || null,
         languages: splitScope(draft.languages), regions: splitScope(draft.regions),
         ...(f.tax ? { taxIncluded: draft.taxIncluded } : {}),
@@ -324,7 +338,7 @@ export function RoundReport(
     const quantity = f.quantity ? numOf(draft.quantity) : null;
     const unit = f.unit ? numOf(draft.unit) : null;
     const sample = f.sample ? numOf(draft.sample ?? "") : null;
-    if (f.printRun) {
+    if (f.copies) {
       const problem = printRunProblem(quantity ?? 0, sample ?? 0, unit ?? 0);
       if (problem) { onError(problem); return; }
     }
@@ -338,7 +352,7 @@ export function RoundReport(
         scheduleId: l.part.scheduleId,
         quantity: quantity || null,
         unitAmount: usage || f.printRun ? (unit || null) : null,
-        ...(f.printRun ? { sampleQuantity: sample || null } : {}),
+        ...(f.sample ? { sampleQuantity: sample || null } : {}),
         grossAmount: gross || null,
         // 利用形態なしの実績は 総額＝実額（料率は計算書で掛ける）。
         amount: usage ? 0 : (gross ?? 0),
@@ -465,15 +479,15 @@ export function RoundReport(
                     <>
                       <td className="num">
                         {f.quantity
-                          ? <input className="inline-input num" style={{ width: 90 }} value={draft.quantity} placeholder={f.printRun ? "部数" : "数量"} aria-label={f.printRun ? "部数" : "数量"} autoFocus
+                          ? <input className="inline-input num" style={{ width: 90 }} value={draft.quantity} placeholder={f.copies ? "部数" : "数量"} aria-label={f.copies ? "部数" : "数量"} autoFocus
                                    onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />
                           : <span className="faint">—</span>}
                       </td>
                       <td className="num">
                         <span className="stack" style={{ gap: 3, alignItems: "flex-end" }}>
-                          {usage === "oem" && <BasisSelect draft={draft} setDraft={setDraft} />}
-                          {f.printRun && <PrintRunFields draft={draft} setDraft={setDraft} ratePpm={c.ratePpm} currency={c.currency} />}
-                          {f.unit && !f.printRun && <input className="inline-input num" style={{ width: 110 }} value={draft.unit} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価"
+                          {(usage === "oem" || usage === "sublicense") && <BasisSelect draft={draft} setDraft={setDraft} usage={usage} />}
+                          {f.copies && <PrintRunFields draft={draft} setDraft={setDraft} ratePpm={c.ratePpm} currency={c.currency} />}
+                          {f.unit && !f.copies && <input className="inline-input num" style={{ width: 110 }} value={draft.unit} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価"
                                             onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
                           {f.gross && <input className="inline-input num" style={{ width: 130 }} value={draft.gross} placeholder={f.grossLabel} aria-label={f.grossLabel}
                                              onChange={(e) => setDraft({ ...draft, gross: e.target.value })} />}
@@ -521,8 +535,12 @@ export function RoundReport(
                                   {c.ratePpm ? <div className="faint">許諾料 {yen(Math.floor((base * c.ratePpm) / 1_000_000), c.currency)}（計算書で確定）</div> : null}
                                 </>;
                               })() : <>{l.event.unitAmount
-                                ? <span className="faint">{yen(l.event.unitAmount, c.currency)} × {l.event.quantity?.toLocaleString() ?? "—"} = </span> : ""}
-                              {l.event.grossAmount !== null ? yen(l.event.grossAmount, c.currency) : ""}
+                                ? <span className="faint">{yen(l.event.unitAmount, c.currency)} × {l.event.sampleQuantity
+                                    ? `（${l.event.quantity?.toLocaleString() ?? "—"} − 非加算 ${l.event.sampleQuantity.toLocaleString()}）`
+                                    : l.event.quantity?.toLocaleString() ?? "—"} = </span> : ""}
+                              {l.event.grossAmount !== null ? yen(l.event.grossAmount, c.currency)
+                                : l.event.unitAmount && l.event.quantity
+                                ? yen(printRunOf(l.event.quantity, l.event.sampleQuantity ?? 0, l.event.unitAmount).base, c.currency) : ""}
                               <div className="faint">許諾料 {yen(l.event.amount, c.currency)}</div></>}
                               <EventTags e={l.event} usage={usage} /></>
                           : <span className="faint">—</span>}
@@ -713,7 +731,7 @@ export function ReportAdd(
       const qty = f.quantity ? numOf(draft.quantity) : 0;
       const smp = f.sample ? numOf(draft.sample ?? "") : 0;
       const unit = f.unit ? numOf(draft.unit) : 0;
-      if (f.printRun) {
+      if (f.copies) {
         const problem = printRunProblem(qty, smp, unit);
         if (problem) { onError(problem); setBusy(false); return; }
       }
@@ -722,7 +740,7 @@ export function ReportAdd(
       await api.post(`/conditions/${cond.id}/events`, {
         eventType: eventTypeFor(u, cond), occurredOn: draft.on, scheduleId: target.scheduleId,
         quantity: f.quantity ? qty || null : null,
-        ...(f.printRun ? { sampleQuantity: smp || null } : {}),
+        ...(f.sample ? { sampleQuantity: smp || null } : {}),
         unitAmount: f.unit ? unit || null : null,
         grossAmount: gross || null, amount: u ? 0 : (gross ?? 0),
         taxIncluded: f.tax ? draft.taxIncluded : null,
@@ -796,11 +814,11 @@ export function ReportAdd(
         </div>
       ) : (
       <div className="row" style={{ gap: 8 }}>
-        {usage === "oem" && <BasisSelect draft={draft} setDraft={setDraft} />}
+        {(usage === "oem" || usage === "sublicense") && <BasisSelect draft={draft} setDraft={setDraft} usage={usage} />}
         {usage && <StageFields draft={draft} setDraft={setDraft} />}
-        {f.quantity && <input className="inline-input num" style={{ width: 90 }} placeholder={f.printRun ? "部数" : "数量"} aria-label={f.printRun ? "部数" : "数量"} value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />}
-        {f.printRun && <PrintRunFields draft={draft} setDraft={setDraft} ratePpm={cond.ratePpm} currency={cond.currency} />}
-        {f.unit && !f.printRun && <input className="inline-input num" style={{ width: 110 }} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価" value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
+        {f.quantity && <input className="inline-input num" style={{ width: 90 }} placeholder={f.copies ? "部数" : "数量"} aria-label={f.copies ? "部数" : "数量"} value={draft.quantity} onChange={(e) => setDraft({ ...draft, quantity: e.target.value })} />}
+        {f.copies && <PrintRunFields draft={draft} setDraft={setDraft} ratePpm={cond.ratePpm} currency={cond.currency} />}
+        {f.unit && !f.copies && <input className="inline-input num" style={{ width: 110 }} placeholder={usage === "oem" ? "単価" : "基準価格"} aria-label="単価" value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} />}
         {f.gross && <input className="inline-input num" style={{ width: 130 }} placeholder={f.grossLabel} aria-label={f.grossLabel} value={draft.gross} onChange={(e) => setDraft({ ...draft, gross: e.target.value })} />}
         {f.tax && <label className="ledger-check"><input type="checkbox" checked={draft.taxIncluded} onChange={(e) => setDraft({ ...draft, taxIncluded: e.target.checked })} /> 税込</label>}
         <label className="row" style={{ gap: 4 }}>{eventStyle && <span className="faint">製造日</span>}
