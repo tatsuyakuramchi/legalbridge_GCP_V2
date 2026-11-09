@@ -360,3 +360,15 @@ test("計算書の明細（束ね）の製品名に版が付く。本文は版�
     statementMode: "bundle", rs_bundle_lines: [line(1, "")] });
   assert.equal((plain.lineGroups as Array<Record<string, any>>)[0].lines[0].productName, "トーネードスプラッシュ", "版が無ければ今までどおり");
 });
+
+test("取引モデル概要は人が書いた値（rs_model_summary）が勝つ。空なら自動（出版は空のまま）", () => {
+  const line = {
+    conditionId: 11, eventId: 42, contractTitle: "2024年12月20日付出版許諾契約", contractNumber: "ARC-PUBT-2026-1032-R2",
+    conditionName: "クトゥルフ神話怪物図鑑", methodLabel: "売上報告ベース",
+    salesJpy: 1534500, ratePct: 4, paymentJpy: 61380, basisNote: "", payerName: "", intakeCurrency: ""
+  };
+  const auto = royaltyStatementPatch({}, { statementMode: "bundle", rs_bundle_lines: [line] }, 10);
+  assert.equal(auto?.payerCompany, "", "出版は自動の値が無い");
+  const typed = royaltyStatementPatch({}, { statementMode: "bundle", rs_bundle_lines: [line], rs_model_summary: " 新紀元社版 " }, 10);
+  assert.equal(typed?.payerCompany, "新紀元社版");
+});

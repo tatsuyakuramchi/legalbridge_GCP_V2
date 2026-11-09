@@ -688,7 +688,9 @@ export function payerSummary(names: Array<string | null | undefined>): string {
   return `${found[0]} ほか${found.length - 1}社`;
 }
 
-function receiptHeader(context: Data, lines: BundleLine[]): Data {
+function receiptHeader(context: Data, lines: BundleLine[], manual: Data = {}): Data {
+  // 「取引モデル概要」を人が書いていればそれ（文書作成の画面の計算書の枠。rs_model_summary）。
+  const typedSummary = String(manual.rs_model_summary ?? "").trim();
   const same = (values: Array<string | null | undefined>) => {
     const found = [...new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))];
     return found.length === 1 ? found[0] : "";
@@ -703,9 +705,9 @@ function receiptHeader(context: Data, lines: BundleLine[]): Data {
     //
     // 利用形態の付いた行は「■ 取引モデル」の「取引モデル概要」として、
     // 取引モデルごとの書き方（アークライト版／◯◯再許諾分／◯◯版）で出す（statement-model.ts）。
-    payerCompany: lines.some((l) => l.usageType)
+    payerCompany: typedSummary || (lines.some((l) => l.usageType)
       ? modelSummary(lines, (context.company as Data | undefined)?.name)
-      : payerSummary(lines.map((l) => l.payerName)),
+      : payerSummary(lines.map((l) => l.payerName))),
     // デザイナー／権利者は作者。＝取得（イン）条件の取引先。
     designerName: String(counterparty.name ?? ""),
     // 入金通貨はアウト条件の通貨。契約が何建てかは、その契約が持っている。
@@ -954,7 +956,7 @@ export function royaltyStatementPatch(
         netTransfer: manual.rs_bundle_net_transfer === undefined || manual.rs_bundle_net_transfer === null
           ? null : num(manual.rs_bundle_net_transfer)
       }, manual.rs_period_label === undefined || manual.rs_period_label === null ? null : String(manual.rs_period_label)),
-      ...receiptHeader(context, computedLines),
+      ...receiptHeader(context, computedLines, manual),
       // 取引モデル（利用形態）で、そのモデルに要らない欄を空にする。
       ...statementModelPatch(computedLines.map((l) => l.usageType)),
       ...(notes ? { notes } : {})
