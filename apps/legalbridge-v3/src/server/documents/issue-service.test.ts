@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { DocumentIssueService, readIssuedOn } from "./issue-service.js";
+import { DocumentIssueService, readIssuedOn, revisionFamily } from "./issue-service.js";
 import { DocumentRepository } from "./repository.js";
 import { DomainError } from "../core/errors.js";
 
@@ -75,6 +75,7 @@ test("訂正版は連番を取らず、元の番号に枝番を付ける。紙�
     if (text.includes("SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE")) {
       return [{ id: 1, document_no: "ARC-RS-2026-0007", status: "issued" }];
     }
+    if (text.includes("SELECT d.document_no, t.template_key, t.label")) return [{ document_no: "ARC-RS-2026-0007" }];
     if (text.includes("SELECT document_no FROM documents WHERE id = $1")) return [{ document_no: "ARC-RS-2026-0007" }];
     if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-RS-2026-0007" }];
     return base(text);
@@ -99,7 +100,7 @@ test("訂正版の改訂の印は、見せないと選べば紙には本体の�
     if (text.includes("SELECT id, document_no, status FROM documents WHERE id = $1 FOR UPDATE")) {
       return [{ id: 1, document_no: "ARC-RS-2026-0007-R2", status: "issued" }];
     }
-    if (text.includes("SELECT document_no FROM documents WHERE id = $1")) return [{ document_no: "ARC-RS-2026-0007-R2" }];
+    if (text.includes("SELECT d.document_no, t.template_key, t.label")) return [{ document_no: "ARC-RS-2026-0007-R2" }];
     if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-RS-2026-0007" }, { document_no: "ARC-RS-2026-0007-R2" }];
     return base(text);
   });
@@ -112,6 +113,7 @@ test("訂正版の改訂の印は、見せないと選べば紙には本体の�
 test("訂正版のプレビューは、紙に出る番号（本体＋改訂の印）を先に見せる", async () => {
   const base = responder();
   const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT d.document_no, t.template_key, t.label")) return [{ document_no: "ARC-RS-2026-0007" }];
     if (text.includes("SELECT document_no FROM documents WHERE id = $1")) return [{ document_no: "ARC-RS-2026-0007" }];
     if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-RS-2026-0007" }];
     // プレビューはひな形を鍵で引く（決定は版 ID で引く）。同じ行を返す。
@@ -489,4 +491,27 @@ test("決定のとき、無効にした条件は新しい方（同じ作品と�
   });
   const svc = new DocumentIssueService(db) as unknown as { followRevisions(client: unknown, ids: number[]): Promise<number[]> };
   assert.deepEqual(await svc.followRevisions(db, [11, 12]), [31, 12]);
+});
+
+test("訂正版は同じ種類の文書でだけ出せる。条件書の訂正版として計算書を出すと止める（番号も取らない）", async () => {
+  const base = responder();
+  const db = new FakeDatabase((text) => {
+    if (text.includes("SELECT id, status, template_version_id")) {
+      return [{ id: 2, status: "draft", template_version_id: 401, matter_id: 501, agreement_id: 201,
+                manual_inputs: { PERIOD: "2026上期" }, supersedes_id: 1, supersede_reason: "金額の誤り" }];
+    }
+    if (text.includes("SELECT d.document_no, t.template_key, t.label")) {
+      return [{ document_no: "ARC-PUBT-2026-9000", template_key: "pub_license_terms", label: "出版等利用許諾条件書" }];
+    }
+    return base(text);
+  });
+  await assert.rejects(() => new DocumentIssueService(db).issue(2, "kuramochi"), /訂正版は同じ種類の文書でだけ出せます.*ARC-PUBT-2026-9000/);
+  assert.equal(db.find("SET status = 'superseded'"), undefined, "元の条件書は退かない");
+  assert.equal(db.find("UPDATE documents"), undefined, "番号を振らない");
+});
+
+test("訂正版の種類：計算書どうし・発注書どうしは同じ種類", () => {
+  assert.equal(revisionFamily("royalty_statement"), revisionFamily("royalty_statement_pub"));
+  assert.equal(revisionFamily("purchase_order"), revisionFamily("intl_purchase_order"));
+  assert.notEqual(revisionFamily("royalty_statement"), revisionFamily("pub_license_terms"));
 });

@@ -98,7 +98,8 @@ export function eventBundleLines(preview: CalculationPreview): BundleLine[] {
     conditionName: e.productName ?? c.name,
     methodLabel: methodLabelOf(preview),
     salesJpy: toMajor(e.basis, currency),
-    ratePct: e.ratePct ?? c.ratePct,
+    // 一括の利用料（定額）は料率を掛けない。算定基礎額 × 100% ＝ 支払額 として出す（0% と出さない）。
+    ratePct: c.pricingModel === "fixed" ? 100 : e.ratePct ?? c.ratePct,
     paymentJpy: toMajor(e.amount ?? 0, currency),
     ...shareOf(preview),
     basisNote: [e.period ? `対象期間 ${e.period}` : "", storeOfNote(e.note), e.basisNote ?? ""].filter(Boolean).join("・"),

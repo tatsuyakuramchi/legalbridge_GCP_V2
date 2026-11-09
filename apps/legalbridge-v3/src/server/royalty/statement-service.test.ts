@@ -20,6 +20,9 @@ interface Options {
   /** 2 版目以降の非加算（発行部数の %）と価格の基準。 */
   exemptLaterPct?: number | null;
   priceBasis?: string | null;
+  /** 計算方式（既定は料率）と定額。 */
+  pricingModel?: string;
+  flatAmount?: number | null;
 }
 
 const responder = (options: Options = {}) => (text: string): Array<Record<string, unknown>> | undefined => {
@@ -32,9 +35,10 @@ const responder = (options: Options = {}) => (text: string): Array<Record<string
   if (text.includes("FROM conditions c") && text.includes("LEFT JOIN parties p")) {
     return [{ id: 5, condition_no: "CL-2026-00042", name: "配信許諾", kind: "license",
               direction: "out", counterparty_id: 11, currency: "JPY",
-              pricing_model: "revenue_rate", rate_ppm: 125000, usage_type: options.usageType ?? null,
+              pricing_model: options.pricingModel ?? "revenue_rate", rate_ppm: options.pricingModel === "fixed" ? 0 : 125000,
+              usage_type: options.usageType ?? null,
               royalty_exempt_later_pct: options.exemptLaterPct ?? null, price_basis: options.priceBasis ?? null,
-              unit_amount: null, flat_amount: null,
+              unit_amount: null, flat_amount: options.flatAmount ?? null,
               mg_amount: options.mg ?? null, ag_amount: options.ag ?? null,
               tax_category: "taxable", status: options.conditionStatus ?? "active",
               agreement_title: "配信許諾基本契約", agreement_no: "AG-2026-0001",
@@ -397,6 +401,24 @@ test("実績の束：紙出版で基準価格のある報告は（部数 − 非
   const receipts = withEvents(eventRows([{ event_type: "manufacturing", quantity: 1000, unit_amount: 1800 }]),
     { usageType: "pub_print", priceBasis: "receipts" });
   assert.equal((await receipts.service.preview({ conditionId: 5, eventIds: [41] })).events[0].basis, 3000000);
+});
+
+test("実績の束：一括の利用料（定額）は実績の金額をそのまま払う。料率は掛けない", async () => {
+  // イラストの利用料 5 万円を 1 回で。実績は検収で入れる。
+  const rows = eventRows([{ event_type: "inspection", gross_amount: null, amount: 50000 }]).slice(0, 1);
+  const { service: royalty } = withEvents(rows, { pricingModel: "fixed", flatAmount: 50000 });
+  const r = await royalty.preview({ conditionId: 5, eventIds: [41] });
+  assert.equal(r.events[0].basis, 50000);
+  assert.equal(r.events[0].amount, 50000);
+  assert.equal(r.fee.gross_ex_tax, 50000, "条件の定額ではなく実績の合計（分けて払う回もある）");
+  // 分けて払う：2 回目の実績だけ。
+  const half = withEvents(eventRows([{ event_type: "inspection", gross_amount: null, amount: 20000 }]).slice(0, 1),
+    { pricingModel: "fixed", flatAmount: 50000 });
+  assert.equal((await half.service.preview({ conditionId: 5, eventIds: [41] })).fee.gross_ex_tax, 20000);
+  // 金額の無い実績は止める。
+  const empty = withEvents(eventRows([{ event_type: "inspection", gross_amount: null, amount: 0 }]).slice(0, 1),
+    { pricingModel: "fixed", flatAmount: 50000 });
+  await assert.rejects(() => empty.service.preview({ conditionId: 5, eventIds: [41] }), /金額が入っていません/);
 });
 
 test("実績の束の確定：実績は作らず、明細を実績ごとに根拠比で按分し、実績を文書に結ぶ", async () => {

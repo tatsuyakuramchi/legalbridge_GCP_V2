@@ -79,9 +79,10 @@ export function buildFeeTerms(condition: ConditionEconomics, reported: ReportedR
 
   switch (condition.pricingModel) {
     case "fixed":
+      // 実績の金額の合計を払うとき（一括の利用料を実績から出す計算書）は、それを渡す。無ければ条件の定額。
       return {
         type: "fixed",
-        unit_price: toMajor(condition.flatAmount, currency),
+        unit_price: toMajor(reported.grossOverrideMinor ?? condition.flatAmount, currency),
         quantity: 1
       };
 

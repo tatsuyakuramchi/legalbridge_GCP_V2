@@ -371,6 +371,12 @@ export function WorkLedger(
     return out;
   };
   /** 支払を立てられる文書（決定済みの検収書・計算書で、まだ支払の無いもの）。 */
+  /** まだ計算書・検収書に載っていない実績（一括の利用料の計算書に載せる）。 */
+  const unbilledEventIds = (r: GridRow): number[] => {
+    const rs = doneRounds(r);
+    if (rs.length) return rs.filter((x) => !x.doc).map((x) => x.eventId!);
+    return r.events.latestId && !r.settlementDoc ? [r.events.latestId] : [];
+  };
   const payableDocs = (r: GridRow) => {
     const rs = doneRounds(r);
     const seen = new Map<number, { id: number; documentNo: string | null; seq: number | null }>();
@@ -552,7 +558,12 @@ export function WorkLedger(
         {r.terms && r.individual && <div className="faint" style={{ fontSize: 11.5 }}>個別契約 {r.individual.agreementNo ?? `#${r.individual.id}`}</div>}
         {!r.terms && contractButton(r, "individual", r.individual ? "条件書を上げる" : "個別契約",
           r.individual ? "この個別契約の条件書（PDF）を上げる。番号は個別契約の番号のまま" : "既存の文書から選ぶか、条件明細から引用して個別契約（利用許諾条件書）を登録する")}
-        {r.direction !== "out" && r.terms && r.terms.phase !== "draft" && partyId !== null && flow.royalty
+        {r.direction !== "out" && r.pricingModel === "fixed"
+          // 一括の利用料（定額。イラストなど）は回の台帳に出ない。実績から計算書を直接作る（料率は掛けない）。
+          ? onCompose && unbilledEventIds(r).length > 0
+            && next("計算書を作る", () => onCompose([r.conditionId], unbilledEventIds(r), matterId, "royalty_statement"),
+                    "一括の利用料。まだ計算書に載っていない実績で計算書を作る（実績の金額をそのまま払う）")
+          : r.direction !== "out" && r.terms && r.terms.phase !== "draft" && partyId !== null && flow.royalty
           && next("計算書を作る", () => flow.royalty!({ partyId, workId: r.workId }),
                   "作品 › 利用許諾計算の台帳（作家 × 作品）を開いて、回ごとに計算書を作る")}
       </>;

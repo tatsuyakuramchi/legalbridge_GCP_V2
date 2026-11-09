@@ -1,3 +1,4 @@
+import { isRoyaltyStatementKey } from "./settlement-docs.js";
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { applyWriteBack, type WriteBackResult } from "./write-back.js";
 import { isAutoInLieuTerms } from "../conditions/royalty-in-lieu.js";
@@ -118,6 +119,16 @@ export function readIssuedOn(raw: string | null | undefined, today = new Date())
     throw new DomainError("VALIDATION", `決定日が古すぎます。打ち間違いではありませんか（${text}）`);
   }
   return text;
+}
+
+/**
+ * 訂正版で入れ替えてよい文書の種類。計算書（通常・出版）どうし、発注書（国内・海外）どうしは同じ種類。
+ * ほかはひな形が同じものだけ。
+ */
+export function revisionFamily(templateKey: string): string {
+  if (isRoyaltyStatementKey(templateKey)) return "royalty_statement";
+  if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") return "purchase_order";
+  return templateKey;
 }
 
 export class DocumentIssueService {
@@ -458,10 +469,24 @@ export class DocumentIssueService {
         const year = issuedOn ? Number(issuedOn.slice(0, 4)) : currentYearInTokyo();
         // 訂正版は連番を進めない。退かせる元の番号に枝番を付ける（ARC-PO-2026-0031-R2）。
         // 連番を取ると相手に出した番号が版ごとに変わり、検収書・支払・契約の引き当てが追いにくい。
-        const supersedesNo = int(row.supersedes_id)
-          ? str(((await client.query("SELECT document_no FROM documents WHERE id = $1",
-                                     [row.supersedes_id])).rows[0] as { document_no?: string } | undefined)?.document_no)
-          : null;
+        const prior = int(row.supersedes_id)
+          ? ((await client.query(
+              `SELECT d.document_no, t.template_key, t.label
+                 FROM documents d
+                 LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+                 LEFT JOIN document_templates t ON t.id = tv.template_id
+                WHERE d.id = $1`, [row.supersedes_id])).rows[0] as
+              { document_no?: string | null; template_key?: string | null; label?: string | null } | undefined)
+          : undefined;
+        // 訂正版は同じ種類の文書でだけ出す。条件書の訂正版として計算書を出すと、計算書が条件書の番号
+        // （ARC-PUBT-…-R2）を取り、条件書が「差し替え済み」に退く（予備系で実際に起きた）。
+        // 取り込んだ文書（ひな形の無いもの）は種類が分からないので止めない。
+        if (prior?.template_key && revisionFamily(prior.template_key) !== revisionFamily(template.templateKey)) {
+          throw new DomainError("VALIDATION",
+            `訂正版は同じ種類の文書でだけ出せます。元の ${prior.document_no ?? "文書"} は「${prior.label ?? prior.template_key}」、`
+            + `この文書は「${template.label}」です。訂正版ではなく新しい文書として作ってください`);
+        }
+        const supersedesNo = int(row.supersedes_id) ? str(prior?.document_no) : null;
         const documentNo = supersedesNo
           ? await nextRevisionNumber(client, supersedesNo)
           : formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));

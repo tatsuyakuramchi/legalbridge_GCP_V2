@@ -130,6 +130,7 @@ const issuing = (extra: Record<string, unknown> = {}, oldStatus = "issued") => {
       return [{ id: 5, document_no: "ARC-INS-2026-1001", status: oldStatus }];
     }
     // 訂正版の番号は元の番号に枝番を付ける。元の番号と、同じ本体を持つ版の一覧。
+    if (text.includes("SELECT d.document_no, t.template_key, t.label")) return [{ document_no: "ARC-INS-2026-1001" }];
     if (text.includes("SELECT document_no FROM documents WHERE id")) return [{ document_no: "ARC-INS-2026-1001" }];
     if (text.includes("OR document_no LIKE $2")) return [{ document_no: "ARC-INS-2026-1001" }];
     if (text.includes("FROM documents WHERE id")) {
