@@ -18,6 +18,14 @@ import { floorRoyalty, roundRoyalty, taxOf } from "./rounding.js";
 const isPublishingUsage = (usage: string | null | undefined) => usage === "pub_print" || usage === "pub_digital";
 
 /** 紙の行の注記「報告額 ¥3,000,000 × （3,000部 − 非加算 30部（1%））÷ 3,000部」。 */
+/** 「（4,009部 − 非加算 100部）× 基準価格 ¥1,800」。非加算が無ければ「4,009部 × 基準価格 ¥1,800」。 */
+export const unitBasisNote = (x: { copies: number; exempt: number; pct: number | null; unit: number }) => {
+  const copies = `${x.copies.toLocaleString("ja-JP")}部`;
+  const price = `基準価格 ¥${Math.round(x.unit).toLocaleString("ja-JP")}`;
+  return x.exempt > 0
+    ? `（${copies} − 非加算 ${x.exempt.toLocaleString("ja-JP")}部${x.pct ? `（${x.pct}%）` : ""}）× ${price}`
+    : `${copies} × ${price}`;
+};
 const laterExemptNote = (x: { copies: number; exempt: number; pct: number | null }, gross: number) =>
   `報告額 ¥${Math.round(gross).toLocaleString("ja-JP")} ×（${x.copies.toLocaleString("ja-JP")}部 − 非加算 ${
     x.exempt.toLocaleString("ja-JP")}部${x.pct ? `（${x.pct}%）` : ""}）÷ ${x.copies.toLocaleString("ja-JP")}部`;
@@ -287,16 +295,33 @@ export class RoyaltyStatementService {
      * （作者に不利にならない向き）。受領額基準（receipts）は部数を掛けないので効かない。
      */
     const laterExemptOf = (e: Record<string, any>): { copies: number; exempt: number; pct: number | null } | null => {
-      if (condition.usageType !== "pub_print" || !condition.exemptLaterPct || condition.priceBasis === "receipts") return null;
+      if (condition.usageType !== "pub_print" || condition.priceBasis === "receipts") return null;
+      // 人が入れた非加算部数（献本・見本など）があればそれ。無ければ条件の「2 版目以降は発行部数の X%」。
+      const manual = e.sample_quantity === null || e.sample_quantity === undefined ? null : Number(e.sample_quantity);
+      const hasManual = manual !== null && manual > 0;
+      if (!hasManual && !condition.exemptLaterPct) return null;
       const copies = Number(e.quantity ?? 0);
       if (!(copies > 0)) {
-        throw new DomainError("VALIDATION",
-          `実績 #${e.id} に発行部数が入っていません（この条件は発行部数の${condition.exemptLaterPct}%を非加算にするので部数が要ります）`);
+        throw new DomainError("VALIDATION", hasManual
+          ? `実績 #${e.id} に部数が入っていません（非加算部数を引くので部数が要ります）`
+          : `実績 #${e.id} に発行部数が入っていません（この条件は発行部数の${condition.exemptLaterPct}%を非加算にするので部数が要ります）`);
       }
-      const manual = e.sample_quantity === null || e.sample_quantity === undefined ? null : Number(e.sample_quantity);
-      const exempt = manual !== null && manual > 0 ? Math.floor(manual) : Math.floor((copies * condition.exemptLaterPct) / 100);
-      if (exempt >= copies) throw new DomainError("VALIDATION", `実績 #${e.id} の非加算部数が発行部数以上です`);
-      return { copies, exempt, pct: manual !== null && manual > 0 ? null : condition.exemptLaterPct };
+      const exempt = hasManual ? Math.floor(manual!) : Math.floor((copies * condition.exemptLaterPct!) / 100);
+      if (exempt >= copies) throw new DomainError("VALIDATION", `実績 #${e.id} の非加算部数が部数以上です`);
+      return { copies, exempt, pct: hasManual ? null : condition.exemptLaterPct };
+    };
+    /**
+     * 紙出版（受領額基準を除く）で基準価格（本体価格）の入った報告は、（部数 − 非加算部数）× 基準価格 が算定の基礎。
+     * 基準価格の無い古い報告は、今までどおり報告額（本体価格 × 部数）から非加算の分を割り引く。
+     */
+    const unitBasisOf = (e: Record<string, any>): { copies: number; exempt: number; pct: number | null; unit: number } | null => {
+      if (condition.usageType !== "pub_print" || condition.priceBasis === "receipts") return null;
+      const unit = Number(e.unit_amount ?? 0);
+      if (!(unit > 0)) return null;
+      const copies = Number(e.quantity ?? 0);
+      if (!(copies > 0)) throw new DomainError("VALIDATION", `実績 #${e.id} に部数が入っていません（基準価格 × 部数で計算します）`);
+      const ex = laterExemptOf(e);
+      return { copies, exempt: ex?.exempt ?? 0, pct: ex?.pct ?? null, unit };
     };
     const basisOf = (e: Record<string, any>): number => {
       const type = String(e.event_type);
@@ -308,6 +333,8 @@ export class RoyaltyStatementService {
           throw new DomainError("VALIDATION",
             `料率の条件の計算書に載せられるのは 売上 と 再許諾の受領 の実績だけです（実績 #${e.id} は ${type}）`);
         }
+        const byUnit = unitBasisOf(e);
+        if (byUnit) return byUnit.unit * (byUnit.copies - byUnit.exempt);
         const gross = Number(e.gross_amount ?? e.amount ?? 0);
         if (!(gross > 0)) throw new DomainError("VALIDATION", `実績 #${e.id} に報告額（本体価格 × 部数などの売上）が入っていません`);
         const exempt = laterExemptOf(e);
@@ -338,7 +365,10 @@ export class RoyaltyStatementService {
       sampleQuantity: model === "revenue_rate" && laterExemptOf(e)
         ? laterExemptOf(e)!.exempt
         : e.sample_quantity === null ? null : Number(e.sample_quantity),
-      ...(model === "revenue_rate" && laterExemptOf(e) ? { basisNote: laterExemptNote(laterExemptOf(e)!, Number(e.gross_amount ?? e.amount ?? 0)) } : {}),
+      ...(model === "revenue_rate" && unitBasisOf(e)
+        ? { basisNote: unitBasisNote(unitBasisOf(e)!) }
+        : model === "revenue_rate" && laterExemptOf(e)
+        ? { basisNote: laterExemptNote(laterExemptOf(e)!, Number(e.gross_amount ?? e.amount ?? 0)) } : {}),
       salesInput: model === "revenue_rate" ? basis[i] : null,
       share: total > 0 ? basis[i] / total : 0,
       note: e.note ? String(e.note) : null,

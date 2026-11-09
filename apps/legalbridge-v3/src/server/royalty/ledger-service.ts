@@ -75,6 +75,11 @@ export interface LedgerCondition {
   targetPartyId?: number | null; targetPartyName?: string | null;
   /** 共著の取り分（A-068）。空なら相手先 1 者に 100%。計算書は受取人ごとに 1 枚。 */
   shares?: Array<{ partyId: number; name: string; sharePpm: number }>;
+  /**
+   * 算定の基礎の価格（list 本体価格／supply 卸値／receipts 受領額）。紙出版で receipts 以外なら、
+   * 報告は 部数・非加算部数・基準価格 で入れ、（部数 − 非加算部数）× 基準価格 × 料率 で計算する。
+   */
+  priceBasis?: string | null;
 }
 
 export interface LedgerEvent {
@@ -83,6 +88,8 @@ export interface LedgerEvent {
   usageType: string | null; outConditionId: number | null; outName: string | null;
   workId: number | null; workTitle: string | null;
   quantity: number | null; unitAmount: number | null; grossAmount: number | null; amount: number;
+  /** 非加算部数（献本・見本など。紙出版の報告）。 */
+  sampleQuantity?: number | null;
   documentId: number | null;
   /** 結ばれた計算書の番号。台帳から決定した文書のページへ行く。 */
   documentNo?: string | null;
@@ -538,6 +545,7 @@ export class RoyaltyLedgerService {
                 c.agreement_id, a.agreement_no, c.pricing_model, c.rate_ppm, c.unit_amount,
                 c.mg_amount, c.ag_amount, c.currency, c.payment_terms, c.statement_timing, c.settlement_mode,
                 c.target_party_id, tp.name AS target_party_name,
+                to_jsonb(c) ->> 'price_basis' AS price_basis,
                 COALESCE(c.series_id, c.id) AS series
            FROM conditions c
            LEFT JOIN works w ON w.id = c.work_id
@@ -570,7 +578,7 @@ export class RoyaltyLedgerService {
       const events = allIds.length ? ((await q.query(
         `SELECT e.id, e.condition_id, e.schedule_id, e.event_type, e.occurred_on, e.period, e.usage_type,
                 e.out_condition_id, oc.name AS out_name, e.work_id, ew.title AS work_title,
-                e.quantity, e.unit_amount, e.gross_amount, e.amount, e.document_id, d.status AS document_status, d.document_no,
+                e.quantity, e.sample_quantity, e.unit_amount, e.gross_amount, e.amount, e.document_id, d.status AS document_status, d.document_no,
                 e.scope_languages, e.scope_regions, e.payment_stage, e.tax_included, e.note
            FROM condition_events e
            LEFT JOIN conditions oc ON oc.id = e.out_condition_id
@@ -585,6 +593,7 @@ export class RoyaltyLedgerService {
           usageType: str(e.usage_type), outConditionId: int(e.out_condition_id), outName: str(e.out_name),
           workId: int(e.work_id), workTitle: str(e.work_title),
           quantity: e.quantity === null ? null : Number(e.quantity), unitAmount: int(e.unit_amount),
+          sampleQuantity: e.sample_quantity === null || e.sample_quantity === undefined ? null : Number(e.sample_quantity),
           grossAmount: int(e.gross_amount), amount: Number(e.amount ?? 0),
           // 無効にした文書に付いたままの実績は、まだ出していない扱い。
           documentId: e.document_id && e.document_status === "issued" ? Number(e.document_id) : null,
@@ -657,7 +666,8 @@ export class RoyaltyLedgerService {
         timingExplicit: Boolean(c.statement_timing) || Boolean(c.settlement_mode),
         settlementMode: str(c.settlement_mode),
         schedules: schedules.filter((s) => s.conditionId === Number(c.id)).length,
-        targetPartyId: int(c.target_party_id), targetPartyName: str(c.target_party_name)
+        targetPartyId: int(c.target_party_id), targetPartyName: str(c.target_party_name),
+        priceBasis: str(c.price_basis)
       }));
 
       // 共著の取り分：受取人ごとの計算書がそろったか。報告は 1 人目の計算書だけを指すので、明細から数える。
@@ -774,6 +784,8 @@ export class RoyaltyLedgerService {
   async correct(
     input: { conditionId: number; eventId: number; reason: string;
              quantity?: number | null; unitAmount?: number | null; grossAmount?: number | null; occurredOn?: string | null;
+             /** 非加算部数（紙出版）。 */
+             sampleQuantity?: number | null;
              languages?: string[] | null; regions?: string[] | null;
              taxIncluded?: boolean | null; paymentStage?: "advance" | "balance" | null; note?: string | null;
              /** 決定した計算書に載った報告を直せるのは admin だけ。載っていない報告は legal も直せる。 */
@@ -801,6 +813,7 @@ export class RoyaltyLedgerService {
       if (input.quantity !== undefined) patch.quantity = input.quantity;
       if (input.unitAmount !== undefined) patch.unitAmount = input.unitAmount;
       if (input.grossAmount !== undefined) patch.grossAmount = input.grossAmount;
+      if (input.sampleQuantity !== undefined) patch.sampleQuantity = input.sampleQuantity;
       if (input.occurredOn !== undefined) patch.occurredOn = input.occurredOn;
       if (input.languages !== undefined) patch.languages = input.languages;
       if (input.regions !== undefined) patch.regions = input.regions;
