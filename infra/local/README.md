@@ -376,7 +376,12 @@ Cloud SQL Studio だけで完結する。読み取りしかしないので本番
 
 **1. 取り出す**
 
-`infra/v3/094_export_rows.sql` を Studio に貼る。
+まず `infra/v3/094_export_schema.sql` を Studio に貼って 1 回流し、結果を CSV で落とす（見出しは
+`schema_seq,schema_b64`。v3 の表の作りを本番から取り出したもの）。中身と同じフォルダに置くと、取り込みが
+表をこの定義で作り直す。置かないと手元の 001/004 から作るので、本番に後から足した列があると
+「手元の定義に無い列があります」で止まる。
+
+続けて `infra/v3/094_export_rows.sql` を Studio に貼る。
 
 - 「1.」を流すとページの一覧（ページ番号・行数・バイト数）が出る。**この一覧を控える**
 - 「2.」の `WHERE page = 0` の数字を 0, 1, 2 … と一覧のぶん変えて流し、毎回 CSV で落とす。
@@ -403,10 +408,10 @@ mkdir dumps\rows -Force
 # 前回の取り出しが残っていると、同じ行が重なって取り込みが止まる。先に空にする。
 Remove-Item dumps\rows\*.csv -ErrorAction SilentlyContinue
 
-# 見出しが tbl,data のものだけを拾う。関係ない CSV を巻き込まないため。
+# 見出しが tbl,data（中身）か schema_seq,schema_b64（表の作り）のものだけを拾う。関係ない CSV を巻き込まないため。
 # まず何が移るのかを見る。
 $src = Get-ChildItem "$HOME\Downloads\studio_results_*.csv" |
-  Where-Object { ((Get-Content $_.FullName -TotalCount 1) -replace '^\uFEFF','' -replace '"','') -eq 'tbl,data' }
+  Where-Object { ((Get-Content $_.FullName -TotalCount 1) -replace '^\uFEFF','' -replace '"','') -in @('tbl,data', 'schema_seq,schema_b64') }
 $src | Select-Object Name, LastWriteTime, Length
 
 # よければ移す。

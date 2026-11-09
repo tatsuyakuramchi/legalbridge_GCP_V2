@@ -821,11 +821,28 @@ import_backup() {
 }
 
 # ---------------------------------------------------------------------
+# 094_export_schema.sql の結果（schema_seq,schema_b64 の CSV）を SQL のファイルに戻す。
+#   1 行 1 文・本文は base64（Studio の CSV で改行が崩れないように）。schema_seq の順に並べる。
+# ---------------------------------------------------------------------
+schema_from_csv() {
+  local csv="$1" out="$2"
+  psql_local -Atq > "$out" <<SQL
+CREATE TEMP TABLE schema_rows (seq bigint, b64 text);
+\copy schema_rows FROM '$csv' WITH (FORMAT csv, HEADER true)
+SELECT convert_from(decode(b64, 'base64'), 'UTF8') FROM schema_rows ORDER BY seq;
+SQL
+  local n; n=$(grep -c ';' "$out" || true)
+  [ "${n:-0}" -gt 10 ] || die "$(basename "$csv") から定義を読めません（094_export_schema.sql の結果か確かめてください）"
+  grep -q '^CREATE TABLE v3\.' "$out" || die "$(basename "$csv") に表の定義がありません"
+}
+
+# ---------------------------------------------------------------------
 # 方式3：Cloud SQL Studio から落とした CSV を取り込む。
 #   自動同期の経路が両方とも塞がれている環境向け。人が Studio で
 #   094_export_rows.sql を流し、結果（tbl, data の2列）を CSV で落として置く。
 #
-#   表の構造は手元の定義（001 + 004）から作り、中身だけを CSV から入れる。
+#   表の構造は、094_export_schema.sql の結果が同じフォルダにあればそれ（本番の定義）から、
+#   無ければ手元の定義（001 + 004）から作り、中身を CSV から入れる。
 #   本番にしか無い列があれば取り込まずに止める（黙って落とさない）。
 # ---------------------------------------------------------------------
 import_rows() {
@@ -840,7 +857,7 @@ import_rows() {
 
   # 094 の結果は見出しが tbl,data の2列。それ以外の CSV が混ざっていると、
   # 文字コードや列数の違いで分かりにくい形で落ちる。先に名指しで止める。
-  local files=() others=()
+  local files=() others=() schemas=()
   for f in "${all[@]}"; do
     # 見出しの1行だけを読む。パイプで繋ぐと、後ろが先に閉じたときに
     # 前が SIGPIPE で落ち、pipefail と set -e で何も出さずに終わる。
@@ -850,14 +867,18 @@ import_rows() {
     head1=${head1%$'\r'}              # CRLF
     head1=${head1//\"/}                # 引用符
     head1=${head1// /}                 # 空白
-    if [ "${head1,,}" = "tbl,data" ]; then files+=("$f"); else others+=("$(basename "$f")"); fi
+    if [ "${head1,,}" = "tbl,data" ]; then files+=("$f")
+    elif [ "${head1,,}" = "schema_seq,schema_b64" ]; then schemas+=("$f")   # 094_export_schema.sql の結果
+    else others+=("$(basename "$f")"); fi
   done
   if [ "${#others[@]}" -gt 0 ]; then
-    echo "094_export_rows.sql の結果ではない CSV が混ざっています（${#others[@]} 個）:" >&2
+    echo "094_export_rows.sql・094_export_schema.sql の結果ではない CSV が混ざっています（${#others[@]} 個）:" >&2
     printf '  %s\n' "${others[@]:0:10}" >&2
     [ "${#others[@]}" -gt 10 ] && echo "  … ほか $(( ${#others[@]} - 10 )) 個" >&2
     die "$dir には取り出した CSV だけを置いてください"
   fi
+  [ "${#files[@]}" -gt 0 ] || die "$dir に 094_export_rows.sql の結果（見出しが tbl,data の CSV）がありません"
+  [ "${#schemas[@]}" -le 1 ] || die "094_export_schema.sql の結果が ${#schemas[@]} 個あります。新しい 1 個だけを置いてください"
   log "${#files[@]} 個の CSV を取り込む"
 
   # 入れ替える前に、いまの中身を写しておく。
@@ -867,16 +888,28 @@ import_rows() {
   # 失った）。戻せる形を必ず残してから消す。戻すのは ops restore。
   backup_before_replace
 
-  log "v3 を手元の定義から作り直す"
-  psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null
-  psql_local -f "$V3/001_schema.sql" >/dev/null
-  psql_local -f "$V3/004_amend.sql" >/dev/null
+  if [ "${#schemas[@]}" -eq 1 ]; then
+    # 本番の定義（094_export_schema.sql の結果）で作り直す。手元の 001/004 が古くても列が足りなくならない。
+    log "v3 を本番の定義（$(basename "${schemas[0]}")）で作り直す"
+    local schema_sql; schema_sql=$(mktemp)
+    schema_from_csv "${schemas[0]}" "$schema_sql"
+    psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null
+    psql_local -f "$schema_sql" >/dev/null
+    rm -f "$schema_sql"
+  else
+    log "v3 を手元の定義から作り直す（本番の定義を使うなら 094_export_schema.sql の結果も同じフォルダに置く）"
+    psql_local -c "DROP SCHEMA IF EXISTS v3 CASCADE;" >/dev/null
+    psql_local -f "$V3/001_schema.sql" >/dev/null
+    psql_local -f "$V3/004_amend.sql" >/dev/null
+  fi
 
   log "行を入れる"
   load_rows "${files[@]}"
 
-  log "ビューを作り直す"
-  psql_local -f "$V3/002_views.sql" >/dev/null
+  if [ "${#schemas[@]}" -eq 0 ]; then
+    log "ビューを作り直す"
+    psql_local -f "$V3/002_views.sql" >/dev/null
+  fi
   apply_grants
 
   local rows
