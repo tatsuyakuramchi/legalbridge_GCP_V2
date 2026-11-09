@@ -3700,6 +3700,7 @@ export function createRoutes(database: Transactable) {
         quantity: z.coerce.number().nullable().optional(),
         unitAmount: z.coerce.number().int().nullable().optional(),
         grossAmount: z.coerce.number().int().nullable().optional(),
+        sampleQuantity: z.coerce.number().min(0).nullable().optional(),
         occurredOn: z.string().date().nullable().optional(),
         languages: z.array(z.string().trim().min(1).max(60)).max(30).nullable().optional(),
         regions: z.array(z.string().trim().min(1).max(60)).max(60).nullable().optional(),

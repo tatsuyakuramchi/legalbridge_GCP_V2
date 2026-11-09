@@ -67,6 +67,8 @@ test("ページを分けても取りこぼさない並び順になっている",
 test("取り込みは取り出した CSV 以外を名指しで断る", () => {
   // 取り込み先に関係ない CSV が混ざると、文字コードの違いで分かりにくく落ちる。
   // 見出しで選り分けて、混ざっているファイル名を出して止める。
-  assert.match(ops(), /094_export_rows\.sql の結果ではない CSV が混ざっています/,
+  assert.match(ops(), /094_export_rows\.sql・094_export_schema\.sql の結果ではない CSV が混ざっています/,
     "取り込み側に見出しの確認が無い");
+  // 表の作り（094_export_schema.sql の結果）は見出し schema_seq,schema_b64 で見分ける。
+  assert.match(ops(), /"schema_seq,schema_b64"/, "表の作りの CSV を見分けていない");
 });

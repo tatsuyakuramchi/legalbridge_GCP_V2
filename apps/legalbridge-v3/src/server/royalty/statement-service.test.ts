@@ -365,6 +365,40 @@ test("実績の束：紙出版の 2 版目以降は発行部数の % を非加�
   assert.equal((await digital.service.preview({ conditionId: 5, eventIds: [41, 42] })).reported.salesInput, 5000000);
 });
 
+test("実績の束：紙出版で基準価格のある報告は（部数 − 非加算部数）× 基準価格 × 料率", async () => {
+  // 4,009部・非加算 100部・基準価格 1,800円 → 3,909 × 1,800 = 7,036,200。12.5% → 879,525。
+  const rows = eventRows([{ event_type: "manufacturing", quantity: 4009, sample_quantity: 100, unit_amount: 1800,
+                            gross_amount: 7216200, amount: 7216200 }]);
+  const { service: royalty } = withEvents(rows, { usageType: "pub_print" });
+  const r = await royalty.preview({ conditionId: 5, eventIds: [41] });
+  assert.equal(r.events[0].basis, 7036200);
+  assert.equal(r.events[0].sampleQuantity, 100, "非加算部数は見本の欄に持つ");
+  assert.equal(r.fee.gross_ex_tax, 879525);
+  assert.equal(r.events[0].basisNote, "（4,009部 − 非加算 100部）× 基準価格 ¥1,800");
+  // 非加算が無ければ 部数 × 基準価格。報告額（gross）が違っていても基準価格で計算する。
+  const plain = withEvents(eventRows([{ event_type: "manufacturing", quantity: 1000, unit_amount: 1800, gross_amount: 1, amount: 1 }]),
+    { usageType: "pub_print" });
+  const p = await plain.service.preview({ conditionId: 5, eventIds: [41] });
+  assert.equal(p.events[0].basis, 1800000);
+  assert.equal(p.events[0].basisNote, "1,000部 × 基準価格 ¥1,800");
+  // 非加算部数を入れず、条件に「2 版目以降は発行部数の 1%」があればそれを引く。
+  const later = withEvents(eventRows([{ event_type: "manufacturing", quantity: 3000, unit_amount: 1000 }]),
+    { usageType: "pub_print", exemptLaterPct: 1 });
+  assert.equal((await later.service.preview({ conditionId: 5, eventIds: [41] })).events[0].basis, 2970000);
+  // 基準価格の無い古い報告は報告額から。非加算部数だけ入っていれば、条件の % が無くても割り引く。
+  const old = withEvents(eventRows([{ event_type: "manufacturing", quantity: 3000, sample_quantity: 100 }]), { usageType: "pub_print" });
+  assert.equal((await old.service.preview({ conditionId: 5, eventIds: [41] })).events[0].basis, 2900000);
+  // 非加算部数が部数以上・部数の無い報告は止める。
+  const over = withEvents(eventRows([{ event_type: "manufacturing", quantity: 100, sample_quantity: 100, unit_amount: 1000 }]), { usageType: "pub_print" });
+  await assert.rejects(() => over.service.preview({ conditionId: 5, eventIds: [41] }), /非加算部数が部数以上/);
+  const noQty = withEvents(eventRows([{ event_type: "manufacturing", quantity: null, unit_amount: 1000 }]), { usageType: "pub_print" });
+  await assert.rejects(() => noQty.service.preview({ conditionId: 5, eventIds: [41] }), /部数が入っていません/);
+  // 受領額基準は基準価格を使わない（報告額のまま）。
+  const receipts = withEvents(eventRows([{ event_type: "manufacturing", quantity: 1000, unit_amount: 1800 }]),
+    { usageType: "pub_print", priceBasis: "receipts" });
+  assert.equal((await receipts.service.preview({ conditionId: 5, eventIds: [41] })).events[0].basis, 3000000);
+});
+
 test("実績の束の確定：実績は作らず、明細を実績ごとに根拠比で按分し、実績を文書に結ぶ", async () => {
   const { db, service: royalty } = withEvents(eventRows());
   const r = await royalty.finalize({ conditionId: 5, eventIds: [41, 42], documentId: 6 }, "kuramochi");
