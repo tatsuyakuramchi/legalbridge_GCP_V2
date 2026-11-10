@@ -19,6 +19,7 @@ import { baseDocumentNumber } from "../documents/numbering.js";
  *
  * 発注書を決定したとき（issue-service）、発注書を条件に紐づけたとき（party-map）に呼ぶ。
  * 何度呼んでも 1 枚の発注書に器は 1 つ（既にあればそれを使い、親を合わせる）。
+ * 訂正版は前の版の器を引き継ぐ（器の order_document_id を新しい版に付け替える）。
  */
 
 export interface OrderAgreementInput {
@@ -49,9 +50,18 @@ export async function ensureAgreementForOrder(
        LEFT JOIN agreements a ON a.id = c.agreement_id
       WHERE c.id = ANY($1::bigint[])`, [ids]) : { rows: [] as any[] };
   const rows = conds.rows as any[];
-  // 既にこの発注書の器があるか。
+  // 既にこの発注書の器があるか。訂正版（-R2 …）なら、前の版の器を引き継ぐ（版ごとに器を立てない）。
+  // 差し替え元を辿り、いちばん新しい版の器を使う。
   const existing = (await client.query(
-    "SELECT id, agreement_no, parent_id, counterparty_id, direction FROM agreements WHERE order_document_id = $1", [input.documentId])).rows[0] as any;
+    `WITH RECURSIVE chain(id, depth) AS (
+       SELECT $1::bigint, 0
+       UNION ALL
+       SELECT d.supersedes_id, c.depth + 1 FROM documents d JOIN chain c ON d.id = c.id
+        WHERE d.supersedes_id IS NOT NULL AND c.depth < 100
+     )
+     SELECT a.id, a.agreement_no, a.parent_id, a.counterparty_id, a.direction, a.order_document_id
+       FROM chain c JOIN agreements a ON a.order_document_id = c.id
+      ORDER BY c.depth, a.id LIMIT 1`, [input.documentId])).rows[0] as any;
   if (!rows.length && !existing) return null;
 
   const parties = [...new Set(rows.map((r) => int(r.counterparty_id)).filter(Boolean))];
@@ -96,6 +106,10 @@ export async function ensureAgreementForOrder(
   if (existing) {
     agreementId = Number(existing.id);
     agreementNo = str(existing.agreement_no);
+    if (Number(existing.order_document_id) !== input.documentId) {
+      // 前の版の器を、いまの版に付け替える。
+      await client.query("UPDATE agreements SET order_document_id = $2, updated_at = now() WHERE id = $1", [agreementId, input.documentId]);
+    }
     await client.query(
       `UPDATE agreements SET kind = $2, parent_id = $3, domain = COALESCE($4, domain), updated_at = now()
         WHERE id = $1 AND (COALESCE(kind, 'master') <> $2 OR parent_id IS DISTINCT FROM $3)`,

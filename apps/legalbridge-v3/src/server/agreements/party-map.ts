@@ -86,6 +86,17 @@ export interface PartyMap {
   looseConditions: LooseCondition[];
   /** この取引先の発注書（作ったもの・取り込んだもの）。基本契約の下か、基本契約なしで並べる。 */
   orders?: MapOrder[];
+  /** この取引先の生きている条件明細ぜんぶ（マッピング：条件明細 ⇔ 個別契約）。 */
+  conditions?: MapCondition[];
+}
+
+/** マッピング用の条件明細。どの契約（個別契約・単体契約・発注書の器）に載っているか。 */
+export interface MapCondition {
+  id: number; conditionNo: string | null; name: string;
+  kind: string; direction: "in" | "out"; status: string; workTitle: string | null;
+  agreementId: number | null;
+  /** 載っている決定済み・下書きの文書（条件書・発注書など）。 */
+  documents: Array<{ id: number; documentNo: string | null; status: string }>;
 }
 
 export interface LooseCondition {
@@ -610,6 +621,23 @@ export class PartyAgreementMapService {
         kind: String(c.kind ?? ""), direction: c.direction === "out" ? "out" : "in",
         status: String(c.status ?? ""), workTitle: str(c.work_title), termStart: dateStr(c.term_start),
         masterNo: str(c.master_no)
+      }));
+      const all = await this.database.query(
+        `SELECT co.id, co.condition_no, co.name, co.kind, co.direction, co.status, co.agreement_id, w.title AS work_title,
+                COALESCE((SELECT json_agg(json_build_object('id', d.id, 'documentNo', d.document_no, 'status', d.status) ORDER BY d.id)
+                            FROM document_conditions dc JOIN documents d ON d.id = dc.document_id
+                           WHERE dc.condition_id = co.id AND d.status IN ('issued', 'draft')), '[]') AS docs
+           FROM conditions co
+           JOIN v_party_resolved r ON r.party_id = co.counterparty_id
+           LEFT JOIN works w ON w.id = co.work_id
+          WHERE r.resolved_id = $1 AND co.status NOT IN ('superseded', 'void')
+          ORDER BY co.direction, co.condition_no NULLS LAST, co.id`, [resolvedId]);
+      map.conditions = (all.rows as any[]).map((c) => ({
+        id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
+        kind: String(c.kind ?? ""), direction: c.direction === "out" ? "out" : "in", status: String(c.status ?? ""),
+        workTitle: str(c.work_title), agreementId: int(c.agreement_id),
+        documents: ((Array.isArray(c.docs) ? c.docs : JSON.parse(String(c.docs ?? "[]"))) as Array<Record<string, any>>)
+          .map((d) => ({ id: Number(d.id), documentNo: str(d.documentNo), status: String(d.status ?? "") }))
       }));
       // 基本契約に直接載っている条件は「ずれ」。基本契約は条件を持たず、発注書・条件書が持つ。
       const direct = new Map<string, number>();
@@ -1345,6 +1373,52 @@ export class PartyAgreementMapService {
    * 個別契約を単体契約に戻す（demoteToIndividual の逆）。基本契約に移した条件明細のうち、
    * この契約の文書（条件書）に載っているものを戻す。
    */
+  /**
+   * 条件明細をまとめて契約に載せる（マッピング：条件明細 ⇔ 個別契約）。null は契約から外す。
+   * 載せられるのは同じ取引先（名寄せ後）・同じ向きの個別契約・単体契約（発注書の器を含む）だけ。
+   * 基本契約は条件明細を持たない（個別契約を持つ）ので載せない。
+   */
+  async assignConditions(conditionIds: number[], agreementId: number | null, actor: string)
+    : Promise<{ moved: number; agreementNo: string | null }> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const ids = [...new Set(conditionIds.map(Number))].filter((n) => n > 0);
+        const cr = await client.query(
+          `SELECT co.id, co.condition_no, co.direction, co.agreement_id, r.resolved_id
+             FROM conditions co JOIN v_party_resolved r ON r.party_id = co.counterparty_id
+            WHERE co.id = ANY($1::bigint[]) FOR UPDATE OF co`, [ids]);
+        const conds = cr.rows as any[];
+        if (conds.length !== ids.length) throw new DomainError("NOT_FOUND", "条件明細が見つかりません");
+        let agreementNo: string | null = null;
+        if (agreementId !== null) {
+          const ar = await client.query(
+            `SELECT a.id, a.agreement_no, COALESCE(a.kind, 'master') AS kind, a.direction, r.resolved_id
+               FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id WHERE a.id = $1`, [agreementId]);
+          const a = ar.rows[0] as any;
+          if (!a) throw new DomainError("NOT_FOUND", `契約 ${agreementId} が見つかりません`);
+          if (a.kind !== "supplement" && a.kind !== "standalone") {
+            throw new DomainError("VALIDATION", "条件明細を載せられるのは個別契約（条件書・発注書）か単体契約です。基本契約には載せられません");
+          }
+          agreementNo = str(a.agreement_no);
+          for (const c of conds) {
+            if (Number(c.resolved_id) !== Number(a.resolved_id)) throw new DomainError("VALIDATION", `${c.condition_no ?? `#${c.id}`} は契約と取引先が違います`);
+            if (String(c.direction) !== String(a.direction)) throw new DomainError("VALIDATION", `${c.condition_no ?? `#${c.id}`} は契約と向き（IN／OUT）が違います`);
+          }
+        }
+        const moving = conds.filter((c) => int(c.agreement_id) !== agreementId);
+        if (moving.length) {
+          await client.query("UPDATE conditions SET agreement_id = $2, updated_at = now() WHERE id = ANY($1::bigint[])",
+            [moving.map((c) => Number(c.id)), agreementId]);
+          await recordAudit(client, {
+            actor, action: "agreement.assign_conditions", targetType: "agreement", targetId: agreementId,
+            detail: { agreementNo, moves: moving.map((c) => ({ conditionId: Number(c.id), conditionNo: str(c.condition_no), from: int(c.agreement_id) })) }
+          });
+        }
+        return { moved: moving.length, agreementNo };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
   async promoteToStandalone(id: number, actor: string): Promise<{ conditionsMoved: number }> {
     try {
       return await inTransaction(this.database, async (client) => {
