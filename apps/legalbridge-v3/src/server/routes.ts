@@ -643,6 +643,15 @@ export function createRoutes(database: Transactable) {
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
   }));
+  // マッピング：条件明細をまとめて個別契約・単体契約に載せる（null は外す）。
+  router.post("/agreement-map/conditions/assign", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        agreementId: z.coerce.number().int().positive().nullable()
+      }).parse(req.body ?? {});
+      res.json(await agreementMap.assignConditions(input.conditionIds, input.agreementId, actor(res)));
+    }));
   router.post("/agreement-map/agreements/:id/promote", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       res.json(await agreementMap.promoteToStandalone(Number(req.params.id), actor(res)));

@@ -11,7 +11,7 @@ type Row = Record<string, unknown>;
 function db(h: { conds?: Row[]; existing?: Row[]; master?: Row[]; taken?: string[] } = {}) {
   return new FakeDatabase((t, p) => {
     if (t.includes("AS agreement_order")) return h.conds ?? [];
-    if (t.includes("WHERE order_document_id = $1")) return h.existing ?? [];
+    if (t.includes("JOIN agreements a ON a.order_document_id = c.id")) return h.existing ?? [];
     if (t.includes("a.terminated_on, r.resolved_id")) return h.master ?? [];
     if (t.includes("SELECT resolved_id FROM v_party_resolved")) return [{ resolved_id: 5 }];
     if (t.includes("SELECT id FROM agreements WHERE agreement_no = $1")) return (h.taken ?? []).includes(String(p?.[0])) ? [{ id: 1 }] : [];
@@ -67,4 +67,15 @@ test("既に器があれば使い回し、親を合わせる（立て直さな�
 test("条件が無く器も無ければ何もしない。相手先が混ざれば断る", async () => {
   assert.equal(await ensureAgreementForOrder(db(), { ...input, conditionIds: [] }, "k"), null);
   await assert.rejects(ensureAgreementForOrder(db({ conds: [cond(501), cond(502, { counterparty_id: 6 })] }), input, "k"), /相手先の違う/);
+});
+
+test("訂正版は前の版の器を引き継ぐ：新しく立てず、器を新しい版に付け替える", async () => {
+  const d = db({ conds: [cond(501, { agreement_id: 77, agreement_kind: "supplement", agreement_parent: 3 })],
+                 existing: [{ id: 77, agreement_no: "ARC-PO-2026-0098", parent_id: 3, counterparty_id: 5, direction: "in", order_document_id: 97 }],
+                 master: [master(3, "ARC-SVC-2026-0001")] });
+  const r = await ensureAgreementForOrder(d, input, "k");
+  assert.equal(r?.agreementId, 77); assert.equal(r?.created, false); assert.equal(r?.agreementNo, "ARC-PO-2026-0098");
+  assert.equal(d.find("INSERT INTO agreements"), undefined, "版ごとに器を立てない");
+  assert.deepEqual(d.find("SET order_document_id = $2")!.params, [77, 98], "器を新しい版に付け替える");
+  assert.match(d.find("JOIN agreements a ON a.order_document_id = c.id")!.text, /supersedes_id/, "差し替え元を辿る");
 });

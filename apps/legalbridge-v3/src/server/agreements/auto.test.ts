@@ -132,3 +132,44 @@ test("受取人宛て：選んだ基本契約が受取人のものでなけれ�
   assert.equal(none.find("INSERT INTO agreements")!.params[2], 21);
   assert.equal(r?.conditionsLinked, 0, "条件は代表の契約のまま");
 });
+
+test("文書に基本契約が付いていれば、それを親に個別契約を立て、文書を個別契約に差し替える（基本契約に直付けしない）", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("COALESCE(kind, 'master') AS kind, parent_id FROM agreements")) return [{ id: 3, agreement_no: "ARC-PUBM-2026-0001", kind: "master", parent_id: null }];
+    if (t.includes("FROM conditions c")) return [{ id: 7, counterparty_id: 5, direction: "out", agreement_id: null, work_title: null }];
+    if (t.includes("SELECT id, agreement_no, domain FROM agreements")) return [{ id: 3, agreement_no: "ARC-PUBM-2026-0001", domain: "license" }];
+    if (t.includes("INSERT INTO agreements")) return [{ id: 95 }];
+    return [];
+  });
+  const r = await ensureAgreementForTerms(db, { ...base, documentNo: "ARC-PUBT-2026-1030", templateKey: "pub_license_terms_v3", agreementId: 3 }, "who");
+  assert.equal(r?.kind, "supplement"); assert.equal(r?.parentId, 3); assert.equal(r?.agreementNo, "ARC-PUBT-2026-1030");
+  const up = db.find("UPDATE documents SET agreement_id")!;
+  assert.match(up.text, /agreement_id = \$3/); assert.deepEqual(up.params, [10, 95, 3], "基本契約を指す文書を個別契約に差し替える");
+  assert.deepEqual(db.find("UPDATE conditions SET agreement_id")!.params, [[7], 95, 3]);
+});
+
+test("訂正版：前の版の個別契約を引き継ぐ（新しく立てない）。文書・条件をそこに寄せる", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions c")) return [{ id: 7, counterparty_id: 5, direction: "out", agreement_id: 3, agreement_kind: "master", work_title: null }];
+    if (t.includes("WITH RECURSIVE chain")) return [{ id: 60, agreement_no: "ARC-PUBT-2026-1032", kind: "supplement", parent_id: 3 }];
+    if (t.includes("UPDATE conditions")) return [{ id: 7 }];
+    return [];
+  });
+  const r = await ensureAgreementForTerms(db, { ...base, documentNo: "ARC-PUBT-2026-1032-R2", templateKey: "pub_license_terms_v3", revision: true }, "who");
+  assert.deepEqual(r, { agreementId: 60, agreementNo: "ARC-PUBT-2026-1032", kind: "supplement", parentId: 3, conditionsLinked: 1 });
+  assert.equal(db.find("INSERT INTO agreements"), undefined);
+  assert.deepEqual(db.find("UPDATE documents SET agreement_id")!.params, [10, 60, 3, null]);
+  assert.deepEqual(db.find("UPDATE conditions SET agreement_id")!.params, [[7], 60, 3]);
+});
+
+test("文書に個別契約が付いていれば、それを使う。契約なしの条件だけそこに寄せる", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("COALESCE(kind, 'master') AS kind, parent_id FROM agreements")) return [{ id: 60, agreement_no: "ARC-PUBT-2026-1032", kind: "supplement", parent_id: 3 }];
+    if (t.includes("UPDATE conditions")) return [];
+    return [];
+  });
+  const r = await ensureAgreementForTerms(db, { ...base, templateKey: "pub_license_terms_v3", agreementId: 60 }, "who");
+  assert.equal(r?.agreementId, 60); assert.equal(r?.conditionsLinked, 0);
+  assert.equal(db.find("INSERT INTO agreements"), undefined);
+  assert.equal(db.find("FROM conditions c"), undefined, "新しく立てるための読み込みはしない");
+});

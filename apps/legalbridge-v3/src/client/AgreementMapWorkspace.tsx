@@ -14,6 +14,7 @@ import { PartySend } from "./PartySend.js";
 import { DocumentRegister } from "./DocumentRegister.js";
 import { MasterMerge } from "./MasterMerge.js";
 import { Relations } from "./Relations.js";
+import { AgreementMappingBoard, ConditionMapping } from "./AgreementMapping.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
 import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapOrder, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
@@ -185,6 +186,11 @@ export function PartyMapView(
   }
 ) {
   const [editing, setEditing] = useState<number | null>(null);
+  /** マッピング（基本契約の列にカードを並べる）か、これまでの図（直す欄はこちら）。 */
+  const [view, setView] = useState<"mapping" | "tree">(() => {
+    try { return localStorage.getItem("amap.view") === "tree" ? "tree" : "mapping"; } catch { return "mapping"; }
+  });
+  const chooseView = (v: "mapping" | "tree") => { setView(v); try { localStorage.setItem("amap.view", v); } catch { /* 保存できなくても動く */ } };
   /** 発注書を紐づける欄（文書か条件を選んだ状態で開く）。 */
   const [poLink, setPoLink] = useState<{ documentId: number | null; conditionIds: number[] } | null>(null);
   const orders = map.orders ?? [];
@@ -243,8 +249,10 @@ export function PartyMapView(
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               {map.issues.map((i, n) => (
                 <li key={n}>
-                  <button className="linky" onClick={() => i.code === "standalone_with_master"
-                    ? setLeveling(i.agreementId) : setEditing(i.agreementId)}>{i.message}</button>
+                  <button className="linky" onClick={() => {
+                    chooseView("tree");
+                    if (i.code === "standalone_with_master") setLeveling(i.agreementId); else setEditing(i.agreementId);
+                  }}>{i.message}</button>
                 </li>
               ))}
             </ul>
@@ -266,6 +274,14 @@ export function PartyMapView(
           </span>
         </div>
         <div className="panel-bd">
+          <div className="chips" role="group" aria-label="表示" style={{ marginBottom: 10 }}>
+            <button className="chip" aria-pressed={view === "mapping"} onClick={() => chooseView("mapping")}>マッピング</button>
+            <button className="chip" aria-pressed={view === "tree"} onClick={() => chooseView("tree")}>図（種類・締結日などを直す）</button>
+          </div>
+          {view === "mapping" && (
+            <AgreementMappingBoard map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+          )}
+          {view === "tree" && <>
           <p className="faint" style={{ margin: "0 0 10px" }}>
             取引の形は2つです。<b>（1）基本契約＋個別契約</b>：基本契約は個別契約を持ちます。条件明細は基本契約ではなく、その下の個別契約（業務委託なら発注書、ライセンスなら条件書）が持ちます。
             <b>（2）単体契約</b>：その取引だけで完結する契約で、条件明細を直接持ちます。
@@ -297,8 +313,11 @@ export function PartyMapView(
               )}
             </div>
           </div>
+          </>}
         </div>
       </div>
+
+      {view === "mapping" && <ConditionMapping map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />}
 
       {/* 文書を番号・件名で探し、基本契約・個別契約・単体契約として登録して、メール・クラウドサインで送る。 */}
       <DocumentRegister map={map} version={sendVersion} onOpen={onOpen} onChanged={onChanged} onError={onError}
