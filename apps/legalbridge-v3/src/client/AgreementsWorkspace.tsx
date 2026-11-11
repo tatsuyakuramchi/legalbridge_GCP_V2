@@ -445,7 +445,7 @@ export function AgreementsWorkspace(
 function documentKindFor(kind: AgreementKind, domain: AgreementDomain, title: string): string {
   if (kind === "document") return /秘密保持|NDA/i.test(title) ? "秘密保持契約書" : "覚書";
   if (kind === "supplement" || kind === "termination") return "覚書";
-  return ({ service: "業務委託契約書", license: "利用許諾契約書", sale: "売買契約書", other: "覚書" } as const)[domain];
+  return ({ service: "業務委託契約書", license: "利用許諾契約書", hybrid: "業務委託・利用許諾契約書", sale: "売買契約書", other: "覚書" } as const)[domain];
 }
 
 /** 契約と一緒に上げた契約書（文書）。sign なら続けてクラウドサインへ進む。 */

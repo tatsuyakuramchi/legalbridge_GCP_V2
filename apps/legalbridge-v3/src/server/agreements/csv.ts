@@ -37,6 +37,7 @@ const KIND_BY_TEXT: Record<string, AgreementKind> = {
 
 const DOMAIN_BY_TEXT: Record<string, AgreementDomain | null> = {
   業務委託: "service", service: "service", ライセンス: "license", license: "license",
+  ハイブリッド: "hybrid", hybrid: "hybrid", "ハイブリッド（業務委託＋ライセンス）": "hybrid",
   売買: "sale", sale: "sale", その他: "other", "その他（覚書など）": "other", other: "other",
   未設定: null, なし: null
 };

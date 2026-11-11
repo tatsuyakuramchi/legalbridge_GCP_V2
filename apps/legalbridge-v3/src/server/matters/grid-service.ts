@@ -483,6 +483,7 @@ export class MatterGridService {
                       AND COALESCE(a.kind, 'master') IN ('master', 'standalone')
                       AND (a.domain IS NULL
                            OR (a.domain = 'service' AND mine.has_service)
+                           OR (a.domain = 'hybrid' AND (mine.has_service OR mine.has_license))
                            OR (a.domain = 'license' AND mine.has_license AND NOT mine.has_service))
                       AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.document_no = a.agreement_no)
                     ORDER BY (a.domain IS NOT NULL) DESC, a.executed_on DESC NULLS LAST, a.id DESC LIMIT 1)
