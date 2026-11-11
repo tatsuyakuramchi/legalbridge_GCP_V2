@@ -643,6 +643,15 @@ export function createRoutes(database: Transactable) {
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
   }));
+  // マッピングのポップアップの検索（作品・取引先・条件名・番号・件名）。
+  router.get("/agreement-map/search", asyncRoute(async (req, res) => {
+    const q = z.object({
+      type: z.enum(["condition", "contract", "master", "settlement", "payment"]),
+      q: z.string().max(200).optional(),
+      partyId: z.coerce.number().int().positive()
+    }).parse(req.query);
+    res.json({ items: await agreementMap.search(q.type, q.q ?? "", q.partyId) });
+  }));
   // マッピング：条件明細をまとめて個別契約・単体契約に載せる（null は外す）。
   router.post("/agreement-map/conditions/assign", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

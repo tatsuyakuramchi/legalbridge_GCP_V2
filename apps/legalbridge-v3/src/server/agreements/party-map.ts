@@ -115,6 +115,8 @@ export interface MapSettlement {
   category: "license" | "service";
   status: string; issuedOn: string | null;
   conditionIds: number[];
+  /** 文書に載せた（document_conditions）条件。ここから外せる。残りは実績で結びついている。 */
+  linkedConditionIds: number[];
 }
 
 export interface MapPayment {
@@ -123,6 +125,32 @@ export interface MapPayment {
   conditionIds: number[];
   /** 割り当てた実績を決済した文書（支払文書）。実績を指定しない割り当てだけなら空。 */
   documentIds: number[];
+  /** この支払の割り当てぜんぶ（ほかの取引先の条件も含む）。追加・解除は全体を置き換えるので要る。 */
+  allocations: Array<{ conditionId: number; eventId: number | null; amount: number }>;
+}
+
+/** マッピングのポップアップで探すもの。 */
+export type MapSearchType = "condition" | "contract" | "master" | "settlement" | "payment";
+export interface MapSearchItem {
+  /** condition・settlement・payment はその id。contract・master は agreements.id（発注書は器の id）。 */
+  id: number;
+  /** 発注書なら文書の id（基本契約の下へ入れるときに使う）。 */
+  orderDocumentId: number | null;
+  code: string | null;
+  label: string;
+  /** 種類（条件書・発注書・検収書・計算書・支払 など）。 */
+  kind: string;
+  category: "license" | "service" | "hybrid" | "unset" | null;
+  party: string | null;
+  work: string | null;
+  /** いまの持ち主・親・状態など、選ぶときの手がかり。 */
+  note: string | null;
+  amount: number | null; currency: string | null;
+  /** 選べないときの理由（取引先が違う など）。 */
+  blocked: string | null;
+  /** 支払：割り当てぜんぶと、まだ割り当てていない額。 */
+  allocations?: Array<{ conditionId: number; eventId: number | null; amount: number }>;
+  unallocated?: number;
 }
 
 /** マッピング用の条件明細。どの契約（個別契約・単体契約・発注書の器）に載っているか。 */
@@ -684,12 +712,13 @@ export class PartyAgreementMapService {
       const ids = map.conditions.map((c) => c.id);
       const settle = ids.length ? await this.database.query(
         `WITH links AS (
-           SELECT dc.document_id, dc.condition_id FROM document_conditions dc WHERE dc.condition_id = ANY($1::bigint[])
+           SELECT dc.document_id, dc.condition_id, true AS direct FROM document_conditions dc WHERE dc.condition_id = ANY($1::bigint[])
            UNION
-           SELECT ce.document_id, ce.condition_id FROM condition_events ce
+           SELECT ce.document_id, ce.condition_id, false FROM condition_events ce
             WHERE ce.document_id IS NOT NULL AND ce.condition_id = ANY($1::bigint[]))
          SELECT d.id, d.document_no, d.status, d.issued_at, t.template_key, t.label,
-                array_agg(DISTINCT l.condition_id ORDER BY l.condition_id) AS condition_ids
+                array_agg(DISTINCT l.condition_id ORDER BY l.condition_id) AS condition_ids,
+                COALESCE(array_agg(DISTINCT l.condition_id ORDER BY l.condition_id) FILTER (WHERE l.direct), '{}') AS linked_ids
            FROM links l
            JOIN documents d ON d.id = l.document_id
            JOIN document_template_versions tv ON tv.id = d.template_version_id
@@ -701,12 +730,15 @@ export class PartyAgreementMapService {
         id: Number(d.id), documentNo: str(d.document_no), label: String(d.label ?? "文書"), templateKey: String(d.template_key),
         category: /royalty|statement/.test(String(d.template_key)) ? "license" : "service",
         status: String(d.status), issuedOn: dateStr(d.issued_at),
-        conditionIds: (d.condition_ids as unknown[] ?? []).map(Number)
+        conditionIds: (d.condition_ids as unknown[] ?? []).map(Number),
+        linkedConditionIds: (d.linked_ids as unknown[] ?? []).map(Number)
       }));
       const pays = ids.length ? await this.database.query(
         `SELECT p.id, p.payment_no, p.status, p.amount, p.currency, p.due_on, p.paid_on,
                 array_agg(DISTINCT pa.condition_id ORDER BY pa.condition_id) AS condition_ids,
-                array_remove(array_agg(DISTINCT ce.document_id), NULL) AS document_ids
+                array_remove(array_agg(DISTINCT ce.document_id), NULL) AS document_ids,
+                (SELECT json_agg(json_build_object('conditionId', x.condition_id, 'eventId', x.event_id, 'amount', x.amount) ORDER BY x.id)
+                   FROM payment_allocations x WHERE x.payment_id = p.id) AS allocs
            FROM payments p
            JOIN payment_allocations pa ON pa.payment_id = p.id
            LEFT JOIN condition_events ce ON ce.id = pa.event_id
@@ -719,7 +751,8 @@ export class PartyAgreementMapService {
         amount: Number(p.amount ?? 0), currency: String(p.currency ?? "JPY").trim() || "JPY",
         dueOn: dateStr(p.due_on), paidOn: dateStr(p.paid_on),
         conditionIds: (p.condition_ids as unknown[] ?? []).map(Number),
-        documentIds: (p.document_ids as unknown[] ?? []).map(Number).filter((id) => settlementIds.has(id))
+        documentIds: (p.document_ids as unknown[] ?? []).map(Number).filter((id) => settlementIds.has(id)),
+        allocations: allocationsOf(p.allocs)
       }));
       // 基本契約に直接載っている条件は「ずれ」。基本契約は条件を持たず、発注書・条件書が持つ。
       const direct = new Map<string, number>();
@@ -1456,6 +1489,138 @@ export class PartyAgreementMapService {
    * この契約の文書（条件書）に載っているものを戻す。
    */
   /**
+   * マッピングのポップアップの検索。作品・取引先・条件名・番号・件名で引く（全取引先から）。
+   * この取引先（名寄せ後）のものを先に並べ、ほかの取引先のものは選べない理由を付けて出す
+   * （契約・条件・支払は同じ取引先どうしでしか繋げない）。
+   */
+  async search(type: MapSearchType, keyword: string, partyId: number, limit = 60): Promise<MapSearchItem[]> {
+    try {
+      const head = (await this.database.query("SELECT resolved_id FROM v_party_resolved WHERE party_id = $1", [partyId])).rows[0] as any;
+      if (!head) throw new DomainError("NOT_FOUND", `取引先 ${partyId} が見つかりません`);
+      const resolved = Number(head.resolved_id);
+      const q = String(keyword ?? "").trim();
+      const like = q ? `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%` : "";
+      const other = (row: any) => (Number(row.resolved_id) === resolved ? null : "取引先が違うので繋げません");
+      const n = Math.min(Math.max(limit, 1), 200);
+      if (type === "condition") {
+        const r = await this.database.query(
+          `SELECT co.id, co.condition_no, co.name, co.kind, co.status, co.rate_ppm, co.flat_amount, co.currency,
+                  w.title AS work_title, p.name AS party_name, r.resolved_id,
+                  a.agreement_no, COALESCE(a.kind, 'master') AS agreement_kind, od.document_no AS order_no
+             FROM conditions co
+             JOIN parties p ON p.id = co.counterparty_id
+             JOIN v_party_resolved r ON r.party_id = co.counterparty_id
+             LEFT JOIN works w ON w.id = co.work_id
+             LEFT JOIN agreements a ON a.id = co.agreement_id
+             LEFT JOIN documents od ON od.id = a.order_document_id
+            WHERE co.status NOT IN ('superseded', 'void')
+              AND ($1 = '' OR co.condition_no ILIKE $1 OR co.name ILIKE $1 OR w.title ILIKE $1 OR p.name ILIKE $1
+                   OR a.agreement_no ILIKE $1 OR od.document_no ILIKE $1)
+            ORDER BY (r.resolved_id = $2) DESC, co.condition_no NULLS LAST, co.id
+            LIMIT $3`, [like, resolved, n]);
+        return (r.rows as any[]).map((c) => {
+          const cat = conditionCategory(str(c.kind), str(c.name));
+          return {
+            id: Number(c.id), orderDocumentId: null, code: str(c.condition_no), label: str(c.name) ?? "（無題の条件）",
+            kind: cat === "license" ? "ライセンスの明細" : cat === "service" ? "業務委託の明細" : "種類未設定",
+            category: cat, party: str(c.party_name), work: str(c.work_title),
+            note: c.agreement_no ? `いま：${str(c.order_no) ?? c.agreement_no}${c.agreement_kind === "master" ? "（基本契約に直付け）" : ""}` : "いま：契約なし",
+            amount: c.rate_ppm ? null : int(c.flat_amount), currency: str(c.currency),
+            blocked: other(c)
+          };
+        });
+      }
+      if (type === "contract" || type === "master") {
+        const r = await this.database.query(
+          `SELECT a.id, a.agreement_no, a.title, COALESCE(a.kind, 'master') AS kind, a.domain, a.order_document_id,
+                  od.document_no AS order_no, pa.agreement_no AS parent_no, p.name AS party_name, r.resolved_id, a.terminated_on,
+                  (SELECT string_agg(DISTINCT w.title, '・') FROM conditions c JOIN works w ON w.id = c.work_id WHERE c.agreement_id = a.id) AS works,
+                  (SELECT count(*)::int FROM conditions c WHERE c.agreement_id = a.id AND c.status NOT IN ('superseded', 'void')) AS conds
+             FROM agreements a
+             JOIN parties p ON p.id = a.counterparty_id
+             JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+             LEFT JOIN agreements pa ON pa.id = a.parent_id
+             LEFT JOIN documents od ON od.id = a.order_document_id
+            WHERE ${type === "master" ? "COALESCE(a.kind, 'master') = 'master'" : "a.kind IN ('supplement', 'standalone', 'termination')"}
+              AND ($1 = '' OR a.agreement_no ILIKE $1 OR a.title ILIKE $1 OR p.name ILIKE $1 OR od.document_no ILIKE $1
+                   OR EXISTS (SELECT 1 FROM conditions c JOIN works w ON w.id = c.work_id WHERE c.agreement_id = a.id AND (w.title ILIKE $1 OR c.name ILIKE $1)))
+            ORDER BY (r.resolved_id = $2) DESC, a.terminated_on IS NOT NULL, a.agreement_no NULLS LAST, a.id
+            LIMIT $3`, [like, resolved, n]);
+        return (r.rows as any[]).map((a) => {
+          const isOrder = Boolean(a.order_document_id);
+          const d = str(a.domain);
+          return {
+            id: Number(a.id), orderDocumentId: int(a.order_document_id),
+            code: isOrder ? str(a.order_no) ?? str(a.agreement_no) : str(a.agreement_no), label: String(a.title ?? ""),
+            kind: type === "master" ? `基本契約（${d ? DOMAIN_LABELS[d as AgreementDomain] ?? d : "種別なし"}）`
+              : isOrder ? "発注書" : a.kind === "standalone" ? "単体契約" : a.kind === "termination" ? "解除合意" : d === "license" ? "条件書" : "個別契約",
+            category: isOrder || d === "service" ? "service" : d === "license" ? "license" : d === "hybrid" ? "hybrid" : null,
+            party: str(a.party_name), work: str(a.works),
+            note: type === "master" ? (a.terminated_on ? `解除 ${dateStr(a.terminated_on)}` : null)
+              : `${a.parent_no ? `親：${a.parent_no}` : "基本契約なし"}・条件 ${a.conds}`,
+            amount: null, currency: null,
+            blocked: other(a) ?? (type === "master" && a.terminated_on ? "解除済みの基本契約です" : null)
+          };
+        });
+      }
+      if (type === "settlement") {
+        const r = await this.database.query(
+          `SELECT d.id, d.document_no, d.status, d.issued_at, t.label, t.template_key, v.title, v.counterparty, vr.resolved_id,
+                  (SELECT string_agg(DISTINCT w.title, '・') FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                     JOIN works w ON w.id = c.work_id WHERE dc.document_id = d.id) AS works
+             FROM documents d
+             JOIN document_template_versions tv ON tv.id = d.template_version_id
+             JOIN document_templates t ON t.id = tv.template_id
+             LEFT JOIN v_document_display v ON v.document_id = d.id
+             LEFT JOIN v_party_resolved vr ON vr.party_id = v.counterparty_id
+            WHERE d.status IN ('issued', 'draft') AND t.template_key ~ $4
+              AND ($1 = '' OR d.document_no ILIKE $1 OR v.title ILIKE $1 OR v.counterparty ILIKE $1
+                   OR EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                               LEFT JOIN works w ON w.id = c.work_id
+                              WHERE dc.document_id = d.id AND (w.title ILIKE $1 OR c.name ILIKE $1 OR c.condition_no ILIKE $1)))
+            ORDER BY (vr.resolved_id = $2) DESC NULLS LAST, d.issued_at DESC NULLS LAST, d.id DESC
+            LIMIT $3`, [like, resolved, n, SETTLEMENT_TEMPLATE_PATTERN.source]);
+        return (r.rows as any[]).map((d) => ({
+          id: Number(d.id), orderDocumentId: null, code: str(d.document_no) ?? "（下書き）", label: str(d.title) ?? String(d.label ?? ""),
+          kind: /royalty|statement/.test(String(d.template_key)) ? "計算書" : String(d.label ?? "文書").replace(/（.*$/, ""),
+          category: /royalty|statement/.test(String(d.template_key)) ? "license" : "service",
+          party: str(d.counterparty), work: str(d.works),
+          note: `${d.status === "draft" ? "下書き" : "決定済み"}${d.issued_at ? `・${dateStr(d.issued_at)}` : ""}`,
+          amount: null, currency: null,
+          blocked: d.resolved_id === null || d.resolved_id === undefined ? null : other(d)
+        }));
+      }
+      const r = await this.database.query(
+        `SELECT p.id, p.payment_no, p.status, p.amount, p.currency, p.due_on, p.paid_on, p.note, pt.name AS party_name, r.resolved_id,
+                (SELECT json_agg(json_build_object('conditionId', x.condition_id, 'eventId', x.event_id, 'amount', x.amount) ORDER BY x.id)
+                   FROM payment_allocations x WHERE x.payment_id = p.id) AS allocs,
+                (SELECT string_agg(DISTINCT w.title, '・') FROM payment_allocations x JOIN conditions c ON c.id = x.condition_id
+                   JOIN works w ON w.id = c.work_id WHERE x.payment_id = p.id) AS works
+           FROM payments p
+           JOIN parties pt ON pt.id = p.party_id
+           JOIN v_party_resolved r ON r.party_id = p.party_id
+          WHERE p.status <> 'canceled'
+            AND ($1 = '' OR p.payment_no ILIKE $1 OR pt.name ILIKE $1 OR COALESCE(p.note, '') ILIKE $1 OR p.amount::text ILIKE $1
+                 OR EXISTS (SELECT 1 FROM payment_allocations x JOIN conditions c ON c.id = x.condition_id LEFT JOIN works w ON w.id = c.work_id
+                             WHERE x.payment_id = p.id AND (w.title ILIKE $1 OR c.name ILIKE $1 OR c.condition_no ILIKE $1)))
+          ORDER BY (r.resolved_id = $2) DESC, COALESCE(p.paid_on, p.due_on) DESC NULLS LAST, p.id DESC
+          LIMIT $3`, [like, resolved, n]);
+      return (r.rows as any[]).map((p) => {
+        const allocations = allocationsOf(p.allocs);
+        const unallocated = Number(p.amount ?? 0) - allocations.reduce((t, a) => t + a.amount, 0);
+        return {
+          id: Number(p.id), orderDocumentId: null, code: str(p.payment_no) ?? `#${p.id}`, label: str(p.note) ?? "",
+          kind: p.status === "paid" ? "支払済" : p.status === "approved" ? "承認済" : "支払予定",
+          category: null, party: str(p.party_name), work: str(p.works),
+          note: p.paid_on ? `${dateStr(p.paid_on)} 支払` : p.due_on ? `${dateStr(p.due_on)} 期日` : "期日なし",
+          amount: Number(p.amount ?? 0), currency: str(p.currency), blocked: other(p),
+          allocations, unallocated
+        };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 条件明細をまとめて契約に載せる（マッピング：条件明細 ⇔ 個別契約）。null は契約から外す。
    * 載せられるのは同じ取引先（名寄せ後）・同じ向きの個別契約・単体契約（発注書の器を含む）だけ。
    * 基本契約は条件明細を持たない（個別契約を持つ）ので載せない。
@@ -1650,4 +1815,9 @@ export class PartyAgreementMapService {
       throw translate(error);
     }
   }
+}
+
+function allocationsOf(v: unknown): Array<{ conditionId: number; eventId: number | null; amount: number }> {
+  const list = (Array.isArray(v) ? v : v ? JSON.parse(String(v)) : []) as Array<Record<string, any>>;
+  return list.map((a) => ({ conditionId: Number(a.conditionId), eventId: int(a.eventId), amount: Number(a.amount ?? 0) }));
 }

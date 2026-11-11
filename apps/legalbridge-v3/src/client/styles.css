@@ -1277,3 +1277,34 @@ tr.ledger-sec.band td{background:var(--accent)}
 .tag.cf-tag.hyb{background:linear-gradient(90deg,var(--cf-lic-soft),var(--cf-svc-soft));border-color:transparent;font-weight:700}
 .tag.cf-tag.unset,.tag.cf-tag.other,.tag.cf-tag.none{border-style:dashed}
 .cf-path{padding:7px 10px;border-radius:6px;background:var(--accent-soft);font-size:12px;min-height:32px}
+
+/* 契約のマッピング（表）ContractTable.tsx */
+.ct-scroll{overflow:auto;max-height:78vh;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.ct-table{border-collapse:separate;border-spacing:0;width:100%;min-width:980px}
+.ct-table th,.ct-table td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:5px 8px;vertical-align:top;text-align:left}
+.ct-table thead th{position:sticky;top:0;z-index:2;background:var(--sunken);font-size:12px;white-space:nowrap}
+.ct-table .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ct-table tr.ct-sec td{background:var(--sunken);font-weight:700;font-size:12px}
+.ct-master{width:170px;background:var(--sunken)}
+.ct-master.lic{box-shadow:inset 4px 0 0 var(--cf-lic)} .ct-master.svc{box-shadow:inset 4px 0 0 var(--cf-svc)}
+.ct-master.hyb{box-shadow:inset 4px 0 0 var(--cf-lic),inset 8px 0 0 var(--cf-svc)}
+.ct-contract{width:200px}
+.ct-contract.lic{box-shadow:inset 4px 0 0 var(--cf-lic)} .ct-contract.svc{box-shadow:inset 4px 0 0 var(--cf-svc)}
+.ct-contract.hyb{box-shadow:inset 4px 0 0 var(--cf-lic),inset 8px 0 0 var(--cf-svc)}
+.ct-contract.loose{background:var(--warn-soft)}
+.ct-cond{min-width:220px}
+.ct-cond.lic{box-shadow:inset 3px 0 0 var(--cf-lic-soft)} .ct-cond.svc{box-shadow:inset 3px 0 0 var(--cf-svc-soft)}
+.ct-line{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.ct-acts{display:inline-flex;gap:4px;flex-wrap:wrap;margin-left:auto}
+.ct-contract .ct-acts,.ct-master .ct-act{margin-top:4px}
+.ct-act{border:1px solid var(--line-strong);background:var(--surface);color:var(--accent);border-radius:4px;padding:0 6px;font-size:11px;line-height:1.7;cursor:pointer;white-space:nowrap}
+.ct-act:hover{background:var(--accent-soft);border-color:var(--accent)}
+.ct-master > .ct-act{display:inline-block}
+.ct-chip{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:3px}
+.ct-fold{background:var(--sunken)}
+.ct-pick{max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:6px}
+.ct-pick-row{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer}
+.ct-pick-row:hover{background:var(--accent-soft)}
+.ct-pick-row.on{background:var(--accent-soft)}
+.ct-pick-row.off{cursor:not-allowed;opacity:.55}
+.ct-pick-main{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
