@@ -187,7 +187,7 @@ export function SendMany(
       <div className="panel-hd">
         <h2>{title ?? `選んだ ${documents.length} 件を送る`}</h2>
         <span className="faint">{parties.join("・")}　{documents.map((d, i) => (
-          <span key={d.id}>{i > 0 && "・"}{d.documentNo ?? `#${d.id}`} <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} /></span>
+          <span key={d.id}>{i > 0 && "・"}{d.documentNo ?? `#${d.id}`} <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} documentNo={d.documentNo} /></span>
         ))}</span>
         <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={onClose}>やめる</button>
       </div>

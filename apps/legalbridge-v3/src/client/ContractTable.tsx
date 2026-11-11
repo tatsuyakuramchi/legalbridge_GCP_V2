@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiError, money } from "./api.js";
 import { Modal } from "./Modal.js";
+import { DocViewButton } from "./DocPeek.js";
 import { useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
 import type { EntityKind } from "./Relations.js";
@@ -88,6 +89,18 @@ export function ContractTable(
     <button className="ct-act" title={title} onClick={(e) => { e.stopPropagation(); onClick(); }}>{label}</button>
   );
   const nodeNo = (id: string) => model.nodeOf(id)?.no ?? "";
+  /** 「見る」：基本契約・個別契約はいま有効な文書、発注書はその文書。 */
+  const viewOf = (nodeId: string) => {
+    if (nodeId.startsWith("o")) {
+      const o = (map.orders ?? []).find((x) => `o${x.id}` === nodeId);
+      return o ? <DocViewButton id={o.id} documentNo={o.documentNo} imported={o.imported} storageUrl={o.storageUrl} /> : null;
+    }
+    const aid = Number(nodeId.slice(1));
+    if (!/^[am]\d+$/.test(nodeId)) return null;
+    const a = [...map.roots, ...map.roots.flatMap((r) => r.children), ...map.loose].find((x) => x.id === aid);
+    const d = a?.currentDocument;
+    return d ? <DocViewButton id={d.id} documentNo={d.documentNo} imported={d.imported} storageUrl={d.storageUrl} /> : null;
+  };
 
   // ---- 実行（ポップアップで選んだあと） ----
   async function run(work: () => Promise<string>) {
@@ -144,6 +157,7 @@ export function ContractTable(
             <div key={s.id} className="ct-chip">
               <span className="tag">{/royalty|statement/.test(s.templateKey) ? "計算書" : s.label.replace(/（.*$/, "")}</span>
               <button className="linky code" onClick={() => onOpen?.("document", s.id)}>{s.documentNo ?? "（下書き）"}</button>
+              <DocViewButton id={s.id} documentNo={s.documentNo} />
               {s.linkedConditionIds.includes(c.id)
                 ? act("解除", () => setDialog({ kind: "doc-move", cond: c, doc: s }), "この文書から外す・ほかの文書へ付け替える")
                 : <span className="faint" title="実績（納品・売上）でこの文書に結びついています。外すときは実績から">実績で結びつき</span>}
@@ -197,7 +211,10 @@ export function ContractTable(
                   {g.master ? (
                     <>
                       <span className={`tag cf-tag ${g.master.cat}`}>{CAT_LABEL[g.master.cat] || "種別なし"}</span>
-                      <div><button className="linky code" onClick={() => onOpen?.("agreement", Number(g.master!.id.slice(1)))}>{g.master.no}</button></div>
+                      <div className="ct-line">
+                        <button className="linky code" onClick={() => onOpen?.("agreement", Number(g.master!.id.slice(1)))}>{g.master.no}</button>
+                        {viewOf(g.master.id)}
+                      </div>
                       <div>{g.master.title}</div>
                       <div className="faint">{g.master.meta}</div>
                     </>
@@ -223,6 +240,7 @@ export function ContractTable(
                           {node.open
                             ? <button className="linky code" onClick={node.open}>{node.no}</button>
                             : <span className="code">{node.no}</span>}
+                          {viewOf(k.id)}
                           {node.badge && <span className={`tag ${node.badge.cls}`}>{node.badge.text}</span>}
                         </div>
                         <div>{node.title}</div>

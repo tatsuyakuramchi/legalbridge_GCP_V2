@@ -1987,7 +1987,7 @@ export function DocumentsWorkspace(
                                   return next;
                                 })} />
                             )}
-                            {d.status === "issued" && <> <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} /></>}
+                            {d.status === "issued" && <> <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} documentNo={d.documentNo} /></>}
                           </td>
                           <td className="code">
                             {d.documentNo ?? "（未決定）"}

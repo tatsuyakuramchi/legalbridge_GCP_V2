@@ -58,7 +58,12 @@ export interface MapAgreement {
   documentCount: number;
   /** 発注書の個別契約（order-agreement.ts）なら、その発注書。図では発注書の行として出す。 */
   orderDocumentId: number | null;
+  /** いま有効な文書（決定済み。契約と同じ番号の版を優先）。「見る」で開く。 */
+  currentDocument?: MapDocRef | null;
 }
+
+/** 「見る」で開く文書。作った文書は本文、取り込んだ文書は保存先のファイル。 */
+export interface MapDocRef { id: number; documentNo: string | null; imported: boolean; storageUrl: string | null }
 
 export interface MapNode extends MapAgreement {
   children: MapAgreement[];
@@ -182,6 +187,8 @@ export interface LooseCondition {
 export interface MapOrder {
   id: number; documentNo: string | null; title: string | null; status: string;
   issuedOn: string | null; imported: boolean;
+  /** 取り込んだ発注書の保存先（Drive）。 */
+  storageUrl?: string | null;
   /** 載っている条件明細がそろって載っている基本契約。無ければ null（基本契約なし）。 */
   masterId: number | null;
   /** 発注書の個別契約の器（order-agreement.ts）。決定前・移行前の発注書は null。 */
@@ -535,7 +542,17 @@ const MAP_SELECT = `
          a.counterparty_id, p.name AS party_name, (r.party_id <> r.resolved_id) AS party_merged,
          pr.resolved_id AS parent_resolved_id, pa.kind AS parent_kind,
          (SELECT count(*) FROM conditions c WHERE c.agreement_id = a.id)::int AS condition_count,
-         (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count
+         (SELECT count(*) FROM documents d WHERE d.agreement_id = a.id)::int AS document_count,
+         (SELECT (array_agg(json_build_object('id', d.id, 'documentNo', d.document_no, 'imported', d.template_version_id IS NULL,
+                                              'storageUrl', d.storage_url)
+                            ORDER BY (regexp_replace(COALESCE(d.document_no, ''), '-R[0-9]+$', '') = a.agreement_no) DESC,
+                                     d.issued_at DESC NULLS LAST, d.id DESC))[1]
+            FROM documents d
+            LEFT JOIN document_template_versions dtv ON dtv.id = d.template_version_id
+            LEFT JOIN document_templates dt ON dt.id = dtv.template_id
+           WHERE d.agreement_id = a.id AND d.status = 'issued'
+             -- 支払文書（検収書・計算書）は契約の文書ではない（基本契約に付いていても出さない）。
+             AND COALESCE(dt.template_key, '') !~ 'inspection|acceptance|delivery|statement|royalty|completion') AS current_doc
     FROM agreements a
     JOIN parties p ON p.id = a.counterparty_id
     JOIN v_party_resolved r ON r.party_id = a.counterparty_id
@@ -558,8 +575,15 @@ export function mapAgreementRow(row: any): MapAgreement {
     parentKind: row.parent_id ? ((str(row.parent_kind) ?? "master") as AgreementKind) : null,
     conditionCount: Number(row.condition_count ?? 0),
     documentCount: Number(row.document_count ?? 0),
-    orderDocumentId: int(row.order_document_id)
+    orderDocumentId: int(row.order_document_id),
+    currentDocument: docRefOf(row.current_doc)
   };
+}
+
+export function docRefOf(v: unknown): MapDocRef | null {
+  if (!v) return null;
+  const d = (typeof v === "string" ? JSON.parse(v) : v) as Record<string, any>;
+  return { id: Number(d.id), documentNo: str(d.documentNo), imported: d.imported === true, storageUrl: str(d.storageUrl) };
 }
 
 export class PartyAgreementMapService {
@@ -767,7 +791,7 @@ export class PartyAgreementMapService {
       // 発注書。載っている条件がそろって同じ基本契約なら、その基本契約の下に並べる。
       const orders = await this.database.query(
         `SELECT d.id, d.document_no, d.status, d.issued_at, COALESCE(d.manual_inputs->>'title', v.title) AS title,
-                (d.template_version_id IS NULL) AS imported,
+                (d.template_version_id IS NULL) AS imported, d.storage_url,
                 oa.id AS order_agreement_id, oa.parent_id AS order_agreement_parent,
                 COALESCE(json_agg(json_build_object('id', co.id, 'conditionNo', co.condition_no, 'name', co.name,
                                                     'agreementId', co.agreement_id,
@@ -784,7 +808,7 @@ export class PartyAgreementMapService {
           WHERE d.status NOT IN ('void', 'superseded') AND ${ORDER_DOCUMENT_SQL}
             AND (v.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $1)
                  OR co.counterparty_id IN (SELECT party_id FROM v_party_resolved WHERE resolved_id = $1))
-          GROUP BY d.id, d.document_no, d.status, d.issued_at, d.manual_inputs, v.title, d.template_version_id, oa.id, oa.parent_id
+          GROUP BY d.id, d.document_no, d.status, d.issued_at, d.manual_inputs, v.title, d.template_version_id, d.storage_url, oa.id, oa.parent_id
           ORDER BY d.issued_at DESC NULLS LAST, d.id DESC`, [resolvedId]);
       const masterIds = new Set(map.roots.filter((x) => x.kind === "master").map((x) => x.id));
       map.orders = (orders.rows as any[]).map((o) => {
@@ -797,7 +821,7 @@ export class PartyAgreementMapService {
         const one = orderAgreementId ? orderParent : agreements.length === 1 ? agreements[0] : null;
         return {
           id: Number(o.id), documentNo: str(o.document_no), title: str(o.title), status: String(o.status),
-          issuedOn: dateStr(o.issued_at), imported: o.imported === true,
+          issuedOn: dateStr(o.issued_at), imported: o.imported === true, storageUrl: str(o.storage_url),
           masterId: one !== null && masterIds.has(Number(one)) ? Number(one) : null,
           agreementId: orderAgreementId,
           conditions: conds.map((c) => ({ id: Number(c.id), conditionNo: str(c.conditionNo), name: String(c.name ?? "") }))
