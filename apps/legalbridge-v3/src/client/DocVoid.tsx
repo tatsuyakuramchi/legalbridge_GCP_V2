@@ -76,8 +76,10 @@ interface AgreementDoc {
 }
 
 /** 契約に繋がっている文書ぜんぶ。見る・無効にする・無効を取り消す。 */
-export function AgreementDocsDialog({ agreementId, title, onChanged, onClose }: {
+export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, onOpenDocument }: {
   agreementId: number; title: string; onChanged: (msg: string) => void; onClose: () => void;
+  /** 文書番号を押したとき、文書の画面（送る・訂正など）を開く。 */
+  onOpenDocument?: (documentId: number) => void;
 }) {
   const readOnly = useReadOnly();
   const [docs, setDocs] = useState<AgreementDoc[] | null>(null);
@@ -108,7 +110,11 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose }: 
               <tbody>
                 {docs.map((d) => (
                   <tr key={d.id} style={d.status === "void" ? { opacity: 0.6 } : undefined}>
-                    <td className="code">{d.documentNo ?? "（番号なし）"}{d.imported && <span className="tag" style={{ marginLeft: 4 }}>取込</span>}</td>
+                    <td className="code">
+                      {onOpenDocument
+                        ? <button className="linky code" title="文書の画面を開く（送る・訂正など）" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? "（番号なし）"}</button>
+                        : d.documentNo ?? "（番号なし）"}
+                      {d.imported && <span className="tag" style={{ marginLeft: 4 }}>取込</span>}</td>
                     <td>{d.label}{d.title && <div className="faint">{d.title}</div>}</td>
                     <td><span className={`tag${d.status === "void" ? " warn" : d.status === "issued" ? " ok" : ""}`}>{STATUS_LABEL[d.status] ?? d.status}</span></td>
                     <td>{d.issuedOn ?? "—"}</td>

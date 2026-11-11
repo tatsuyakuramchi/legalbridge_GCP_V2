@@ -489,9 +489,15 @@ export function buildContractModel(map: PartyMap) {
     return node;
   };
   // 開くリンクは描画のたびに作らない（ノードに付けておく）。
+  // 基本契約・個別契約の番号は、いま有効な文書の画面（送る・訂正などのある画面）を開く。文書が無ければ契約の画面。
+  const allAgreements = [...map.roots, ...map.roots.flatMap((r) => r.children), ...map.loose];
+  const openAgreementOrDoc = (aid: number) => {
+    const d = allAgreements.find((x) => x.id === aid)?.currentDocument;
+    return d ? () => openRef.current?.("document", d.id) : () => openRef.current?.("agreement", aid);
+  };
   for (const [id, n] of nodes) {
-    if (/^m\d+$/.test(id)) { const aid = Number(id.slice(1)); n.open = () => openRef.current?.("agreement", aid); }
-    if (id.startsWith("a")) { const aid = Number(id.slice(1)); n.open = () => openRef.current?.("agreement", aid); }
+    if (/^m\d+$/.test(id)) n.open = openAgreementOrDoc(Number(id.slice(1)));
+    if (/^a\d+$/.test(id)) n.open = openAgreementOrDoc(Number(id.slice(1)));
     if (id.startsWith("o")) { const did = Number(id.slice(1)); n.open = () => openRef.current?.("document", did); }
     if (id.startsWith("c")) { const cid = Number(id.slice(1)); n.open = () => openRef.current?.("condition", cid); }
   }
@@ -572,3 +578,5 @@ export function buildContractModel(map: PartyMap) {
 
 /** 開く口。描画のたびに変わる onOpen を、作り置きのノード（build）から呼ぶ。 */
 const openRef: { current: ((kind: EntityKind, id: number) => void) | undefined } = { current: undefined };
+/** 表（ContractTable）など、ContractFlow を描かずに buildContractModel のノードを使う画面が開く口を渡す。 */
+export function setContractOpener(onOpen: ((kind: EntityKind, id: number) => void) | undefined) { openRef.current = onOpen; }

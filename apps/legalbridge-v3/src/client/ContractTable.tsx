@@ -7,7 +7,7 @@ import { useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
 import type { EntityKind } from "./Relations.js";
 import type { MapCondition, MapPayment, MapSearchItem, MapSearchType, MapSettlement, PartyMap } from "../server/agreements/party-map.js";
-import { CAT_OF_COND, MASTER_SECTIONS, PAY_STATUS, buildContractModel, condTerms, type Cat } from "./ContractFlow.js";
+import { CAT_OF_COND, MASTER_SECTIONS, PAY_STATUS, buildContractModel, condTerms, setContractOpener, type Cat } from "./ContractFlow.js";
 
 /**
  * 契約のマッピング（表）。1 行＝条件明細。基本契約・個別契約の欄は縦に結合し、右に支払文書・支払。
@@ -41,6 +41,7 @@ export function ContractTable(
   }
 ) {
   const readOnly = useReadOnly();
+  setContractOpener(onOpen);
   const model = useMemo(() => buildContractModel(map), [map]);
   const [catFilter, setCatFilter] = useState<"all" | "lic" | "svc" | "unset">("all");
   const [show, setShow] = useState<"all" | "loose" | "unsettled" | "unpaid">("all");
@@ -108,6 +109,21 @@ export function ContractTable(
     <button className="ct-act" title={title} onClick={(e) => { e.stopPropagation(); onClick(); }}>{label}</button>
   );
   const nodeNo = (id: string) => model.nodeOf(id)?.no ?? "";
+  const agreementOf = (nodeId: string) => /^[am]\d+$/.test(nodeId)
+    ? [...map.roots, ...map.roots.flatMap((r) => r.children), ...map.loose].find((x) => x.id === Number(nodeId.slice(1))) ?? null
+    : null;
+  /** 番号を押したときに開くもの（文書の画面。文書が無ければ契約の画面）。 */
+  const docTitle = (nodeId: string) => {
+    if (nodeId.startsWith("o")) return "発注書の画面を開く（送る・訂正など）";
+    const d = agreementOf(nodeId)?.currentDocument;
+    return d ? `${d.documentNo ?? "文書"} の画面を開く（送る・訂正など）` : "契約の画面を開く（決定済みの文書がありません）";
+  };
+  /** 文書の画面へ飛ぶようにしたので、契約の画面は「契約」から。 */
+  const agreementButton = (nodeId: string) => {
+    const a = agreementOf(nodeId);
+    if (!a?.currentDocument) return null;
+    return <button className="ct-act" title="契約の画面を開く（締結日・期間など）" onClick={(e) => { e.stopPropagation(); onOpen?.("agreement", a.id); }}>契約</button>;
+  };
   /** 「文書」：契約に繋がっている文書ぜんぶ（無効にする・取り消す）。器のない発注書はその文書を直接無効に。 */
   const docsButton = (nodeId: string, title: string) => {
     if (nodeId === "loose") return null;
@@ -241,9 +257,10 @@ export function ContractTable(
                     <>
                       <span className={`tag cf-tag ${g.master.cat}`}>{CAT_LABEL[g.master.cat] || "種別なし"}</span>
                       <div className="ct-line">
-                        <button className="linky code" onClick={() => onOpen?.("agreement", Number(g.master!.id.slice(1)))}>{g.master.no}</button>
+                        <button className="linky code" title={docTitle(g.master.id)} onClick={() => model.nodeOf(g.master!.id)?.open?.()}>{g.master.no}</button>
                         {viewOf(g.master.id)}
                         {docsButton(g.master.id, g.master.no)}
+                        {agreementButton(g.master.id)}
                       </div>
                       <div>{g.master.title}</div>
                       <div className="faint">{g.master.meta}</div>
@@ -266,10 +283,11 @@ export function ContractTable(
                         <div className="ct-line">
                           {node.tag && <span className={`tag cf-tag ${node.tag.cls}`}>{node.tag.text}</span>}
                           {node.open
-                            ? <button className="linky code" onClick={node.open}>{node.no}</button>
+                            ? <button className="linky code" title={docTitle(k.id)} onClick={node.open}>{node.no}</button>
                             : <span className="code">{node.no}</span>}
                           {viewOf(k.id)}
                           {docsButton(k.id, node.no ?? "")}
+                          {agreementButton(k.id)}
                           {node.badge && <span className={`tag ${node.badge.cls}`}>{node.badge.text}</span>}
                         </div>
                         <div>{node.title}</div>
@@ -394,7 +412,8 @@ export function ContractTable(
               }) }} />;
         }
       })()}
-      {docsOf && <AgreementDocsDialog agreementId={docsOf.agreementId} title={docsOf.title} onChanged={onChanged} onClose={() => setDocsOf(null)} />}
+      {docsOf && <AgreementDocsDialog agreementId={docsOf.agreementId} title={docsOf.title} onChanged={onChanged} onClose={() => setDocsOf(null)}
+                                       onOpenDocument={(id) => { setDocsOf(null); onOpen?.("document", id); }} />}
       {voiding && <VoidDialog doc={voiding} onDone={onChanged} onClose={() => setVoiding(null)} />}
     </div>
   );
