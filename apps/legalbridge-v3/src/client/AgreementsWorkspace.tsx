@@ -8,6 +8,8 @@ import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { TermHistoryTable } from "./TermHistory.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { useReadOnly } from "./read-only.js";
+import { LinkViewButton } from "./DocPeek.js";
+import { AgreementDocsDialog } from "./DocVoid.js";
 import { DOMAIN_OPTIONS, MASTER_PREFIX, STANDALONE_PREFIX } from "./agreement-domains.js";
 import { SignAfterField, useSignReady } from "./SignNext.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
@@ -127,6 +129,8 @@ export function AgreementsWorkspace(
   /** 登録した契約を開いたら、続けて条件明細の登録欄を出す（「登録して、条件明細の登録へ」）。 */
   const nextCondition = useRef(false);
   const bump = () => setVersion((v) => v + 1);
+  /** この契約に繋がっている文書の一覧（ポップアップ）。 */
+  const [docsOpen, setDocsOpen] = useState(false);
 
   useEffect(() => {
     api.get<{ agreements: AgreementRow[] }>(
@@ -260,9 +264,14 @@ export function AgreementsWorkspace(
                   {a.renewalStoppedOn && <span><span className="faint">不更新 </span>{a.renewalStoppedOn}</span>}
                   {a.terminatedOn && <span style={{ color: "var(--out)" }}><span className="faint">解除 </span>{a.terminatedOn}</span>}
                   {a.counterpartyRefNo && <span><span className="faint">相手方番号 </span>{a.counterpartyRefNo}</span>}
-                  <span><span className="faint">契約書 </span>
-                    {a.sourceUrl ? <a className="linky" href={a.sourceUrl} target="_blank" rel="noreferrer">Drive で開く</a>
-                                 : <span className="faint">リンクなし</span>}</span>
+                  <span className="row" style={{ gap: 4, alignItems: "center" }}><span className="faint">契約書 </span>
+                    {a.sourceUrl
+                      ? <><a className="linky" href={a.sourceUrl} target="_blank" rel="noreferrer">Drive で開く</a>
+                          <LinkViewButton url={a.sourceUrl} title={`${a.agreementNo ?? ""} 契約書`} /></>
+                      : <span className="faint">リンクなし</span>}
+                    {/* 契約に付けたリンクのほか、この契約に繋がっている文書（条件書・取り込んだ契約書など）もここから。 */}
+                    <button className="ct-act" title="この契約に繋がっている文書（見る・ファイルを付ける・無効にする）"
+                            onClick={() => setDocsOpen(true)}>つながっている文書</button></span>
                   {detail.parent && (
                     <span><span className="faint">親 </span>
                       <button className="linky" onClick={() => setSelected(detail.parent!.id)}>
@@ -430,6 +439,11 @@ export function AgreementsWorkspace(
             )}
 
             <Relations kind="agreement" id={a.id} reloadKey={version} onOpen={onOpen} onChanged={bump} />
+            {docsOpen && (
+              <AgreementDocsDialog agreementId={a.id} title={a.agreementNo ?? `#${a.id}`} onChanged={() => bump()}
+                onClose={() => setDocsOpen(false)}
+                onOpenDocument={(id) => { setDocsOpen(false); onOpen?.("document", id); }} />
+            )}
           </>
         )}
       </div>
