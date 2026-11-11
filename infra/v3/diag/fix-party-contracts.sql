@@ -3,7 +3,8 @@
 -- 調査は diag/party-contracts.sql q=…（先に流して中身を確かめる）。
 --
 --   直すこと（アプリは 2026-11 に直した：agreements/auto.ts・order-agreement.ts。以前に決定した分の後始末）
---     1. 条件書（個別利用許諾条件書・出版等利用許諾条件書。取り込んだ ARC-PUBT／ARC-ILT 番号の文書も）
+--     1. 条件書（個別利用許諾条件書・出版等利用許諾条件書。番号が ARC-PUBT／ARC-ILT の文書は、取り込んだもの・
+--        旧システムから移したもの（pub_license_terms など）も条件書として扱う）
 --        本体の番号ごとに、個別契約（基本契約の下）に全部の版を載せる。
 --          ・本体の番号の個別契約があればそれ、決定済みの版が個別契約・単体契約に載っていればそれを使う
 --          ・無ければ基本契約の下に立てる（番号＝条件書の本体の番号）
@@ -36,7 +37,9 @@ DO $fix$
 DECLARE
   dry        boolean := current_setting('fix.write') NOT IN ('1', 'true', 'yes');
   v_q        text := '%' || current_setting('fix.party_q') || '%';
-  terms_keys text[] := ARRAY['individual_license_terms_v3', 'individual_license_terms_v4', 'pub_license_terms_v3', 'pub_license_terms_v3_annex'];
+  -- 条件書のひな形。旧システム（V2）から移した pub_license_terms・individual_license_terms も含める。
+  terms_keys text[] := ARRAY['individual_license_terms_v3', 'individual_license_terms_v4', 'pub_license_terms_v3', 'pub_license_terms_v3_annex',
+                             'pub_license_terms', 'individual_license_terms'];
   order_keys text[] := ARRAY['purchase_order', 'intl_purchase_order'];
   plan       text[] := '{}';
   changed    int := 0;
@@ -86,8 +89,9 @@ BEGIN
         LEFT JOIN v3.document_template_versions tv ON tv.id = dd.template_version_id
         LEFT JOIN v3.document_templates t ON t.id = tv.template_id
        WHERE dd.status IN ('issued', 'superseded') AND dd.document_no IS NOT NULL
+         -- ひな形が条件書か、番号が条件書の番号（ARC-PUBT／ARC-ILT。取り込んだ文書・移行した文書も）。
          AND (t.template_key = ANY (terms_keys)
-              OR (dd.template_version_id IS NULL AND dd.document_no ~ '^ARC-(PUBT|ILT)(-D)?-[0-9]{4}-[0-9]+(-R[0-9]+)?$'))
+              OR dd.document_no ~ '^ARC-(PUBT|ILT)(-D)?-[0-9]{4}-[0-9]+(-R[0-9]+)?$')
          AND (dd.agreement_id IN (SELECT id FROM v3.agreements WHERE counterparty_id = ANY (v_parties))
               OR EXISTS (SELECT 1 FROM v3.document_conditions dc JOIN v3.conditions c ON c.id = dc.condition_id
                           WHERE dc.document_id = dd.id AND c.counterparty_id = ANY (v_parties)))

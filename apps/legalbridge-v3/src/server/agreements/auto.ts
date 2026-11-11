@@ -27,9 +27,10 @@ import { baseDocumentNumber } from "../documents/numbering.js";
  * 条件書の番号（本体）の個別契約・単体契約が同じ相手で既にあれば、それを使う。
  */
 
-/** 合意を起こす条件書のひな形。 */
+/** 合意を起こす条件書のひな形。旧システム（V2）から移した pub_license_terms・individual_license_terms の訂正版も同じ。 */
 export const TERMS_TEMPLATE_KEYS = new Set([
-  "individual_license_terms_v3", "individual_license_terms_v4", "pub_license_terms_v3", "pub_license_terms_v3_annex"
+  "individual_license_terms_v3", "individual_license_terms_v4", "pub_license_terms_v3", "pub_license_terms_v3_annex",
+  "pub_license_terms", "individual_license_terms"
 ]);
 
 export interface AutoAgreementInput {
