@@ -18,13 +18,13 @@ import type { ConditionCategory, MapAgreement, MapCondition, MapOrder, MapPaymen
  *     （サーバの口はこれまでと同じ：demote／promote／親の付け替え／発注書を基本契約の下へ／条件の割り当て）
  */
 
-type Cat = "lic" | "svc" | "hyb" | "unset" | "other" | "none";
+export type Cat = "lic" | "svc" | "hyb" | "unset" | "other" | "none";
 const CAT_OF_DOMAIN = (d: AgreementDomain | null): Cat =>
   d === "license" ? "lic" : d === "service" ? "svc" : d === "hybrid" ? "hyb" : d ? "other" : "none";
-const CAT_OF_COND: Record<ConditionCategory, Cat> = { license: "lic", service: "svc", unset: "unset" };
-const MASTER_SECTIONS: Array<[Cat, string]> = [["lic", "ライセンス"], ["svc", "業務委託"], ["hyb", "ハイブリッド"], ["other", "その他の種別"]];
+export const CAT_OF_COND: Record<ConditionCategory, Cat> = { license: "lic", service: "svc", unset: "unset" };
+export const MASTER_SECTIONS: Array<[Cat, string]> = [["lic", "ライセンス"], ["svc", "業務委託"], ["hyb", "ハイブリッド"], ["other", "その他の種別"]];
 const COND_SECTIONS: Array<[Cat, string]> = [["lic", "ライセンスの明細"], ["svc", "業務委託の明細"], ["unset", "種類未設定"]];
-const PAY_STATUS: Record<string, string> = { planned: "支払予定", approved: "承認済", paid: "支払済" };
+export const PAY_STATUS: Record<string, string> = { planned: "支払予定", approved: "承認済", paid: "支払済" };
 /** 1 つの個別契約の条件がこれより多ければ、先頭だけ出して残りを畳む。 */
 const FOLD_OVER = 10;
 const FOLD_SHOW = 6;
@@ -47,7 +47,7 @@ interface Node {
 type Item = { sec: string; label: string; cls: string; count?: number } | { node: Node };
 
 const no = (a: { agreementNo: string | null; id: number }) => a.agreementNo ?? `#${a.id}`;
-const condTerms = (c: MapCondition) =>
+export const condTerms = (c: MapCondition) =>
   c.ratePpm ? `${Number((c.ratePpm / 10000).toFixed(3))}%` : c.flatAmount !== null ? money(c.flatAmount, c.currency) : "";
 
 export function ContractFlow(
@@ -64,7 +64,7 @@ export function ContractFlow(
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
-  const model = useMemo(() => build(map), [map]);
+  const model = useMemo(() => buildContractModel(map), [map]);
 
   // ---- 絞り込み ----
   const view = useMemo(() => {
@@ -368,7 +368,8 @@ function FlowCard({ n, sel, dim, over, draggable, onClick, onDragStart, onDragEn
 // データ → ノード・つながり・付け替え
 // ---------------------------------------------------------------------------
 
-function build(map: PartyMap) {
+/** データ → ノード・つながり・付け替え。表（ContractTable.tsx）も使う。 */
+export function buildContractModel(map: PartyMap) {
   const orders = map.orders ?? [];
   const conds = map.conditions ?? [];
   const settlements = map.settlements ?? [];
@@ -563,7 +564,9 @@ function build(map: PartyMap) {
   return {
     masters: masterNodes, contracts, conds, condNodes, settlements, payments, parentOf,
     condHolder, condById, settlementNode, paymentNode, canPutContract, canPutCondition, move,
-    nodeOf: (id: string) => nodes.get(id)
+    nodeOf: (id: string) => nodes.get(id),
+    agreementIdOf: (id: string) => agreementIdOf.get(id) ?? null,
+    catOf: (id: string) => catOf.get(id) ?? null
   };
 }
 

@@ -16,6 +16,7 @@ import { MasterMerge } from "./MasterMerge.js";
 import { Relations } from "./Relations.js";
 import { ConditionMapping } from "./AgreementMapping.js";
 import { ContractFlow } from "./ContractFlow.js";
+import { ContractTable } from "./ContractTable.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
 import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapOrder, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
@@ -188,10 +189,13 @@ export function PartyMapView(
 ) {
   const [editing, setEditing] = useState<number | null>(null);
   /** マッピング（基本契約の列にカードを並べる）か、これまでの図（直す欄はこちら）。 */
-  const [view, setView] = useState<"mapping" | "tree">(() => {
-    try { return localStorage.getItem("amap.view") === "tree" ? "tree" : "mapping"; } catch { return "mapping"; }
+  const [view, setView] = useState<"table" | "mapping" | "tree">(() => {
+    try {
+      const v = localStorage.getItem("amap.view");
+      return v === "tree" || v === "mapping" ? v : "table";
+    } catch { return "table"; }
   });
-  const chooseView = (v: "mapping" | "tree") => { setView(v); try { localStorage.setItem("amap.view", v); } catch { /* 保存できなくても動く */ } };
+  const chooseView = (v: "table" | "mapping" | "tree") => { setView(v); try { localStorage.setItem("amap.view", v); } catch { /* 保存できなくても動く */ } };
   /** 発注書を紐づける欄（文書か条件を選んだ状態で開く）。 */
   const [poLink, setPoLink] = useState<{ documentId: number | null; conditionIds: number[] } | null>(null);
   const orders = map.orders ?? [];
@@ -276,9 +280,13 @@ export function PartyMapView(
         </div>
         <div className="panel-bd">
           <div className="chips" role="group" aria-label="表示" style={{ marginBottom: 10 }}>
-            <button className="chip" aria-pressed={view === "mapping"} onClick={() => chooseView("mapping")}>マッピング</button>
+            <button className="chip" aria-pressed={view === "table"} onClick={() => chooseView("table")}>表（追加・解除）</button>
+            <button className="chip" aria-pressed={view === "mapping"} onClick={() => chooseView("mapping")}>線の図</button>
             <button className="chip" aria-pressed={view === "tree"} onClick={() => chooseView("tree")}>図（種類・締結日などを直す）</button>
           </div>
+          {view === "table" && (
+            <ContractTable map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+          )}
           {view === "mapping" && (
             <ContractFlow map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
           )}
