@@ -7,6 +7,7 @@ import { agreementDatedTitle } from "../documents/legacy-variables.js";
 import type { AgreementCsvRow } from "./csv.js";
 import { rootAgreementJoin } from "../conditions/contracts.js";
 import { ensureAgreementForOrder } from "./order-agreement.js";
+import { SETTLEMENT_TEMPLATE_PATTERN } from "../documents/settlement-docs.js";
 
 /**
  * 取引先 ⇔ 基本契約のマップ。
@@ -88,12 +89,48 @@ export interface PartyMap {
   orders?: MapOrder[];
   /** この取引先の生きている条件明細ぜんぶ（マッピング：条件明細 ⇔ 個別契約）。 */
   conditions?: MapCondition[];
+  /** 条件明細の実績を決済する文書（検収書・納品書・役務提供完了通知書・利用許諾料計算書）。 */
+  settlements?: MapSettlement[];
+  /** 条件明細に割り当てた支払（取り消しを除く）。 */
+  payments?: MapPayment[];
+}
+
+/**
+ * 条件明細の分類（マッピングの列分け）。
+ *   license … 許諾料
+ *   service … 委託料・実費・手数料・製品（OEM は実態が製造委託なので業務委託）
+ *   unset   … 種類未設定（名前の無い「無題の条件」。中身を入れると上のどちらかに入る）
+ */
+export type ConditionCategory = "license" | "service" | "unset";
+export function conditionCategory(kind: string | null | undefined, name: string | null | undefined): ConditionCategory {
+  if (!String(name ?? "").trim()) return "unset";
+  if (kind === "license") return "license";
+  if (kind === "service" || kind === "product" || kind === "expense" || kind === "fee") return "service";
+  return "unset";
+}
+
+export interface MapSettlement {
+  id: number; documentNo: string | null; label: string; templateKey: string;
+  /** 計算書（ライセンス）か、検収書など（業務委託）か。 */
+  category: "license" | "service";
+  status: string; issuedOn: string | null;
+  conditionIds: number[];
+}
+
+export interface MapPayment {
+  id: number; paymentNo: string | null; status: string;
+  amount: number; currency: string; dueOn: string | null; paidOn: string | null;
+  conditionIds: number[];
+  /** 割り当てた実績を決済した文書（支払文書）。実績を指定しない割り当てだけなら空。 */
+  documentIds: number[];
 }
 
 /** マッピング用の条件明細。どの契約（個別契約・単体契約・発注書の器）に載っているか。 */
 export interface MapCondition {
   id: number; conditionNo: string | null; name: string;
   kind: string; direction: "in" | "out"; status: string; workTitle: string | null;
+  category: ConditionCategory;
+  pricingModel: string; ratePpm: number | null; flatAmount: number | null; currency: string;
   agreementId: number | null;
   /** 載っている決定済み・下書きの文書（条件書・発注書など）。 */
   documents: Array<{ id: number; documentNo: string | null; status: string }>;
@@ -624,6 +661,7 @@ export class PartyAgreementMapService {
       }));
       const all = await this.database.query(
         `SELECT co.id, co.condition_no, co.name, co.kind, co.direction, co.status, co.agreement_id, w.title AS work_title,
+                co.pricing_model, co.rate_ppm, co.flat_amount, co.currency,
                 COALESCE((SELECT json_agg(json_build_object('id', d.id, 'documentNo', d.document_no, 'status', d.status) ORDER BY d.id)
                             FROM document_conditions dc JOIN documents d ON d.id = dc.document_id
                            WHERE dc.condition_id = co.id AND d.status IN ('issued', 'draft')), '[]') AS docs
@@ -636,8 +674,52 @@ export class PartyAgreementMapService {
         id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
         kind: String(c.kind ?? ""), direction: c.direction === "out" ? "out" : "in", status: String(c.status ?? ""),
         workTitle: str(c.work_title), agreementId: int(c.agreement_id),
+        category: conditionCategory(str(c.kind), str(c.name)),
+        pricingModel: String(c.pricing_model ?? "none"), ratePpm: int(c.rate_ppm), flatAmount: int(c.flat_amount),
+        currency: String(c.currency ?? "JPY").trim() || "JPY",
         documents: ((Array.isArray(c.docs) ? c.docs : JSON.parse(String(c.docs ?? "[]"))) as Array<Record<string, any>>)
           .map((d) => ({ id: Number(d.id), documentNo: str(d.documentNo), status: String(d.status ?? "") }))
+      }));
+      // 支払文書（実績を決済する文書）：条件明細に載っている（document_conditions）か、実績が結びつく（condition_events）もの。
+      const ids = map.conditions.map((c) => c.id);
+      const settle = ids.length ? await this.database.query(
+        `WITH links AS (
+           SELECT dc.document_id, dc.condition_id FROM document_conditions dc WHERE dc.condition_id = ANY($1::bigint[])
+           UNION
+           SELECT ce.document_id, ce.condition_id FROM condition_events ce
+            WHERE ce.document_id IS NOT NULL AND ce.condition_id = ANY($1::bigint[]))
+         SELECT d.id, d.document_no, d.status, d.issued_at, t.template_key, t.label,
+                array_agg(DISTINCT l.condition_id ORDER BY l.condition_id) AS condition_ids
+           FROM links l
+           JOIN documents d ON d.id = l.document_id
+           JOIN document_template_versions tv ON tv.id = d.template_version_id
+           JOIN document_templates t ON t.id = tv.template_id
+          WHERE d.status IN ('issued', 'draft') AND t.template_key ~ $2
+          GROUP BY d.id, d.document_no, d.status, d.issued_at, t.template_key, t.label
+          ORDER BY d.issued_at NULLS LAST, d.id`, [ids, SETTLEMENT_TEMPLATE_PATTERN.source]) : { rows: [] };
+      map.settlements = (settle.rows as any[]).map((d) => ({
+        id: Number(d.id), documentNo: str(d.document_no), label: String(d.label ?? "文書"), templateKey: String(d.template_key),
+        category: /royalty|statement/.test(String(d.template_key)) ? "license" : "service",
+        status: String(d.status), issuedOn: dateStr(d.issued_at),
+        conditionIds: (d.condition_ids as unknown[] ?? []).map(Number)
+      }));
+      const pays = ids.length ? await this.database.query(
+        `SELECT p.id, p.payment_no, p.status, p.amount, p.currency, p.due_on, p.paid_on,
+                array_agg(DISTINCT pa.condition_id ORDER BY pa.condition_id) AS condition_ids,
+                array_remove(array_agg(DISTINCT ce.document_id), NULL) AS document_ids
+           FROM payments p
+           JOIN payment_allocations pa ON pa.payment_id = p.id
+           LEFT JOIN condition_events ce ON ce.id = pa.event_id
+          WHERE pa.condition_id = ANY($1::bigint[]) AND p.status <> 'canceled'
+          GROUP BY p.id
+          ORDER BY COALESCE(p.paid_on, p.due_on) NULLS LAST, p.id`, [ids]) : { rows: [] };
+      const settlementIds = new Set(map.settlements.map((d) => d.id));
+      map.payments = (pays.rows as any[]).map((p) => ({
+        id: Number(p.id), paymentNo: str(p.payment_no), status: String(p.status),
+        amount: Number(p.amount ?? 0), currency: String(p.currency ?? "JPY").trim() || "JPY",
+        dueOn: dateStr(p.due_on), paidOn: dateStr(p.paid_on),
+        conditionIds: (p.condition_ids as unknown[] ?? []).map(Number),
+        documentIds: (p.document_ids as unknown[] ?? []).map(Number).filter((id) => settlementIds.has(id))
       }));
       // 基本契約に直接載っている条件は「ずれ」。基本契約は条件を持たず、発注書・条件書が持つ。
       const direct = new Map<string, number>();

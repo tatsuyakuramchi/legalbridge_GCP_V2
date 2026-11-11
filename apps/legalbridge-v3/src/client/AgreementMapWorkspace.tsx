@@ -14,7 +14,8 @@ import { PartySend } from "./PartySend.js";
 import { DocumentRegister } from "./DocumentRegister.js";
 import { MasterMerge } from "./MasterMerge.js";
 import { Relations } from "./Relations.js";
-import { AgreementMappingBoard, ConditionMapping } from "./AgreementMapping.js";
+import { ConditionMapping } from "./AgreementMapping.js";
+import { ContractFlow } from "./ContractFlow.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
 import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapOrder, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
@@ -279,7 +280,7 @@ export function PartyMapView(
             <button className="chip" aria-pressed={view === "tree"} onClick={() => chooseView("tree")}>図（種類・締結日などを直す）</button>
           </div>
           {view === "mapping" && (
-            <AgreementMappingBoard map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+            <ContractFlow map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
           )}
           {view === "tree" && <>
           <p className="faint" style={{ margin: "0 0 10px" }}>
