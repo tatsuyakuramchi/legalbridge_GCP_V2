@@ -92,6 +92,10 @@ BEGIN
          -- ひな形が条件書か、番号が条件書の番号（ARC-PUBT／ARC-ILT。取り込んだ文書・移行した文書も）。
          AND (t.template_key = ANY (terms_keys)
               OR dd.document_no ~ '^ARC-(PUBT|ILT)(-D)?-[0-9]{4}-[0-9]+(-R[0-9]+)?$')
+         -- 取り込んだ文書で、種類が条件書以外（計算書・検収書など）と分かっているものは条件書と見なさない
+         -- （番号だけ PUBT で取り込んだ計算書があった。種類は diag/not-terms-document.sql か画面で直す）。
+         AND NOT (dd.template_version_id IS NULL
+                  AND COALESCE(dd.manual_inputs->>'documentKind', '') ~ '計算書|検収|納品|請求|支払|発注|見積|領収')
          AND (dd.agreement_id IN (SELECT id FROM v3.agreements WHERE counterparty_id = ANY (v_parties))
               OR EXISTS (SELECT 1 FROM v3.document_conditions dc JOIN v3.conditions c ON c.id = dc.condition_id
                           WHERE dc.document_id = dd.id AND c.counterparty_id = ANY (v_parties)))
