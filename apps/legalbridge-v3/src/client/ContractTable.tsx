@@ -57,30 +57,45 @@ export function ContractTable(
   const filtering = catFilter !== "all" || show !== "all";
 
   // 行を組む：基本契約（種別ごと） → 個別契約 → 条件明細。
+  // 行を組む：種別（ライセンス → 業務委託 → ハイブリッド → その他） → その種別の基本契約・基本契約なし → 個別契約 → 条件明細。
+  // 最後に「未整理」（どの個別契約にも載っていない条件）。中身の無い種別は見出しごと出さない。
   const groups = useMemo(() => {
-    const out: Array<{ key: string; sec: string | null; master: { id: string; no: string; title: string; meta: string; cat: Cat } | null;
-                       contracts: Array<{ id: string; conds: MapCondition[]; hidden: number }> }> = [];
-    const contractsUnder = (parent: string) => model.contracts.filter((k) => (model.parentOf.get(k.id) ?? "") === parent)
+    type Group = { key: string; sec: string | null; noneLabel: string | null;
+                   master: { id: string; no: string; title: string; meta: string; cat: Cat } | null;
+                   contracts: Array<{ id: string; conds: MapCondition[]; hidden: number }> };
+    const out: Group[] = [];
+    const contractsUnder = (parent: string, pick: (id: string) => boolean = () => true) => model.contracts
+      .filter((k) => (model.parentOf.get(k.id) ?? "") === parent && pick(k.id))
       .map((k) => {
         const all = model.conds.filter((c) => model.condHolder(c) === k.id && condVisible(c));
         const folded = all.length > FOLD_OVER && !open.has(k.id);
         return { id: k.id, conds: folded ? all.slice(0, FOLD_SHOW) : all, hidden: folded ? all.length - FOLD_SHOW : 0, total: all.length };
       })
       .filter((k) => !filtering || k.total > 0);
+    const NONE_LABEL: Record<string, string> = {
+      lic: "基本契約なし（条件書を単体契約で結んだもの）", svc: "基本契約なし（発注書の約款で取引）",
+      hyb: "基本契約なし", other: "基本契約なし（種別の決まっていない契約）"
+    };
+    const catOfContract = (id: string): string => {
+      const c = model.catOf(id);
+      return c === "lic" || c === "svc" || c === "hyb" ? c : "other";
+    };
     for (const [cat, label] of MASTER_SECTIONS) {
-      const ms = model.masters.filter((m) => m.cat === cat);
-      let first = true;
-      for (const m of ms) {
+      const sec: Group[] = [];
+      for (const m of model.masters.filter((x) => x.cat === cat)) {
         const contracts = contractsUnder(m.node.id);
         if (filtering && !contracts.length) continue;
-        out.push({ key: m.node.id, sec: first ? label : null, contracts,
+        sec.push({ key: m.node.id, sec: null, noneLabel: null, contracts,
           master: { id: m.node.id, no: m.node.no ?? "", title: m.node.title ?? "", meta: m.node.meta ?? "", cat: m.cat } });
-        first = false;
       }
-      if (!ms.length && !filtering && cat !== "other") out.push({ key: `empty-${cat}`, sec: label, master: null, contracts: [] });
+      const none = contractsUnder("none", (id) => catOfContract(id) === cat);
+      if (none.length) sec.push({ key: `none-${cat}`, sec: null, noneLabel: NONE_LABEL[cat] ?? "基本契約なし", master: null, contracts: none });
+      if (!sec.length) continue;
+      sec[0]!.sec = label;
+      out.push(...sec);
     }
-    const none = [...contractsUnder("none"), ...contractsUnder("")];
-    if (none.length || !filtering) out.push({ key: "none", sec: "基本契約なし", master: null, contracts: none });
+    const loose = contractsUnder("");
+    if (loose.length) out.push({ key: "loose", sec: "未整理", noneLabel: "どの個別契約にも載っていない条件明細", master: null, contracts: loose });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, catFilter, show, open]);
@@ -207,7 +222,7 @@ export function ContractTable(
             {groups.map((g) => {
               const rows = g.contracts.reduce((t, k) => t + Math.max(k.conds.length, 1) + (k.hidden || open.has(k.id) ? 1 : 0), 0);
               const masterCell = (span: number) => (
-                <td className={`ct-master ${g.master?.cat ?? "none"}`} rowSpan={span}>
+                <td className={`ct-master ${g.master?.cat ?? (g.key.startsWith("none-") ? `${g.key.slice(5)} ct-nomaster` : "loose")}`} rowSpan={span}>
                   {g.master ? (
                     <>
                       <span className={`tag cf-tag ${g.master.cat}`}>{CAT_LABEL[g.master.cat] || "種別なし"}</span>
@@ -218,10 +233,8 @@ export function ContractTable(
                       <div>{g.master.title}</div>
                       <div className="faint">{g.master.meta}</div>
                     </>
-                  ) : g.key === "none"
-                    ? <div className="faint">単体契約・発注書の約款で取引</div>
-                    : <div className="faint">（{g.sec}の基本契約なし）</div>}
-                  {(g.master || g.key === "none") && act("＋ 個別契約を追加", () => setDialog({ kind: "contract-add", to: g.master?.id ?? "none", toNo: g.master?.no ?? "基本契約なし" }),
+                  ) : <div className="faint">{g.noneLabel}</div>}
+                  {(g.master || g.key.startsWith("none-")) && act("＋ 個別契約を追加", () => setDialog({ kind: "contract-add", to: g.master?.id ?? "none", toNo: g.master?.no ?? "基本契約なし" }),
                     g.master ? "個別契約（条件書・発注書・単体契約）を探してこの基本契約の下に入れる" : "個別契約を基本契約から外して、ここ（基本契約なし）に置く")}
                 </td>
               );
