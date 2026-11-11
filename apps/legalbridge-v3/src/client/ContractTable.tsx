@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiError, money } from "./api.js";
 import { Modal } from "./Modal.js";
 import { DocViewButton } from "./DocPeek.js";
+import { AgreementDocsDialog, VoidDialog, type VoidTarget } from "./DocVoid.js";
 import { useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
 import type { EntityKind } from "./Relations.js";
@@ -45,6 +46,9 @@ export function ContractTable(
   const [show, setShow] = useState<"all" | "loose" | "unsettled" | "unpaid">("all");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  /** 文書の一覧（契約ごと）・無効にする文書。 */
+  const [docsOf, setDocsOf] = useState<{ agreementId: number; title: string } | null>(null);
+  const [voiding, setVoiding] = useState<VoidTarget | null>(null);
 
   const settlementsOf = (c: MapCondition) => model.settlements.filter((s) => s.conditionIds.includes(c.id));
   const paymentsOf = (c: MapCondition) => model.payments.filter((p) => p.conditionIds.includes(c.id));
@@ -104,6 +108,15 @@ export function ContractTable(
     <button className="ct-act" title={title} onClick={(e) => { e.stopPropagation(); onClick(); }}>{label}</button>
   );
   const nodeNo = (id: string) => model.nodeOf(id)?.no ?? "";
+  /** 「文書」：契約に繋がっている文書ぜんぶ（無効にする・取り消す）。器のない発注書はその文書を直接無効に。 */
+  const docsButton = (nodeId: string, title: string) => {
+    if (nodeId === "loose") return null;
+    const aid = nodeId.startsWith("o") ? model.agreementIdOf(nodeId) : /^[am]\d+$/.test(nodeId) ? Number(nodeId.slice(1)) : null;
+    if (aid) return <button className="ct-act" title="この契約の文書ぜんぶ（重複・主旨に合わない文書を無効にする）"
+                            onClick={(e) => { e.stopPropagation(); setDocsOf({ agreementId: aid, title }); }}>文書</button>;
+    const o = nodeId.startsWith("o") ? (map.orders ?? []).find((x) => `o${x.id}` === nodeId) : null;
+    return o ? act("無効", () => setVoiding({ id: o.id, documentNo: o.documentNo, label: "発注書", status: o.status }), "この発注書を無効にする") : null;
+  };
   /** 「見る」：基本契約・個別契約はいま有効な文書、発注書はその文書。 */
   const viewOf = (nodeId: string) => {
     if (nodeId.startsWith("o")) {
@@ -173,6 +186,7 @@ export function ContractTable(
               <span className="tag">{/royalty|statement/.test(s.templateKey) ? "計算書" : s.label.replace(/（.*$/, "")}</span>
               <button className="linky code" onClick={() => onOpen?.("document", s.id)}>{s.documentNo ?? "（下書き）"}</button>
               <DocViewButton id={s.id} documentNo={s.documentNo} />
+              {act("無効", () => setVoiding({ id: s.id, documentNo: s.documentNo, label: s.label, status: s.status }), "重複・主旨に合わない文書を無効にする")}
               {s.linkedConditionIds.includes(c.id)
                 ? act("解除", () => setDialog({ kind: "doc-move", cond: c, doc: s }), "この文書から外す・ほかの文書へ付け替える")
                 : <span className="faint" title="実績（納品・売上）でこの文書に結びついています。外すときは実績から">実績で結びつき</span>}
@@ -229,6 +243,7 @@ export function ContractTable(
                       <div className="ct-line">
                         <button className="linky code" onClick={() => onOpen?.("agreement", Number(g.master!.id.slice(1)))}>{g.master.no}</button>
                         {viewOf(g.master.id)}
+                        {docsButton(g.master.id, g.master.no)}
                       </div>
                       <div>{g.master.title}</div>
                       <div className="faint">{g.master.meta}</div>
@@ -254,6 +269,7 @@ export function ContractTable(
                             ? <button className="linky code" onClick={node.open}>{node.no}</button>
                             : <span className="code">{node.no}</span>}
                           {viewOf(k.id)}
+                          {docsButton(k.id, node.no ?? "")}
                           {node.badge && <span className={`tag ${node.badge.cls}`}>{node.badge.text}</span>}
                         </div>
                         <div>{node.title}</div>
@@ -378,6 +394,8 @@ export function ContractTable(
               }) }} />;
         }
       })()}
+      {docsOf && <AgreementDocsDialog agreementId={docsOf.agreementId} title={docsOf.title} onChanged={onChanged} onClose={() => setDocsOf(null)} />}
+      {voiding && <VoidDialog doc={voiding} onDone={onChanged} onClose={() => setVoiding(null)} />}
     </div>
   );
 

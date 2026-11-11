@@ -1312,3 +1312,5 @@ tr.ledger-sec.band td{background:var(--accent)}
 .doc-viewer{width:100%;height:calc(100vh - 170px);border:1px solid var(--line);border-radius:6px;background:#fff}
 .ct-master.ct-nomaster{background:repeating-linear-gradient(135deg,var(--sunken),var(--sunken) 6px,var(--surface) 6px,var(--surface) 12px)}
 .ct-master.loose{background:var(--warn-soft)}
+.ct-act.ct-danger{color:var(--out);border-color:var(--out-soft)}
+.ct-act.ct-danger:hover{background:var(--out-soft);border-color:var(--out)}
