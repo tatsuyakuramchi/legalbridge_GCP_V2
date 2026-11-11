@@ -37,7 +37,7 @@ export function PartySend({ map, version, onOpen }: { map: PartyMap; version: nu
   const row = (d: DocumentSummary) => (
     <div key={d.id} className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap", padding: "2px 0" }}>
       <input type="checkbox" checked={picked.has(d.id)} onChange={() => toggle(d.id)} />
-      <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} />
+      <DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} documentNo={d.documentNo} />
       {onOpen ? <button className="linky code" onClick={() => onOpen("document", d.id)}>{d.documentNo ?? `#${d.id}`}</button> : <span className="code">{d.documentNo}</span>}
       <span>{d.templateLabel ?? ""}</span>
       <span className="faint">{d.title ?? ""}</span>

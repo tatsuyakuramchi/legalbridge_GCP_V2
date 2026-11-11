@@ -195,7 +195,7 @@ export function DocumentRegister(
                     </td>
                     <td className="code" style={{ whiteSpace: "nowrap" }}>
                       {onOpen ? <button className="linky" onClick={() => onOpen("document", d.id)}>{d.documentNo ?? `#${d.id}`}</button> : d.documentNo ?? `#${d.id}`}
-                      {" "}<DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} />
+                      {" "}<DocPeek id={d.id} imported={d.imported} storageUrl={d.storageUrl} documentNo={d.documentNo} />
                     </td>
                     <td>
                       {d.imported && <span className="tag ghost" style={{ marginRight: 4 }}>取込</span>}
