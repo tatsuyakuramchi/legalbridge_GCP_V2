@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { Modal } from "./Modal.js";
 import { DocViewButton } from "./DocPeek.js";
@@ -73,6 +73,7 @@ const STATUS_LABEL: Record<string, string> = { draft: "下書き", issued: "決�
 interface AgreementDoc {
   id: number; documentNo: string | null; label: string; title: string | null; status: string;
   issuedOn: string | null; imported: boolean; storageUrl: string | null; supersedesId: number | null; conditionCount: number;
+  agreementId: number | null; agreementNo: string | null;
 }
 
 /** 契約に繋がっている文書ぜんぶ。見る・無効にする・無効を取り消す。 */
@@ -93,7 +94,9 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
       .catch((e: ApiError) => { if (alive) setError(e.message); });
     return () => { alive = false; };
   }, [agreementId, version]);
-  const issued = (docs ?? []).filter((d) => d.status === "issued");
+  // 決定済みの重複は、同じ契約の中で数える（基本契約は下の個別契約の文書も出すので）。
+  const issued = (docs ?? []).filter((d) => d.status === "issued" && d.agreementId === agreementId);
+  const withChildren = (docs ?? []).some((d) => d.agreementId !== agreementId);
   return (
     <>
       <Modal title={`${title} の文書`} onClose={onClose} wide>
@@ -106,7 +109,7 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
           {docs && !docs.length && <div className="faint">文書はありません。</div>}
           {docs && docs.length > 0 && (
             <table className="table">
-              <thead><tr><th>文書番号</th><th>種類・件名</th><th>状態</th><th>決定日</th><th className="num">条件</th><th></th></tr></thead>
+              <thead><tr><th>文書番号</th>{withChildren && <th>契約</th>}<th>種類・件名</th><th>状態</th><th>決定日</th><th className="num">条件</th><th></th></tr></thead>
               <tbody>
                 {docs.map((d) => (
                   <tr key={d.id} style={d.status === "void" ? { opacity: 0.6 } : undefined}>
@@ -115,13 +118,18 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
                         ? <button className="linky code" title="文書の画面を開く（送る・訂正など）" onClick={() => onOpenDocument(d.id)}>{d.documentNo ?? "（番号なし）"}</button>
                         : d.documentNo ?? "（番号なし）"}
                       {d.imported && <span className="tag" style={{ marginLeft: 4 }}>取込</span>}</td>
+                    {withChildren && <td className="code">{d.agreementId === agreementId ? <span className="faint">この契約</span> : d.agreementNo ?? "—"}</td>}
                     <td>{d.label}{d.title && <div className="faint">{d.title}</div>}</td>
                     <td><span className={`tag${d.status === "void" ? " warn" : d.status === "issued" ? " ok" : ""}`}>{STATUS_LABEL[d.status] ?? d.status}</span></td>
                     <td>{d.issuedOn ?? "—"}</td>
                     <td className="num">{d.conditionCount}</td>
                     <td>
                       <span className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
-                        <DocViewButton id={d.id} documentNo={d.documentNo} imported={d.imported} storageUrl={d.storageUrl} />
+                        {d.imported && !d.storageUrl
+                          ? (!readOnly && d.status !== "void"
+                              ? <AttachFile documentId={d.id} onDone={() => { onChanged(`${d.documentNo ?? `文書 #${d.id}`} にファイルを付けました`); setVersion((v) => v + 1); }} />
+                              : <span className="faint" title="ファイルなしで取り込んだ文書です">ファイルなし</span>)
+                          : <DocViewButton id={d.id} documentNo={d.documentNo} imported={d.imported} storageUrl={d.storageUrl} />}
                         {!readOnly && (d.status === "issued" || d.status === "draft") && (
                           <button className="ct-act ct-danger" onClick={() => setTarget(d)}>無効にする</button>
                         )}
@@ -143,5 +151,32 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
           onDone={(msg) => { onChanged(msg); setVersion((v) => v + 1); }} />
       )}
     </>
+  );
+}
+
+/**
+ * ファイルなしで取り込んだ文書に PDF などを付ける（POST /documents/:id/import-file。保存先は Drive）。
+ * 付けたあとは「見る」で開ける。
+ */
+function AttachFile({ documentId, onDone }: { documentId: number; onDone: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function pick(file: File | undefined) {
+    if (!file) return;
+    setBusy(true); setError(null);
+    try {
+      await api.postRaw(`/documents/${documentId}/import-file?filename=${encodeURIComponent(file.name)}`, file, file.type || "application/pdf");
+      onDone();
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); if (ref.current) ref.current.value = ""; }
+  }
+  return (
+    <span className="stack" style={{ gap: 2, alignItems: "flex-end" }}>
+      <input ref={ref} type="file" accept="application/pdf,image/*" hidden onChange={(e) => void pick(e.target.files?.[0])} />
+      <button className="ct-act" disabled={busy} title="ファイルなしで取り込んだ文書です。PDF を付けると「見る」で開けます"
+              onClick={() => ref.current?.click()}>{busy ? "付けています…" : "ファイルを付ける"}</button>
+      {error && <span className="amap-issue">{error}</span>}
+    </span>
   );
 }

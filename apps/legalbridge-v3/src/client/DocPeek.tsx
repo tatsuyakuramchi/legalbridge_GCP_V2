@@ -70,3 +70,26 @@ export function DocViewer({ id, documentNo, imported, storageUrl, onClose }: {
     </Modal>
   );
 }
+
+/** URL だけの「見る」（契約に付けた Drive のリンクなど）。Drive なら埋め込み、ほかは別タブで開く案内。 */
+export function LinkViewButton({ url, title, label = "見る" }: { url: string; title: string; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const src = embeddableUrl(url);
+  return (
+    <>
+      <button className="ct-act ct-view" title="この画面のまま開く" onClick={(e) => { e.stopPropagation(); setOpen(true); }}>{label}</button>
+      {open && (
+        <Modal title={title} onClose={() => setOpen(false)} wide>
+          <div className="stack" style={{ gap: 8 }}>
+            <div className="row" style={{ gap: 8 }}>
+              <a className="btn btn-sm" href={url} target="_blank" rel="noreferrer">別タブで開く</a>
+              <span className="faint" style={{ marginLeft: "auto" }}>Esc か外側を押すと閉じます</span>
+            </div>
+            {src ? <iframe className="doc-viewer" src={src} title={title} />
+                 : <div className="note">このリンクはここでは開けません。「別タブで開く」で見てください。</div>}
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
