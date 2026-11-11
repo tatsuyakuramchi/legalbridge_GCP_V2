@@ -1443,6 +1443,34 @@ export class PartyAgreementMapService {
    * この契約に繋いでいる文書のうち、基本契約の紙。基本契約を結んでも契約（合意）として
    * 登録せず、条件書の単体契約に文書だけ繋いでいることがある。ここから基本契約を起こす。
    */
+  /**
+   * 契約に繋がっている文書ぜんぶ（無効・差し替え済みも。新しい順）。表の「文書」から開いて、
+   * 重複や主旨に合わない文書を無効にする（無効化は documents/issue-service の void。記録は残る）。
+   */
+  async agreementDocuments(id: number): Promise<Array<{
+    id: number; documentNo: string | null; label: string; title: string | null; status: string;
+    issuedOn: string | null; imported: boolean; storageUrl: string | null; supersedesId: number | null; conditionCount: number;
+  }>> {
+    try {
+      const r = await this.database.query(
+        `SELECT d.id, d.document_no, d.status, d.issued_at, d.storage_url, d.supersedes_id, (d.template_version_id IS NULL) AS imported,
+                COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label,
+                COALESCE(d.manual_inputs->>'title', v.title) AS title,
+                (SELECT count(*)::int FROM document_conditions dc WHERE dc.document_id = d.id) AS condition_count
+           FROM documents d
+           LEFT JOIN v_document_display v ON v.document_id = d.id
+           LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+           LEFT JOIN document_templates t ON t.id = tv.template_id
+          WHERE d.agreement_id = $1 OR d.id = (SELECT order_document_id FROM agreements WHERE id = $1)
+          ORDER BY (d.status = 'issued') DESC, d.issued_at DESC NULLS LAST, d.id DESC`, [id]);
+      return (r.rows as any[]).map((d) => ({
+        id: Number(d.id), documentNo: str(d.document_no), label: String(d.label), title: str(d.title), status: String(d.status),
+        issuedOn: dateStr(d.issued_at), imported: d.imported === true, storageUrl: str(d.storage_url),
+        supersedesId: int(d.supersedes_id), conditionCount: Number(d.condition_count ?? 0)
+      }));
+    } catch (error) { throw translate(error); }
+  }
+
   async masterDocuments(id: number): Promise<Array<{ id: number; documentNo: string; title: string; label: string; issuedOn: string | null }>> {
     const r = await this.database.query(
       `SELECT d.id, d.document_no, v.title, COALESCE(t.label, d.manual_inputs->>'documentKind', '文書') AS label, d.issued_at

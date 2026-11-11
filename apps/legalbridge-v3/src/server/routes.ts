@@ -640,6 +640,9 @@ export function createRoutes(database: Transactable) {
       const input = z.object({ documentIds: z.array(z.coerce.number().int().positive()).min(1).max(200) }).parse(req.body ?? {});
       res.json(await masterMerge.reissue(input.documentIds, actor(res)));
     }));
+  router.get("/agreement-map/agreements/:id/documents", asyncRoute(async (req, res) => {
+    res.json({ documents: await agreementMap.agreementDocuments(Number(req.params.id)) });
+  }));
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
   }));
