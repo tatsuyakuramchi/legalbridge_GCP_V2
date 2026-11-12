@@ -1,6 +1,7 @@
 import type { Queryable } from "../core/db.js";
 import { recordAudit } from "../core/audit.js";
 import { recordCommunication, slackRef } from "../matters/communication-service.js";
+import { MULTI_TERMS_TEMPLATE_KEY, applyToWorkAgreements } from "../agreements/auto.js";
 
 /**
  * 受信した出来事を業務に反映する。
@@ -72,7 +73,9 @@ export async function handleCloudSign(
 
   // 送信時（または下書きを作ったとき）の監査記録から、その外部IDの文書を引く。
   const found = await client.query(
-    `SELECT a.target_id AS document_id, d.document_no, d.agreement_id
+    `SELECT a.target_id AS document_id, d.document_no, d.agreement_id,
+            (SELECT t.template_key FROM document_template_versions tv JOIN document_templates t ON t.id = tv.template_id
+              WHERE tv.id = d.template_version_id) AS template_key
        FROM audit_events a
        JOIN documents d ON d.id = a.target_id
       WHERE a.action IN ('cloudsign.send', 'cloudsign.draft') AND a.target_type = 'document'
@@ -118,7 +121,10 @@ export async function handleCloudSign(
     `UPDATE agreements SET status = $2, updated_at = now()
       WHERE id = $1 AND status <> $2 RETURNING agreement_no, status`,
     [row.agreement_id, status]);
-  await stamp(true, {});
+  // 作品ごとに番号を持つ条件書：載っている作品の個別契約にも写す（紙は基本契約に付いている）。
+  const works = row.template_key === MULTI_TERMS_TEMPLATE_KEY
+    ? await applyToWorkAgreements(client, documentId, String(status), null) : 0;
+  await stamp(true, works ? { workAgreements: works } : {});
 
   return {
     applied: (updated.rowCount ?? 0) > 0,

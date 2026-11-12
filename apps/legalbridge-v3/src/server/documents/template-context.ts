@@ -19,7 +19,7 @@ import { foldPeriodicLines } from "./periodic-fold.js";
 import { editionPatch, royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
-import { PUB_TITLES_FIELD, isPubTermsTemplate, pubTermsPatch, pubTermsSuggestions,
+import { PUB_TITLES_FIELD, isPubTermsMulti, isPubTermsTemplate, pubTermsMultiWarnings, pubTermsPatch, pubTermsSuggestions,
          pubTermsWarnings, pubTitleSeeds } from "./pub-terms.js";
 import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
@@ -1493,7 +1493,11 @@ export function suggestionsFor(
  * ここで足す。発行は止めない。
  */
 export function templateWarnings(templateKey: string, context: Ctx, manual: Record<string, unknown> = {}): Warning[] {
-  if (isPubTermsTemplate(templateKey)) return pubTermsWarnings(context, templateKey);
+  if (isPubTermsTemplate(templateKey)) {
+    return isPubTermsMulti(templateKey)
+      ? [...pubTermsWarnings(context, templateKey), ...pubTermsMultiWarnings(context)]
+      : pubTermsWarnings(context, templateKey);
+  }
   if (templateKey === "intl_purchase_order") return intlCompanyWarnings(context);
   if (INSPECTION_KEYS.has(templateKey)) {
     return inLieuInspectionViolations(context, manual).map((v) => ({

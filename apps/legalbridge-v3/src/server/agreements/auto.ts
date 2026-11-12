@@ -30,6 +30,7 @@ import { baseDocumentNumber } from "../documents/numbering.js";
 /** 合意を起こす条件書のひな形。旧システム（V2）から移した pub_license_terms・individual_license_terms の訂正版も同じ。 */
 export const TERMS_TEMPLATE_KEYS = new Set([
   "individual_license_terms_v3", "individual_license_terms_v4", "pub_license_terms_v3", "pub_license_terms_v3_annex",
+  "pub_license_terms_multi",
   "pub_license_terms", "individual_license_terms"
 ]);
 
@@ -65,6 +66,8 @@ export async function ensureAgreementForTerms(
   client: Queryable, input: AutoAgreementInput, actor: string
 ): Promise<AutoAgreementResult | null> {
   if (!TERMS_TEMPLATE_KEYS.has(input.templateKey)) return null;
+  // 作品ごとに番号を持つ条件書は、紙ごとの個別契約を立てない（決定の前に ensureWorkAgreements が作品ごとに立てる）。
+  if (input.templateKey === MULTI_TERMS_TEMPLATE_KEY) return null;
   const payeeId = input.payeePartyId ?? null;
   if (!input.conditionIds.length) return null;
 
@@ -249,4 +252,158 @@ async function attachToExisting(
     });
   }
   return { agreementId: a.id, agreementNo: a.agreement_no, kind, parentId: parent, conditionsLinked: linked.rowCount ?? 0 };
+}
+
+// ---------------------------------------------------------------------------
+// 作品ごとに番号を持つ条件書（pub_license_terms_multi）
+//
+// 1 枚の紙に作品が何点も載り、作品ごとに個別利用許諾番号（作品の個別契約＝基本契約の下の supplement）を振る。
+// 紙そのものは基本契約に付け（ARC-PUBS-…）、作品の個別契約とは載っている条件明細で繋がる。
+// ---------------------------------------------------------------------------
+
+export const MULTI_TERMS_TEMPLATE_KEY = "pub_license_terms_multi";
+
+export interface WorkAgreementsResult {
+  masterId: number; masterNo: string | null;
+  works: Array<{ workTitle: string; agreementId: number; agreementNo: string | null; created: boolean; conditionsLinked: number }>;
+}
+
+/**
+ * 決定の前（紙に番号を刷る前）に、載っている作品ごとの個別契約を確かめる。
+ *   ・作品の条件が既に同じ基本契約の下の個別契約に載っていれば、それを使う
+ *   ・無ければ作品ごとに個別契約を立てる（番号は条件書と同じ PUBT の連番から振る）
+ *   ・1 本の個別契約に別の作品の条件が載っていれば止める（先に作品ごとに分けてもらう）
+ * 文書は基本契約に付ける。条件明細は作品の個別契約に寄せる（契約なし・基本契約に直付けのものだけ）。
+ */
+export async function ensureWorkAgreements(
+  client: Queryable,
+  input: { documentId: number; conditionIds: number[]; agreementId: number | null; issuedOn: string | null;
+           nextNumber: () => Promise<string> },
+  actor: string
+): Promise<WorkAgreementsResult> {
+  const ids = [...new Set(input.conditionIds.map(Number))].filter((n) => n > 0);
+  if (!ids.length) throw new DomainError("VALIDATION", "条件明細が載っていません");
+  const rows = (await client.query(
+    `SELECT c.id, c.counterparty_id, c.direction, c.agreement_id, c.work_id, c.name, w.title AS work_title,
+            COALESCE(a.kind, 'master') AS agreement_kind, a.parent_id AS agreement_parent, a.agreement_no,
+            a.order_document_id AS agreement_order
+       FROM conditions c
+       LEFT JOIN works w ON w.id = c.work_id
+       LEFT JOIN agreements a ON a.id = c.agreement_id
+      WHERE c.id = ANY($1::bigint[])`, [ids])).rows as any[];
+  const parties = [...new Set(rows.map((r) => Number(r.counterparty_id)))];
+  if (parties.length !== 1) throw new DomainError("VALIDATION", "相手先の違う条件明細を 1 枚の条件書に載せることはできません");
+  const partyId = parties[0]!;
+
+  // 基本契約：文書に付いた基本契約 → 条件の基本契約（個別契約ならその親）→ 取引先の基本契約（1 本だけのとき）。
+  const asMaster = async (id: number | null) => {
+    if (!id) return null;
+    const a = (await client.query(
+      "SELECT id, agreement_no, domain, direction, COALESCE(kind, 'master') AS kind FROM agreements WHERE id = $1", [id])).rows[0] as any;
+    return a && a.kind === "master" ? a : null;
+  };
+  let master = await asMaster(input.agreementId);
+  if (!master) {
+    const roots = [...new Set(rows.map((r) => (r.agreement_kind === "master" ? int(r.agreement_id)
+      : r.agreement_kind === "supplement" && !r.agreement_order ? int(r.agreement_parent) : null)).filter((x): x is number => x !== null))];
+    if (roots.length > 1) throw new DomainError("VALIDATION", "条件明細が 2 本の基本契約に分かれています。文書で基本契約を選んでください");
+    master = await asMaster(roots[0] ?? null);
+  }
+  if (!master) {
+    const only = (await client.query(
+      `SELECT id FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id
+        WHERE r.resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $1)
+          AND COALESCE(a.kind, 'master') = 'master' AND a.terminated_on IS NULL`, [partyId])).rows as any[];
+    if (only.length !== 1) throw new DomainError("VALIDATION", "作品ごとに番号を持つ条件書は基本契約の下で出します。文書で基本契約を選んでください");
+    master = await asMaster(Number(only[0].id));
+  }
+
+  // 作品ごと（作品の無い条件は条件ごと）にまとめる。
+  const groups = new Map<string, any[]>();
+  for (const r of rows) {
+    const key = r.work_id ? `w${r.work_id}` : `c${r.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  // 個別契約 1 本に別の作品が載っていないか（載っていれば、どの作品の番号か決められない）。
+  const supplementOf = (r: any) => r.agreement_kind === "supplement" && !r.agreement_order && Number(r.agreement_parent) === Number(master.id)
+    ? Number(r.agreement_id) : null;
+  const worksBySupplement = new Map<number, Set<string>>();
+  for (const [key, group] of groups) {
+    for (const r of group) {
+      const s = supplementOf(r);
+      if (s) worksBySupplement.set(s, new Set([...(worksBySupplement.get(s) ?? []), key]));
+    }
+  }
+  const shared = [...worksBySupplement.entries()].filter(([, works]) => works.size > 1);
+  if (shared.length) {
+    const nos = shared.map(([id]) => rows.find((r) => Number(r.agreement_id) === id)?.agreement_no ?? `#${id}`);
+    throw new DomainError("VALIDATION",
+      `個別契約 ${nos.join("・")} に、作品が 2 点以上載っています。作品ごとに番号を振るので、取引先⇔基本契約の表で作品ごとの個別契約に分けてから決定してください`);
+  }
+  // 条件書に載せない条件（同じ取引先の別の個別契約・単体契約に載っている）は動かさないが、番号は振れないので止める。
+  const elsewhere = rows.filter((r) => r.agreement_id && r.agreement_kind !== "master" && !supplementOf(r));
+  if (elsewhere.length) {
+    throw new DomainError("VALIDATION",
+      `${elsewhere.map((r) => r.agreement_no ?? `#${r.agreement_id}`).filter((v, i, a) => a.indexOf(v) === i).join("・")} `
+      + `（基本契約 ${master.agreement_no ?? ""} の下の個別契約ではない契約）に載っている条件明細があります。先に表で付け替えてください`);
+  }
+
+  const works: WorkAgreementsResult["works"] = [];
+  for (const group of groups.values()) {
+    const workTitle = String(group[0].work_title ?? group[0].name ?? "");
+    const existing = group.map(supplementOf).find((x): x is number => x !== null) ?? null;
+    let agreementId: number;
+    let agreementNo: string | null;
+    let created = false;
+    if (existing) {
+      agreementId = existing;
+      agreementNo = str(group.find((r) => supplementOf(r) === existing)?.agreement_no);
+    } else {
+      // 番号は条件書と同じ PUBT の連番（文書番号・契約番号のどちらにも使われていないもの）。
+      let no = await input.nextNumber();
+      for (let i = 0; i < 50 && (await client.query("SELECT 1 FROM agreements WHERE agreement_no = $1", [no])).rows[0]; i += 1) {
+        no = await input.nextNumber();
+      }
+      const r = await client.query(
+        `INSERT INTO agreements (agreement_no, title, counterparty_id, direction, status, kind, domain, parent_id, effective_on)
+         VALUES ($1, $2, $3, $4, 'negotiating', 'supplement', $5, $6, $7::date) RETURNING id`,
+        [no, `出版等利用許諾条件書${workTitle ? `（${workTitle}）` : ""}`, partyId, str(master.direction) ?? "in",
+         str(master.domain) ?? "license", Number(master.id), input.issuedOn ?? new Date().toISOString().slice(0, 10)]);
+      agreementId = Number((r.rows[0] as { id: number }).id);
+      agreementNo = no;
+      created = true;
+    }
+    const moved = await client.query(
+      "UPDATE conditions SET agreement_id = $2, updated_at = now() WHERE id = ANY($1::bigint[]) AND (agreement_id IS NULL OR agreement_id = $3) RETURNING id",
+      [group.map((r) => Number(r.id)), agreementId, Number(master.id)]);
+    works.push({ workTitle, agreementId, agreementNo, created, conditionsLinked: moved.rowCount ?? 0 });
+  }
+  await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1 AND agreement_id IS DISTINCT FROM $2", [input.documentId, Number(master.id)]);
+  await recordAudit(client, {
+    actor, action: "agreement.work_terms", targetType: "document", targetId: input.documentId,
+    detail: { masterId: Number(master.id), masterNo: str(master.agreement_no), works }
+  });
+  return { masterId: Number(master.id), masterNo: str(master.agreement_no), works };
+}
+
+/**
+ * 作品ごとに番号を持つ条件書の締結・辞退を、載っている作品の個別契約に写す（紙は基本契約に付いているので、
+ * 紙の合意の状態を動かすだけでは作品の個別契約が「交渉中」のまま残る）。
+ */
+export async function applyToWorkAgreements(
+  client: Queryable, documentId: number, status: string, onDate: string | null
+): Promise<number> {
+  const r = await client.query(
+    `UPDATE agreements a
+        SET status = $2,
+            executed_on = CASE WHEN $2 = 'executed' THEN COALESCE(a.executed_on, $3::date) ELSE a.executed_on END,
+            updated_at = now()
+      WHERE a.status <> $2 AND a.kind = 'supplement' AND a.order_document_id IS NULL
+        AND a.id IN (SELECT c.agreement_id FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                      WHERE dc.document_id = $1)
+        AND EXISTS (SELECT 1 FROM documents d JOIN document_template_versions tv ON tv.id = d.template_version_id
+                      JOIN document_templates t ON t.id = tv.template_id
+                     WHERE d.id = $1 AND t.template_key = $4)
+      RETURNING a.id`, [documentId, status, onDate, MULTI_TERMS_TEMPLATE_KEY]);
+  return r.rowCount ?? 0;
 }

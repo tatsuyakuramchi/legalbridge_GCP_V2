@@ -173,3 +173,39 @@ test("文書に個別契約が付いていれば、それを使う。契約な�
   assert.equal(db.find("INSERT INTO agreements"), undefined);
   assert.equal(db.find("FROM conditions c"), undefined, "新しく立てるための読み込みはしない");
 });
+
+test("作品ごとに番号を持つ条件書：作品ごとに個別契約を確かめ、無ければ PUBT の番号で立てる。紙は基本契約に付ける", async () => {
+  const { ensureWorkAgreements } = await import("./auto.js");
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions c")) return [
+      { id: 1, counterparty_id: 5, direction: "in", agreement_id: 60, work_id: 10, work_title: "作品A",
+        agreement_kind: "supplement", agreement_parent: 3, agreement_no: "ARC-PUBT-2026-0012", agreement_order: null },
+      { id: 2, counterparty_id: 5, direction: "in", agreement_id: 3, work_id: 11, work_title: "作品B",
+        agreement_kind: "master", agreement_parent: null, agreement_no: "ATT-2026-00069", agreement_order: null }];
+    if (t.includes("COALESCE(kind, 'master') AS kind FROM agreements WHERE id = $1")) return [{ id: 3, agreement_no: "ATT-2026-00069", domain: "license", direction: "in", kind: "master" }];
+    if (t.includes("INSERT INTO agreements")) return [{ id: 70 }];
+    if (t.includes("UPDATE conditions")) return [{ id: 2 }];
+    return [];
+  });
+  const r = await ensureWorkAgreements(db, { documentId: 9, conditionIds: [1, 2], agreementId: 3, issuedOn: "2026-11-12",
+    nextNumber: async () => "ARC-PUBT-2026-0032" }, "who");
+  assert.equal(r.masterId, 3);
+  assert.deepEqual(r.works.map((w) => [w.workTitle, w.agreementNo, w.created]), [["作品A", "ARC-PUBT-2026-0012", false], ["作品B", "ARC-PUBT-2026-0032", true]]);
+  assert.equal(db.find("INSERT INTO agreements")!.params[0], "ARC-PUBT-2026-0032");
+  assert.deepEqual(db.find("UPDATE documents SET agreement_id")!.params, [9, 3], "紙は基本契約に付ける");
+});
+
+test("作品ごとに番号を持つ条件書：1 本の個別契約に作品が 2 点載っていれば止める（作品ごとに分けてから）", async () => {
+  const { ensureWorkAgreements } = await import("./auto.js");
+  const db = new FakeDatabase((t) => {
+    if (t.includes("FROM conditions c")) return [
+      { id: 1, counterparty_id: 5, direction: "in", agreement_id: 60, work_id: 10, work_title: "神我狩",
+        agreement_kind: "supplement", agreement_parent: 3, agreement_no: "ARC-PUBT-2026-0012", agreement_order: null },
+      { id: 2, counterparty_id: 5, direction: "in", agreement_id: 60, work_id: 11, work_title: "黒剣のスレイヤー",
+        agreement_kind: "supplement", agreement_parent: 3, agreement_no: "ARC-PUBT-2026-0012", agreement_order: null }];
+    if (t.includes("COALESCE(kind, 'master') AS kind FROM agreements WHERE id = $1")) return [{ id: 3, agreement_no: "ATT-2026-00069", domain: "license", direction: "in", kind: "master" }];
+    return [];
+  });
+  await assert.rejects(ensureWorkAgreements(db, { documentId: 9, conditionIds: [1, 2], agreementId: 3, issuedOn: null,
+    nextNumber: async () => "X" }, "who"), /ARC-PUBT-2026-0012 に、作品が 2 点以上/);
+});

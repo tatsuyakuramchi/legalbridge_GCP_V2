@@ -1,6 +1,6 @@
 import { inTransaction, int, str, type Transactable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
-import { TERMS_TEMPLATE_KEYS } from "../agreements/auto.js";
+import { MULTI_TERMS_TEMPLATE_KEY, TERMS_TEMPLATE_KEYS, applyToWorkAgreements } from "../agreements/auto.js";
 import { recordAudit } from "../core/audit.js";
 import { recordCommunication } from "../matters/communication-service.js";
 
@@ -218,7 +218,9 @@ export class DocumentSendService {
     try {
       return await inTransaction(this.database, async (client) => {
         const head = await client.query(
-          `SELECT d.id, d.document_no, d.status, d.matter_id, d.agreement_id, a.status AS agreement_status
+          `SELECT d.id, d.document_no, d.status, d.matter_id, d.agreement_id, a.status AS agreement_status,
+                  (SELECT t.template_key FROM document_template_versions tv JOIN document_templates t ON t.id = tv.template_id
+                    WHERE tv.id = d.template_version_id) AS template_key
              FROM documents d LEFT JOIN agreements a ON a.id = d.agreement_id
             WHERE d.id = $1 FOR UPDATE OF d`, [documentId]);
         const doc = head.rows[0] as Record<string, any> | undefined;
@@ -281,6 +283,11 @@ export class DocumentSendService {
               WHERE id = $1 AND status <> $2 RETURNING id`,
             [agreementId, input.status, input.at ? String(input.at).slice(0, 10) : null]);
           agreementUpdated = (updated.rowCount ?? 0) > 0;
+        }
+        // 作品ごとに番号を持つ条件書：紙は基本契約に付いているので、載っている作品の個別契約にも写す。
+        if ((input.status === "executed" || input.status === "terminated") && doc.template_key === MULTI_TERMS_TEMPLATE_KEY) {
+          const works = await applyToWorkAgreements(client, documentId, input.status, input.at ? String(input.at).slice(0, 10) : null);
+          agreementUpdated = agreementUpdated || works > 0;
         }
         await recordAudit(client, {
           actor, action: "cloudsign.applied", targetType: "document", targetId: documentId, occurredAt: at,

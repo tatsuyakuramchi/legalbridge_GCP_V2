@@ -31,7 +31,7 @@ const ORDER_KEYS = "('purchase_order', 'intl_purchase_order')";
  */
 const ORDER_IMPORT_KINDS = "('発注書')";
 /** 利用許諾の条件書（相手と結ぶ個別の契約）。取り込んだ利用許諾契約書も同じ（conditions/contracts.ts）。 */
-const TERMS_KEYS = "('individual_license_terms_v3', 'individual_license_terms_v4', 'pub_license_terms', 'pub_license_terms_v3', 'pub_license_terms_v3_annex')";
+const TERMS_KEYS = "('individual_license_terms_v3', 'individual_license_terms_v4', 'pub_license_terms', 'pub_license_terms_v3', 'pub_license_terms_v3_annex', 'pub_license_terms_multi')";
 const TERMS_IMPORT_KINDS = "('利用許諾契約書')";
 /** 結果の文書。検収書と計算書。 */
 const RESULT_KEYS = "('inspection_certificate', 'intl_inspection_certificate', 'service_completion_notice', 'royalty_statement', 'royalty_statement_pub')";

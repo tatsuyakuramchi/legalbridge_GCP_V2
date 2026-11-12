@@ -148,7 +148,7 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
   assert.equal(patch.titleCount, 2);
   assert.equal(patch.hasAnyDigital, true);
   assert.deepEqual(patch.titles[1], {
-    no: 2, title: "ねこの図書館", edition: "ねこの図書館 ①", copyright: "", thirdParty: "なし", note: "",
+    no: 2, termsNo: "", jointLabel: "なし", title: "ねこの図書館", edition: "ねこの図書館 ①", copyright: "", thirdParty: "なし", note: "",
     printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—",
     hasPrint: true, hasDigital: false,
     // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
@@ -467,4 +467,13 @@ test("行に控えた条件 id が無くなっていても（改訂・重複の�
   const row = (patch.titles as Array<Record<string, unknown>>)[0];
   assert.equal(row.printExclusivity, "独占");
   assert.equal(row.printRate, "10%");
+});
+
+test("作品ごとに番号を持つ条件書：番号の範囲は続いていれば「〜」、飛んでいれば「・」", async () => {
+  const { termsNoRange } = await import("./pub-terms.js");
+  assert.equal(termsNoRange(["ARC-PUBT-2026-0014", "ARC-PUBT-2026-0012", "ARC-PUBT-2026-0013"]), "ARC-PUBT-2026-0012〜0014");
+  assert.equal(termsNoRange(["ARC-PUBT-2026-0030", "ARC-PUBT-2026-0031"]), "ARC-PUBT-2026-0030〜0031");
+  assert.equal(termsNoRange(["ARC-PUBT-2026-0012", "ARC-PUBT-2026-0026"]), "ARC-PUBT-2026-0012・ARC-PUBT-2026-0026");
+  assert.equal(termsNoRange(["ARC-PUBT-2026-0012"]), "ARC-PUBT-2026-0012");
+  assert.equal(termsNoRange([]), "");
 });

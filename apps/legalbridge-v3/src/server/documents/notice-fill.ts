@@ -19,7 +19,7 @@ import { joinContactParts } from "./contact-line.js";
  * 決定日のまま出し直す。入っている欄は触らない。必ず試算（preview）を見てから出す。
  */
 
-export const TERMS_KEYS = ["pub_license_terms_v3", "pub_license_terms_v3_annex"];
+export const TERMS_KEYS = ["pub_license_terms_v3", "pub_license_terms_v3_annex", "pub_license_terms_multi"];
 export const MASTER_KEYS = ["pub_master_individual", "pub_master_corporate"];
 export const NOTICE_REASON = "通知先を記載する";
 

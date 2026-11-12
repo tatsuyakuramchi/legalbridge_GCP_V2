@@ -306,3 +306,31 @@ test("許諾期間：期間を持たない条件なら行を出さない（こ�
   assert.ok(!out.includes('<span class="lbl">許諾期間</span>'));
   assert.ok(!out.includes("一覧の「許諾期間」の行による"));
 });
+
+test("作品ごとに番号を持つ条件書（206）：本文が差す名前はすべて出る。A4 横・作品ごとの番号・番号の範囲・空の締結日", async () => {
+  const { PUB_TERMS_MULTI_EXTRA_VARIABLES } = await import("./pub-terms.js");
+  const multiHtml = bodyOf("206_pub_license_terms_multi.sql", 0);
+  // 料率は紙 1 枚で 1 つ（そろえる）。作品の個別契約の番号は条件から。
+  const multiContext = { ...context, conditions: context.conditions.map((c: any, i: number) => ({
+    ...c, ratePct: c.scopes.media.includes("電子") ? 15 : 11, exclusivity: "exclusive", exclusivityLabel: "独占",
+    termsAgreementNo: i < 2 ? "ARC-PUBT-2026-0012" : "ARC-PUBT-2026-0013" })) };
+  multiContext.condition = { ...context.condition };
+  const defaults = Object.fromEntries(PUB_TERMS_MULTI_EXTRA_VARIABLES.filter((v) => v.default).map((v) => [v.name, v.default]));
+  const patch = pubTermsPatch(multiContext, { ...defaults, "副題": "1通目／テスト", "許諾者連絡先": "甲野 甲太 ／ kono@example.test" });
+  const values = { taxRate: 10, BANK_INFO: bankInfoLine(context.bank), ...patch };
+  const out = renderDocumentHtml(multiHtml, values);
+  const blanks = blankPlaceholders(multiHtml, values, [...PUB_TERMS_VARIABLES, ...PUB_TERMS_MULTI_EXTRA_VARIABLES].map((v) => v.name));
+  const rowNames = new Set(["termsNo", "title", "edition", "copyright", "jointLabel", "note", "this"]);
+  // 締結日は空のとき「年　月　日」の空欄（Word と同じ）。
+  const outside = blanks.filter((name) => !rowNames.has(name) && name !== "multiSignDate");
+  assert.deepEqual(outside, [], `空欄で出る差し込み: ${outside.join(", ")}`);
+  assert.ok(!out.includes("{{"), "差し込みが残っていない");
+  assert.ok(out.includes("size: A4 landscape"), "A4 横");
+  assert.ok(out.includes("個別利用許諾番号：ARC-PUBT-2026-0012〜0013"), "番号の範囲");
+  assert.ok(out.includes("<td class=\"no\">ARC-PUBT-2026-0012</td>"), "作品ごとの番号");
+  assert.ok(/締結日：\d{4}年　　月　　日/.test(out), "締結日は空欄");
+  assert.ok(out.includes("料率（11%）") && out.includes("料率（15%）"), "料率は 1 つ");
+  assert.ok(out.includes("（1通目／テスト）"), "副題");
+  assert.ok(out.includes("「力造」名義以外の者"), "共著者分の支払（初期値）");
+  assert.ok(out.includes("本個別契約に定めのない事項は基本契約の定めによる。"), "特記事項の結び");
+});
