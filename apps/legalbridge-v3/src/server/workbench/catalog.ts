@@ -24,6 +24,7 @@ export const MAIN_DOCS: Record<WorkbenchPattern, Array<{ key: string; label: str
   // 出版許諾契約書（個人・法人）は、基本契約を兼ねる 1 通で済ませるときの代わり。
   pub_in: [{ key: "pub_license_terms_v3", label: "出版等利用許諾条件書（作品追加の合意・一覧形式）" },
            { key: "pub_license_terms_v3_annex", label: "出版等利用許諾条件書（別紙形式。作品が多いとき）" },
+           { key: "pub_license_terms_multi", label: "出版等利用許諾条件書（作品ごとに番号・A4 横）" },
            { key: "pub_master_individual", label: "出版許諾契約書（個人。基本契約を兼ねる 1 通）" },
            { key: "pub_master_corporate", label: "出版許諾契約書（法人。基本契約を兼ねる 1 通）" }],
   game_out: [{ key: "pub_license_terms_v3", label: "利用許諾条件書（一覧形式）" },

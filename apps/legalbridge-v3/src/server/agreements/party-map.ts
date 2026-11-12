@@ -237,7 +237,7 @@ const MASTER_DOCUMENT_SQL = `t.template_key IN ('license_master', 'service_maste
 
 /** 条件書（相手と結ぶ個別の契約そのもの）。取り込んだ利用許諾契約書も同じ扱い。 */
 const TERMS_DOCUMENT_SQL = `t.template_key IN ('individual_license_terms_v3', 'individual_license_terms_v4',
-                                                 'pub_license_terms_v3', 'pub_license_terms_v3_annex')
+                                                 'pub_license_terms_v3', 'pub_license_terms_v3_annex', 'pub_license_terms_multi')
   OR d.manual_inputs->>'documentKind' = '利用許諾契約書'`;
 
 /** 文書から立てられる契約の役割（d・t を使う）。 */
@@ -550,7 +550,14 @@ const MAP_SELECT = `
             FROM documents d
             LEFT JOIN document_template_versions dtv ON dtv.id = d.template_version_id
             LEFT JOIN document_templates dt ON dt.id = dtv.template_id
-           WHERE d.agreement_id = a.id AND d.status = 'issued'
+           WHERE d.status = 'issued'
+             AND (d.agreement_id = a.id
+                  -- 作品ごとに番号を持つ条件書は基本契約に付く。作品の個別契約からは、載っている条件で繋がる。
+                  OR (dt.template_key = 'pub_license_terms_multi' AND a.kind = 'supplement'
+                      AND EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                                   WHERE dc.document_id = d.id AND c.agreement_id = a.id)))
+             -- 基本契約の文書としては出さない（基本契約書そのものではない）。
+             AND NOT (COALESCE(a.kind, 'master') = 'master' AND COALESCE(dt.template_key, '') = 'pub_license_terms_multi')
              -- 支払文書（検収書・計算書）は契約の文書ではない（基本契約に付いていても出さない）。
              AND COALESCE(dt.template_key, '') !~ 'inspection|acceptance|delivery|statement|royalty|completion') AS current_doc
     FROM agreements a
@@ -1468,6 +1475,10 @@ export class PartyAgreementMapService {
            LEFT JOIN agreements oa ON oa.order_document_id = d.id
           WHERE d.agreement_id = $1 OR d.id = (SELECT order_document_id FROM agreements WHERE id = $1)
              OR d.agreement_id IN (SELECT id FROM agreements WHERE parent_id = $1)
+             -- 作品ごとに番号を持つ条件書（基本契約に付く）は、載っている作品の個別契約からも見える。
+             OR (t.template_key = 'pub_license_terms_multi'
+                 AND EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                              WHERE dc.document_id = d.id AND c.agreement_id = $1))
              OR d.id IN (SELECT order_document_id FROM agreements WHERE parent_id = $1 AND order_document_id IS NOT NULL)
           ORDER BY (COALESCE(oa.id, da.id) = $1) DESC, (d.status = 'issued') DESC, COALESCE(oa.agreement_no, da.agreement_no),
                    d.issued_at DESC NULLS LAST, d.id DESC`, [id]);

@@ -37,7 +37,18 @@ export const PUB_TERMS_KEY = "pub_license_terms_v3";
  * 項目・値の出どころ・一覧の組み方は同じで、本文の組み方だけが違う。
  */
 export const PUB_TERMS_ANNEX_KEY = "pub_license_terms_v3_annex";
-export const PUB_TERMS_KEYS: readonly string[] = [PUB_TERMS_KEY, PUB_TERMS_ANNEX_KEY];
+/**
+ * 作品ごとに番号を持つ条件書（A4 横。DucQrews の条件書をひな形にしたもの）。
+ *
+ * 1 枚の紙に作品を何点も並べ、作品ごとに個別利用許諾番号（作品の個別契約＝基本契約の下の
+ * supplement の番号。ARC-PUBT-…）を振る。紙そのものの番号は別の頭（ARC-PUBS-…）。
+ * 料率・期間・地域は紙 1 枚で 1 つ（作品で違うものは別の紙に分ける。警告で知らせる）。
+ * 条文のうち、支払時期・共著者分の支払・旧合意・特記事項などは文書ごとに直せる文言（初期値あり）。
+ */
+export const PUB_TERMS_MULTI_KEY = "pub_license_terms_multi";
+export const PUB_TERMS_KEYS: readonly string[] = [PUB_TERMS_KEY, PUB_TERMS_ANNEX_KEY, PUB_TERMS_MULTI_KEY];
+/** 作品ごとに番号を持つ条件書か。 */
+export const isPubTermsMulti = (templateKey: string): boolean => templateKey === PUB_TERMS_MULTI_KEY;
 export const isPubTermsTemplate = (templateKey: string): boolean => PUB_TERMS_KEYS.includes(templateKey);
 /** 別紙形式か（本文の組み方の違い。警告の出し分けに使う）。 */
 export const isPubTermsAnnex = (templateKey: string): boolean => templateKey === PUB_TERMS_ANNEX_KEY;
@@ -54,7 +65,8 @@ export const PUB_TITLES_ANNEX_HINT = 12;
  */
 export const PUB_TERMS_TEMPLATE_HINT: Record<string, string> = {
   [PUB_TERMS_KEY]: `作品が少ないとき向け。対象著作物の一覧が第１条に出る（${PUB_TITLES_ANNEX_HINT} 点あたりまで）`,
-  [PUB_TERMS_ANNEX_KEY]: "作品が多いとき向け。条文を先に読み切れるよう、一覧は末尾の別紙1に出る"
+  [PUB_TERMS_ANNEX_KEY]: "作品が多いとき向け。条文を先に読み切れるよう、一覧は末尾の別紙1に出る",
+  [PUB_TERMS_MULTI_KEY]: "作品ごとに個別利用許諾番号を振る形（A4 横）。料率・期間が同じ作品を 1 枚にまとめる"
 };
 
 /** 一覧の行の欄。画面の行編集（LineItems の pub_titles）と本文が同じ名前を読む。 */
@@ -440,6 +452,8 @@ export function pubTitleSeeds(context: Data): Data[] {
       edition,
       // 作品に持たせた著作権表示・第三者権利（A-027）。無ければ行で人が入れる。
       copyright: text(head.work?.copyrightNotice),
+      // 作品の個別契約の番号（作品ごとに番号を持つ条件書の「条件書番号」欄）。紙・電子のどちらかが載っている個別契約。
+      terms_no: text(print?.termsAgreementNo) || text(digital?.termsAgreementNo) || text(head.termsAgreementNo),
       third_party: text(head.work?.thirdPartyRights),
       // 共同著作の取り分（A-068）。条件明細の写し。条件から出た行は紙に出すとき引き直す。
       co_authors: print || digital ? mediaSharesText(print, digital) : sharesText(head),
@@ -686,14 +700,20 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       const receipts = fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
       return [fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
     })();
+    // 作品の個別契約の番号。条件から出た行は条件の個別契約が正（決定のときに作品ごとに立てる）。
+    const termsNo = (fromLedger ? text(print?.termsAgreementNo) || text(digital?.termsAgreementNo)
+      || text(transPrint?.termsAgreementNo) || text(transDigital?.termsAgreementNo) : "") || text(row.terms_no);
     return {
       no: index + 1,
+      termsNo,
       title: text(row.title) || text(row.item_name),
       edition: text(row.edition),
       copyright: text(row.copyright),
       thirdParty: text(row.third_party) || "なし",
       note,
       coAuthors, payeeShare, hasShares: Boolean(coAuthors),
+      // 「共同著作・第三者権利」欄（作品ごとに番号を持つ条件書）。共著の取り分か第三者権利があれば「あり」。
+      jointLabel: Boolean(coAuthors) || (text(row.third_party) !== "" && text(row.third_party) !== "なし") ? "あり" : "なし",
       printRate: fromLedger ? payeeRateText(context.payee, print) : (text(row.print_rate) || "—"),
       printExclusivity: fromLedger ? (print ? exclusivityText(print) || "—" : "—")
         : (text(row.print_exclusivity) || "—"),
@@ -809,6 +829,136 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     titleCount: titles.length,
     hasAnyDigital: titles.some((t) => t.hasDigital),
     /** 作品ごとの許諾期間が一覧に出ているか。第３条がそちらを指す（A-039）。 */
-    hasWorkTerms: titles.some((t) => t.hasTerm)
+    hasWorkTerms: titles.some((t) => t.hasTerm),
+    ...multiPatch(titles, conditions, pick, translationShare)
   };
+}
+
+// ---------------------------------------------------------------------------
+// 作品ごとに番号を持つ条件書（pub_license_terms_multi）
+// ---------------------------------------------------------------------------
+
+/** 既定の文言（DucQrews の条件書 v4 のまま）。文書ごとに画面で直せる。 */
+export const MULTI_DEFAULTS = {
+  preambleExtra: "著作権者はいずれも許諾者とする。",
+  grantPrint: "独占的に許諾する。許諾者は、許諾期間中、本著作物について被許諾者以外の第三者に対し出版を許諾しない。ただし、許諾者自身が本著作物を利用することは妨げられない。この場合において、当該利用が被許諾者による本出版物の販売と競合するときは、許諾者は、利用の時期、数量、販売経路その他の態様につき、被許諾者の販売に不当な影響を及ぼさないよう配慮するものとする。",
+  grantDigital: "独占的に許諾する（条件：主要電子書籍ストアにて配信。DRM適用）。許諾者は、許諾期間中、本著作物について被許諾者以外の第三者に対し電子書籍の配信を許諾しない。ただし、許諾者自身が本著作物を利用することは妨げられない。この場合において、当該利用が被許諾者による電子出版物の配信と競合するときは、許諾者は、利用の時期、数量、販売経路その他の態様につき、被許諾者の配信に不当な影響を及ぼさないよう配慮するものとする。",
+  grantTranslation: "独占的に許諾する。被許諾者は、本著作物の翻訳（二次的著作物の作成）ならびに翻訳版の出版および配信を、自ら行い、または第三者に再許諾することができる。再許諾の条件は、本条件書に定める許諾地域および許諾期間の範囲内とする。",
+  grantPromo: "本出版物の販売促進、広告宣伝、営業資料、プレスリリース、SNS告知その他これらに準ずる目的に必要な範囲で許諾する。",
+  grantSecondary: "通常の条件書では対象外（二次的著作物）。本条件書により当然に許諾されるものではなく、当事者間で追加条件書、覚書その他の書面により別途合意した場合に限り許諾される。",
+  translationBasis: "算定の基礎は、源泉徴収税額および海外送金手数料を控除した後の被許諾者の実受領額とする。",
+  payTiming: "紙書籍：都度払い（刊行日を含む月の翌月末日払い）。電子書籍：年1回・10月末日払い（算定期間：毎年7月1日から翌年6月末日まで、同日締め）。翻訳版：被許諾者が再許諾先から許諾料を受領した日を含む月の翌々月末日払い。報告明細：利用形態別の数量・単価・金額を記載した報告書を提出。",
+  coAuthorPay: [
+    "基本契約第12条第3項に基づき、被許諾者は、許諾者が書目ごとに定めて被許諾者に通知した対価の配分割合（以下「配分割合」という）に従い、「力造」名義以外の者（以下「共著者」という）に配分されるべき対価（以下「共著者分」という）を、各共著者に直接支払い、その額を許諾者への支払額から控除する。「力造」名義に配分される対価は、許諾者に支払う。これに伴う源泉徴収、支払調書の作成その他の事務は、被許諾者が行う。",
+    "前項にかかわらず、被許諾者が許諾者に対し、特定の支払について共著者への分配を書面（電子メールを含む）により委託した場合は、被許諾者は当該支払について共著者分を含む全額を許諾者に支払い、許諾者がこれを各共著者に分配する（源泉徴収、支払調書の作成その他の事務を含む）。この場合、被許諾者は許諾者に対し、分配業務の委託料として、委託1回につき金50,000円（消費税別）を支払う。委託を行うか否かは、被許諾者が決定する。",
+    "許諾者は、第1項の直接支払に必要な共著者の情報（氏名、住所、振込先口座、個人番号その他法令上必要なもの）を取りまとめ、被許諾者に提供する。配分割合に変更が生じたときは、許諾者は、変更後の配分割合およびその適用開始時期を遅滞なく被許諾者に通知し、被許諾者は、当該通知の到達後に行う支払から変更後の配分割合を適用する。被許諾者は、当該情報を当該支払および法令上の手続の目的にのみ利用する。許諾者から当該情報の提供がないために被許諾者が直接支払を行えない場合、被許諾者は当該支払について共著者分を含む全額を許諾者に支払うものとし、この場合、前項の委託料は生じない。"
+  ].join("\n"),
+  thirdPartyIp: "対象著作物ごとに上記一覧の「共同著作・第三者権利」欄および「備考」欄に記載のとおり。",
+  copyrightNotice: "対象著作物ごとに上記一覧の「著作権表示」欄記載のとおり。",
+  priorAgreements: [
+    "本条件書の対象著作物および許諾内容に関し、締結日以前に両当事者間で成立した契約、覚書、条件書、発注書、請求書、電子メール、口頭・黙示の合意、取引慣行その他形式を問わない一切の合意（以下「旧契約等」）は、本条件書および基本契約に統合される。",
+    "相互に矛盾・抵触する場合、本条件書、基本契約、旧契約等の順に優先する。",
+    "前二項にかかわらず、本条件書に明示されていない商品化、映像化、デジタルゲーム化その他の追加利用は、別途書面または電磁的方法により合意した場合に限り許諾される。"
+  ].join("\n"),
+  closing: "本個別契約に定めのない事項は基本契約の定めによる。"
+} as const;
+
+/** 作品ごとに番号を持つ条件書の項目（一覧形式の項目に足す）。初期値は v4 の文言。 */
+export const PUB_TERMS_MULTI_EXTRA_VARIABLES: TemplateVariable[] = [
+  { name: "締結日", label: "締結日（空なら「年　月　日」の空欄で出る）", type: "date", group: "I. 基本情報", noGuess: true },
+  { name: "副題", label: "副題（タイトルの右。例：1通目／神我狩シリーズ）", group: "I. 基本情報", noGuess: true },
+  { name: "前文の追記", label: "前文の追記（点数のあとに続ける文）", type: "textarea", group: "I. 基本情報", noGuess: true,
+    default: MULTI_DEFAULTS.preambleExtra },
+  { name: "許諾内容_紙", label: "許諾内容：紙媒体出版", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantPrint },
+  { name: "許諾内容_電子", label: "許諾内容：電子書籍配信", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantDigital },
+  { name: "許諾内容_翻訳", label: "許諾内容：翻訳版", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantTranslation },
+  { name: "許諾内容_販促", label: "許諾内容：販促・広告利用", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantPromo },
+  { name: "許諾内容_二次利用", label: "許諾内容：二次利用", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantSecondary },
+  { name: "翻訳版の算定の基礎", label: "翻訳版：算定の基礎", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.translationBasis },
+  { name: "支払時期・方法", label: "支払時期・方法", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.payTiming },
+  { name: "共著者分の支払", label: "共著者分の支払（1 行 1 項。空にすると欄ごと出さない）", type: "textarea", group: "VIII. 条文（作品ごとに番号）",
+    noGuess: true, default: MULTI_DEFAULTS.coAuthorPay },
+  { name: "旧合意", label: "旧合意・過去利用（1 行 1 項）", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.priorAgreements },
+  { name: "特記事項（作品ごと）", label: "特記事項（1 行 1 項。最後に「本個別契約に定めのない事項は基本契約の定めによる。」が付く）",
+    type: "textarea", group: "VI. 特記事項", noGuess: true }
+];
+
+/** 番号の範囲（ARC-PUBT-2026-0012〜0029）。続いていなければ「・」で並べる。 */
+export function termsNoRange(nos: string[]): string {
+  const list = [...new Set(nos.map((n) => n.trim()).filter(Boolean))];
+  if (!list.length) return "";
+  const parsed = list.map((n) => ({ n, m: n.match(/^(.*-)(\d+)$/) }));
+  if (parsed.every((p) => p.m) && new Set(parsed.map((p) => p.m![1])).size === 1) {
+    const sorted = [...parsed].sort((a, b) => Number(a.m![2]) - Number(b.m![2]));
+    const nums = sorted.map((p) => Number(p.m![2]));
+    const contiguous = nums.every((v, i) => i === 0 || v === nums[i - 1]! + 1);
+    if (sorted.length === 1) return sorted[0]!.n;
+    if (contiguous) return `${sorted[0]!.n}〜${sorted[sorted.length - 1]!.m![2]}`;
+    return sorted.map((p) => p.n).join("・");
+  }
+  return list.join("・");
+}
+
+const lines = (v: string) => v.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+/** 作品で 1 つにそろっている値（そろっていなければ null）。 */
+const uniform = (values: string[]): string | null => {
+  const set = [...new Set(values.filter((v) => v && v !== "—"))];
+  return set.length === 1 ? set[0]! : null;
+};
+
+function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]) => string, translationShare: number | null): Data {
+  const own = conditions.filter((c) => !isTranslationCondition(c));
+  const prints = own.filter((c) => mediaOfCondition(c) === "print");
+  const exemptFirst = uniform(prints.map((c) => text(c.royaltyExemptFirstCopies)));
+  const transRates = conditions.filter((c) => isTranslationCondition(c)).map((c) => percentText(c.ratePct));
+  const nos = titles.map((t) => text(t.termsNo)).filter(Boolean);
+  const special = lines(pick("特記事項（作品ごと）"));
+  const coAuthor = lines(pick("共著者分の支払"));
+  const prior = lines(pick("旧合意"));
+  return {
+    termsNoRange: termsNoRange(nos),
+    // 締結日は欄に入れたときだけ（Word と同じく、署名の前の紙は「2026年　　月　　日」）。決定日では埋めない。
+    multiSignDate: pick("締結日"),
+    // 締結日が空のとき（締結の前に出す紙）、ヘッダは「2026年　　月　　日」と年だけ入れる（Word と同じ）。
+    signYear: new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric" }).format(new Date()).replace(/[^0-9]/g, ""),
+    subtitle: pick("副題"),
+    preambleExtra: pick("前文の追記"),
+    grantPrint: pick("許諾内容_紙"), grantDigital: pick("許諾内容_電子"), grantTranslation: pick("許諾内容_翻訳"),
+    grantPromo: pick("許諾内容_販促"), grantSecondary: pick("許諾内容_二次利用"),
+    // 料率は紙 1 枚で 1 つ（作品で違えば「一覧のとおり」にせず警告で分けてもらう）。
+    printRateAll: uniform(titles.map((t) => text(t.printRate))) ?? "",
+    digitalRateAll: uniform(titles.map((t) => text(t.digitalRate))) ?? "",
+    translationRateAll: uniform(transRates) ?? (translationShare != null ? percentText(translationShare) : ""),
+    exemptFirstCopies: exemptFirst && Number(exemptFirst) > 0 ? Number(exemptFirst).toLocaleString("ja-JP") : "",
+    translationBasis: pick("翻訳版の算定の基礎"),
+    payTiming: pick("支払時期・方法"),
+    coAuthorPay: coAuthor, hasCoAuthorPay: coAuthor.length > 0,
+    priorAgreements: prior, hasPriorAgreements: prior.length > 0,
+    thirdPartyIp: MULTI_DEFAULTS.thirdPartyIp,
+    copyrightNoticeText: MULTI_DEFAULTS.copyrightNotice,
+    multiSpecial: [...special, MULTI_DEFAULTS.closing]
+  };
+}
+
+/** 作品ごとに番号を持つ条件書だけの警告（料率・期間がそろっているか、番号・按分）。 */
+export function pubTermsMultiWarnings(context: Data): Warning[] {
+  const out: Warning[] = [];
+  const patch = pubTermsPatch(context, {});
+  const titles = list(patch.titles);
+  const rateSets = (key: string) => [...new Set(titles.map((t) => text(t[key])).filter((v) => v && v !== "—"))];
+  for (const [key, label] of [["printRate", "紙"], ["digitalRate", "電子"]] as const) {
+    const set = rateSets(key);
+    if (set.length > 1) out.push({ kind: "other", message: `${label}の料率が作品で違います（${set.join("・")}）。この条件書は料率を 1 つで書くので、料率ごとに紙を分けてください` });
+  }
+  const terms = [...new Set(titles.map((t) => text(t.term)).filter(Boolean))];
+  if (terms.length > 1) out.push({ kind: "other", message: `許諾期間が作品で違います（${terms.length} 通り）。期間ごとに紙を分けてください` });
+  const missing = titles.filter((t) => !text(t.termsNo)).map((t) => text(t.title));
+  if (missing.length) out.push({ kind: "other", message: `作品の個別契約がまだ無い作品があります（${missing.slice(0, 5).join("・")}${missing.length > 5 ? ` ほか ${missing.length - 5}` : ""}）。決定のときに作品ごとに個別利用許諾番号を振ります` });
+  // 按分（共著の取り分）と著作権表示の食い違い。
+  for (const t of titles) {
+    const names = text(t.copyright).split(/[／/、,]/).map((x) => x.trim()).filter(Boolean);
+    if (names.length > 1 && !t.hasShares) out.push({ kind: "other", message: `${text(t.title)}：著作権表示に ${names.length} 名ありますが、条件明細に共著の取り分がありません（共同著作は「なし」で出ます）` });
+    if (names.length <= 1 && t.hasShares) out.push({ kind: "other", message: `${text(t.title)}：条件明細に共著の取り分がありますが、著作権表示が 1 名です` });
+  }
+  return out;
 }

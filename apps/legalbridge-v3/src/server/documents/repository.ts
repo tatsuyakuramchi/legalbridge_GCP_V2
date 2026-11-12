@@ -4,7 +4,7 @@ import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { parseVariables, type TemplateVariable } from "./binding.js";
 import { LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
-import { PUB_TERMS_VARIABLES, isPubTermsTemplate } from "./pub-terms.js";
+import { PUB_TERMS_MULTI_EXTRA_VARIABLES, PUB_TERMS_VARIABLES, isPubTermsMulti, isPubTermsTemplate } from "./pub-terms.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { DEFAULT_TAX_ROUNDING, TAX_ROUNDING_INPUT, TAX_ROUNDING_LABEL } from "../core/rounding.js";
 
@@ -210,6 +210,11 @@ function variablesFor(templateKey: string, declared: TemplateVariable[]): Templa
   if (declared.length) return declared;
   if (isLicenseTermsTemplate(templateKey)) return LICENSE_TERMS_VARIABLES;
   // 出版の条件書（V3）も項目はコードが持つ。ひな形の SQL は本文だけを運ぶ。
+  if (isPubTermsMulti(templateKey)) {
+    // 作品ごとに番号を持つ条件書：署名欄・翻訳の在庫販売期間・一覧形式の特記事項は使わない（Word の条件書どおり）。
+    return [...PUB_TERMS_VARIABLES.filter((v) => !["署名欄", "翻訳物の在庫販売期間", "特記事項", "締結日"].includes(v.name)),
+            ...PUB_TERMS_MULTI_EXTRA_VARIABLES];
+  }
   if (isPubTermsTemplate(templateKey)) return PUB_TERMS_VARIABLES;
   return declared;
 }

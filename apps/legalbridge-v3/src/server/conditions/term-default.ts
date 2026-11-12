@@ -27,7 +27,7 @@ import { addMonths, renewalLabel } from "./renewal.js";
 /** 基本契約の期間と更新の単位（月）。 */
 export const DEFAULT_TERM_MONTHS = 36;
 
-export const PUB_TERMS_TEMPLATE_KEYS = ["pub_license_terms_v3", "pub_license_terms_v3_annex", "pub_license_terms"];
+export const PUB_TERMS_TEMPLATE_KEYS = ["pub_license_terms_v3", "pub_license_terms_v3_annex", "pub_license_terms_multi", "pub_license_terms"];
 
 export interface TermTarget {
   conditionId: number;

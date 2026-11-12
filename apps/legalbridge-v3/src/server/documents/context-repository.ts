@@ -643,6 +643,10 @@ export class DocumentContextRepository {
               -- 検収書の行の発注番号が、発注書の文書も控えも無いときにこれを使う。
               (SELECT a.agreement_no FROM agreements a
                 WHERE a.id = c.agreement_id AND COALESCE(a.kind, 'master') IN ('standalone', 'document')) AS standalone_no,
+              -- 条件が載っている個別契約（条件書の個別契約。発注書の器は除く）の番号。
+              -- 作品ごとに番号を持つ条件書（pub_license_terms_multi）の一覧の「条件書番号」に出る。
+              (SELECT a.agreement_no FROM agreements a
+                WHERE a.id = c.agreement_id AND a.kind = 'supplement' AND a.order_document_id IS NULL) AS terms_agreement_no,
               c.counterparty_id, c.work_id, c.work_part_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
               p.invoice_no AS party_invoice_no, p.corporate_no AS party_corporate_no,
@@ -746,6 +750,8 @@ export class DocumentContextRepository {
         orderNo: str(row.order_no),
         /** 条件が載っている単体契約の番号。発注書の文書も控えも無いときの発注番号。 */
         standaloneNo: str(row.standalone_no),
+        /** 条件が載っている個別契約（条件書）の番号。作品ごとに番号を持つ条件書の一覧に出る。 */
+        termsAgreementNo: str(row.terms_agreement_no),
         /** 利用形態（A-027）。条件書の行・取引形態の当てはめはこれが先。 */
         usageType: str(row.usage_type),
         agreementId: int(row.agreement_id),
@@ -947,7 +953,7 @@ export class DocumentContextRepository {
                  JOIN document_template_versions v ON v.id = d.template_version_id
                  JOIN document_templates t ON t.id = v.template_id
                 WHERE dc.condition_id = c.id AND d.status IN ('draft', 'issued')
-                  AND t.template_key IN ('pub_license_terms_v3', 'pub_license_terms_v3_annex',
+                  AND t.template_key IN ('pub_license_terms_v3', 'pub_license_terms_v3_annex', 'pub_license_terms_multi',
                                          'individual_license_terms_v3', 'individual_license_terms_v4')
                 ORDER BY d.id DESC LIMIT 1) AS companion_template_key,
               -- 初版の算定の基礎（A-077）。特約の第 2 項と明細の注記が使う。

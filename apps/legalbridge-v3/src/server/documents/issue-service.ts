@@ -2,7 +2,8 @@ import { isRoyaltyStatementKey } from "./settlement-docs.js";
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { applyWriteBack, type WriteBackResult } from "./write-back.js";
 import { isAutoInLieuTerms } from "../conditions/royalty-in-lieu.js";
-import { ensureAgreementForTerms } from "../agreements/auto.js";
+import { MULTI_TERMS_TEMPLATE_KEY, ensureAgreementForTerms, ensureWorkAgreements } from "../agreements/auto.js";
+import { TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { ensureAgreementForOrder } from "../agreements/order-agreement.js";
 import { inContractRef } from "../royalty/in-contract.js";
 import { DomainError, translate } from "../core/errors.js";
@@ -128,6 +129,10 @@ export function readIssuedOn(raw: string | null | undefined, today = new Date())
 export function revisionFamily(templateKey: string): string {
   if (isRoyaltyStatementKey(templateKey)) return "royalty_statement";
   if (templateKey === "purchase_order" || templateKey === "intl_purchase_order") return "purchase_order";
+  // 出版等利用許諾条件書（一覧形式・別紙形式・作品ごとに番号・旧 V2）は同じ種類。形式を変えて改定できる。
+  if (["pub_license_terms", "pub_license_terms_v3", "pub_license_terms_v3_annex", MULTI_TERMS_TEMPLATE_KEY].includes(templateKey)) {
+    return "pub_license_terms";
+  }
   return templateKey;
 }
 
@@ -486,7 +491,9 @@ export class DocumentIssueService {
             `訂正版は同じ種類の文書でだけ出せます。元の ${prior.document_no ?? "文書"} は「${prior.label ?? prior.template_key}」、`
             + `この文書は「${template.label}」です。訂正版ではなく新しい文書として作ってください`);
         }
-        const supersedesNo = int(row.supersedes_id) ? str(prior?.document_no) : null;
+        // 作品ごとに番号を持つ条件書は、改定でも紙の番号（PUBS）を新しく振る（元の条件書の番号は作品の番号として一覧に残る）。
+        const multiTerms = template.templateKey === MULTI_TERMS_TEMPLATE_KEY;
+        const supersedesNo = int(row.supersedes_id) && !multiTerms ? str(prior?.document_no) : null;
         const documentNo = supersedesNo
           ? await nextRevisionNumber(client, supersedesNo)
           : formatDocumentNumber(prefix, year, await nextSequence(client, prefix, year));
@@ -509,12 +516,19 @@ export class DocumentIssueService {
             "SELECT id FROM condition_events WHERE document_id = $1 AND status = 'active' ORDER BY id", [row.supersedes_id]);
           eventIds = (onOld.rows as Array<{ id: number }>).map((e) => Number(e.id));
         }
+        // 作品ごとに番号を持つ条件書：紙に番号を刷る前に、作品ごとの個別契約を確かめる（無ければ PUBT の番号で立てる）。
+        const workTerms = multiTerms
+          ? await ensureWorkAgreements(client, {
+              documentId, conditionIds, agreementId: int(row.agreement_id), issuedOn,
+              nextNumber: async () => formatDocumentNumber("PUBT", year, await nextSequence(client, "PUBT", year))
+            }, actor)
+          : null;
         const context = withInspectionLines(template.templateKey, await this.buildContext(client, {
           templateKey: template.templateKey,
           conditionIds,
           matterId: row.matter_id,
           requestId,
-          agreementId: row.agreement_id,
+          agreementId: workTerms ? workTerms.masterId : row.agreement_id,
           eventIds,
           royalty: extra.royalty ?? null
         }, printedNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId),
@@ -592,6 +606,33 @@ export class DocumentIssueService {
             await this.supersede(client, x, documentId, documentNo, str(row.supersede_reason), actor);
           }
         }
+        // 作品ごとに番号を持つ条件書は、載せた作品の条件書（旧い紙）をまとめて差し替える。
+        // 差し替えるのは、その紙の条件明細（改訂の系列で見る）がすべてこの紙に載っているものだけ。
+        // 一部の作品だけが重なる紙は残す（別の作品の条件がまだそこにある）。
+        const coveredTerms: string[] = [];
+        if (multiTerms) {
+          const covered = await client.query(
+            `WITH mine AS (SELECT DISTINCT COALESCE(c.series_id, c.id) AS s FROM conditions c WHERE c.id = ANY($2::bigint[]))
+             SELECT d.id, d.document_no
+               FROM documents d
+               LEFT JOIN document_template_versions tv ON tv.id = d.template_version_id
+               LEFT JOIN document_templates t ON t.id = tv.template_id
+              WHERE d.status = 'issued' AND d.id <> $1
+                AND (t.template_key = ANY($3::text[])
+                     OR (d.template_version_id IS NULL AND d.document_no ~ '^ARC-(PUBT|ILT)'
+                         AND COALESCE(d.manual_inputs->>'documentKind', '') !~ '計算書|検収|納品|請求|支払|発注|見積|領収'))
+                AND EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                             WHERE dc.document_id = d.id AND COALESCE(c.series_id, c.id) IN (SELECT s FROM mine))
+                AND NOT EXISTS (SELECT 1 FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+                                 WHERE dc.document_id = d.id AND c.status <> 'void'
+                                   AND COALESCE(c.series_id, c.id) NOT IN (SELECT s FROM mine))
+              ORDER BY d.document_no`, [documentId, conditionIds, TERMS_TEMPLATES]);
+          for (const old of covered.rows as Array<{ id: number; document_no: string | null }>) {
+            await this.supersede(client, Number(old.id), documentId, documentNo,
+              str(row.supersede_reason) ?? `作品ごとに番号を持つ条件書 ${documentNo} にまとめた`, actor);
+            coveredTerms.push(str(old.document_no) ?? `#${old.id}`);
+          }
+        }
 
         // 条件書（個別利用許諾条件書・出版条件書）は相手と結ぶ契約そのもの。
         // 決定した瞬間に合意の器を立てる（基本契約があれば補助文書、無ければ単体契約）。
@@ -625,6 +666,8 @@ export class DocumentIssueService {
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
                     ...(printedNo !== documentNo ? { printedNo } : {}),
                     ...(auto ? { agreement: auto } : {}),
+                    ...(workTerms ? { workAgreements: workTerms } : {}),
+                    ...(coveredTerms.length ? { supersededTerms: coveredTerms } : {}),
                     ...(order ? { orderAgreement: order } : {}),
                     ...(versionId !== Number(row.template_version_id)
                       ? { templateVersionWas: Number(row.template_version_id), templateVersion: versionId } : {}),
