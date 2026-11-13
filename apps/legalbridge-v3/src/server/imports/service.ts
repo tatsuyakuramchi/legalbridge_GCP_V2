@@ -10,6 +10,8 @@ import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionScope } from "../core/model.js";
 import { csvAmount, csvBoolean, parseCsv } from "./parse.js";
 import { toCsv } from "../exports/csv.js";
+import { PARTIES_SAMPLE, PARTIES_UPDATE_HINT, PARTIES_UPDATE_SAMPLE, PARTY_HEADERS, PARTY_UPDATE_COLUMNS,
+         PartiesImportService } from "./parties.js";
 import { FEE_BASIS } from "./fee-basis.js";
 import { CONDITION_KIND_CSV, DELIVERABLE_OWNERSHIP_CSV, PRICING_MODEL_CSV, SERVICE_CONDITION_EXPORT_HEADERS,
          TAX_CATEGORY_CSV } from "../conditions/export.js";
@@ -86,13 +88,15 @@ export interface ImportSpec {
 
 export const IMPORT_SPECS: ImportSpec[] = [
   {
-    kind: "parties", label: "取引先",
+    kind: "parties", label: "取引先（登録・修正の画面と口座の欄と同じ項目）",
     required: ["名称", "区分"],
-    optional: ["取引先コード", "カナ", "インボイス番号", "法人番号", "源泉対象", "別名",
-               "代表者肩書", "代表者氏名", "主担当氏名", "主担当メール", "主担当部署"],
-    sample: "名称,区分,取引先コード,カナ,インボイス番号,法人番号,源泉対象,別名,代表者肩書,代表者氏名,主担当氏名,主担当メール,主担当部署\n" +
-            "株式会社甲,法人,,カブシキガイシャコウ,T1234567890123,1234567890123,,甲社,代表取締役,甲野 一郎,乙山 花子,otoyama@example.co.jp,制作部\n" +
-            "山田太郎,個人,V-0102,ヤマダタロウ,,,対象,やまだ,,,,,"
+    optional: PARTY_HEADERS.filter((h) => h !== "名称" && h !== "区分"),
+    sample: PARTIES_SAMPLE,
+    updatable: true,
+    updateHint: PARTIES_UPDATE_HINT,
+    updateColumns: PARTY_UPDATE_COLUMNS,
+    updateSample: PARTIES_UPDATE_SAMPLE,
+    exportPath: "/imports/parties/export.csv", exportLabel: "登録済みの取引先（口座を含む・1 取引先 1 行）"
   },
   {
     kind: "works", label: "作品",
@@ -286,6 +290,7 @@ function csvDate(value: string | undefined): string | null {
 
 export class ImportService {
   private readonly parties: PartyWriteService;
+  private readonly partyImport: PartiesImportService;
   private readonly works: WorkWriteService;
   private readonly conditions: ConditionWriteService;
   private readonly agreements: PartyAgreementMapService;
@@ -296,6 +301,7 @@ export class ImportService {
   constructor(private readonly database: Transactable) {
     this.agreements = new PartyAgreementMapService(database);
     this.parties = new PartyWriteService(database);
+    this.partyImport = new PartiesImportService(database, { parties: this.parties });
     this.works = new WorkWriteService(database);
     this.conditions = new ConditionWriteService(database);
     this.pubWorks = new PubWorksImportService(database, { works: this.works, conditions: this.conditions,
@@ -304,6 +310,9 @@ export class ImportService {
                                                            editions: new WorkEditionService(database) });
     this.existingContracts = new ExistingContractsImportService(database, { agreements: new AgreementService(database) });
   }
+
+  /** 登録済みの取引先を、取引先の取込と同じ列で書き出す（口座を含む）。 */
+  exportParties(): Promise<string> { return this.partyImport.exportCsv(); }
 
   /** 登録済みの出版作品を、出版作品の取込と同じ列で書き出す。 */
   exportPubWorks(): Promise<string> { return this.pubWorks.exportCsv(); }
@@ -371,6 +380,11 @@ export class ImportService {
           throw new DomainError("VALIDATION",
             "更新には「条件番号」か、「作品名（または作品コード）」と「取引モデル」の見出しが要ります");
         }
+      } else if (input.kind === "parties") {
+        if (!parsed.headers.includes("取引先コード") && !parsed.headers.includes("名称")) {
+          throw new DomainError("VALIDATION",
+            "更新には「取引先コード」か「名称」の見出しが要ります。どの取引先を直すかが決まりません");
+        }
       } else if (!parsed.headers.includes("作品コード") && !parsed.headers.includes("作品名")) {
         throw new DomainError("VALIDATION",
           "更新には「作品コード」か「作品名」の見出しが要ります。どの作品を直すかが決まりません");
@@ -412,7 +426,9 @@ export class ImportService {
           : input.kind === "service_conditions"
           ? await this.serviceConditionUpdate(row, input.dryRun, input.actor)
           : input.kind === "parties"
-            ? await this.party(row, input.dryRun, input.actor)
+            ? (mode === "update"
+              ? await this.partyImport.update(row, input.dryRun, input.actor)
+              : await this.partyImport.create(row, input.dryRun, input.actor))
             : mode === "update"
               ? await this.workUpdate(row, input.dryRun, input.actor)
               : await this.work(row, input.dryRun, input.actor, earlier);
@@ -427,7 +443,7 @@ export class ImportService {
           line,
           status: e?.code === "CONFLICT" ? "duplicate" : "error",
           label: String(row["条件番号"] ?? row["契約番号"] ?? row["契約ID"]
-                        ?? (spec.required[0] ? row[spec.required[0]] : undefined) ?? row["作品コード"] ?? ""),
+                        ?? (spec.required[0] ? row[spec.required[0]] : undefined) ?? row["作品コード"] ?? row["取引先コード"] ?? ""),
           message: e?.message ?? (mode === "update" ? "更新に失敗しました" : "登録に失敗しました")
         });
       }
@@ -584,53 +600,6 @@ export class ImportService {
     }
     return { status: "ok", label, id: Number(a.id), code: a.agreement_no,
              message: `${who} の ${changed.join("・")} を${dryRun ? "更新します" : "更新しました"}` };
-  }
-
-  private async party(row: Record<string, string>, dryRun: boolean, actor: string):
-    Promise<Omit<RowOutcome, "line">> {
-    const name = String(row["名称"] ?? "").trim();
-    const kindText = String(row["区分"] ?? "").trim();
-    const kind = ["個人", "individual"].includes(kindText) ? "individual"
-      : ["法人", "corporate"].includes(kindText) ? "corporate" : null;
-    if (!kind) {
-      throw new DomainError("VALIDATION", `区分は「法人」か「個人」です（"${kindText}"）`);
-    }
-
-    // 取引先コード。空なら自動採番。書いてあれば他と重ならないことを確かめる。
-    const partyCode = String(row["取引先コード"] ?? "").trim() || null;
-    if (partyCode) {
-      const taken = await this.database.query(
-        "SELECT id, name FROM parties WHERE lower(btrim(party_code)) = lower(btrim($1)) LIMIT 1", [partyCode]);
-      const hit = taken.rows[0] as { id: number; name: string } | undefined;
-      if (hit) throw new DomainError("CONFLICT", `取引先コード ${partyCode} は既に「${hit.name}」で使われています`);
-    }
-
-    if (dryRun) {
-      // 書かずに、同名が既にいるかだけ確かめる。
-      const same = await this.database.query(
-        "SELECT id, party_code FROM parties WHERE btrim(name) = btrim($1) AND status <> 'merged' LIMIT 1",
-        [name]);
-      const hit = same.rows[0] as { id: number; party_code: string | null } | undefined;
-      if (hit) {
-        return { status: "duplicate", label: name,
-                 message: `同名が既にあります（${hit.party_code ?? `#${hit.id}`}）。この行は飛ばされます`,
-                 id: Number(hit.id) };
-      }
-      return { status: "ok", label: name };
-    }
-
-    const created = await this.parties.create({
-      name, kind, partyCode,
-      representativeTitle: row["代表者肩書"] || null,
-      representativeName: row["代表者氏名"] || null,
-      primaryContact: { name: row["主担当氏名"] || null, email: row["主担当メール"] || null, department: row["主担当部署"] || null },
-      nameKana: row["カナ"] || null,
-      invoiceNo: row["インボイス番号"] || null,
-      corporateNo: row["法人番号"] || null,
-      withholding: csvBoolean(row["源泉対象"]) ?? false,
-      aliases: String(row["別名"] ?? "").split(/[,、\/]/).map((a) => a.trim()).filter(Boolean)
-    }, actor);
-    return { status: "ok", label: name, id: created.id, code: created.partyCode };
   }
 
   private async work(row: Record<string, string>, dryRun: boolean, actor: string,

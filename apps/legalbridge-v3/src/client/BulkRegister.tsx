@@ -20,7 +20,8 @@ interface Target {
 }
 const GROUPS: Array<{ label: string; targets: Target[] }> = [
   { label: "取引先", targets: [
-    { kind: "parties", title: "取引先", what: "新しい取引先を登録／名前・住所・区分を直す" }
+    { kind: "parties", title: "取引先", what: "新しい取引先を登録（住所・非居住者・口座まで画面と同じ項目を 1 行で）" },
+    { kind: "parties", mode: "update", title: "取引先を直す", what: "登録済みの取引先の名前・住所・源泉・非居住者・主担当・口座を直す（書き出して直して戻せる）" }
   ] },
   { label: "作品", targets: [
     { kind: "works", title: "作品", what: "作品を登録（親作品を書けば派生作品）" },
