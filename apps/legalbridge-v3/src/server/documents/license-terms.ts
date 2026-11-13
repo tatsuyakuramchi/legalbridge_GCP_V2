@@ -314,7 +314,18 @@ export function calcOfCondition(condition: Data, deal: Data): Data {
   }
   if (model === "subscription") return { calc_type: "SUBSCRIPTION", basePrice: base || "期間ごとの定額", qty: "1" };
   if (model === "unit_rate") return { calc_type: "SUPPLY_QTY", basePrice: base || "単価 × 数量", qty: "数量" };
-  return base ? { basePrice: `${base} × ${deal.qty === "数量" ? "数量 × " : ""}料率` } : {};
+  if (base) return { basePrice: `${base} × ${deal.qty === "数量" ? "数量 × " : ""}料率` };
+  // 算定の基礎（条件の price_basis）。再許諾・他社販売は「受領額 × 料率」（入金）と
+  // 「単価 × 数量 × 料率」（製造・部数）のどちらの契約もある。取引モデル（条件名）は分けず、
+  // 条件に持たせた基礎で式だけ変える。空なら形態の既定（再許諾＝受領額／他社販売＝供給価格 × 数量）。
+  const basis = String(condition?.priceBasis ?? "");
+  if (Number(deal.id) === 2 && basis === "list") {
+    return { calc_type: "BASE_QTY_RATE", basePrice: "再許諾先の基準価格 × 数量", qty: "数量" };
+  }
+  if (Number(deal.id) === 3 && basis === "receipts") {
+    return { calc_type: "BASE_RATE", basePrice: "販売先からの受領額", qty: "1" };
+  }
+  return {};
 }
 
 /**

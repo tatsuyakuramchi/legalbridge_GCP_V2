@@ -9,7 +9,7 @@ import { createCompanionDocument, inLieuCheck, licensePayload, licensePeriodMiss
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
-import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
+import { CONDITION_USAGE_TYPES, conditionUsageSpec, isSublicensingUsage } from "../server/core/condition-usage.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN, workShapeOf } from "../server/conditions/contract-form.js";
 import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
@@ -268,9 +268,6 @@ export function ConditionCreateForm(
                  currency: "JPY", taxCategory: "taxable", ...preset }}
       fields={[
         { name: "_s1", type: "section", label: "① 何の条件か", hint: "条件名・向き・種類・相手先・作品・契約。種類で下に出る欄が変わります" },
-        // 作品に紐づく許諾（IN）は名前を打たせない。作品名｜取引モデル で付く（下の利用形態）。
-        { name: "name", label: "条件名", required: true, placeholder: "◯◯の制作委託 / △△の配信許諾",
-          visibleWhen: (v) => !(v.kind === "license" && v.direction === "in" && String(v.workId ?? "").trim() !== "") },
         { name: "direction", label: "向き", type: "select", required: true,
           options: [{ value: "in", label: "IN 取得（費用側）" }, { value: "out", label: "OUT 許諾（収入側）" }] },
         { name: "kind", label: "種類", type: "select", required: true,
@@ -278,6 +275,34 @@ export function ConditionCreateForm(
             value: k, label: CONDITION_KIND_LABEL[k]
           })),
           hint: "許諾料・製品はライセンスの案件、委託料・実費・手数料は業務委託の案件に繋がる" },
+        // 取得（IN）の許諾は、種類のすぐ下で利用形態（取引モデル）を選ぶ。条件名は打たせず、
+        // 作品名｜取引モデル で付ける（ゲーム 3 種・出版 2 種・翻訳版の再許諾 2 種）。条件書の行・
+        // 計算書の計算の形・支払文書の出し方は、条件名ではなくこの利用形態で決まる（A-027）。
+        // 作品1点ぶんをまとめて作るなら「ゲーム IN」「出版 IN」のほうが早い。
+        { name: "usageType", label: "利用形態（取引モデル）", type: "select",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
+          required: true,
+          options: CONDITION_USAGE_TYPES.map((u) => ({
+            value: u.value, label: `${u.family === "game" ? "ゲーム" : "出版"}：${u.label}`, hint: u.hint })),
+          hint: (v) => {
+            const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
+            const made = v.usageType ? conditionNameFor({ workTitle: t, usageType: v.usageType as never,
+                                                         sublicensee: null, purpose: v.purpose }) : null;
+            const how = conditionUsageSpec(v.usageType)?.hint ?? "";
+            return made ? `条件名は自動で付きます：${made}${how ? `　／　計算：${how}` : ""}`
+              : `この条件がどの使い方の料率かを決めます。条件名は打たずに、作品名｜利用形態 で自動で付きます${how ? `　／　計算：${how}` : ""}`;
+          } },
+        // 算定の基礎。再許諾・他社販売は、入金（受領額）で計算する契約と、製造・部数（単価 × 数量）で
+        // 計算する契約がある。利用形態は分けず、ここで選ぶ（条件書の算定式と、実績入力の初期の形）。
+        { name: "priceBasisSub", label: "算定の基礎", type: "select",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "sublicense",
+          options: [{ value: "receipts", label: "受領額 × 料率（入金ベース）" }, { value: "list", label: "基準価格 × 数量 × 料率（製造・部数ベース）" }],
+          hint: "選ばなければ入金ベース。条件名・利用形態は同じまま、条件書の算定式と、実績を入れるときの初期の形がこれになります（実績ごとに変えることもできます）" },
+        { name: "priceBasisOem", label: "算定の基礎", type: "select",
+          visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "oem",
+          options: [{ value: "list", label: "受領価格（1個）× 製造個数 × 料率（製造ベース）" },
+                    { value: "receipts", label: "受領額 × 料率（入金ベース）" }],
+          hint: "選ばなければ条件書の式は「供給価格 × 数量 × 料率」。条件名・利用形態は同じまま、条件書の算定式と、実績を入れるときの初期の形がこれになります（実績ごとに変えることもできます）" },
         // 業務委託は まず契約形式（請負／準委任）、次に成果物の有無と権利の帰属先、次に支払の形。
         // 契約形式で ② の期日の欄が変わる（請負＝納期／準委任＝役務提供期間）。A-121
         { name: "contractForm", label: "契約形式", type: "select",
@@ -309,6 +334,14 @@ export function ConditionCreateForm(
         { name: "workId", label: "作品（許諾なら原作か、原作を兼ねる作品）", type: "search",
           options: works.map((w) => ({ value: String(w.id), label: w.title })),
           hint: "ライセンスの条件は作品にぶら下げる。ここが空だと権利の上限を計算できない" },
+        // 条件名。作品に紐づく許諾（IN）は打たせない（作品名｜利用形態 で付く）。
+        { name: "name", label: "条件名", required: true,
+          placeholder: "◯◯の制作委託 / △△の配信許諾",
+          visibleWhen: (v) => !(v.kind === "license" && v.direction === "in" && String(v.workId ?? "").trim() !== ""),
+          hint: (v) => v.kind === "license" && v.direction === "in"
+            ? "作品を選べば条件名は自動で付きます（作品名｜利用形態）。作品に紐づかない許諾のときだけ入れてください"
+            : v.kind === "license" ? "許諾（OUT）は「作品名｜言語｜地域｜許諾先」のように、何をだれに許諾したかが分かる名前に"
+            : "発注書・検収書の明細に出る名前" },
         // 相手先が分かっているときは、その相手先の契約だけを候補にする。
         { name: "agreementId", label: "契約（合意）", type: "search",
           valueLabel: presetLabels?.agreementId ?? null,
@@ -446,18 +479,7 @@ export function ConditionCreateForm(
         { name: "_s6b", type: "section", label: "⑥ 利用許諾の条件 — 下の欄で入れます",
           hint: "受注者帰属の成果物の利用許諾（支払の形・初版の算定の基礎・料率・独占性・許諾期間・クレジット表記）は、この画面の下（登録ボタンの上）の欄で入れます。登録すると利用許諾条件が別の条件明細として立ち、この委託料に対応づきます",
           visibleWhen: (v) => v.kind === "service" && v.deliverableOwnership === "contractor" },
-        // 利用形態（A-027）。条件書の行・計算書の製品名はこれで決まる。
-        // 作品1点ぶんをまとめて作るなら「許諾セット」「出版セット」のほうが早い。
-        { name: "usageType", label: "利用形態（取引モデル）", type: "select",
-          visibleWhen: (v) => v.kind === "license" && v.direction === "in",
-          required: true,
-          options: CONDITION_USAGE_TYPES.map((u) => ({ value: u.value, label: u.label, hint: u.hint })),
-          hint: (v) => {
-            const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
-            const made = v.usageType ? conditionNameFor({ workTitle: t, usageType: v.usageType as never,
-                                                         sublicensee: null, purpose: v.purpose }) : null;
-            return made ? `条件名：${made}` : "取得（IN）の許諾で、この条件がどの使い方の料率かを決める。作品を選ぶと 作品名｜取引モデル の条件名が付く";
-          } },
+        // 利用形態（A-027）は ① で選ぶ（種類のすぐ下）。
         // 対象の許諾先（A-063）。ふつうは空＝一律（その作品の許諾先すべてに効く）。
         // 契約が特定の許諾先だけ別の料率にしているときだけ、その許諾先を選ぶ（許諾先専用）。
         { name: "targetPartyId", label: "対象の許諾先", type: "search",
@@ -556,6 +578,11 @@ export function ConditionCreateForm(
           mgAmount: int(v.mgAmount), agAmount: int(v.agAmount),
           exclusivity: text(v.exclusivity), taxCategory: v.taxCategory,
           usageType: v.kind === "license" ? text(v.usageType) : undefined,
+          // 算定の基礎（再許諾・他社販売）。空は形態の既定。
+          ...(v.kind === "license" && v.direction === "in" && v.usageType === "sublicense" && text(v.priceBasisSub)
+            ? { priceBasis: text(v.priceBasisSub) } : {}),
+          ...(v.kind === "license" && v.direction === "in" && v.usageType === "oem" && text(v.priceBasisOem)
+            ? { priceBasis: text(v.priceBasisOem) } : {}),
           sublicenseConsent: isSublicensingUsage(v.usageType) ? text(v.sublicenseConsent) : undefined,
           licenseFeeBasis: v.kind === "license" ? (text(v.licenseFeeBasis) ?? undefined) : undefined,
           paymentTerms: text(v.paymentTerms), notes: text(v.notes),

@@ -98,9 +98,14 @@ interface PreviewResponse {
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
-    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId, kind,
+    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId, kind, conditionPriceBasis,
     openForSchedule, onOpened, openOnMount, onCompose, onOpenDocument, onChanged, preset }:
   { conditionId: number; currency: string; editable: boolean;
+    /**
+     * 条件の算定の基礎（price_basis）。再許諾・他社販売の実績の初期の形になる：
+     * list＝単価 × 数量、receipts＝受領額。空ならこれまでどおり受領額。実績ごとに変えられる。
+     */
+    conditionPriceBasis?: string | null;
     /** 条件の種類。委託料・実費・手数料は業務委託の記録の流れ（EventEntryForm の ServiceEntry）を出す。 */
     kind?: string | null;
     matterId?: number | null; reloadKey?: number;
@@ -212,7 +217,9 @@ export function ConditionEvents(
       // 他社販売は受領額に料率を掛ける形が既定。海外から売上が入ってくる取引が
       // 中心で、そこには個数が無い（再許諾と同じ計算になる）。
       // 個数建ての契約もあるので、形そのものは選べるままにしてある。
-      basisKind: "lump", paymentStage: "", taxIncluded: "",
+      // 条件が算定の基礎を持っていれば（単価 × 数量）、その形を初期値にする。
+      basisKind: conditionPriceBasis === "list" && (value === "sublicense" || value === "oem") ? "per_unit" : "lump",
+      paymentStage: "", taxIncluded: "",
       ratePct: v.ratePct || defaultRatePct
     };
     if (value === "in_house") {

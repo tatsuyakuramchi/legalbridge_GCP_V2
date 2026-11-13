@@ -104,6 +104,19 @@ export function LicenseSetForm(
                 { value: "included", label: "業務委託報酬に含む（追加の許諾料なし）" },
                 { value: "free", label: "無償" }],
       hint: "発注書の利用許諾条件の「料率・額」に出る" },
+    // 算定の基礎。再許諾・他社販売は、入金（受領額）で計算する契約と、製造・部数（単価 × 数量）で計算する契約がある。
+    // 取引モデル（条件名）は分けない。条件書の式と、実績入力の初期値がこれになる。
+    ...(u.value === "sublicense" || u.value === "oem" ? [
+      { name: `pb_${u.value}`, label: `${u.label}：算定の基礎`, type: "select",
+        visibleWhen: (v) => on(v, u.value) && (v[`model_${u.value}`] || "revenue_rate") !== "fixed",
+        options: u.value === "sublicense"
+          ? [{ value: "receipts", label: "受領額 × 料率（入金ベース）" }, { value: "list", label: "基準価格 × 数量 × 料率（製造・部数ベース）" }]
+          : [{ value: "list", label: "受領価格（1個）× 製造個数 × 料率（製造ベース）" },
+             { value: "receipts", label: "受領額 × 料率（入金ベース）" }],
+        hint: u.value === "sublicense"
+          ? "選ばなければ入金ベース。条件名は同じ（作品名｜再許諾）のまま、条件書の算定式と、実績を入れるときの初期の形がこれになります（実績ごとに変えることもできます）"
+          : "選ばなければ条件書の式は「供給価格 × 数量 × 料率」。条件名は同じまま、条件書の算定式と、実績を入れるときの初期の形がこれになります（実績ごとに変えることもできます）" } as Field
+    ] : []),
     ...(u.value === "sublicense" ? [
       // 対象の許諾先（A-063）。ふつうは空＝一律（その作品の許諾先すべてに効く）。
       // 契約が特定の許諾先だけ別の料率にしているときだけ選ぶ（許諾先専用）。再許諾先の名称は打たせない。
@@ -216,6 +229,7 @@ export function LicenseSetForm(
             usageType: u.value, ratePct: r, exclusivity: v[`excl_${u.value}`] || null,
             pricingModel: fixed ? "fixed" : "revenue_rate", flatAmount: flat,
             licenseFeeBasis: basis,
+            priceBasis: !fixed && (u.value === "sublicense" || u.value === "oem") ? (v[`pb_${u.value}`] || null) : null,
             mgAmount: int(v[`mg_${u.value}`]) ?? null, agAmount: int(v[`ag_${u.value}`]) ?? null,
             ...(u.value === "sublicense"
               ? { sublicensee: null, targetPartyId: int(v.targetPartyId) ?? null, purpose: text(v.purpose) ?? null }

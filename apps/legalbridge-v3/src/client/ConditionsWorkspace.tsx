@@ -689,6 +689,7 @@ export function ConditionsWorkspace(
                 pricingModel={detail.pricingModel} deliverableOwnership={detail.deliverableOwnership}
                 ratePpm={detail.ratePpm} direction={detail.direction}
                 conditionUnitAmount={detail.unitAmount} conditionQuantity={detail.quantity}
+                conditionPriceBasis={detail.priceBasis ?? null}
                 workTitle={detail.work?.title ?? null} workId={detail.work?.id ?? null}
                 kind={detail.kind}
                 matterId={detail.matters[0]?.id ?? null}
