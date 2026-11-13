@@ -1872,6 +1872,14 @@ export function createRoutes(database: Transactable) {
        .set("Content-Disposition", `attachment; filename="${filename("pub_works")}"`)
        .send(withBom(csv));
   }));
+  // 登録済みの取引先（口座を含む）を取込と同じ列で書き出す。直して「登録済みに当てる」で取り込める。
+  // 口座番号が載るので admin / legal だけ（口座の欄を直せるのと同じ人）。
+  router.get("/imports/parties/export.csv", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
+    const csv = await imports.exportParties();
+    res.type("text/csv; charset=utf-8")
+       .set("Content-Disposition", `attachment; filename="${filename("parties")}"`)
+       .send(withBom(csv));
+  }));
   // 登録済みの作品（1 作品 1 行）を取込と同じ列で書き出す。直して「登録済みに当てる」で取り込める。
   router.get("/imports/works/export.csv", requireRole("admin", "legal"), asyncRoute(async (_req, res) => {
     const csv = await imports.exportWorks();

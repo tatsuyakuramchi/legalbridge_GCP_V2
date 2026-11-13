@@ -158,12 +158,12 @@ test("更新：当たらない・複数当たる行は止める。試算では�
   assert.equal(db.find("UPDATE works SET"), undefined, "試算では書かない");
 });
 
-test("更新：当てる手がかりの見出しが無ければ受け付けない。取引先は更新できない", async () => {
+test("更新：当てる手がかりの見出しが無ければ受け付けない", async () => {
   const svc = new ImportService(updateDb());
   await assert.rejects(() => svc.run({ kind: "works", csv: "備考\nあ", dryRun: true, actor: "k", mode: "update" }),
     /作品コード.*作品名/);
-  await assert.rejects(() => svc.run({ kind: "parties", csv: "名称\n甲", dryRun: true, actor: "k", mode: "update" }),
-    /できません/);
+  await assert.rejects(() => svc.run({ kind: "parties", csv: "住所\nあ", dryRun: true, actor: "k", mode: "update" }),
+    /取引先コード.*名称/);
 });
 
 /**
