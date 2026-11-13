@@ -183,12 +183,12 @@ export function AgreementsWorkspace(
 
       {creating && (
         <AgreementCreate preset={creating}
-          onDone={(id, no, thenConditions) => {
+          onDone={(id, no, thenConditions, _file, problem) => {
             // 取引から来たなら、登録したら取引へ戻って続きから。
             if (onCreated) { onCreated(id); return; }
             nextCondition.current = thenConditions;
             setCreating(null); setSelected(id); bump();
-            setNotice(thenConditions
+            setNotice(problem ? problem : thenConditions
               ? `${no ?? "契約"} を登録しました。次は条件明細を登録します（登録すると、その条件で文書を作る画面へ進みます）`
               : `${no ?? "契約"} を登録しました`);
           }}
@@ -517,11 +517,36 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
   }, [partyId]);
 
   const parent = parents.find((p) => String(p.id) === parentId) ?? null;
+  // 個別契約は親に合わせる（種別・向き）。親がライセンスなのに初期値の業務委託のまま登録されないように。
+  useEffect(() => {
+    if (!parent) return;
+    if (parent.domain) setDomain(parent.domain);
+    if (parent.direction === "in" || parent.direction === "out") setDirection(parent.direction);
+  }, [parent?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 一緒に載せる既存の条件明細（個別契約・単体契約のとき。登録のあと載せる）。 */
+  const [attach, setAttach] = useState<Array<{ id: number; code: string | null; label: string }>>([]);
+  const [condQ, setCondQ] = useState("");
+  const condQuery = useDebounced(condQ, 250);
+  const [condHits, setCondHits] = useState<Array<{ id: number; code: string | null; label: string; note: string | null; work: string | null; blocked: string | null }>>([]);
   const effectiveKind: AgreementKind = hasConditions === false ? "document" : kind;
   /** 向きなしにできるのは文書だけの契約（条件明細を持たない）。 */
   const directionOk = direction !== "none" || effectiveKind === "document";
   const ready = partyId && title.trim() && (executedOn || unsigned) && hasConditions !== null
     && (effectiveKind !== "supplement" || parentId) && directionOk;
+  const canAttach = effectiveKind === "supplement" || effectiveKind === "standalone";
+  /** 登録される番号。自社の契約番号を入れたらその番号（入れた番号が優先される）。 */
+  const numberPreview = externalNo.trim() || previewNumber(effectiveKind, domain, effectiveKind === "supplement" ? parent : null);
+  useEffect(() => {
+    if (!canAttach || !partyId) { setCondHits([]); return; }
+    let alive = true;
+    const qs = new URLSearchParams({ type: "condition", partyId: String(partyId) });
+    if (condQuery.trim()) qs.set("q", condQuery.trim());
+    api.get<{ items: Array<{ id: number; code: string | null; label: string; note: string | null; work: string | null; blocked: string | null }> }>(`/agreement-map/search?${qs}`)
+      .then((r) => { if (alive) setCondHits(r.items.filter((x) => !x.blocked).slice(0, 30)); })
+      .catch(() => { if (alive) setCondHits([]); });
+    return () => { alive = false; };
+  }, [canAttach, partyId, condQuery]);
 
   async function submit(thenConditions: boolean) {
     setBusy(true); setError(null);
@@ -555,6 +580,16 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
           return;
         }
       }
+      // 選んだ既存の条件明細をこの契約に載せる（ほかの契約に載っていれば付け替え）。
+      if (canAttach && attach.length) {
+        try {
+          await api.post("/agreement-map/conditions/assign", { conditionIds: attach.map((c) => c.id), agreementId: made.id });
+        } catch (e) {
+          onDone(made.id, made.agreementNo, false, uploaded,
+            `契約 ${made.agreementNo ?? `#${made.id}`} は登録しましたが、条件明細を載せられませんでした（${(e as ApiError).message}）。取引先⇔基本契約の表から載せてください`);
+          return;
+        }
+      }
       // 条件明細がぶら下がらない契約（文書だけ）には、続けて登録する欄が無い。
       onDone(made.id, made.agreementNo, thenConditions && effectiveKind !== "document", uploaded);
     } catch (e) { setError((e as ApiError).message); }
@@ -565,10 +600,39 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
     <div className="panel">
       <div className="panel-hd">
         <h2>{preset.kind === "supplement" ? "補助文書の登録" : "契約の登録"}</h2>
-        <span className="faint">必須は 相手先・向き・種別・件名・締結日</span>
+        <span className="faint">必須は 種類・相手先・件名・締結日（まだ締結していなければ不要）</span>
       </div>
       <div className="panel-bd stack">
         {error && <div className="alert">{error}</div>}
+        {preset.kind !== "supplement" && (
+          <div className="fld">
+            <span>種類 <em>必須</em></span>
+            <div className="chips" role="radiogroup" aria-label="契約の種類">
+              {([["master", "基本契約", "器を作る。条件は個別契約・発注書から付く"],
+                 ["supplement", "個別契約（基本契約の下）", "条件書・覚書・変更合意。基本契約の下で条件を定める"],
+                 ["standalone", "単体契約", "基本契約なしで、この 1 通が金額・期間まで定める"],
+                 ["document", "文書だけ", "NDA・覚書など。条件明細がぶら下がらない（番号は振らない）"]] as const).map(([k, label, help]) => {
+                const on = k === "document" ? hasConditions === false : hasConditions === true && kind === k;
+                return (
+                  <button key={k} type="button" className="chip" aria-pressed={on} title={help}
+                          onClick={() => { if (k === "document") setHasConditions(false); else { setHasConditions(true); setKind(k); } }}>{label}</button>
+                );
+              })}
+            </div>
+            {hasConditions === true && kind === "supplement" && (
+              <span className="row" style={{ gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                <select value={parentId} onChange={(e) => setParentId(e.target.value)} aria-label="親の契約">
+                  <option value="">親の基本契約を選ぶ（必須）</option>
+                  {parents.map((p) => <option key={p.id} value={p.id}>{p.agreementNo ?? `#${p.id}`} {p.title}</option>)}
+                </select>
+                {!partyId ? <span className="faint">先に相手先を選んでください</span>
+                  : !parents.length ? <span className="faint">この相手には基本契約・単体契約がありません</span>
+                  : parent ? <small className="faint">種別・向きは親に合わせました（{parent.domain ? DOMAIN_OPTIONS.find(([v]) => v === parent.domain)?.[1] : "種別なし"}・{parent.direction === "out" ? "OUT" : "IN"}）</small> : null}
+              </span>
+            )}
+            {hasConditions === null && <small className="faint">どれかを選んでください</small>}
+          </div>
+        )}
         <div className="grid4">
           <label className="fld"><span>相手先 <em>必須</em></span>
             {preset.partyId && preset.partyName
@@ -584,7 +648,7 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
             </select>
             {direction === "none" && (directionOk
               ? <small>お金の流れの無い契約。条件明細は載せられません</small>
-              : <small className="bad">向きなしにできるのは、条件明細がぶら下がらない契約（下で「いいえ」）だけです</small>)}
+              : <small className="bad">向きなしにできるのは、種類が「文書だけ」の契約だけです</small>)}
           </label>
           {/* 種別は、条件明細がぶら下がる契約（基本契約・単体契約）の番号の頭を決めるだけ。
               NDA・覚書のように文書として登録するだけの契約には要らないので、問わない。 */}
@@ -595,7 +659,7 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
             <label className="fld"><span>種別 <em>必須</em></span>
               <select value={domain} onChange={(e) => setDomain(e.target.value as AgreementDomain)}>
                 {DOMAIN_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-              </select><small>番号の頭が決まる（SVC／LIC／SAL／OTH、単体は ISA／ILT／ISL／IOT）。NDA など条件の無い契約は下で「いいえ」</small></label>
+              </select><small>番号の頭が決まる（SVC／LIC／SAL／OTH、単体は ISA／ILT／ISL／IOT）。NDA など条件の無い契約は種類で「文書だけ」</small></label>
           )}
           <label className="fld"><span>件名 <em>必須</em></span>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="業務委託基本契約・秘密保持契約書 など" /></label>
@@ -629,7 +693,8 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
             <input value={refNo} onChange={(e) => setRefNo(e.target.value)} placeholder="相手が付けた番号があれば" /></label>
           <label className="fld"><span>自社の契約番号</span>
             <input value={externalNo} onChange={(e) => setExternalNo(e.target.value)}
-              placeholder="空ならシステムが採番。移行前の紙の契約は ATT-2026-00069 のように" /></label>
+              placeholder="空ならシステムが採番（例：ATT-2026-00069・ARC-PUBT-2026-0026）" />
+            <small>登録される番号：<span className="code">{numberPreview}</span>{externalNo.trim() ? "（入れた番号）" : "（自動）"}</small></label>
         </div>
         {withFile && (
           <div className="stack" style={{ gap: 4 }}>
@@ -643,57 +708,53 @@ export function AgreementCreate({ preset, onDone, onCancel, withFile = false }: 
           <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://drive.google.com/…" />
           <small>現物は Drive に置く。ここにはリンクだけ</small></label>
 
-        {preset.kind !== "supplement" && (
-          <div className="ask">
-            <div className="ask-q">この契約の下に、条件明細（金額・期間の行）がぶら下がりますか？</div>
-            <div className="ask-help">発注書・検収書・計算書は条件明細から出ます。NDA や秘密保持のように金額を持たないものは「いいえ」。</div>
-            <label className={`opt${hasConditions === false ? " on" : ""}`}>
-              <input type="radio" name="hasc" checked={hasConditions === false} onChange={() => setHasConditions(false)} />
-              {" "}<b>いいえ</b><span className="faint">　文書として登録するだけ。番号は振らない（相手方の番号だけ持つ）</span>
-            </label>
-            <label className={`opt${hasConditions === true ? " on" : ""}`}>
-              <input type="radio" name="hasc" checked={hasConditions === true} onChange={() => setHasConditions(true)} />
-              {" "}<b>はい</b><span className="faint">　どれですか</span>
-            </label>
-            {hasConditions && (
-              <div className="ask-sub">
-                {(["master", "supplement", "standalone"] as AgreementKind[]).map((k) => (
-                  <label key={k} className={`opt${kind === k ? " on" : ""}`}>
-                    <input type="radio" name="kind" checked={kind === k} onChange={() => setKind(k)} />
-                    {" "}<b>{KIND_LABEL[k]}</b>
-                    <span className="faint">
-                      {k === "master" && "　器を作る。条件はあとで発注書・条件書から付く"}
-                      {k === "supplement" && "　既存の基本契約の下で条件を定める・一部を直す（個別条件書・覚書・変更合意）"}
-                      {k === "standalone" && "　基本契約なしで、この 1 通が金額・期間まで定める"}
-                      {"　→ "}<span className="code">{previewNumber(k, domain, k === "supplement" ? parent : null)}</span>
-                    </span>
-                    {k === "supplement" && kind === "supplement" && (
-                      <span className="row" style={{ margin: "4px 0 0 22px" }}>
-                        <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
-                          <option value="">親の契約を選ぶ</option>
-                          {parents.map((p) => <option key={p.id} value={p.id}>{p.agreementNo ?? `#${p.id}`} {p.title}</option>)}
-                        </select>
-                        {!parents.length && <span className="faint">この相手には基本契約・単体契約がありません</span>}
-                      </span>
-                    )}
-                  </label>
+        {preset.kind === "supplement" && (
+          <div className="note">親：<span className="code">{parent?.agreementNo ?? preset.parentId}</span>　番号は <span className="code">{numberPreview}</span></div>
+        )}
+
+        {canAttach && (
+          <div className="fld">
+            <span>載せる条件明細（任意。既にある条件明細をこの契約に載せる）</span>
+            <input className="inline-input" type="search" value={condQ} onChange={(e) => setCondQ(e.target.value)}
+                   placeholder={partyId ? "条件番号・作品・条件名で探す" : "先に相手先を選んでください"} disabled={!partyId} />
+            {attach.length > 0 && (
+              <div className="row" style={{ gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                {attach.map((c) => (
+                  <span key={c.id} className="tag">{c.code ?? `#${c.id}`} {c.label}
+                    <button className="linky" style={{ marginLeft: 4 }} aria-label="外す" onClick={() => setAttach((x) => x.filter((y) => y.id !== c.id))}>×</button></span>
                 ))}
               </div>
             )}
+            {condHits.length > 0 && (
+              <div className="ct-pick" style={{ maxHeight: 180, marginTop: 4 }}>
+                {condHits.map((h) => {
+                  const on = attach.some((a) => a.id === h.id);
+                  return (
+                  <label key={h.id} className={`ct-pick-row${on ? " on" : ""}`}>
+                    <input type="checkbox" checked={on}
+                           onChange={() => setAttach((x) => (on ? x.filter((y) => y.id !== h.id) : [...x, { id: h.id, code: h.code, label: h.label }]))} />
+                    <span className="ct-pick-main"><span><span className="code">{h.code}</span> {h.label}</span>
+                      <span className="faint">{[h.work, h.note].filter(Boolean).join("・")}</span></span>
+                  </label>
+                  );
+                })}
+              </div>
+            )}
+            <small>ほかの契約に載っている条件明細は、この契約に付け替えます</small>
           </div>
         )}
-        {preset.kind === "supplement" && (
-          <div className="note">親：<span className="code">{parent?.agreementNo ?? preset.parentId}</span>　番号は <span className="code">{previewNumber("supplement", domain, parent)}</span></div>
-        )}
 
-        <div className="row">
-          <button className="btn primary" disabled={!ready || busy} onClick={() => void submit(true)}>
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          <button className="btn primary" disabled={!ready || busy} onClick={() => void submit(false)}>
             {busy ? "登録しています…"
               : withFile ? (signOn ? "登録して、クラウドサインへ進む" : file ? "契約と契約書を登録する" : "登録する")
-              : effectiveKind === "document" ? "登録する" : "登録して、条件明細の登録へ"}
+              : attach.length ? `登録して、条件明細 ${attach.length} 本を載せる` : "登録する"}
           </button>
+          {!withFile && effectiveKind !== "document" && (
+            <button className="btn" disabled={!ready || busy} onClick={() => void submit(true)}>登録して、新しい条件明細を登録する</button>
+          )}
           <button className="btn" onClick={onCancel}>やめる</button>
-          {!ready && <span className="faint">相手先・件名・締結日（未締結なら不要）と、条件明細の要否を入れると登録できます</span>}
+          {!ready && <span className="faint">種類・相手先・件名・締結日（まだ締結していなければ印を付ける）{effectiveKind === "supplement" ? "・親の基本契約" : ""}を入れると登録できます</span>}
         </div>
       </div>
     </div>
