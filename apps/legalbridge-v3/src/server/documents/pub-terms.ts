@@ -392,6 +392,30 @@ function payeeShareOf(payee: Data | null | undefined, condition: Data | undefine
 }
 
 /**
+ * 許諾者の取り分を料率で言う備考の 1 文（作品ごとに番号を持つ条件書）。
+ * 「紙 取り分 10.3125%（全体 11%）／電子 取り分 15%（全体 16%）」。だれに按分するかは書かない。
+ * 取り分は条件の按分（condition_shares）のうち、条件の相手先（許諾者）の分。按分の無い作品は空。
+ */
+export function licensorShareNote(print: Data | undefined, digital: Data | undefined): string {
+  const one = (label: string, c: Data | undefined): string => {
+    if (!c || !list(c.shares).length) return "";
+    const whole = number(c.ratePct);
+    if (whole == null) return "";
+    const partyId = number(c.counterpartyId);
+    const ppm = number(list(c.shares).find((s) => number(s.partyId) === partyId)?.sharePpm) ?? 0;
+    return `${label} 取り分 ${ppmPct(Math.round((whole * ppm) / 100))}%（全体 ${percentText(whole)}）`;
+  };
+  return [one("紙", print), one("電子", digital)].filter(Boolean).join("／");
+}
+
+/** 按分があるのに、許諾者（条件の相手先）の取り分が無い条件（取り分 0% で出る）。 */
+export function licensorShareMissing(c: Data | undefined): boolean {
+  if (!c || !list(c.shares).length) return false;
+  const partyId = number(c.counterpartyId);
+  return !list(c.shares).some((s) => number(s.partyId) === partyId);
+}
+
+/**
  * 受取人（甲）の取り分の文（「甲の取り分 25%」）。一覧の「共同著作」欄に添える。
  * 媒体ごとの率は料率の欄（payeeRateText）に出すので、ここでは繰り返さない。受取人でなければ空。
  */
@@ -712,6 +736,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       thirdParty: text(row.third_party) || "なし",
       note,
       coAuthors, payeeShare, hasShares: Boolean(coAuthors),
+      // 許諾者の取り分を料率で（作品ごとに番号を持つ条件書の備考の頭。受取人宛ての紙は料率の欄が取り分なので出さない）。
+      shareNote: fromLedger && number(context.payee?.partyId) == null ? licensorShareNote(print, digital) : "",
+      shareMissing: fromLedger && (licensorShareMissing(print) || licensorShareMissing(digital)),
       // 「共同著作・第三者権利」欄（作品ごとに番号を持つ条件書）。共著の取り分か第三者権利があれば「あり」。
       jointLabel: Boolean(coAuthors) || (text(row.third_party) !== "" && text(row.third_party) !== "なし") ? "あり" : "なし",
       printRate: fromLedger ? payeeRateText(context.payee, print) : (text(row.print_rate) || "—"),
@@ -956,6 +983,7 @@ export function pubTermsMultiWarnings(context: Data): Warning[] {
   if (missing.length) out.push({ kind: "other", message: `作品の個別契約がまだ無い作品があります（${missing.slice(0, 5).join("・")}${missing.length > 5 ? ` ほか ${missing.length - 5}` : ""}）。決定のときに作品ごとに個別利用許諾番号を振ります` });
   // 按分（共著の取り分）と著作権表示の食い違い。
   for (const t of titles) {
+    if (t.shareMissing) out.push({ kind: "other", message: `${text(t.title)}：按分に許諾者の取り分がありません（備考は「取り分 0%」で出ます）。按分の相手先を確かめてください` });
     const names = text(t.copyright).split(/[／/、,]/).map((x) => x.trim()).filter(Boolean);
     if (names.length > 1 && !t.hasShares) out.push({ kind: "other", message: `${text(t.title)}：著作権表示に ${names.length} 名ありますが、条件明細に共著の取り分がありません（共同著作は「なし」で出ます）` });
     if (names.length <= 1 && t.hasShares) out.push({ kind: "other", message: `${text(t.title)}：条件明細に共著の取り分がありますが、著作権表示が 1 名です` });

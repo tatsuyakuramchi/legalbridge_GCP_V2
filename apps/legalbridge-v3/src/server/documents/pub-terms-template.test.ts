@@ -334,3 +334,27 @@ test("作品ごとに番号を持つ条件書（206）：本文が差す名前�
   assert.ok(out.includes("「力造」名義以外の者"), "共著者分の支払（初期値）");
   assert.ok(out.includes("本個別契約に定めのない事項は基本契約の定めによる。"), "特記事項の結び");
 });
+
+test("作品ごとに番号を持つ条件書（207）：備考の頭に許諾者の取り分（料率）。だれに按分するかは書かない", async () => {
+  const { PUB_TERMS_MULTI_EXTRA_VARIABLES, pubTermsMultiWarnings } = await import("./pub-terms.js");
+  const r2 = bodyOf("207_pub_license_terms_multi_r2.sql", 0);
+  const shares = [{ partyId: 5, name: "合同会社テスト", sharePpm: 937500 }, { partyId: 9, name: "ほかの会社", sharePpm: 62500 }];
+  const multiContext: any = { ...context, conditions: [
+    { ...context.conditions[0], ratePct: 11, shares, termsAgreementNo: "ARC-PUBT-2026-0012" },
+    { ...context.conditions[1], ratePct: 16, shares, termsAgreementNo: "ARC-PUBT-2026-0012" },
+    // 按分に許諾者（相手先 5）がいない作品は 0%（警告も出す）。按分の無い作品は備考に出さない。
+    { ...context.conditions[2], ratePct: 11, shares: [{ partyId: 9, name: "ほかの会社", sharePpm: 1000000 }], termsAgreementNo: "ARC-PUBT-2026-0013" }
+  ] };
+  multiContext.condition = { ...context.condition };
+  const defaults = Object.fromEntries(PUB_TERMS_MULTI_EXTRA_VARIABLES.filter((v) => v.default).map((v) => [v.name, v.default]));
+  const patch = pubTermsPatch(multiContext, { ...defaults, "許諾者連絡先": "甲" });
+  const out = renderDocumentHtml(r2, { taxRate: 10, BANK_INFO: "", ...patch });
+  assert.ok(out.includes("紙 取り分 10.3125%（全体 11%）／電子 取り分 15%（全体 16%）／初版100部"), "取り分のあとに条件の備考");
+  assert.ok(out.includes("紙 取り分 0%（全体 11%）"), "許諾者のいない按分は 0%");
+  assert.ok(!out.includes("ほかの会社"), "按分の相手の名前は出さない");
+  const warns = pubTermsMultiWarnings(multiContext).map((w) => w.message);
+  assert.ok(warns.some((m) => m.includes("按分に許諾者の取り分がありません")), "0% の作品は警告");
+  // 按分の無い作品は備考に何も足さない。
+  const plain = pubTermsPatch({ ...multiContext, conditions: multiContext.conditions.map((c: any) => ({ ...c, shares: [] })) }, { ...defaults });
+  assert.ok((plain.titles as any[]).every((t) => t.shareNote === ""));
+});

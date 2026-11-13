@@ -157,7 +157,7 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
     translationLabel: "翻訳版再許諾", translationDerivative: false,
     // 許諾期間（A-039）。条件が期間を持つので、下に続く行が出る。
     term: "2026.10.1〜2032.3.31（更新なし）", hasTerm: true, hasNoteRow: true,
-    coAuthors: "", payeeShare: "", hasShares: false
+    coAuthors: "", payeeShare: "", hasShares: false, shareNote: "", shareMissing: false
   });
 });
 
