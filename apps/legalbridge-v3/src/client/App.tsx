@@ -681,6 +681,7 @@ export function App() {
         {view === "agreement-map" && (
           <AgreementMapWorkspace key={`am${focusFor("agreement-map") ?? mapParty ?? 0}`} onOpenImport={openImport}
             initialPartyId={focusFor("agreement-map") ?? mapParty} onOpen={openEntity}
+            onCompose={(conditionIds) => startCompose(conditionIds, [], null, null)}
             onRegisterAgreement={startAgreement}
             initialMode={mapMode} onModeChange={setMapMode} onPartyChange={setMapParty} />
         )}

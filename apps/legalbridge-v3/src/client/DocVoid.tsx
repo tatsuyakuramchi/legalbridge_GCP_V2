@@ -77,8 +77,10 @@ interface AgreementDoc {
 }
 
 /** 契約に繋がっている文書ぜんぶ。見る・無効にする・無効を取り消す。 */
-export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, onOpenDocument }: {
+export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, onOpenDocument, onAttach }: {
   agreementId: number; title: string; onChanged: (msg: string) => void; onClose: () => void;
+  /** 文書を足す（作成済みを上げる・システムの文書を繋ぐ・作る）。無ければ出さない。 */
+  onAttach?: () => void;
   /** 文書番号を押したとき、文書の画面（送る・訂正など）を開く。 */
   onOpenDocument?: (documentId: number) => void;
 }) {
@@ -143,7 +145,10 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
               </tbody>
             </table>
           )}
-          <small className="faint">差し替え済み（古い版）は無効にできません。いちばん新しい版を無効にするか、訂正版を出し直してください。</small>
+          <div className="row" style={{ gap: 8, alignItems: "center" }}>
+            <small className="faint">差し替え済み（古い版）は無効にできません。いちばん新しい版を無効にするか、訂正版を出し直してください。</small>
+            {onAttach && <button className="btn btn-sm" style={{ marginLeft: "auto", whiteSpace: "nowrap" }} onClick={onAttach}>＋ 文書を足す（上げる・繋ぐ・作る）</button>}
+          </div>
         </div>
       </Modal>
       {target && (
