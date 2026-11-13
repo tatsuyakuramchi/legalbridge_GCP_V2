@@ -275,9 +275,14 @@ export const RELATIONS: Record<EntityKind, Record<string, RelationDefinition>> =
            VALUES ($1, $2, $3) ON CONFLICT (document_id, condition_id) DO NOTHING`,
           [targetId, id, Number((seq.rows[0] as { next: number }).next)]);
       },
+      // 一覧は改訂の全版（系列）で出すので、外すのも系列で。新版の画面から、旧版に繋がった文書を外せるように。
       detach: async (c, id, targetId) => {
         await c.query(
-          "DELETE FROM document_conditions WHERE document_id = $1 AND condition_id = $2",
+          `DELETE FROM document_conditions
+            WHERE document_id = $1
+              AND condition_id IN (SELECT x.id FROM conditions x
+                                    WHERE COALESCE(x.series_id, x.id) =
+                                          (SELECT COALESCE(y.series_id, y.id) FROM conditions y WHERE y.id = $2))`,
           [targetId, id]);
       }
     },
