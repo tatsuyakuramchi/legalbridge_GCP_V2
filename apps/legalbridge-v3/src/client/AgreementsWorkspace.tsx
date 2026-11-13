@@ -14,6 +14,7 @@ import { DOMAIN_OPTIONS, MASTER_PREFIX, STANDALONE_PREFIX } from "./agreement-do
 import { SignAfterField, useSignReady } from "./SignNext.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
+import { AgreementVersionsList } from "./AgreementVersions.js";
 
 /**
  * 契約（合意）。
@@ -343,6 +344,14 @@ export function AgreementsWorkspace(
                 <span className="faint">行は計算で出ます。最終行の終了日がいまの終了日</span>
               </div>
               <div className="panel-bd"><TermHistoryTable history={detail.history} /></div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-hd">
+                <h2>記録の履歴（版）</h2>
+                <span className="faint">締結日・期間・状態・親の契約などを変えるたびに版が増えます。前の版の中身は消えません</span>
+              </div>
+              <div className="panel-bd"><AgreementVersionsList agreementId={a.id} version={version} /></div>
             </div>
 
             {(detail.children.length > 0 || a.kind === "master" || a.kind === "standalone") && (

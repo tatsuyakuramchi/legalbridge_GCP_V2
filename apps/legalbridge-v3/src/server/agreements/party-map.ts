@@ -5,6 +5,7 @@ import { DOMAIN_LABELS, KIND_LABEL, checkDirection, directionOf, type AgreementD
 import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { agreementDatedTitle } from "../documents/legacy-variables.js";
 import type { AgreementCsvRow } from "./csv.js";
+import { noteAgreementChange } from "./versions.js";
 import { rootAgreementJoin } from "../conditions/contracts.js";
 import { ensureAgreementForOrder } from "./order-agreement.js";
 import { SETTLEMENT_TEMPLATE_PATTERN } from "../documents/settlement-docs.js";
@@ -384,6 +385,8 @@ export function buildPartyMap(party: { id: number; name: string }, rows: MapAgre
 // ---------------------------------------------------------------------------
 
 export interface RemapInput {
+  /** 変更の理由（まき直し・更新・訂正など）。契約の版（agreement_versions）に残る。 */
+  reason?: string | null;
   kind?: AgreementKind;
   domain?: AgreementDomain | null;
   /** null は向きなし（文書だけの契約のときだけ）。 */
@@ -1854,6 +1857,7 @@ export class PartyAgreementMapService {
         ].filter((x): x is string => Boolean(x));
         if (!changed.length) return [];
 
+        await noteAgreementChange(client, actor, input.reason);
         await client.query(
           `UPDATE agreements
               SET kind = $2, domain = $3, direction = $4, parent_id = $5, counterparty_id = $6,

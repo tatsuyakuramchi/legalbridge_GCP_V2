@@ -3,6 +3,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import { termHistory, type TermEvent, type TermHistory, type TermInput } from "./term-history.js";
+import { agreementVersions, noteAgreementChange, type AgreementVersion } from "./versions.js";
 
 /**
  * 契約（合意）。
@@ -63,6 +64,8 @@ export function numberPrefix(kind: AgreementKind, domain: AgreementDomain | null
 }
 
 export interface AgreementInput {
+  /** 変更の理由（まき直し・更新・訂正など）。契約の版（agreement_versions）に残る。 */
+  reason?: string | null;
   counterpartyId: number;
   direction: AgreementDirection;
   kind: AgreementKind;
@@ -306,6 +309,11 @@ export class AgreementService {
     return null;
   }
 
+  /** 契約の記録の版（新しい順）。208 を流していなければ available=false。 */
+  async versions(id: number): Promise<{ available: boolean; versions: AgreementVersion[] }> {
+    return agreementVersions(this.database, id);
+  }
+
   async update(id: number, patch: Partial<AgreementInput>, actor: string): Promise<void> {
     const cols: string[] = [];
     const vals: unknown[] = [];
@@ -329,6 +337,7 @@ export class AgreementService {
     vals.push(id);
     try {
       await inTransaction(this.database, async (client) => {
+        await noteAgreementChange(client, actor, patch.reason);
         const r = await client.query(
           `UPDATE agreements SET ${cols.join(", ")}, updated_at = now() WHERE id = $${vals.length} RETURNING id`, vals);
         if (!r.rows[0]) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
@@ -368,6 +377,7 @@ export class AgreementService {
   async execute(id: number, input: { on?: string | null; note?: string | null }, actor: string): Promise<void> {
     try {
       await inTransaction(this.database, async (client) => {
+        await noteAgreementChange(client, actor, ["締結を記録", str(input.note)].filter(Boolean).join("："));
         const r = await client.query(
           `UPDATE agreements
               SET status = 'executed',
@@ -387,6 +397,7 @@ export class AgreementService {
     if (!input.on) throw new DomainError("VALIDATION", "不更新を決めた日を入れてください");
     try {
       await inTransaction(this.database, async (client) => {
+        await noteAgreementChange(client, actor, ["更新しない通知", str(input.note)].filter(Boolean).join("："));
         const r = await client.query(
           `UPDATE agreements SET renewal_stopped_on = $2::date, updated_at = now() WHERE id = $1 RETURNING id`,
           [id, input.on]);
@@ -507,6 +518,7 @@ export class AgreementService {
         const terminationId = Number((made.rows[0] as { id: number }).id);
 
         if (input.scope === "whole") {
+          await noteAgreementChange(client, actor, `解除合意 ${terminationNo ?? ""}`.trim());
           await client.query(
             `UPDATE agreements SET status = 'terminated', terminated_on = $2::date, updated_at = now() WHERE id = $1`,
             [id, input.on]);
