@@ -153,6 +153,15 @@ export function ContractTable(
     onChanged(msg);
   }
   const contractFromItem = (it: MapSearchItem) => (it.orderDocumentId ? `o${it.orderDocumentId}` : `a${it.id}`);
+  /** 条件がいま載っている契約の基本契約（新しい個別契約の親の初期値）。 */
+  const masterOfCond = (c: MapCondition): number | null => {
+    let at: string | undefined = model.condHolder(c);
+    for (let i = 0; at && i < 4; i++) {
+      if (/^m\d+$/.test(at)) return Number(at.slice(1));
+      at = model.parentOf.get(at);
+    }
+    return null;
+  };
   async function moveContracts(items: MapSearchItem[], to: string) {
     const done: string[] = [];
     for (const it of items) {
@@ -339,7 +348,11 @@ export function ContractTable(
                 if (!model.nodeOf(from)) return "この取引先の個別契約として出ていません";
                 return model.parentOf.get(from) === dialog.to ? "いまここにあります" : model.canPutContract(from, dialog.to);
               }}
-              confirmLabel="追加する" onConfirm={(items) => run(() => moveContracts(items, dialog.to))} />;
+              confirmLabel="追加する" onConfirm={(items) => run(() => moveContracts(items, dialog.to))}
+              extra={dialog.to !== "none" && !readOnly ? (
+                <NewContract map={map} masterId={Number(dialog.to.slice(1))} fixedMaster
+                  onCreate={(made) => run(async () => `個別契約 ${made.agreementNo ?? `#${made.id}`} を ${dialog.toNo} の下に作りました`)} />
+              ) : undefined} />;
           case "contract-move":
             return <PickDialog title={`${dialog.fromNo} の基本契約を付け替え`} type="master" partyId={partyId} onClose={close}
               intro={dialog.underMaster ? "付け替え先の基本契約を選ぶか、「基本契約なしにする」を押します。" : "入れる先の基本契約を選びます。"}
@@ -361,6 +374,13 @@ export function ContractTable(
                 return model.condHolder(dialog.cond) === to ? "いま載っています" : model.canPutCondition(`c${dialog.cond.id}`, to);
               }}
               confirmLabel="付け替える" onConfirm={(items) => run(() => assignConds([dialog.cond.id], items[0]!.id, items[0]!.code ?? ""))}
+              extra={!readOnly ? (
+                <NewContract map={map} masterId={masterOfCond(dialog.cond)} title={dialog.cond.workTitle ? `${dialog.cond.workTitle}${dialog.cond.category === "license" ? " 利用許諾条件" : ""}` : ""}
+                  onCreate={(made) => run(async () => {
+                    const msg = await assignConds([dialog.cond.id], made.id, made.agreementNo ?? `#${made.id}`);
+                    return `個別契約 ${made.agreementNo ?? `#${made.id}`} を作り、${msg}`;
+                  })} />
+              ) : undefined}
               secondary={dialog.holderNo ? { label: "外すだけ（どの契約にも載せない）", run: () => run(() => assignConds([dialog.cond.id], null, "")) } : undefined} />;
           case "doc-add":
             return <PickDialog title={`${dialog.cond.conditionNo ?? "条件"} に支払文書を追加`} type="settlement" partyId={partyId} multi onClose={close}
@@ -431,13 +451,15 @@ export function ContractTable(
  * 選べないもの（取引先が違う・いまここにある など）は理由を出して選べなくする。
  */
 function PickDialog(
-  { title, intro, type, partyId, multi, exclude, confirmLabel, onConfirm, secondary, amount, onClose }: {
+  { title, intro, type, partyId, multi, exclude, confirmLabel, onConfirm, secondary, amount, extra, onClose }: {
     title: string; intro?: ReactNode; type: MapSearchType; partyId: number; multi?: boolean;
     exclude?: (item: MapSearchItem) => string | null;
     confirmLabel: string;
     onConfirm: (items: MapSearchItem[], amount: number | null) => Promise<void>;
     secondary?: { label: string; run: () => Promise<void> };
     amount?: { label: string; initial: (item: MapSearchItem) => number };
+    /** 一覧の下に出す追加の欄（新しい個別契約を作る など）。 */
+    extra?: ReactNode;
     onClose: () => void;
   }
 ) {
@@ -509,6 +531,7 @@ function PickDialog(
             );
           })}
         </div>
+        {extra}
         {amount && picked.length === 1 && (
           <label className="row" style={{ gap: 6, alignItems: "center" }}>
             <span>{amount.label}</span>
@@ -527,5 +550,79 @@ function PickDialog(
         </div>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * ポップアップの中で、新しい個別契約（基本契約の下）を作る。番号が空ならシステムが採番（親の番号-Snn）、
+ * 移行前の紙の番号（ARC-PUBT-2026-0026 など）があればその番号で作る。種別・向きは基本契約に合わせる。
+ * 締結日が空なら「まだ締結していない」（交渉中）で作り、締結したら契約の「編集」で入れる。
+ */
+function NewContract({ map, masterId, fixedMaster, title: initialTitle = "", onCreate }: {
+  map: PartyMap; masterId: number | null; fixedMaster?: boolean; title?: string;
+  onCreate: (made: { id: number; agreementNo: string | null }) => Promise<void>;
+}) {
+  const masters = map.roots.filter((r) => r.kind === "master" && !r.terminatedOn);
+  const [open, setOpen] = useState(false);
+  const [parentId, setParentId] = useState(masterId && masters.some((m) => m.id === masterId) ? String(masterId) : masters.length === 1 ? String(masters[0]!.id) : "");
+  const [no, setNo] = useState("");
+  const [title, setTitle] = useState(initialTitle);
+  const [executedOn, setExecutedOn] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** 作れたが載せられなかったとき、やり直しで二重に作らないように覚えておく。 */
+  const [made, setMade] = useState<{ id: number; agreementNo: string | null } | null>(null);
+  const parent = masters.find((m) => String(m.id) === parentId) ?? null;
+  if (!open) {
+    return (
+      <button className="linky" style={{ alignSelf: "flex-start" }} onClick={() => setOpen(true)}>
+        ＋ 見つからなければ、新しい個別契約を作って{fixedMaster ? "この基本契約の下に入れる" : "載せる"}
+      </button>
+    );
+  }
+  async function go() {
+    if (!parent) return;
+    setBusy(true); setError(null);
+    try {
+      const got = made ?? await api.post<{ id: number; agreementNo: string | null }>("/agreements", {
+        counterpartyId: map.party.id, direction: parent.direction, kind: "supplement", domain: parent.domain,
+        parentId: parent.id, title: title.trim(), agreementNo: no.trim() || null,
+        executedOn: executedOn || null, effectiveOn: executedOn || null, status: executedOn ? "executed" : "negotiating"
+      });
+      setMade(got);
+      await onCreate(got);
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="note stack" style={{ gap: 6 }}>
+      <b>新しい個別契約を作る</b>
+      <div className="grid4">
+        <label className="fld"><span>基本契約 <em>必須</em></span>
+          {fixedMaster && parent ? <span className="code" style={{ paddingTop: 6 }}>{parent.agreementNo ?? `#${parent.id}`}</span> : (
+            <select value={parentId} onChange={(e) => setParentId(e.target.value)}>
+              <option value="">選ぶ</option>
+              {masters.map((m) => <option key={m.id} value={m.id}>{m.agreementNo ?? `#${m.id}`} {m.title}</option>)}
+            </select>
+          )}
+          {parent && <small>種別・向きは基本契約に合わせます</small>}</label>
+        <label className="fld"><span>番号</span>
+          <input value={no} onChange={(e) => setNo(e.target.value)} placeholder="空なら自動" />
+          <small>{no.trim() ? `${no.trim()} で作ります` : `自動：${parent?.agreementNo ?? "（基本契約）"}-Snn`}</small></label>
+        <label className="fld"><span>件名 <em>必須</em></span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例：神我狩 利用許諾条件" /></label>
+        <label className="fld"><span>締結日</span>
+          <input type="date" value={executedOn} onChange={(e) => setExecutedOn(e.target.value)} />
+          <small>{executedOn ? "締結済みで作ります" : "空なら未締結（交渉中）で作ります"}</small></label>
+      </div>
+      {!masters.length && <div className="faint">この取引先には基本契約がありません。先に基本契約を登録してください。</div>}
+      {made && <div className="faint">個別契約 {made.agreementNo ?? `#${made.id}`} は作りました。</div>}
+      {error && <div className="alert">{error}</div>}
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn" disabled={busy || Boolean(made)} onClick={() => setOpen(false)}>閉じる</button>
+        <button className="btn primary" disabled={busy || !parent || !title.trim()} onClick={() => void go()}>
+          {busy ? "作っています…" : made ? `${made.agreementNo ?? "作った契約"} に載せ直す` : fixedMaster ? "作る" : "作って載せる"}</button>
+      </div>
+    </div>
   );
 }
