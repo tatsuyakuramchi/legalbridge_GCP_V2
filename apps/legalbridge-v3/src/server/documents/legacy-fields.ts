@@ -96,21 +96,47 @@ export function isRoyaltyComputedFieldHidden(
 }
 
 /**
- * 法人にしか無い項目。相手先が個人のときは必須から外す。
- * 個人の許諾者に「代表者名」を要求すると、入力しようのない必須項目で止まる。
+ * 相手先の代表者の欄。法人にしか無いので、相手先が個人のときは必須から外す。
+ * 個人の許諾者・受託者に「代表者名」を要求すると、入力しようのない必須項目で止まる。
+ *
+ * 以前は license_master の 2 項目だけを名指ししていた。ひな形ごとに欄の名前が違う
+ * （Licensor_代表者名・代表者氏名・受託者代表者 …）ので、名前の組で見る。
+ * 個人でも代理人などを代表者として登録してあれば（__counterpartyHasRep）欄は出す（必須にはしない）。
  */
-const CORPORATE_ONLY_FIELDS: Record<string, ReadonlySet<string>> = {
-  license_master: new Set(["VENDOR_REP", "VENDOR_REPRESENTATIVE_SAMA"])
-};
+/** 契約書の当事者欄の代表者（個人は本人で埋めない。登録が無ければ欄ごと出さない）。 */
+const PARTY_BLOCK_REP_FIELDS: ReadonlySet<string> = new Set([
+  "VENDOR_REP", "VENDOR_REPRESENTATIVE", "VENDOR_REPRESENTATIVE_SAMA", "LICENSOR_REP", "LICENSOR_REPRESENTATIVE",
+  "Licensor_代表者名", "代表者氏名", "代表者名様", "許諾者代表者", "受託者代表者", "representativeName"
+]);
+/** 代表者の肩書・1 行（取引先に登録した代表者から出る。個人は無い）。 */
+const REP_TITLE_FIELDS: ReadonlySet<string> = new Set([
+  "VENDOR_REPRESENTATIVE_LINE", "VENDOR_REPRESENTATIVE_TITLE", "代表者行", "代表者肩書",
+  "受託者代表者行", "受託者代表者肩書", "representativeLine", "representativeTitle"
+]);
+/** 検収書などの「受託者代表者名」。個人は本人の名前で出す（そのままでよい）が、必須にはしない。 */
+const REP_NAME_FIELDS: ReadonlySet<string> = new Set(["受託者代表者名", "相手先代表者", "counterpartyRep"]);
 
+/** 相手先の代表者の欄か（当事者欄・肩書・検収書の代表者名）。 */
+export const isCounterpartyRepField = (fieldName: string): boolean =>
+  PARTY_BLOCK_REP_FIELDS.has(fieldName) || REP_TITLE_FIELDS.has(fieldName) || REP_NAME_FIELDS.has(fieldName);
+
+/** 相手先が個人で、この欄が代表者の欄（必須にしない）。 */
+export function isRepOfIndividual(fieldName: string, values: Record<string, unknown>): boolean {
+  return values.__counterpartyKind === "individual" && isCounterpartyRepField(fieldName);
+}
+
+/** 相手先が個人で、代表者の登録が無いとき、本人の名前で埋めない欄（契約書の当事者欄）。 */
+export function isRepLeftBlankForIndividual(fieldName: string, values: Record<string, unknown>): boolean {
+  return values.__counterpartyKind === "individual" && values.__counterpartyHasRep !== true
+    && PARTY_BLOCK_REP_FIELDS.has(fieldName);
+}
+
+/** 個人の相手先の代表者の欄を隠すか。代表者の登録が無いときだけ（あれば出して直せるように）。 */
 export function isCorporateOnlyFieldHidden(
-  templateKey: string, fieldName: string, values: Record<string, unknown>
+  _templateKey: string, fieldName: string, values: Record<string, unknown>
 ): boolean {
-  const fields = CORPORATE_ONLY_FIELDS[templateKey];
-  if (!fields?.has(fieldName)) return false;
-  const kind = values.__counterpartyKind;
-  if (kind !== "individual" && kind !== "corporate") return false;
-  return kind === "individual";
+  return values.__counterpartyKind === "individual" && values.__counterpartyHasRep !== true
+    && (PARTY_BLOCK_REP_FIELDS.has(fieldName) || REP_TITLE_FIELDS.has(fieldName));
 }
 
 /** その項目を人に入力させるか。false なら必須判定からも外す。 */

@@ -175,6 +175,53 @@ test("個人の相手先に法人だけの項目を要求しない", () => {
   assert.deepEqual(corporate.missing.map((m) => m.name), ["VENDOR_REP"]);
 });
 
+test("個人の相手先：代表者の欄は、ひな形・欄の名前・宣言（dbField）によらず本人で埋めず、必須にもしない", () => {
+  const person = { condition: { counterparty: { name: "山田 太郎", kind: "individual" } },
+                   contacts: [{ role: "primary", name: "山田 太郎", email: "yamada@example.test", phone: "090-0000-0000" }] };
+  // 基本契約書（V1 から移した宣言は dbField で引く）・条件書（Licensor_代表者名）・業務委託基本契約書。
+  for (const [templateKey, name, dbField] of [
+    ["license_master", "VENDOR_REP", "vendor.vendor_rep"],
+    ["individual_license_terms_v4", "Licensor_代表者名", "vendor.vendor_rep_line"],
+    ["service_master", "受託者代表者", "vendor.vendor_rep"]] as const) {
+    const variables = parseVariables([{ name, label: "代表者", required: true, dbField }]);
+    const bound = bindVariables(variables, person, {}, { templateKey });
+    assert.deepEqual(bound.missing, [], `${templateKey}：必須で止めない`);
+    assert.equal(bound.values[name], undefined, `${templateKey}：本人の名前で埋めない`);
+    assert.deepEqual(bound.fields, [], `${templateKey}：代表者の登録が無ければ欄も出さない`);
+    // 人が入れれば出る（代理人など）。
+    assert.equal(bindVariables(variables, person, { [name]: "代理 花子" }, { templateKey }).values[name], "代理 花子");
+  }
+  // 代表者を登録してある個人（代理人・屋号の代表）は、その人が入り、欄も出る（必須ではない）。
+  const withRep = { condition: { counterparty: { name: "山田 太郎", kind: "individual", representativeName: "代理 花子" } } };
+  const variables = parseVariables([{ name: "VENDOR_REP", label: "代表者", required: true, dbField: "vendor.vendor_rep" }]);
+  const bound = bindVariables(variables, withRep, {}, { templateKey: "license_master" });
+  assert.equal(bound.values.VENDOR_REP, "代理 花子");
+  assert.equal(bound.fields[0]?.required, false);
+  // 法人はこれまでどおり（代表者が入り、空なら必須で止まる）。
+  const corp = bindVariables(variables, { condition: { counterparty: { name: "株式会社A", kind: "corporate", representativeName: "工房 一郎" } } },
+    {}, { templateKey: "license_master" });
+  assert.equal(corp.values.VENDOR_REP, "工房 一郎");
+  assert.equal(corp.fields[0]?.required, true);
+  // 検収書の「受託者代表者名」は個人なら本人のまま（紙は変えない）。
+  const insp = bindVariables(parseVariables([{ name: "受託者代表者名", label: "受託者代表者名" }]), person, {}, { templateKey: "inspection_certificate" });
+  assert.equal(insp.values["受託者代表者名"], "山田 太郎");
+});
+
+test("個人の相手先：通知先（担当者・電話・メール）は本人で入る。法人は候補から選ぶ（自動では入れない）", () => {
+  const variables = parseVariables([
+    { name: "Licensor_担当者", label: "担当者", dbField: "vendor.contact_name" },
+    { name: "Licensor_電話", label: "電話", dbField: "vendor.phone" },
+    { name: "Licensor_メール", label: "メール", dbField: "vendor.email" }]);
+  const person = { condition: { counterparty: { name: "山田 太郎", kind: "individual" } },
+                   contacts: [{ role: "primary", name: "山田 太郎", email: "yamada@example.test", phone: "090-0000-0000" }] };
+  const bound = bindVariables(variables, person, {}, { templateKey: "individual_license_terms_v4" });
+  assert.deepEqual([bound.values.Licensor_担当者, bound.values.Licensor_電話, bound.values.Licensor_メール],
+    ["山田 太郎", "090-0000-0000", "yamada@example.test"]);
+  const corp = { condition: { counterparty: { name: "株式会社A", kind: "corporate" } },
+                 contacts: [{ role: "primary", name: "窓口 次郎", email: "mado@example.test", phone: "03-0000-0000" }] };
+  assert.deepEqual(bindVariables(variables, corp, {}, { templateKey: "individual_license_terms_v4" }).values, {});
+});
+
 test("口座種別しか無い行は口座として扱わない", async () => {
   // V1 のフォームは口座種別に「普通」を初期値で入れていた。銀行名も口座番号も
   // 名義も無いまま保存された取引先が98件あり、そのまま書類に出すと

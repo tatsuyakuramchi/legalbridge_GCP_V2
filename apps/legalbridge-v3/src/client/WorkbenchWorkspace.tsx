@@ -139,7 +139,9 @@ export function WorkbenchWorkspace(
     state: WorkbenchState | null;
     onState: (next: WorkbenchState | null) => void;
     /** 1 枚だけ作る。文書の画面を流れの帯つきで開く（決定したらこの画面へ戻る）。 */
-    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
+    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string;
+                                         /** 相手先。条件の無い文書（基本契約書）は、ここから相手先の欄を引く。 */
+                                         partyId: number | null }) => void;
     /** 訂正版・下敷きの下書きを作ったあと、その下書きを文書の画面（流れの帯つき・直す状態）で開く。 */
     onOpenDraft?: (unit: WorkUnit, documentId: number) => void;
     onOpenDocument: (id: number) => void;
@@ -313,7 +315,9 @@ function EntryPicker({ onPick }: { onPick: (entry: WorkbenchEntry) => void }) {
 function Workbench(
   { state, onState, readOnly, onCompose, onOpenDraft, onOpenDocument, onOpenTask, onOpenMatter, onOpenCondition, onOpenDeals }: {
     state: WorkbenchState; onState: (next: WorkbenchState | null) => void; readOnly: boolean;
-    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string }) => void;
+    onCompose: (unit: WorkUnit, args: { conditionIds: number[]; eventIds: number[]; matterId: number | null; requestId: number | null; templateKey: string;
+                                         /** 相手先。条件の無い文書（基本契約書）は、ここから相手先の欄を引く。 */
+                                         partyId: number | null }) => void;
     onOpenDraft?: (unit: WorkUnit, documentId: number) => void;
     onOpenDocument: (id: number) => void; onOpenTask: (taskId: number) => void; onOpenMatter: (matterId: number) => void;
     onOpenCondition: (conditionId: number) => void; onOpenDeals?: () => void;
@@ -582,7 +586,8 @@ function Workbench(
       {plan && state.step === "work" && (
         <WorkStep plan={plan} state={state} agreements={agreements} channels={channels} isAdmin={isAdmin}
                   onDone={done} onBackToPick={() => patch({ step: "pick" })}
-                  onComposeUnit={(u) => onCompose(u, { conditionIds: u.conditionIds ?? conditionIds, eventIds: u.eventIds ?? [], matterId, requestId, templateKey: u.templateKey ?? "" })}
+                  onComposeUnit={(u) => onCompose(u, { conditionIds: u.conditionIds ?? conditionIds, eventIds: u.eventIds ?? [], matterId, requestId, templateKey: u.templateKey ?? "",
+                                                       partyId: ctx?.partyId ?? null })}
                   onOpenDraft={(u, id) => (onOpenDraft ? onOpenDraft(u, id) : onOpenDocument(id))}
                   onOpenDocument={onOpenDocument} onOpenCondition={onOpenCondition} busy={busy || readOnly}
                   onConditionsAdded={(ids, templateKey) => void linkConditions(ids, templateKey)}

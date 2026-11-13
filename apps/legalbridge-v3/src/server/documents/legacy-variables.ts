@@ -666,6 +666,13 @@ const DB_FIELD_SOURCES: Record<string, (c: Ctx) => Record<string, unknown>> = {
       address: party.address,
       // 担当者の欄（phone / email / contact_*）は自動で入れない（上の対応表と同じ理由）。
       // 宣言（dbField）で指していても空のまま出し、候補から人が選ぶ。
+      // 個人だけは別：窓口は本人しかいないので、本人の氏名・電話・メールを入れる
+      // （条件書の「許諾者 通知先」が空のまま出ていた）。人が直せばそちらが勝つ。
+      ...(party.kind === "individual" ? {
+        contact_name: primary.name ?? party.name,
+        phone: primary.phone ?? party.phone,
+        email: primary.email ?? party.email
+      } : {}),
       vendor_rep: representativeName(c) ?? signer.name ?? primary.name,
       // 「代表取締役 武田 敏裕」の 1 行（A-110）。条件書の代表者名の欄はこちら。肩書は取引先に登録した
       // 代表者のものなので、代表者の登録が無く署名者・主担当に落ちるときは付けない。

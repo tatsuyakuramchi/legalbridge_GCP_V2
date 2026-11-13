@@ -228,6 +228,8 @@ export function App() {
                /** デイリータスクから来たとき、その元の依頼（作った文書を依頼に繋ぐ）。 */
                requestId?: number | null;
                templateKey?: string | null;
+               /** 相手先。条件の無い文書（基本契約書）を作るとき、相手先の欄をここから引く。 */
+               partyId?: number | null;
                bulk?: boolean; settled?: boolean;
                /** 訂正版。退かせる元の文書と理由。 */
                supersedesId?: number | null; supersedesExtraIds?: number[]; reason?: string | null } | null>(null);
@@ -258,7 +260,8 @@ export function App() {
     templateKey: string | null = null, back: DocBack | null = null,
     revise: { supersedesIds: number[]; reason: string } | null = null,
     requestId: number | null = null,
-    flow: DocFlow | null = null
+    flow: DocFlow | null = null,
+    partyId: number | null = null
   ) => {
     // 文書を作るのは作業テーブル。条件明細・作品・契約・案件・工程表の「文書を作る」は、
     // 流れの帯（契約・条件明細・作業テーブル）も訂正・台帳の戻り先も無ければ、作業テーブルの
@@ -272,6 +275,7 @@ export function App() {
     setDocFlow(flow);
     // 作業から離れて作品・条件明細の画面で作った文書も、その作業に繋ぐ（案件の文書は案件へ）。
     setCompose({ conditionIds, eventIds, matterId, requestId: requestId ?? (matterId ? null : taskCtx?.requestId ?? null), templateKey,
+                 partyId,
                  supersedesId: revise?.supersedesIds[0] ?? null, supersedesExtraIds: revise?.supersedesIds.slice(1) ?? [],
                  reason: revise?.reason ?? null });
     setFocus(null);
@@ -605,7 +609,7 @@ export function App() {
           <WorkbenchWorkspace state={workbench} onState={setWorkbench}
             onOpenDeals={() => { setFocus(null); setView("paydocs"); }}
             onCompose={(unit, a) => startCompose(a.conditionIds, a.eventIds, a.matterId, a.templateKey || null, null, null, a.requestId,
-                                                 workbenchFlow(unit.key, unit.label))}
+                                                 workbenchFlow(unit.key, unit.label), a.partyId)}
             // 訂正版・下敷きの下書きは、文書の画面を「直す」状態で開く。決定したらこの単位を済みにする。
             onOpenDraft={(unit, id) => openDocumentAt(id, null, workbenchFlow(unit.key, unit.label), true)}
             onOpenDocument={(id) => openDocumentAt(id, null, workbench
@@ -653,7 +657,7 @@ export function App() {
         )}
         {view === "documents" && (
           <DocumentsWorkspace
-            key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}r${compose.supersedesId ?? ""}`
+            key={compose ? `c${compose.bulk ? "bulk" : ""}${compose.settled ? "settled" : ""}${compose.matterId ?? ""}${compose.conditionIds.join("-")}r${compose.supersedesId ?? ""}p${compose.partyId ?? ""}t${compose.conditionIds.length ? "" : compose.templateKey ?? ""}`
                           : openDocument ? `d${openDocument.id}` : "docs"}
             start={compose ?? undefined} openDocumentId={openDocument?.id}
             openNonce={openDocument?.nonce} openAsDraft={openDocument?.edit} openStep={docStep}

@@ -88,7 +88,9 @@ export function DocumentSet({
         try {
           next[p.uid] = await api.post<Preview>("/documents/preview", {
             templateKey: p.templateKey, conditionIds: p.conditionIds, matterId,
-            agreementId: agreementForPreview(p.role, p.templateKey), manualInputs: inputsFor(p.uid)
+            agreementId: agreementForPreview(p.role, p.templateKey),
+            // 基本契約書は条件を持たないので、相手先を添える（無いと相手先の欄が空・代表者が必須で出る）。
+            manualInputs: p.role === "master" ? { ...inputsFor(p.uid), _partyId: partyId } : inputsFor(p.uid)
           });
         } catch (e) { next[p.uid] = { error: e instanceof ApiError ? e.message : String(e) }; }
       }
