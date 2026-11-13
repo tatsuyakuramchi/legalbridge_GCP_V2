@@ -188,6 +188,11 @@ export function DocumentsWorkspace(
                * ひな形で開き、人がもう一度選び直すことになる。
                */
               templateKey?: string | null;
+              /**
+               * 相手先。条件の無い文書（まだ契約の記録が無い基本契約書）は、条件から相手先を引けない。
+               * 作業テーブルが決めている相手先を渡し、相手先の欄（名称・住所・代表者・法人／個人）を引く。
+               */
+              partyId?: number | null;
               /** 案件から「発注書をまとめて作る」で来た。一括作成を開いた状態にする。 */
               bulk?: boolean;
               /** 案件から「検収済みをまとめて入れる」で来た。 */
@@ -646,8 +651,12 @@ export function DocumentsWorkspace(
   }, [isPubTerms, [...picked].sort((a, b) => a - b).join(",")]);
   /** 手入力に受取人を添える（条件書。計算書は試算の側で添える）。 */
   const inputsWithPayee = useMemo(
-    () => (isPubTerms && payeePartyId ? { ...inputs, _payeePartyId: payeePartyId } : inputs),
-    [isPubTerms, payeePartyId, inputs]);
+    () => {
+      const withPayee = isPubTerms && payeePartyId ? { ...inputs, _payeePartyId: payeePartyId } : inputs;
+      // 条件の無い文書（基本契約書）は、呼んだ側が決めた相手先を添える（サーバは _partyId から相手先の欄を引く）。
+      return !picked.length && start?.partyId && !("_partyId" in withPayee) ? { ...withPayee, _partyId: start.partyId } : withPayee;
+    },
+    [isPubTerms, payeePartyId, inputs, picked.length, start?.partyId]);
   const [stmtError, setStmtError] = useState<string | null>(null);
   // 条件ごとに実績をまとめる。計算は条件ごと（料率も MG・AG も条件ごとに違う）で、
   // 1枚にまとめるのは印字と支払のまとめ方だけ。
@@ -710,6 +719,8 @@ export function DocumentsWorkspace(
     const ids = [...new Set(picked
       .map((id) => conditions.find((c) => c.id === id)?.counterparty?.id)
       .filter((v): v is number => typeof v === "number"))];
+    // 条件の無い文書（基本契約書）は、呼んだ側が決めた相手先（担当者の候補もここから出る）。
+    if (!picked.length && start?.partyId) return start.partyId;
     return ids.length === 1 ? ids[0] : null;
   })();
   // 基本契約の選択肢は、この相手先の契約だけ。他社の契約が並ぶと選び間違える。

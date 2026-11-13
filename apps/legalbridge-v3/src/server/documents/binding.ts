@@ -1,6 +1,6 @@
 import { DomainError } from "../core/errors.js";
 import { resolveLegacyDbField, resolveLegacyVariable, templateAliasOf } from "./legacy-variables.js";
-import { isFieldRequested, type LegacyFieldMeta, type ShowWhenCondition } from "./legacy-fields.js";
+import { isFieldRequested, isRepLeftBlankForIndividual, isRepOfIndividual, type LegacyFieldMeta, type ShowWhenCondition } from "./legacy-fields.js";
 
 /**
  * テンプレート変数の束縛。
@@ -200,8 +200,14 @@ export function bindVariables(
     ...computed, ...manualInputs,
     __hasRoyalty: Boolean((context as Record<string, unknown>).royalty),
     __counterpartyKind:
-      ((context as any).condition?.counterparty?.kind as string | undefined) ?? null
+      ((context as any).condition?.counterparty?.kind as string | undefined) ?? null,
+    // 個人でも代理人などを代表者として登録してあるか（あれば代表者の欄を出す）。
+    __counterpartyHasRep:
+      String((context as any).condition?.counterparty?.representativeName ?? "").trim() !== ""
   };
+  // 相手先が個人のときの代表者の欄。登録が無ければ本人の名前で埋めない（当事者欄に
+  // 「氏名」と「代表者 氏名」が並ぶ）。宣言（dbField）で引く欄も同じ。必須にもしない。
+  const repOfIndividual = (name: string) => isRepOfIndividual(name, decisionValues);
 
   // 画面に出す項目。明細（array）と隠し項目は出さない。
   const shown = (variable: TemplateVariable) =>
@@ -214,7 +220,7 @@ export function bindVariables(
     label: variable.label ?? variable.name,
     group: variable.group ?? null,
     type: variable.type ?? "text",
-    required: variable.required === true,
+    required: variable.required === true && !repOfIndividual(variable.name),
     source,
     value: value ?? null,
     helpText: variable.helpText ?? null,
@@ -254,10 +260,11 @@ export function bindVariables(
         value = manual;
       } else {
         // dbField（V1 の宣言）→ 名前の対応表、の順に見る。宣言のほうが確か。
-        const declared = variable.dbField
+        const skipRep = isRepLeftBlankForIndividual(variable.name, decisionValues);
+        const declared = variable.dbField && !skipRep
           ? resolveLegacyDbField(variable.dbField, context)
           : undefined;
-        const legacy = isEmpty(declared)
+        const legacy = skipRep ? undefined : isEmpty(declared)
           ? (variable.noGuess && !templateAliasOf(templateKey, variable.name)
               ? undefined : resolveLegacyVariable(variable.name, context, variable.label, templateKey))
           : declared;
@@ -296,7 +303,7 @@ export function bindVariables(
       // 人に入力させない項目（計算で埋まる欄・使わない分岐の欄・隠し項目）は
       // 未入力として数えない。ここを見ていなかったので、検収書は入力しようの
       // ない項目まで必須として要求していた。
-      if (variable.required && isFieldRequested(templateKey, variable, decisionValues)) {
+      if (variable.required && !repOfIndividual(variable.name) && isFieldRequested(templateKey, variable, decisionValues)) {
         missing.push({ name: variable.name, label: variable.label ?? variable.name });
       }
       continue;
