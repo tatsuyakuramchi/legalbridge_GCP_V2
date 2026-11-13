@@ -311,7 +311,7 @@ test("作品ごとに番号を持つ条件書（206）：本文が差す名前�
   const { PUB_TERMS_MULTI_EXTRA_VARIABLES } = await import("./pub-terms.js");
   const multiHtml = bodyOf("206_pub_license_terms_multi.sql", 0);
   // 料率は紙 1 枚で 1 つ（そろえる）。作品の個別契約の番号は条件から。
-  const multiContext = { ...context, conditions: context.conditions.map((c: any, i: number) => ({
+  const multiContext: any = { ...context, conditions: context.conditions.map((c: any, i: number) => ({
     ...c, ratePct: c.scopes.media.includes("電子") ? 15 : 11, exclusivity: "exclusive", exclusivityLabel: "独占",
     termsAgreementNo: i < 2 ? "ARC-PUBT-2026-0012" : "ARC-PUBT-2026-0013" })) };
   multiContext.condition = { ...context.condition };
