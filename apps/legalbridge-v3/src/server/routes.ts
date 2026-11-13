@@ -680,7 +680,9 @@ export function createRoutes(database: Transactable) {
         counterpartyId: z.coerce.number().int().positive().optional(),
         executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
         // 件名（文書から立てた契約の件名が文書の名前のまま違っているとき直す）。
-        title: z.string().trim().min(1).max(200).optional()
+        title: z.string().trim().min(1).max(200).optional(),
+        // 変更の理由（まき直し・更新・訂正など）。契約の版に残る。
+        reason: z.string().trim().max(300).nullable().optional()
       }).parse(req.body ?? {});
       await agreementMap.remap(Number(req.params.id), input, actor(res));
       res.json({ ok: true });
@@ -715,10 +717,16 @@ export function createRoutes(database: Transactable) {
 
   router.patch("/agreements/:id", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
-      const input = agreementBody.partial().parse(req.body ?? {});
+      const input = agreementBody.partial()
+        .extend({ reason: z.string().trim().max(300).nullable().optional() }).parse(req.body ?? {});
       await agreements.update(Number(req.params.id), input, actor(res));
       res.json({ ok: true });
     }));
+
+  // 契約の記録の版（だれが・いつ・なぜ・何を変えたか）。/agreements/:id より前に置く必要は無い（道が違う）。
+  router.get("/agreements/:id/versions", asyncRoute(async (req, res) => {
+    res.json(await agreements.versions(Number(req.params.id)));
+  }));
 
   router.post("/agreements/:id/execute", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {

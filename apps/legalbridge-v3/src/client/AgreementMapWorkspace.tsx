@@ -17,6 +17,7 @@ import { Relations } from "./Relations.js";
 import { ConditionMapping } from "./AgreementMapping.js";
 import { ContractFlow } from "./ContractFlow.js";
 import { ContractTable } from "./ContractTable.js";
+import { AgreementVersionsButton, VersionReasonField } from "./AgreementVersions.js";
 import type { EntityKind } from "./Relations.js";
 import type { AgreementDomain, AgreementKind } from "../server/agreements/service.js";
 import type { LooseCondition, MapAgreement, MapIssue, MapNode, MapOrder, MapPartyRow, PartyMap, UnlinkedDocument } from "../server/agreements/party-map.js";
@@ -919,6 +920,8 @@ function RemapForm(
   const [parentId, setParentId] = useState<string>(a.parentId ? String(a.parentId) : "");
   const [counterpartyId, setCounterpartyId] = useState<string>(String(a.counterparty.id));
   const [executedOn, setExecutedOn] = useState<string>(a.executedOn ?? "");
+  /** 変更の理由（契約の版に残る。まき直し・更新・訂正など）。 */
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const needsParent = kind === "supplement" || kind === "termination";
   const isRoot = kind === "master" || kind === "standalone";
@@ -932,9 +935,10 @@ function RemapForm(
         domain: domain ? domain : null,
         parentId: needsParent && parentId ? Number(parentId) : null,
         counterpartyId: Number(counterpartyId),
-        executedOn: executedOn || null
+        executedOn: executedOn || null,
+        reason: reason.trim() || null
       });
-      onSaved(`${a.agreementNo ?? `#${a.id}`} を保存しました（番号はそのまま）`);
+      onSaved(`${a.agreementNo ?? `#${a.id}`} を保存しました（番号はそのまま。前の内容は「履歴」に残ります）`);
     } catch (e) { onError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -987,8 +991,10 @@ function RemapForm(
         <SearchSelect value={counterpartyId} onChange={(v) => setCounterpartyId(v)}
           search={searchParties} valueLabel={a.counterparty.name} placeholder="取引先名で探す" />
       </div>
+      <VersionReasonField value={reason} onChange={setReason} />
       <div className="row" style={{ gridColumn: "1 / -1" }}>
         <button className="btn primary btn-sm" disabled={busy || (needsParent && !parentId)} onClick={save}>保存する</button>
+        <AgreementVersionsButton agreementId={a.id} title={a.agreementNo ?? a.title} />
         <span className="faint">
           番号は振り直しません。文書には「{executedOn ? `${Number(executedOn.slice(0, 4))}年${Number(executedOn.slice(5, 7))}月${Number(executedOn.slice(8, 10))}日付` : ""}{a.title}」と出ます。{isRoot ? "基本契約・単体契約にすると親は外れます。" : ""}
           相手先を別の取引先にすると、この取引先の図から外れます。
