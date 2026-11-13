@@ -3,6 +3,7 @@ import { api, ApiError, money } from "./api.js";
 import { Modal } from "./Modal.js";
 import { DocViewButton } from "./DocPeek.js";
 import { AgreementDocsDialog, VoidDialog, type VoidTarget } from "./DocVoid.js";
+import { AttachDocDialog, type AttachTarget } from "./DocAttach.js";
 import { useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
 import type { EntityKind } from "./Relations.js";
@@ -35,8 +36,10 @@ type Dialog =
   | { kind: "pay-move"; cond: MapCondition; pay: MapPayment; amount: number };
 
 export function ContractTable(
-  { map, onOpen, onChanged, onError }: {
+  { map, onOpen, onCompose, onChanged, onError }: {
     map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
+    /** 条件を選んだ状態で文書の作成画面へ（文書の無い契約の「文書を作る」）。 */
+    onCompose?: (conditionIds: number[]) => void;
     onChanged: (msg: string) => void; onError: (msg: string) => void;
   }
 ) {
@@ -50,6 +53,8 @@ export function ContractTable(
   /** 文書の一覧（契約ごと）・無効にする文書。 */
   const [docsOf, setDocsOf] = useState<{ agreementId: number; title: string } | null>(null);
   const [voiding, setVoiding] = useState<VoidTarget | null>(null);
+  /** 文書の無い契約に文書を付ける（上げる・繋ぐ・作る）。 */
+  const [attachTo, setAttachTo] = useState<AttachTarget | null>(null);
 
   const settlementsOf = (c: MapCondition) => model.settlements.filter((s) => s.conditionIds.includes(c.id));
   const paymentsOf = (c: MapCondition) => model.payments.filter((p) => p.conditionIds.includes(c.id));
@@ -116,7 +121,21 @@ export function ContractTable(
   const docTitle = (nodeId: string) => {
     if (nodeId.startsWith("o")) return "発注書の画面を開く（送る・訂正など）";
     const d = agreementOf(nodeId)?.currentDocument;
-    return d ? `${d.documentNo ?? "文書"} の画面を開く（送る・訂正など）` : "契約の画面を開く（決定済みの文書がありません）";
+    return d ? `${d.documentNo ?? "文書"} の画面を開く（送る・訂正など）` : "文書がありません。押すと、文書を上げる・繋ぐ・作るを選べます";
+  };
+  /** 番号を押したとき。文書があれば文書の画面、無ければ文書を付けるポップアップ（上げる・繋ぐ・作る）。 */
+  const numberClick = (nodeId: string, fallback?: () => void) => {
+    const a = agreementOf(nodeId);
+    if (!a || a.currentDocument || readOnly) { fallback?.(); return; }
+    openAttach(nodeId);
+  };
+  const openAttach = (nodeId: string) => {
+    const a = agreementOf(nodeId);
+    if (!a) return;
+    setAttachTo({
+      id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: map.party.id,
+      conditions: model.conds.filter((c) => c.agreementId === a.id).map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name }))
+    });
   };
   /** 文書の画面へ飛ぶようにしたので、契約の画面は「契約」から。 */
   const agreementButton = (nodeId: string) => {
@@ -266,7 +285,7 @@ export function ContractTable(
                     <>
                       <span className={`tag cf-tag ${g.master.cat}`}>{CAT_LABEL[g.master.cat] || "種別なし"}</span>
                       <div className="ct-line">
-                        <button className="linky code" title={docTitle(g.master.id)} onClick={() => model.nodeOf(g.master!.id)?.open?.()}>{g.master.no}</button>
+                        <button className="linky code" title={docTitle(g.master.id)} onClick={() => numberClick(g.master!.id, () => model.nodeOf(g.master!.id)?.open?.())}>{g.master.no}</button>
                         {viewOf(g.master.id)}
                         {docsButton(g.master.id, g.master.no)}
                         {agreementButton(g.master.id)}
@@ -292,7 +311,7 @@ export function ContractTable(
                         <div className="ct-line">
                           {node.tag && <span className={`tag cf-tag ${node.tag.cls}`}>{node.tag.text}</span>}
                           {node.open
-                            ? <button className="linky code" title={docTitle(k.id)} onClick={node.open}>{node.no}</button>
+                            ? <button className="linky code" title={docTitle(k.id)} onClick={() => numberClick(k.id, node.open)}>{node.no}</button>
                             : <span className="code">{node.no}</span>}
                           {viewOf(k.id)}
                           {docsButton(k.id, node.no ?? "")}
@@ -433,8 +452,13 @@ export function ContractTable(
         }
       })()}
       {docsOf && <AgreementDocsDialog agreementId={docsOf.agreementId} title={docsOf.title} onChanged={onChanged} onClose={() => setDocsOf(null)}
+                                       onAttach={readOnly ? undefined : () => { const id = docsOf.agreementId; setDocsOf(null); openAttach(`a${id}`); }}
                                        onOpenDocument={(id) => { setDocsOf(null); onOpen?.("document", id); }} />}
       {voiding && <VoidDialog doc={voiding} onDone={onChanged} onClose={() => setVoiding(null)} />}
+      {attachTo && (
+        <AttachDocDialog target={attachTo} onDone={onChanged} onClose={() => setAttachTo(null)}
+          onCompose={onCompose} onOpenAgreement={onOpen ? () => onOpen("agreement", attachTo.id) : undefined} />
+      )}
     </div>
   );
 

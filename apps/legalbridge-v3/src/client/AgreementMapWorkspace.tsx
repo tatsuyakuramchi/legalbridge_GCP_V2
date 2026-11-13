@@ -50,10 +50,12 @@ const canBeOrder = (a: Pick<MapAgreement, "kind" | "agreementNo" | "title" | "do
   isOrderAgreement(a) || a.kind === "document" || (a.kind === "standalone" && a.domain === "service");
 
 export function AgreementMapWorkspace(
-  { initialPartyId, onOpen, onRegisterAgreement, initialMode, onModeChange, onPartyChange, onOpenImport }: {
+  { initialPartyId, onOpen, onCompose, onRegisterAgreement, initialMode, onModeChange, onPartyChange, onOpenImport }: {
     /** 直した CSV の取り込み：一括処理 › まとめて登録・更新する を開く（取込の入口は 1 つ。docs/navigation.md）。 */
     onOpenImport?: (preset: ImportPreset) => void;
     initialPartyId?: number; onOpen?: (kind: EntityKind, id: number) => void;
+    /** 条件を選んだ状態で文書の作成画面へ（表の、文書の無い契約から）。 */
+    onCompose?: (conditionIds: number[]) => void;
     /** URL から来た切り替え（マップ／整理する）と、切り替え・取引先の変更を親（URL）へ知らせる。 */
     initialMode?: "map" | "tidy"; onModeChange?: (mode: "map" | "tidy") => void; onPartyChange?: (id: number | undefined) => void;
     /** 契約の登録へ（相手先を入れた状態で開く）。契約の無い取引先から始めるとき。 */
@@ -167,7 +169,7 @@ export function AgreementMapWorkspace(
         <div className="stack">
           {!map && <div className="note">左から取引先を選んでください。</div>}
           {map && (
-            <PartyMapView map={map} onOpen={onOpen} onRegisterAgreement={onRegisterAgreement} sendVersion={version}
+            <PartyMapView map={map} onOpen={onOpen} onCompose={onCompose} onRegisterAgreement={onRegisterAgreement} sendVersion={version}
               onChanged={(msg) => { setNotice(msg); setError(null); bump(); }}
               onError={setError} />
           )}
@@ -178,8 +180,10 @@ export function AgreementMapWorkspace(
 }
 
 export function PartyMapView(
-  { map, onOpen, onRegisterAgreement, onAddSupplement, onChanged, onError, sendVersion = 0 }: {
+  { map, onOpen, onCompose, onRegisterAgreement, onAddSupplement, onChanged, onError, sendVersion = 0 }: {
     sendVersion?: number;
+    /** 条件を選んだ状態で文書の作成画面へ（表の、文書の無い契約から）。 */
+    onCompose?: (conditionIds: number[]) => void;
     /** 基本契約の下に個別契約を足す（作業台から。その場で登録欄を開く）。無ければ出さない。 */
     onAddSupplement?: (parent: MapAgreement) => void;
     map: PartyMap; onOpen?: (kind: EntityKind, id: number) => void;
@@ -285,7 +289,7 @@ export function PartyMapView(
             <button className="chip" aria-pressed={view === "tree"} onClick={() => chooseView("tree")}>図（種類・締結日などを直す）</button>
           </div>
           {view === "table" && (
-            <ContractTable map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
+            <ContractTable map={map} onOpen={onOpen} onCompose={onCompose} onChanged={onChanged} onError={onError} />
           )}
           {view === "mapping" && (
             <ContractFlow map={map} onOpen={onOpen} onChanged={onChanged} onError={onError} />
