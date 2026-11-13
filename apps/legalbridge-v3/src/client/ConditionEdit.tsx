@@ -16,6 +16,7 @@ import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/co
 import { minorUnitHint, SETTLEMENT_CYCLE_OPTIONS, SETTLEMENT_MODE_OPTIONS } from "./ConditionCreateForm.js";
 import { SETTLEMENT_GRACE_DAYS_DEFAULT } from "../server/conditions/settlement-mode.js";
 import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
+import { conditionNameFor } from "../server/conditions/naming.js";
 
 /**
  * 条件の編集。
@@ -631,6 +632,22 @@ export function ConditionEdit(
              onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && (e.target as HTMLElement).classList.contains("form-section")) { e.preventDefault(); toggleSec(e.target); } }}>
           <div className="form-section"><b>① 何の条件か</b><small>条件名・種類・相手先・作品。向きは変えられません</small></div>
           {field("name", "条件名")}
+          {/* 取得（IN）の許諾は 作品名｜利用形態 が規則。手で付けた名前・利用形態を変えたあとの名前を 1 回で揃える。 */}
+          {kindNow === "license" && detail.direction === "in" && (() => {
+            const made = detail.work?.title && v.usageType
+              ? conditionNameFor({ workTitle: detail.work.title, usageType: v.usageType as never, sublicensee: null, purpose: null }) : null;
+            if (!made || v.name === made || v.name.startsWith(`${made}（`)) return null;
+            return (
+              <div className="field">
+                <span>条件名の規則</span>
+                <span className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                  <span className="faint">作品名｜利用形態：</span><b>{made}</b>
+                  <button type="button" className="btn btn-sm" onClick={() => set("name", made)}>この名前にする</button>
+                </span>
+                <small className="faint">条件書の行・計算の形は、条件名ではなく下の「利用形態」で決まります。名前は探しやすさのため</small>
+              </div>
+            );
+          })()}
           {fixed("向き", detail.direction === "in" ? "IN 取得（費用側）" : "OUT 許諾（収入側）",
             "向きは変えられません。逆向きなら新しい条件を作ってください")}
           {inPlace
@@ -838,6 +855,26 @@ export function ConditionEdit(
                   ? "条件書の行・計算書の製品名はこれで決まる。1本に1つ"
                   : "再許諾の実績はこの形の許諾先にしか付かない。作品画面の一覧にもこれが出る"}
               </small>
+            </label>
+          )}
+          {/* 算定の基礎。再許諾・他社販売は、入金（受領額）と製造・部数（単価 × 数量）のどちらの契約もある。
+              利用形態（条件名）は分けず、ここで持つ（条件書の算定式・実績入力の初期の形）。 */}
+          {kindNow === "license" && detail.direction === "in" && (v.usageType === "sublicense" || v.usageType === "oem")
+            && v.licenseFeeBasis !== "in_lieu" && (
+            <label className="field" id="f-priceBasisDeal">
+              <span>算定の基礎</span>
+              <select value={v.priceBasis} onChange={(e) => set("priceBasis", e.target.value)}>
+                {v.usageType === "sublicense" ? (<>
+                  <option value="">受領額 × 料率（入金ベース）</option>
+                  <option value="list">基準価格 × 数量 × 料率（製造・部数ベース）</option>
+                  {v.priceBasis === "receipts" && <option value="receipts">受領額 × 料率（入金ベース）</option>}
+                </>) : (<>
+                  <option value="">指定しない（条件書の式は 供給価格 × 数量 × 料率）</option>
+                  <option value="list">受領価格（1個）× 製造個数 × 料率（製造ベース）</option>
+                  <option value="receipts">受領額 × 料率（入金ベース）</option>
+                </>)}
+              </select>
+              <small className="faint">条件名・利用形態は同じまま。条件書の算定式と、実績を入れるときの初期の形がこれになります（実績ごとに変えることもできます）</small>
             </label>
           )}
           {kindNow === "license" && detail.direction === "in" && (v.usageType === "sublicense" || v.usageType === "oem") && (

@@ -105,6 +105,11 @@ export interface LicenseSetRow {
   sublicenseConsent?: "covered" | "required" | null;
   /** 許諾料の扱い（A-048）。included / free のときは率が無くてもよい。 */
   licenseFeeBasis?: LicenseFeeBasis | null;
+  /**
+   * 算定の基礎。再許諾・他社販売は 受領額 × 料率（receipts）と 単価 × 数量 × 料率（list）の
+   * どちらの契約もある。取引モデルは分けず、条件に持たせる（条件書の式・実績入力の初期値）。空なら形態の既定。
+   */
+  priceBasis?: "list" | "receipts" | null;
   /** この行だけの支払条件。空ならセット共通の支払条件。 */
   paymentTerms?: string | null;
   /** この行だけの決済の型（A-071）。空ならセット共通。電子の年 2 回・年 4 回で使う。 */
@@ -718,7 +723,8 @@ export class ConditionWriteService {
       usageType: row.usageType,
       targetPartyId: row.targetPartyId ?? null,
       sublicenseConsent: row.sublicenseConsent ?? input.sublicenseConsentDefault ?? null,
-      licenseFeeBasis: row.licenseFeeBasis ?? null
+      licenseFeeBasis: row.licenseFeeBasis ?? null,
+      priceBasis: row.priceBasis ?? null
     }));
     for (const one of inputs) validateConditionInput(one);
 

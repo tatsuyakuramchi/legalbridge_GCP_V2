@@ -2481,7 +2481,9 @@ export function createRoutes(database: Transactable) {
       targetPartyId: z.coerce.number().int().positive().nullable().optional(),
       purpose: z.string().trim().max(200).nullable().optional(),
       sublicenseConsent: sublicenseConsentSchema,
-      licenseFeeBasis: licenseFeeBasisSchema
+      licenseFeeBasis: licenseFeeBasisSchema,
+      // 算定の基礎（再許諾・他社販売）。受領額 × 料率／単価 × 数量 × 料率。
+      priceBasis: z.enum(["list", "receipts"]).nullable().optional()
     })).min(1).max(20)
   });
   /** 業務委託の条件を業務1つぶん（委託料＋実費＋手数料）まとめて登録する。 */

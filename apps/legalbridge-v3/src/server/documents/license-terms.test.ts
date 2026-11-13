@@ -457,3 +457,21 @@ test("A-089：初版分を発注書の報酬で払った構成要素があれば
   assert.match(String(rows[0]!.seText), /^作品A：初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み（算定：本体価格 1,000円（税抜）× 初版 3,000部 × 10%）。/);
   assert.deepEqual(inLieuSpecialExtras({ conditions: [] }), []);
 });
+
+test("算定の基礎（price_basis）：再許諾・他社販売は取引モデルを分けず、条件の基礎で算定式だけ変える", () => {
+  const sub = FIXED_DEALS.find((d) => d.id === 2)!;
+  const oem = FIXED_DEALS.find((d) => d.id === 3)!;
+  // 空は形態の既定（再許諾＝許諾収入、他社販売＝供給価格 × 数量）。
+  assert.deepEqual(calcOfCondition({ pricingModel: "revenue_rate" }, sub), {});
+  assert.deepEqual(calcOfCondition({ pricingModel: "revenue_rate" }, oem), {});
+  // 再許諾を製造・部数ベースで計算する契約。
+  assert.deepEqual(calcOfCondition({ pricingModel: "revenue_rate", priceBasis: "list" }, sub),
+    { calc_type: "BASE_QTY_RATE", basePrice: "再許諾先の基準価格 × 数量", qty: "数量" });
+  // 他社販売を入金ベースで計算する契約。
+  assert.deepEqual(calcOfCondition({ pricingModel: "revenue_rate", priceBasis: "receipts" }, oem),
+    { calc_type: "BASE_RATE", basePrice: "販売先からの受領額", qty: "1" });
+  // 既定と同じ向きの指定は式を変えない。条件に料率の基準（文）があればそちらが先。
+  assert.deepEqual(calcOfCondition({ pricingModel: "revenue_rate", priceBasis: "receipts" }, sub), {});
+  assert.deepEqual(calcOfCondition({ pricingModel: "revenue_rate", priceBasis: "list" }, oem), {});
+  assert.equal(calcOfCondition({ pricingModel: "revenue_rate", priceBasis: "list", royaltyBase: "卸価格" }, sub).basePrice, "卸価格 × 料率");
+});
