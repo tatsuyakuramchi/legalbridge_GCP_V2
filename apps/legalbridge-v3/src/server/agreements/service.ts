@@ -434,8 +434,10 @@ export class AgreementService {
           throw new DomainError("VALIDATION", "基本契約＋個別契約に切り替えられるのは単体契約です");
         }
         const newKind: AgreementKind = toMaster ? "master" : old.kind;
-        const newDomain: AgreementDomain | null = (toMaster ? input.domain ?? old.domain : old.domain) ?? null;
-        if (toMaster && !newDomain) {
+        // 種別は選べる（ライセンスの基本契約／業務委託の基本契約／ハイブリッド …）。渡さなければ旧契約と同じ。
+        // 番号の頭と、基本契約書のひな形が種別で決まる。
+        const newDomain: AgreementDomain | null = (input.domain ?? old.domain) ?? null;
+        if (newKind === "master" && !newDomain) {
           throw new DomainError("VALIDATION", "基本契約の種別（業務委託／ライセンス／売買／その他）を選んでください。番号の頭が決まります");
         }
         const title = String(input.title ?? "").trim() || String(old.title ?? "");
