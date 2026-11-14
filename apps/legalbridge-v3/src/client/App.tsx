@@ -230,6 +230,8 @@ export function App() {
                templateKey?: string | null;
                /** 相手先。条件の無い文書（基本契約書）を作るとき、相手先の欄をここから引く。 */
                partyId?: number | null;
+               /** 文書を載せる契約（巻き直した新契約の契約書を作るとき）。 */
+               agreementId?: number | null;
                bulk?: boolean; settled?: boolean;
                /** 訂正版。退かせる元の文書と理由。 */
                supersedesId?: number | null; supersedesExtraIds?: number[]; reason?: string | null } | null>(null);
@@ -261,7 +263,8 @@ export function App() {
     revise: { supersedesIds: number[]; reason: string } | null = null,
     requestId: number | null = null,
     flow: DocFlow | null = null,
-    partyId: number | null = null
+    partyId: number | null = null,
+    agreementId: number | null = null
   ) => {
     // 文書を作るのは作業テーブル。条件明細・作品・契約・案件・工程表の「文書を作る」は、
     // 流れの帯（契約・条件明細・作業テーブル）も訂正・台帳の戻り先も無ければ、作業テーブルの
@@ -275,7 +278,7 @@ export function App() {
     setDocFlow(flow);
     // 作業から離れて作品・条件明細の画面で作った文書も、その作業に繋ぐ（案件の文書は案件へ）。
     setCompose({ conditionIds, eventIds, matterId, requestId: requestId ?? (matterId ? null : taskCtx?.requestId ?? null), templateKey,
-                 partyId,
+                 partyId, agreementId,
                  supersedesId: revise?.supersedesIds[0] ?? null, supersedesExtraIds: revise?.supersedesIds.slice(1) ?? [],
                  reason: revise?.reason ?? null });
     setFocus(null);
@@ -680,6 +683,9 @@ export function App() {
             // 契約の画面で条件明細を登録したら、その条件で文書を作る画面へ進む（戻る先はその契約）。
             onCompose={(conditionIds, agreement, templateKey) =>
               startCompose(conditionIds, [], null, templateKey, null, null, null, agreementFlow(agreement))}
+            // 巻き直した新契約の契約書をひな形で作る（条件は載せない。相手先と契約を入れた状態で開く）。
+            onComposeContract={(agreement, partyId, templateKey) =>
+              startCompose([], [], null, templateKey, null, null, null, agreementFlow(agreement), partyId, agreement.id)}
             onSelectId={pickFor("agreements")} />
         )}
         {view === "agreement-map" && (

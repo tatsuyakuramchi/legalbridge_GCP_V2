@@ -104,6 +104,36 @@ export interface AgreementRow {
   renewals: number;
 }
 
+/** 契約の巻き直し（209）。 */
+export interface RepaperInput {
+  /** 新契約の件名。空なら旧契約と同じ。 */
+  title?: string | null;
+  /** 新契約の番号。空なら新しく取る。 */
+  agreementNo?: string | null;
+  /** 締結日。空なら未締結（交渉中）で立て、旧契約は有効のまま。締結済みにした時点で旧契約が終了になる。 */
+  executedOn?: string | null;
+  effectiveOn?: string | null;
+  expiresOn?: string | null;
+  /** 自動更新・更新期間。渡さなければ旧契約と同じ。 */
+  autoRenewal?: boolean | null;
+  renewalMonths?: number | null;
+  renewalNoticeMonths?: number | null;
+  sourceUrl?: string | null;
+  reason?: string | null;
+  /** 旧契約の条件明細と下の個別契約を新契約へ移す（既定は移す）。 */
+  carryOver?: boolean;
+}
+export interface RepaperResult {
+  id: number; agreementNo: string | null; oldNo: string | null;
+  movedConditions: number; movedChildren: number;
+  /** 新契約を締結済みで立てたので、旧契約が終了になった。 */
+  oldClosed: boolean;
+}
+export interface RepaperRef {
+  id: number; agreementNo: string | null; title: string; status: string; executedOn: string | null; terminatedOn: string | null;
+}
+export interface RepaperLinks { available: boolean; replaces: RepaperRef | null; replacedBy: RepaperRef | null }
+
 export interface TerminateInput {
   on: string;
   /** whole 契約ごと終える／conditions 一部の条件だけ */
@@ -312,6 +342,110 @@ export class AgreementService {
   /** 契約の記録の版（新しい順）。208 を流していなければ available=false。 */
   async versions(id: number): Promise<{ available: boolean; versions: AgreementVersion[] }> {
     return agreementVersions(this.database, id);
+  }
+
+  /**
+   * 巻き直しのつながり（infra/v3/209_agreement_repaper.sql）。この契約が置き換えた旧契約と、
+   * この契約を置き換えた新契約。209 を流していなければ available=false。
+   */
+  async repaperLinks(id: number): Promise<RepaperLinks> {
+    try {
+      const r = await this.database.query(
+        `SELECT 'replaces' AS rel, o.id, o.agreement_no, o.title, o.status, o.executed_on, o.terminated_on
+           FROM agreements a JOIN agreements o ON o.id = a.replaces_id WHERE a.id = $1
+         UNION ALL
+         SELECT 'replaced_by', n.id, n.agreement_no, n.title, n.status, n.executed_on, n.terminated_on
+           FROM agreements n WHERE n.replaces_id = $1`, [id]);
+      const of = (rel: string): RepaperRef | null => {
+        const row = (r.rows as any[]).find((x) => x.rel === rel);
+        return row ? { id: Number(row.id), agreementNo: str(row.agreement_no), title: String(row.title ?? ""),
+                       status: String(row.status), executedOn: dateStr(row.executed_on), terminatedOn: dateStr(row.terminated_on) } : null;
+      };
+      return { available: true, replaces: of("replaces"), replacedBy: of("replaced_by") };
+    } catch (error) {
+      // 42703：列が無い（209 をまだ流していない）。
+      if ((error as { code?: string }).code === "42703") return { available: false, replaces: null, replacedBy: null };
+      throw error;
+    }
+  }
+
+  /**
+   * 契約を巻き直す：いまの基本契約・単体契約を、新しい契約で置き換える。
+   *
+   *   ・新契約を立てる（種類・種別・向き・相手先は旧契約と同じ。番号は新しく取るか、渡した番号）
+   *   ・carryOver なら、旧契約に載っている条件明細と、下の個別契約（発注書の器を含む）を新契約へ移す
+   *     条件書・発注書を新しい基本契約の名前で出すには、条件が新契約の下に要る
+   *   ・旧契約は、新契約が締結済みになった時点で終了になる（209 のトリガー）。未締結のあいだは有効のまま
+   *   ・旧契約の文書・実績・支払・解除合意は旧契約に残る
+   */
+  async repaper(id: number, input: RepaperInput, actor: string): Promise<RepaperResult> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const cur = await client.query(
+          `SELECT id, agreement_no, title, counterparty_id, direction, status, COALESCE(kind, 'master') AS kind, domain,
+                  expires_on, auto_renewal, renewal_months, renewal_notice_months, terminated_on
+             FROM agreements WHERE id = $1 FOR UPDATE`, [id]);
+        const old = cur.rows[0] as any;
+        if (!old) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
+        if (old.kind !== "master" && old.kind !== "standalone") {
+          throw new DomainError("VALIDATION", "巻き直せるのは基本契約か単体契約です（個別契約・覚書は、新しい条件書を出して差し替えます）");
+        }
+        if (old.terminated_on) throw new DomainError("CONFLICT", "この契約はもう終了しています");
+        let dup: { rows: unknown[] };
+        try {
+          dup = await client.query("SELECT id, agreement_no FROM agreements WHERE replaces_id = $1", [id]);
+        } catch (error) {
+          if ((error as { code?: string }).code === "42703") {
+            throw new DomainError("CONFLICT", "巻き直しを使うには、データベースに 209_agreement_repaper.sql を先に流してください");
+          }
+          throw error;
+        }
+        const hit = dup.rows[0] as { id: number; agreement_no: string | null } | undefined;
+        if (hit) throw new DomainError("CONFLICT", `この契約は ${hit.agreement_no ?? `#${hit.id}`} でもう巻き直しています`);
+
+        const title = String(input.title ?? "").trim() || String(old.title ?? "");
+        const external = String(input.agreementNo ?? "").trim();
+        if (external) {
+          const used = await client.query("SELECT id FROM agreements WHERE lower(btrim(agreement_no)) = lower($1)", [external]);
+          if (used.rows[0]) throw new DomainError("CONFLICT", `契約番号 ${external} はもう使われています`);
+        }
+        const agreementNo = external || await this.numberFor(client, old.kind, old.domain ?? null, null);
+        const executedOn = input.executedOn ?? null;
+        const reason = String(input.reason ?? "").trim() || "契約の巻き直し";
+        await noteAgreementChange(client, actor, `${reason}（旧 ${old.agreement_no ?? `#${id}`} を置き換え）`);
+        const made = await client.query(
+          `INSERT INTO agreements
+             (agreement_no, title, counterparty_id, direction, status, kind, domain, executed_on, effective_on, expires_on,
+              auto_renewal, renewal_months, renewal_notice_months, source_url, replaces_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, $10::date, $11, $12, $13, $14, $15)
+           RETURNING id`,
+          [agreementNo, title, old.counterparty_id, old.direction, executedOn ? "executed" : "negotiating", old.kind, old.domain,
+           executedOn, input.effectiveOn ?? executedOn, input.expiresOn ?? null,
+           input.autoRenewal ?? (old.auto_renewal === true), input.renewalMonths ?? old.renewal_months ?? null,
+           input.renewalNoticeMonths ?? old.renewal_notice_months ?? null, str(input.sourceUrl), id]);
+        const newId = Number((made.rows[0] as { id: number }).id);
+
+        let movedConditions = 0, movedChildren = 0;
+        if (input.carryOver !== false) {
+          await noteAgreementChange(client, actor, `${reason}（${agreementNo ?? `#${newId}`} へ引き継ぎ）`);
+          const kids = await client.query(
+            `UPDATE agreements SET parent_id = $2, updated_at = now()
+              WHERE parent_id = $1 AND kind = 'supplement' AND terminated_on IS NULL RETURNING id`, [id, newId]);
+          movedChildren = kids.rows.length;
+          const conds = await client.query(
+            `UPDATE conditions SET agreement_id = $2, updated_at = now()
+              WHERE agreement_id = $1 AND status NOT IN ('superseded', 'void') RETURNING id`, [id, newId]);
+          movedConditions = conds.rows.length;
+        }
+        await recordAudit(client, {
+          actor, action: "agreement.repaper", targetType: "agreement", targetId: newId,
+          detail: { replaces: id, oldNo: old.agreement_no ?? null, agreementNo, reason, carryOver: input.carryOver !== false,
+                    movedConditions, movedChildren, executedOn }
+        });
+        return { id: newId, agreementNo, oldNo: str(old.agreement_no), movedConditions, movedChildren,
+                 oldClosed: Boolean(executedOn) };
+      });
+    } catch (error) { throw translate(error); }
   }
 
   async update(id: number, patch: Partial<AgreementInput>, actor: string): Promise<void> {

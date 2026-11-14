@@ -15,6 +15,7 @@ import { SignAfterField, useSignReady } from "./SignNext.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
 import { AgreementVersionsList } from "./AgreementVersions.js";
+import { RepaperDialog, RepaperLinksNote } from "./AgreementRepaper.js";
 
 /**
  * 契約（合意）。
@@ -91,8 +92,10 @@ export interface CreatePreset {
 }
 
 export function AgreementsWorkspace(
-  { initialId, onOpen, createPreset, onCreated, onCompose, onSelectId }: {
+  { initialId, onOpen, createPreset, onCreated, onCompose, onComposeContract, onSelectId }: {
     initialId?: number; onOpen?: (kind: EntityKind, id: number) => void;
+    /** 巻き直した新契約の契約書を、ひな形で作りに行く（文書の画面。相手先と契約を入れた状態で）。 */
+    onComposeContract?: (agreement: { id: number; label: string }, partyId: number, templateKey: string) => void;
     /** 選んだ行を親へ知らせる（URL に写す）。 */
     onSelectId?: (id: number | undefined) => void;
     /** 案件の工程「契約を登録する」から来たとき。相手先が入った状態で登録を開く。 */
@@ -121,6 +124,8 @@ export function AgreementsWorkspace(
   const [version, setVersion] = useState(0);
   const [creating, setCreating] = useState<CreatePreset | null>(createPreset ?? null);
   const [terminating, setTerminating] = useState(false);
+  /** 巻き直す（新しい契約で置き換える）ポップアップ。 */
+  const [repapering, setRepapering] = useState(false);
   const [addingCondition, setAddingCondition] = useState(false);
   /**
    * 条件明細の登録の形。取引を進めると同じ種類別のフォーム（業務委託の明細・許諾セット・
@@ -299,6 +304,11 @@ export function AgreementsWorkspace(
                       onRun={(on) => act(`/agreements/${a.id}/decline`, { on }, "不更新を記録しました。いまの期間は満了まで有効です")} />
                   )}
                   {(a.kind === "master" || a.kind === "standalone") && !a.terminatedOn && (
+                    <button className="btn btn-sm" disabled={readOnly}
+                            title="新しい契約を立てて、この契約を置き換える。条件明細と個別契約を新契約へ引き継げる"
+                            onClick={() => setRepapering(true)}>巻き直す</button>
+                  )}
+                  {(a.kind === "master" || a.kind === "standalone") && !a.terminatedOn && (
                     <button className="btn btn-sm danger" disabled={readOnly} onClick={() => setTerminating(true)}>解除する</button>
                   )}
                   <button className="btn btn-sm" disabled={readOnly} onClick={() => setAddingCondition((v) => !v)}>
@@ -306,6 +316,16 @@ export function AgreementsWorkspace(
                   </button>
                   <span className="faint">締結の記録は、文書からでも契約からでもできます</span>
                 </div>
+
+                {/* 巻き直しのつながり（旧 → 新）。 */}
+                <RepaperLinksNote agreementId={a.id} version={version} onOpen={(id) => setSelected(id)} />
+                {repapering && (
+                  <RepaperDialog target={{ id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: a.counterparty.id }}
+                    onClose={() => setRepapering(false)}
+                    onDone={(msg) => { setNotice(msg); bump(); }}
+                    onOpenAgreement={(id) => setSelected(id)}
+                    onComposeContract={onComposeContract} />
+                )}
 
                 {terminating && (
                   <TerminatePanel agreement={a} conditions={detail.conditions}

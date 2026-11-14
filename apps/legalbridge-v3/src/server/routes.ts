@@ -728,6 +728,28 @@ export function createRoutes(database: Transactable) {
     res.json(await agreements.versions(Number(req.params.id)));
   }));
 
+  // 契約の巻き直し（209）。この契約が置き換えた旧契約・この契約を置き換えた新契約。
+  router.get("/agreements/:id/repaper", asyncRoute(async (req, res) => {
+    res.json(await agreements.repaperLinks(Number(req.params.id)));
+  }));
+  // いまの基本契約・単体契約を、新しい契約で置き換える。
+  router.post("/agreements/:id/repaper", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional();
+      const input = z.object({
+        title: z.string().trim().max(200).nullable().optional(),
+        agreementNo: z.string().trim().max(60).nullable().optional(),
+        executedOn: date, effectiveOn: date, expiresOn: date,
+        autoRenewal: z.boolean().nullable().optional(),
+        renewalMonths: z.coerce.number().int().min(1).max(120).nullable().optional(),
+        renewalNoticeMonths: z.coerce.number().int().min(0).max(36).nullable().optional(),
+        sourceUrl: z.string().trim().max(2000).nullable().optional(),
+        reason: z.string().trim().max(300).nullable().optional(),
+        carryOver: z.boolean().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await agreements.repaper(Number(req.params.id), input, actor(res)));
+    }));
+
   router.post("/agreements/:id/execute", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const input = z.object({ on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
