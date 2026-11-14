@@ -52,6 +52,9 @@ export async function ensureAgreementForOrder(
   const rows = conds.rows as any[];
   // 既にこの発注書の器があるか。訂正版（-R2 …）なら、前の版の器を引き継ぐ（版ごとに器を立てない）。
   // 差し替え元を辿り、いちばん新しい版の器を使う。
+  // 巻き直しで置き換えた器（209）は引き継がない：発注書（基本契約なし）を基本契約＋個別契約に切り替えたあと、
+  // 旧発注書の訂正版を決定しても、置き換え済みの旧契約を新しい基本契約の下へ引き込まず、新しい器を立てる。
+  // replaces_id の無い環境（209 の前）でも通るよう、列は行の JSON から読む。
   const existing = (await client.query(
     `WITH RECURSIVE chain(id, depth) AS (
        SELECT $1::bigint, 0
@@ -61,6 +64,7 @@ export async function ensureAgreementForOrder(
      )
      SELECT a.id, a.agreement_no, a.parent_id, a.counterparty_id, a.direction, a.order_document_id
        FROM chain c JOIN agreements a ON a.order_document_id = c.id
+      WHERE NOT EXISTS (SELECT 1 FROM agreements rp WHERE (to_jsonb(rp) ->> 'replaces_id')::bigint = a.id)
       ORDER BY c.depth, a.id LIMIT 1`, [input.documentId])).rows[0] as any;
   if (!rows.length && !existing) return null;
 
