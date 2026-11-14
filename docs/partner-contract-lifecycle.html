@@ -13,6 +13,7 @@
   --core:#3d4a8a;      /* LegalBridge の既存中核 */
   --core-soft:#e2e5f4;
   --both:#6b5a8e; --both-soft:#ebe5f3;
+  --acct:#4d6b2b; --acct-soft:#e6eedb;
   --have:#2e8b57; --ext:#d49b12; --new:#c4403a;
   --f-display:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
   --f-body:"Noto Sans JP","Hiragino Sans","Yu Gothic",sans-serif;
@@ -21,12 +22,12 @@
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
   --card:#5cbcc4; --card-soft:#163235; --contract:#e3a160; --contract-soft:#3a2816;
-  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540;
+  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540; --acct:#a9c97c; --acct-soft:#24301a;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }}
 :root[data-theme="dark"]{
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
   --card:#5cbcc4; --card-soft:#163235; --contract:#e3a160; --contract-soft:#3a2816;
-  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540;
+  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540; --acct:#a9c97c; --acct-soft:#24301a;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.75;
@@ -149,6 +150,32 @@ td .st{display:inline-flex;align-items:center;gap:6px;font-weight:700;white-spac
 .step{border-top:4px solid var(--ink);padding-top:14px;display:grid;gap:8px;align-content:start}
 .step .k{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
 .step ul{margin:0;padding-left:1.1em;display:grid;gap:4px;font-size:14px}
+/* accounting scheme */
+.acct svg{min-width:760px}
+.col-h{fill:var(--muted);font:700 12px var(--f-body);letter-spacing:.12em}
+.lb rect{fill:var(--core-soft);stroke:var(--core);stroke-width:2}
+.ad>rect:first-child{fill:var(--panel);stroke:var(--ink);stroke-width:2;stroke-dasharray:7 5}
+.bg rect{fill:var(--acct-soft);stroke:var(--acct);stroke-width:2}
+.bg-q rect{stroke-dasharray:6 4}
+.bt{fill:var(--ink);font:700 15px var(--f-display)}
+.bs{fill:var(--muted);font:400 12.5px var(--f-body)}
+.at{fill:var(--ink);font:700 14px var(--f-display)}
+.al{fill:var(--ink);font:400 13px var(--f-body)}
+.am{fill:var(--muted);font:500 11.5px var(--f-mono)}
+.ok{fill:var(--have);font:700 11.5px var(--f-body)}
+.q{fill:var(--ext);font:700 11.5px var(--f-body)}
+.pill{stroke-width:2}
+.pa{fill:var(--card-soft);stroke:var(--card)}
+.pb{fill:var(--acct-soft);stroke:var(--acct)}
+.pt{fill:var(--ink);font:700 12.5px var(--f-body);text-anchor:middle}
+.ar{stroke:var(--muted);stroke-width:2;fill:none}
+.ar-d{stroke-dasharray:5 5}
+.ahd{fill:var(--muted)}
+.je rect{fill:var(--bg);stroke:var(--line);stroke-width:1.5}
+.jh{fill:var(--muted);font:700 12px var(--f-body);letter-spacing:.1em}
+.jl{fill:var(--ink);font:400 13px var(--f-body)}
+.jv{fill:var(--ink);font:500 13px var(--f-mono)}
+.acct ~ .duo .prod h3{font-size:15px}
 .src{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
 .src a{color:var(--muted)}
 a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
@@ -399,6 +426,92 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
 
 <section>
   <div class="sec-head">
+    <div class="eyebrow">会計への連携</div>
+    <h2>奉行シリーズへお金の記録を渡す</h2>
+    <p class="lead">確定した検収書・計算書と入出金の記録を、奉行クラウドの取引先と仕訳に変換して渡します。最初は CSV で始め、API の契約がそろったら直接送る形に切り替えます。</p>
+  </div>
+  <div class="figure acct" role="img" aria-label="LegalBridge の取引先・確定文書・入出金・PDF を、奉行アダプタで変換し、勘定奉行・債務奉行・債権奉行へ渡すスキーム図">
+    <svg viewBox="0 0 960 560" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahd"/></marker></defs>
+      <text x="20" y="30" class="col-h">LegalBridge</text>
+      <text x="350" y="30" class="col-h">奉行アダプタ（新規）</text>
+      <text x="700" y="30" class="col-h">奉行クラウド</text>
+
+      <!-- left: LegalBridge sources -->
+      <g class="lb"><rect x="20" y="50" width="250" height="72" rx="10"/><text x="36" y="80" class="bt">取引先マスタ</text><text x="36" y="104" class="bs">法人番号・インボイス番号・口座</text></g>
+      <g class="lb"><rect x="20" y="140" width="250" height="72" rx="10"/><text x="36" y="170" class="bt">検収書・計算書の確定</text><text x="36" y="194" class="bs">明細・消費税・源泉・差引振込額</text></g>
+      <g class="lb"><rect x="20" y="230" width="250" height="72" rx="10"/><text x="36" y="260" class="bt">受領記録・入出金台帳</text><text x="36" y="284" class="bs">再許諾料の入金・上流への分配</text></g>
+      <g class="lb"><rect x="20" y="320" width="250" height="72" rx="10"/><text x="36" y="350" class="bt">文書の PDF（Drive）</text><text x="36" y="374" class="bs">証憑として仕訳にリンク</text></g>
+
+      <!-- arrows left -> adapter -->
+      <path d="M270 86 H346" class="ar" marker-end="url(#ah)"/>
+      <path d="M270 176 H346" class="ar" marker-end="url(#ah)"/>
+      <path d="M270 266 H346" class="ar" marker-end="url(#ah)"/>
+      <path d="M270 356 H346" class="ar ar-d" marker-end="url(#ah)"/>
+
+      <!-- adapter -->
+      <g class="ad"><rect x="350" y="50" width="260" height="342" rx="14"/>
+        <text x="368" y="82" class="at">変換の決まり</text>
+        <text x="368" y="110" class="al">・取引先コードの対応表</text>
+        <text x="380" y="130" class="am">VEN-00412 ⇔ 奉行コード</text>
+        <text x="368" y="158" class="al">・勘定科目と税区分の対応</text>
+        <text x="368" y="186" class="al">・仕訳の組み立て（借方・貸方）</text>
+        <text x="368" y="214" class="al">・送信の記録と二重送信の防止</text>
+        <text x="368" y="242" class="al">・ローカルでは外へ送らない</text>
+        <text x="380" y="262" class="am">INTEGRATION_MODE=local</text>
+        <rect x="368" y="290" width="224" height="40" rx="20" class="pill pa"/><text x="480" y="315" class="pt">STEP A ・ CSV 汎用データ受入</text>
+        <rect x="368" y="340" width="224" height="40" rx="20" class="pill pb"/><text x="480" y="365" class="pt">STEP B ・ API v2（OBCiD）</text>
+      </g>
+
+      <!-- arrows adapter -> bugyo -->
+      <path d="M610 110 H696" class="ar" marker-end="url(#ah)"/><text x="653" y="100" class="rl" text-anchor="middle">取引先・仕訳</text>
+      <path d="M610 240 H696" class="ar ar-d" marker-end="url(#ah)"/><text x="653" y="230" class="rl" text-anchor="middle">支払予定</text>
+      <path d="M610 352 H696" class="ar ar-d" marker-end="url(#ah)"/><text x="653" y="342" class="rl" text-anchor="middle">入金</text>
+
+      <!-- right: bugyo -->
+      <g class="bg"><rect x="700" y="50" width="240" height="130" rx="10"/><text x="716" y="80" class="bt">勘定奉行クラウド</text><text x="716" y="106" class="bs">取引先マスタの受け入れ</text><text x="716" y="128" class="bs">仕訳伝票の登録</text><text x="716" y="150" class="bs">伝票に証憑リンク</text><text x="716" y="170" class="ok">公開 API で確認済み</text></g>
+      <g class="bg bg-q"><rect x="700" y="198" width="240" height="96" rx="10"/><text x="716" y="228" class="bt">債務奉行クラウド</text><text x="716" y="252" class="bs">支払先・支払予定・消込</text><text x="716" y="278" class="q">API の項目は要確認</text></g>
+      <g class="bg bg-q"><rect x="700" y="310" width="240" height="82" rx="10"/><text x="716" y="340" class="bt">債権奉行クラウド</text><text x="716" y="364" class="bs">得意先・入金消込</text><text x="716" y="384" class="q">要確認</text></g>
+
+      <!-- journal example -->
+      <g class="je"><rect x="20" y="420" width="920" height="120" rx="10"/>
+        <text x="36" y="448" class="at">例：計算書 1 通の支払仕訳（説明用の数字）</text>
+        <text x="36" y="476" class="jh">借方</text><text x="490" y="476" class="jh">貸方</text>
+        <text x="36" y="500" class="jl">支払ロイヤリティ</text><text x="440" y="500" class="jv" text-anchor="end">100,000</text>
+        <text x="36" y="522" class="jl">仮払消費税（10%）</text><text x="440" y="522" class="jv" text-anchor="end">10,000</text>
+        <text x="490" y="500" class="jl">未払金（差引振込額）</text><text x="924" y="500" class="jv" text-anchor="end">98,769</text>
+        <text x="490" y="522" class="jl">預り金（源泉 10.21%）</text><text x="924" y="522" class="jv" text-anchor="end">11,231</text>
+      </g>
+    </svg>
+  </div>
+  <p class="note">点線の矢印は、仕様を確かめてから作る部分です。例の仕訳は、今の経理提出用エクセルと同じく税込額に源泉をかけた場合です。勘定科目の名前は会社の設定に合わせます。</p>
+  <div class="duo">
+    <div class="prod">
+      <h3>公開情報で確かめられたこと</h3>
+      <ul>
+        <li>勘定奉行クラウドの公開 API で、仕訳伝票の登録と取引先などマスタの受け入れ・取得ができる</li>
+        <li>接続情報とアクセストークンは OBCiD の管理ポータルで取得する</li>
+        <li>Bill One（Sansan）、バクラク、楽楽精算が仕訳 API で連携済み。Bill One は請求書画像も送っている</li>
+        <li>API の利用には「API バージョン」の契約が必要とする事例がある</li>
+        <li>送った仕訳の修正・削除は奉行側で行うとする事例がある</li>
+        <li>API が使えない環境では汎用データ受入（CSV）で取り込める</li>
+      </ul>
+    </div>
+    <div class="prod">
+      <h3>決める前に確かめること</h3>
+      <ul>
+        <li>使っている奉行の製品と、クラウド版か社内に置く版か</li>
+        <li>API バージョンの契約の有無と費用</li>
+        <li>債務奉行・債権奉行の API で支払予定・入金を書けるか</li>
+        <li>呼び出し回数の上限、源泉とインボイス登録番号の項目</li>
+        <li>経理が今のエクセルを奉行へどう取り込んでいるか</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
     <div class="eyebrow">機能の対応表</div>
     <h2>どこから持ってきて、どこまであるか</h2>
   </div>
@@ -416,6 +529,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
         <tr><th>契約の関連づけ</th><td class="dash">—</td><td>自動ツリー・任意単位</td><td>契約の版履歴・条件明細</td><td><span class="st"><i class="pip ext"></i>拡張</span> 基本⇔個別⇔覚書の親子と、作品単位の束ね</td></tr>
         <tr><th>期限・更新</th><td class="dash">—</td><td>覚書を自動反映</td><td>満了・更新通告の日次チェック</td><td><span class="st"><i class="pip ext"></i>拡張</span> 覚書の登録で満了日とアラートが動く</td></tr>
         <tr><th>横断検索・AI</th><td>AI 組織図分析</td><td>AI エージェント・MCP</td><td>横断検索</td><td><span class="st"><i class="pip ext"></i>拡張</span> 取引先・人・契約・条件を一度に問い合わせ</td></tr>
+        <tr><th>会計への連携</th><td>CRM 連携</td><td>新リース会計の CSV</td><td>経理提出用エクセル・入出金台帳</td><td><span class="st"><i class="pip new"></i>新規</span> 奉行へ取引先と仕訳を CSV → API で渡す</td></tr>
         <tr><th>取引先 360°</th><td>企業ページ</td><td>契約ツリー</td><td>取引先マスタ画面</td><td><span class="st"><i class="pip new"></i>新規</span> 上の画面の絵</td></tr>
       </tbody>
     </table>
@@ -425,7 +539,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
 <section>
   <div class="sec-head">
     <div class="eyebrow">進め方</div>
-    <h2>三段階で一周させる</h2>
+    <h2>四段階で一周させる</h2>
   </div>
   <div class="steps">
     <div class="step">
@@ -455,13 +569,22 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
         <li>取引先・契約を横断する AI 検索</li>
       </ul>
     </div>
+    <div class="step">
+      <span class="k">STEP 4 ・ お金を会計へ</span>
+      <h3>奉行シリーズ連携</h3>
+      <ul>
+        <li>取引先コードの対応表をつくる</li>
+        <li>確定文書から奉行の CSV 受入形式を出力</li>
+        <li>API 契約後、仕訳と取引先を直接送信</li>
+      </ul>
+    </div>
   </div>
 </section>
 
 <section>
   <div class="sec-head"><div class="eyebrow">出典</div></div>
   <div class="src">
-    <p>製品の機能は 2026年11月時点の公開情報（報道・製品紹介）によります。価格やプランは調べていません。</p>
+    <p>製品の機能は 2026年11月時点の公開情報（報道・製品紹介・連携事例）によります。価格やプランは調べていません。OBC の公式資料はこの調査環境から直接開けなかったため、検索結果の要約に基づきます。</p>
     <a href="https://www.itreview.jp/products/sansan/profile">ITreview ・ Sansan 製品情報</a>
     <a href="https://cloud.watch.impress.co.jp/docs/news/2095689.html">クラウド Watch ・ Sansan「AI組織図分析」</a>
     <a href="https://www.itreview.jp/products/contract-one/profile">ITreview ・ Contract One 製品情報</a>
@@ -469,6 +592,15 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
     <a href="https://cloud.watch.impress.co.jp/docs/news/2075981.html">クラウド Watch ・ Contract One 取適法対応の新機能</a>
     <a href="https://it.impress.co.jp/articles/-/29687">IT Leaders ・ Contract One の新機能</a>
     <a href="https://cloud.watch.impress.co.jp/docs/news/2130495.html">クラウド Watch ・ Contract One 関連記事</a>
+    <a href="https://www.obc.co.jp/bugyo-cloud/apiservice">OBC ・ 奉行APIコネクトサービス</a>
+    <a href="https://www.obc.co.jp/bugyo-cloud/apiservice/billone">OBC ・ 奉行APIコネクト × Bill One</a>
+    <a href="https://www.obc.co.jp/bugyo-cloud/kanjo/function/api">OBC ・ 勘定奉行クラウド API連携</a>
+    <a href="https://www.obc.co.jp/bugyo-cloud/saimu/feature/">OBC ・ 債務奉行クラウド 特長</a>
+    <a href="https://bakuraku.jp/news/20241218/">バクラク ・ 勘定奉行V ERPクラウドとのAPI連携</a>
+    <a href="https://cloud.watch.impress.co.jp/docs/news/1220757.html">クラウド Watch ・ 楽楽精算と勘定奉行クラウドの連携</a>
+    <a href="https://www.lets-co.com/consideration/letsgenkakanrigo2/07-14/ad19/">レッツ原価管理Go2 ・ 奉行クラウドAPI連動</a>
+    <a href="https://www.hulft.com/service/hulft-square/applications/76">HULFT Square ・ 勘定奉行クラウド連携</a>
+    <a href="https://itcs.zendesk.com/hc/ja/articles/43584872492697">manage と奉行クラウドの接続設定手順</a>
   </div>
 </section>
 
