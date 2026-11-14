@@ -282,8 +282,11 @@ export class WorkbenchPlanService {
     if (master) {
       const rows = ctx.partyId ? await this.deps.agreements.list({ partyId: ctx.partyId }) : [];
       const domain = SET_DOMAIN[p];
+      // 巻き直しで置き換える旧契約（新契約がまだ未締結で、旧契約が有効のあいだ）は「結んだ基本契約」に数えない。
+      // 数えると、新しい基本契約書を作るところで「既にある文書を使う」が勧められる。
+      const replaced = await this.deps.agreements.replacedIds(rows.map((a) => a.id));
       const masters = rows
-        .filter((a) => (a.kind === "master" || a.kind === "standalone") && a.status !== "terminated"
+        .filter((a) => (a.kind === "master" || a.kind === "standalone") && a.status !== "terminated" && !replaced.has(a.id)
                        && (!domain || !a.domain || a.domain === domain))
         .map((a) => ({ id: a.id, agreementNo: a.agreementNo, title: a.title, status: a.status, live: isLive(a, today), currentEnd: a.currentEnd }));
       const existing = byKeys([master.key]);

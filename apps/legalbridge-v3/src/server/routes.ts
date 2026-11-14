@@ -745,7 +745,10 @@ export function createRoutes(database: Transactable) {
         renewalNoticeMonths: z.coerce.number().int().min(0).max(36).nullable().optional(),
         sourceUrl: z.string().trim().max(2000).nullable().optional(),
         reason: z.string().trim().max(300).nullable().optional(),
-        carryOver: z.boolean().optional()
+        carryOver: z.boolean().optional(),
+        // 単体契約を、基本契約＋個別契約に切り替える（新契約を基本契約で立てる）。
+        toMaster: z.boolean().optional(),
+        domain: z.enum(AGREEMENT_DOMAINS).nullable().optional()
       }).parse(req.body ?? {});
       res.status(201).json(await agreements.repaper(Number(req.params.id), input, actor(res)));
     }));

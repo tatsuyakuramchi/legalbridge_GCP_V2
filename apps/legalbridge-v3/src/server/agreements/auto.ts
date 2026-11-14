@@ -201,6 +201,15 @@ export async function ensureAgreementForTerms(
 interface Existing { id: number; agreement_no: string | null; kind: "supplement" | "standalone"; parent_id: number | null }
 
 /**
+ * 巻き直しで置き換えた契約（209）ではない。置き換え済みの旧契約は器として使い回さない：
+ * 単体契約を基本契約＋個別契約に切り替えたあと、旧条件書の訂正版や同じ番号の条件書を決定しても、
+ * 旧単体契約を新しい基本契約の下へ引き込まず、新しい個別契約を立てる。
+ * replaces_id の無い環境（209 の前）でも通るよう、列は行の JSON から読む。
+ */
+const NOT_REPLACED = (alias: string) =>
+  `NOT EXISTS (SELECT 1 FROM agreements rp WHERE (to_jsonb(rp) ->> 'replaces_id')::bigint = ${alias}.id)`;
+
+/**
  * 使い回せる器：前の版（差し替え元を辿る）に付いていた個別契約・単体契約、
  * 無ければ条件書の番号（本体）と同じ番号の、同じ相手の個別契約・単体契約（発注書の器は除く）。
  */
@@ -215,11 +224,13 @@ async function findReusable(client: Queryable, input: AutoAgreementInput, partyI
      SELECT a.id, a.agreement_no, a.kind, a.parent_id
        FROM chain c JOIN documents d ON d.id = c.id JOIN agreements a ON a.id = d.agreement_id
       WHERE a.kind IN ('supplement', 'standalone') AND a.order_document_id IS NULL AND a.counterparty_id = $2
+        AND ${NOT_REPLACED("a")}
       ORDER BY c.depth LIMIT 1`, [input.documentId, partyId])).rows[0] as any;
   const hit = prior ?? (await client.query(
-    `SELECT id, agreement_no, kind, parent_id FROM agreements
-      WHERE agreement_no = $1 AND kind IN ('supplement', 'standalone') AND order_document_id IS NULL AND counterparty_id = $2
-      ORDER BY id LIMIT 1`, [baseDocumentNumber(input.documentNo), partyId])).rows[0] as any;
+    `SELECT a.id, a.agreement_no, a.kind, a.parent_id FROM agreements a
+      WHERE a.agreement_no = $1 AND a.kind IN ('supplement', 'standalone') AND a.order_document_id IS NULL AND a.counterparty_id = $2
+        AND ${NOT_REPLACED("a")}
+      ORDER BY a.id LIMIT 1`, [baseDocumentNumber(input.documentNo), partyId])).rows[0] as any;
   return hit ? { id: Number(hit.id), agreement_no: str(hit.agreement_no), kind: hit.kind, parent_id: int(hit.parent_id) } : null;
 }
 
