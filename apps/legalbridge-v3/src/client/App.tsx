@@ -327,7 +327,9 @@ export function App() {
   const mapLinks: MapLinks = {
     settle: settleFrom,
     royalty: ({ partyId, workId }) => openAuthor({ partyId, workId }),
-    agreement: (id) => openEntity("agreement", id)
+    agreement: (id) => openEntity("agreement", id),
+    composeContract: (agreement, partyId, templateKey) =>
+      startCompose([], [], null, templateKey, null, null, null, agreementFlow(agreement), partyId, agreement.id)
   };
   /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
   const [pick, setPick] = useState<{ view: View; id: number } | null>(null);

@@ -9,11 +9,14 @@ import type { SettlementSource } from "./OrderSettlement.js";
  *   settle   … 発注書・単体契約 → 検収書・役務提供完了通知書（支払文書 › 発注書から検収書）
  *   royalty  … 利用許諾条件書 → 利用許諾計算書（作品 › 利用許諾計算の台帳。作家 × 作品）
  *   agreement… 基本契約・単体契約の画面
+ *   composeContract … 巻き直した新契約の契約書をひな形で作る（文書の画面）
  */
 export interface MapLinks {
   settle?: (source: SettlementSource) => void;
   royalty?: (target: { partyId: number; workId: number | null }) => void;
   agreement?: (agreementId: number) => void;
+  /** 巻き直した新契約の契約書を、ひな形で作る（文書の画面。相手先と契約を入れた状態で開く）。 */
+  composeContract?: (agreement: { id: number; label: string }, partyId: number, templateKey: string) => void;
 }
 
 export const MapLinksContext = createContext<MapLinks>({});

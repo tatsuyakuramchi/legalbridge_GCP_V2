@@ -10,6 +10,7 @@ import { ContractBand } from "./ContractBand.js";
 import { AssignBar } from "./AssignBar.js";
 import { Modal } from "./Modal.js";
 import { ContractDialog, type ContractDialogMode } from "./ContractDialog.js";
+import { RepaperDialog, type RepaperTarget } from "./AgreementRepaper.js";
 import { ConditionEntryForm, ENTRY_KINDS, type ConditionEntryKind } from "./ConditionEntryForm.js";
 import {
   applyFilter, groupByParty, groupByWork, isStuck, unpaidPayments,
@@ -162,6 +163,19 @@ export function WorkLedger(
   const [bulk, setBulk] = useState<"docs" | "cancel" | "due" | "drift" | null>(null);
   /** 基本契約・個別契約（発注書）の登録・紐づけのポップアップ。 */
   const [contractDialog, setContractDialog] = useState<{ row: GridRow; mode: ContractDialogMode } | null>(null);
+  /** 基本契約・単体契約を巻き直す（新しい契約で置き換える）。種別は契約から引く（ひな形が決まる）。 */
+  const [repaper, setRepaper] = useState<RepaperTarget | null>(null);
+  const [repaperBusy, setRepaperBusy] = useState(false);
+  async function openRepaper(agreementId: number, partyId: number) {
+    setRepaperBusy(true);
+    try {
+      const d = await api.get<{ agreement: { id: number; agreementNo: string | null; title: string; kind: string; domain: string | null;
+                                             counterparty: { id: number } } }>(`/agreements/${agreementId}`);
+      const a = d.agreement;
+      setRepaper({ id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: a.counterparty?.id ?? partyId });
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setRepaperBusy(false); }
+  }
   /** 「文書をまとめて作る」を開くときのひな形（発注書／検収書のボタンから）。 */
   const [bulkTemplate, setBulkTemplate] = useState<string | null>(null);
   /** 実績を入れる（条件と、次の回）／支払を立てる（条件）。 */
@@ -525,6 +539,12 @@ export function WorkLedger(
           <span className="tag">{c.kind === "standalone" ? "単体契約" : "基本契約"}</span>
         </div>
         {c.title && <div className="faint" style={{ fontSize: 11.5 }}>{c.title}</div>}
+        {/* 巻き直す：新しい契約で置き換える（条件明細と個別契約を引き継げる）。終了した契約には出さない。 */}
+        {canWrite && c.status !== "terminated" && r.counterparty && (
+          <button className="btn btn-sm ledger-next" disabled={repaperBusy}
+                  title="新しい契約を立てて、この契約を置き換える。条件明細と個別契約を新契約へ引き継げる"
+                  onClick={(e) => { e.stopPropagation(); void openRepaper(c.id, r.counterparty!.id); }}>巻き直す</button>
+        )}
       </td>
     );
   };
@@ -815,6 +835,11 @@ export function WorkLedger(
         {isAdmin && <p className="faint" style={{ margin: 0 }}>セルを押すと、その段を開いた「まとめて直す」がポップアップで出ます。右に 発注書・条件明細・実績・支払・検収書 の前後（保存前の試算）。</p>}
       </div>
 
+      {repaper && (
+        <RepaperDialog target={repaper} onClose={() => setRepaper(null)}
+          onDone={(message) => reload(message)}
+          onOpenAgreement={flow.agreement} onComposeContract={flow.composeContract} />
+      )}
       {contractDialog && (
         <ContractDialog row={contractDialog.row} mode={contractDialog.mode}
           onClose={() => setContractDialog(null)}
