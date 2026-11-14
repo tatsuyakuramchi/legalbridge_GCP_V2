@@ -4,6 +4,7 @@ import { Modal } from "./Modal.js";
 import { DocViewButton } from "./DocPeek.js";
 import { AgreementDocsDialog, VoidDialog, type VoidTarget } from "./DocVoid.js";
 import { AttachDocDialog, type AttachTarget } from "./DocAttach.js";
+import { RepaperDialog, type RepaperTarget } from "./AgreementRepaper.js";
 import { useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
 import type { EntityKind } from "./Relations.js";
@@ -55,6 +56,8 @@ export function ContractTable(
   const [voiding, setVoiding] = useState<VoidTarget | null>(null);
   /** 文書の無い契約に文書を付ける（上げる・繋ぐ・作る）。 */
   const [attachTo, setAttachTo] = useState<AttachTarget | null>(null);
+  /** 基本契約を巻き直す（新しい契約で置き換える）。 */
+  const [repaper, setRepaper] = useState<RepaperTarget | null>(null);
 
   const settlementsOf = (c: MapCondition) => model.settlements.filter((s) => s.conditionIds.includes(c.id));
   const paymentsOf = (c: MapCondition) => model.payments.filter((p) => p.conditionIds.includes(c.id));
@@ -296,6 +299,11 @@ export function ContractTable(
                   ) : <div className="faint">{g.noneLabel}</div>}
                   {(g.master || g.key.startsWith("none-")) && act("＋ 個別契約を追加", () => setDialog({ kind: "contract-add", to: g.master?.id ?? "none", toNo: g.master?.no ?? "基本契約なし" }),
                     g.master ? "個別契約（条件書・発注書・単体契約）を探してこの基本契約の下に入れる" : "個別契約を基本契約から外して、ここ（基本契約なし）に置く")}
+                  {/* 巻き直す：新しい契約で置き換える（条件明細と個別契約を引き継げる）。終了した契約には出さない。 */}
+                  {g.master && !agreementOf(g.master.id)?.terminatedOn && act("巻き直す", () => {
+                    const a = agreementOf(g.master!.id);
+                    if (a) setRepaper({ id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: map.party.id });
+                  }, "新しい契約を立てて、この基本契約を置き換える。条件明細と個別契約を新契約へ引き継げる")}
                 </td>
               );
               return (
@@ -455,6 +463,10 @@ export function ContractTable(
                                        onAttach={readOnly ? undefined : () => { const id = docsOf.agreementId; setDocsOf(null); openAttach(`a${id}`); }}
                                        onOpenDocument={(id) => { setDocsOf(null); onOpen?.("document", id); }} />}
       {voiding && <VoidDialog doc={voiding} onDone={onChanged} onClose={() => setVoiding(null)} />}
+      {repaper && (
+        <RepaperDialog target={repaper} onClose={() => setRepaper(null)} onDone={(msg) => onChanged(msg)}
+          onOpenAgreement={onOpen ? (id) => onOpen("agreement", id) : undefined} />
+      )}
       {attachTo && (
         <AttachDocDialog target={attachTo} onDone={onChanged} onClose={() => setAttachTo(null)}
           onCompose={onCompose} onOpenAgreement={onOpen ? () => onOpen("agreement", attachTo.id) : undefined} />

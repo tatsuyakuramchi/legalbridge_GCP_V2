@@ -193,6 +193,8 @@ export function DocumentsWorkspace(
                * 作業テーブルが決めている相手先を渡し、相手先の欄（名称・住所・代表者・法人／個人）を引く。
                */
               partyId?: number | null;
+              /** この文書を載せる契約（巻き直した新契約の契約書を作るとき）。相手先・期間は契約から引く。 */
+              agreementId?: number | null;
               /** 案件から「発注書をまとめて作る」で来た。一括作成を開いた状態にする。 */
               bulk?: boolean;
               /** 案件から「検収済みをまとめて入れる」で来た。 */
@@ -280,7 +282,7 @@ export function DocumentsWorkspace(
    * 基本契約（発注書の準拠契約・条件書の基本契約）。null は「選んだ条件に
    * 付いている契約に従う」。条件に契約が無いときや、別の契約に基づくときに選ぶ。
    */
-  const [agreementId, setAgreementId] = useState<number | null>(null);
+  const [agreementId, setAgreementId] = useState<number | null>(start?.agreementId ?? null);
   /** 文書フォームで選ぶ値（基本契約・発注書番号・個別契約番号）。取引先⇔基本契約のマップと同じ引き方。 */
   const [refs, setRefs] = useState<DocumentRefs | null>(null);
   /** 相手方番号の控えがある引用先（番号の出し方を選ばせるかの判断と、説明に出す）。 */
