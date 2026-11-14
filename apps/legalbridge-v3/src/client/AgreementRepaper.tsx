@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api.js";
 import { Modal } from "./Modal.js";
+import { DOMAIN_OPTIONS } from "./agreement-domains.js";
+import { useMapLinks } from "./mapLinks.js";
 import type { RepaperLinks, RepaperResult } from "../server/agreements/service.js";
 
 /**
@@ -10,6 +12,10 @@ import type { RepaperLinks, RepaperResult } from "../server/agreements/service.j
  * 下の個別契約を新契約へ引き継ぐ。旧契約は、新契約が締結済みになった時点で終了になる
  * （未締結のあいだは有効のまま）。旧契約の文書・実績・支払は旧契約に残る。
  * 立てたあとは、新しい契約書を「ファイルを上げる」か「ひな形で作る」。
+ *
+ * 単体契約は「基本契約＋個別契約」に切り替えて巻き直せる：新契約を基本契約で立て、条件明細を
+ * いったん基本契約に載せる（個別契約待ち）。続けて条件書・発注書を決定すると、新しい番号の
+ * 個別契約が基本契約の下に立つ。
  */
 
 export interface RepaperTarget {
@@ -22,11 +28,14 @@ const MASTER_TEMPLATE: Record<string, { key: string; label: string }> = {
   license: { key: "license_master", label: "利用許諾基本契約書" },
   service: { key: "service_master", label: "業務委託基本契約書" }
 };
+const MASTER_TITLE: Record<string, string> = {
+  license: "利用許諾基本契約", service: "業務委託基本契約", hybrid: "業務委託・利用許諾基本契約", sale: "売買基本契約"
+};
 const DOC_KIND: Record<string, string> = {
   license: "利用許諾契約書", service: "業務委託契約書", hybrid: "業務委託・利用許諾契約書", sale: "売買契約書"
 };
 
-export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComposeContract }: {
+export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComposeContract: composeContractProp, onComposeTerms: composeTermsProp }: {
   target: RepaperTarget;
   /** 巻き直した（一覧を読み直す）。 */
   onDone: (message: string, made: RepaperResult) => void;
@@ -34,8 +43,19 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   onOpenAgreement?: (id: number) => void;
   /** 新契約の契約書をひな形で作る（文書の画面へ）。無ければ出さない。 */
   onComposeContract?: (agreement: { id: number; label: string }, partyId: number, templateKey: string) => void;
+  /** 引き継いだ条件明細で、条件書・発注書を作る（作業テーブルへ）。無ければ出さない。 */
+  onComposeTerms?: (conditionIds: number[]) => void;
 }) {
+  // 行き先は、渡されなければ App が配る道（mapLinks）を使う（契約の画面・表・工程表のどこから開いても同じ）。
+  const links = useMapLinks();
+  const onComposeContract = composeContractProp ?? links.composeContract;
+  const onComposeTerms = composeTermsProp ?? links.composeTerms;
   const oldNo = target.agreementNo ?? `契約 #${target.id}`;
+  const standalone = target.kind === "standalone";
+  /** 新しい契約の形。単体契約のときだけ選べる：same＝単体契約のまま／master＝基本契約＋個別契約に切り替える。 */
+  const [shape, setShape] = useState<"same" | "master">("same");
+  const toMaster = standalone && shape === "master";
+  const [domain, setDomain] = useState<string>(target.domain ?? "");
   const [title, setTitle] = useState(target.title);
   const [no, setNo] = useState("");
   const [unsigned, setUnsigned] = useState(true);
@@ -50,8 +70,15 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   const [file, setFile] = useState<File | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
 
-  const template = MASTER_TEMPLATE[target.domain ?? ""] ?? null;
-  const ready = title.trim() !== "" && (unsigned || executedOn !== "");
+  const ready = title.trim() !== "" && (unsigned || executedOn !== "") && (!toMaster || domain !== "");
+
+  /** 形を切り替えたら、件名の初期値を合わせる（単体契約の件名は「条件書（◯◯）」などで、基本契約の名前にならない）。 */
+  function chooseShape(next: "same" | "master") {
+    setShape(next);
+    const masterTitle = MASTER_TITLE[domain] ?? "";
+    if (next === "master" && (title === target.title || title === "") && masterTitle) setTitle(masterTitle);
+    if (next === "same" && Object.values(MASTER_TITLE).includes(title)) setTitle(target.title);
+  }
 
   async function go() {
     setBusy(true); setError(null);
@@ -59,7 +86,8 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
       const r = await api.post<RepaperResult>(`/agreements/${target.id}/repaper`, {
         title: title.trim(), agreementNo: no.trim() || null,
         executedOn: unsigned ? null : executedOn, effectiveOn: effectiveOn || null,
-        reason: reason.trim() || null, carryOver
+        reason: reason.trim() || null, carryOver,
+        ...(toMaster ? { toMaster: true, domain: domain || null } : {})
       });
       setMade(r);
       onDone(`${oldNo} を ${r.agreementNo ?? `#${r.id}`} で巻き直しました`
@@ -72,7 +100,7 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
     setBusy(true); setError(null);
     try {
       const params = new URLSearchParams({
-        title: title.trim() || target.title, documentKind: DOC_KIND[target.domain ?? ""] ?? "覚書",
+        title: title.trim() || target.title, documentKind: DOC_KIND[made.domain ?? ""] ?? "覚書",
         agreementId: String(made.id), filename: file.name, inbound: "0", sameNoAsAgreement: "1"
       });
       if (!unsigned && executedOn) params.set("receivedOn", executedOn);
@@ -84,17 +112,25 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
 
   if (made) {
     const newNo = made.agreementNo ?? `契約 #${made.id}`;
+    const isMaster = made.kind === "master";
+    // 基本契約書のひな形は、新契約が基本契約のときだけ（単体契約の紙は条件書・発注書）。
+    const template = isMaster ? MASTER_TEMPLATE[made.domain ?? ""] ?? null : null;
+    const switched = standalone && isMaster;
+    const termsReady = Boolean(onComposeTerms) && made.conditionIds.length > 0;
     return (
       <Modal title={`${newNo} を立てました（${oldNo} の巻き直し）`} onClose={onClose}>
         <div className="stack" style={{ gap: 10 }}>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
-            <li>新契約：<span className="code">{newNo}</span>（{made.oldClosed ? "締結済み" : "交渉中"}）</li>
+            <li>新契約：<span className="code">{newNo}</span>（{isMaster ? "基本契約" : "単体契約"}・{made.oldClosed ? "締結済み" : "交渉中"}）</li>
             <li>旧契約 <span className="code">{oldNo}</span>：{made.oldClosed
               ? "終了にしました（置き換え済み）"
               : "まだ有効です。新契約を締結済みにした時点で終了（置き換え済み）になります"}</li>
             <li>引き継ぎ：条件明細 {made.movedConditions} 本・個別契約 {made.movedChildren} 本{!made.movedConditions && !made.movedChildren ? "（移すものはありませんでした）" : ""}</li>
+            {switched && made.movedConditions > 0 && (
+              <li>条件明細は、いったん新しい基本契約に載せました（個別契約待ち）。下の ② で条件書・発注書を決定すると、新しい番号の個別契約が基本契約の下に立ちます。</li>
+            )}
           </ul>
-          <b>次に、新しい契約書を用意します</b>
+          <b>{switched ? "① 新しい基本契約書を用意します" : "次に、新しい契約書を用意します"}</b>
           {uploaded ? <div className="note ok">契約書 {uploaded} を登録しました</div> : (
             <div className="stack" style={{ gap: 6 }}>
               <label className="fld"><span>作成済みの契約書（PDF など）を上げる</span>
@@ -107,6 +143,17 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
                           onClick={() => { onClose(); onComposeContract({ id: made.id, label: newNo }, target.partyId, template.key); }}>
                     ひな形で作る（{template.label}）</button>
                 )}
+              </div>
+            </div>
+          )}
+          {(switched || !isMaster) && termsReady && (
+            <div className="stack" style={{ gap: 6 }}>
+              <b>{switched ? "② 個別契約（条件書・発注書）を作ります" : "条件書・発注書を作り直すとき"}</b>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <button className={`btn${switched ? " primary" : ""}`} disabled={busy}
+                        onClick={() => { onClose(); onComposeTerms!(made.conditionIds); }}>
+                  条件書・発注書を作る（作業テーブルへ・条件 {made.conditionIds.length} 本）</button>
+                {switched && <small className="faint">基本契約書を先に済ませても、あとからでも作れます（条件明細の画面・作業テーブルから）</small>}
               </div>
             </div>
           )}
@@ -124,14 +171,28 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
     <Modal title={`${oldNo} を巻き直す（新しい契約で置き換える）`} onClose={onClose}>
       <div className="stack" style={{ gap: 10 }}>
         <ul className="faint" style={{ margin: 0, paddingLeft: 18 }}>
-          <li>新しい契約を立てます（種類・種別・向き・相手先はいまの契約と同じ）。</li>
+          <li>新しい契約を立てます（{toMaster ? "基本契約として。向き・相手先はいまの契約と同じ" : "種類・種別・向き・相手先はいまの契約と同じ"}）。</li>
           <li>いまの契約は、新契約を締結済みにした時点で終了（置き換え済み）になります。それまでは有効のままです。</li>
           <li>いまの契約の文書・実績・支払は、いまの契約に残ります。</li>
         </ul>
+        {standalone && (
+          <div className="fld">
+            <span>新しい契約の形</span>
+            <div className="chips" role="radiogroup" aria-label="新しい契約の形">
+              <button type="button" className="chip" role="radio" aria-checked={shape === "same"} aria-pressed={shape === "same"}
+                      onClick={() => chooseShape("same")}>単体契約のまま（1 通で定める）</button>
+              <button type="button" className="chip" role="radio" aria-checked={shape === "master"} aria-pressed={shape === "master"}
+                      onClick={() => chooseShape("master")}>基本契約＋個別契約に切り替える</button>
+            </div>
+            {toMaster && (
+              <small>新しい基本契約を立て、条件明細を引き継ぎます。続けて条件書・発注書を決定すると、新しい番号の個別契約が基本契約の下に立ちます。</small>
+            )}
+          </div>
+        )}
         <div className="grid4">
-          <label className="fld"><span>新契約の件名 <em>必須</em></span>
+          <label className="fld"><span>{toMaster ? "新しい基本契約の件名" : "新契約の件名"} <em>必須</em></span>
             <input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
-          <label className="fld"><span>新契約の番号</span>
+          <label className="fld"><span>{toMaster ? "基本契約の番号" : "新契約の番号"}</span>
             <input value={no} onChange={(e) => setNo(e.target.value)} placeholder="空なら自動" />
             <small>{no.trim() ? `${no.trim()} で立てます` : "新しい番号を取ります"}</small></label>
           <label className="fld"><span>締結日 {!unsigned && <em>必須</em>}</span>
@@ -143,18 +204,28 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
           <label className="fld"><span>有効期間の開始</span>
             <input type="date" value={effectiveOn} onChange={(e) => setEffectiveOn(e.target.value)} />
             <small>空なら締結日。いまの契約の終了日はこの日になります</small></label>
+          {toMaster && !target.domain && (
+            <label className="fld"><span>種別 <em>必須</em></span>
+              <select value={domain} onChange={(e) => setDomain(e.target.value)}>
+                <option value="">選ぶ</option>
+                {DOMAIN_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              </select>
+              <small>基本契約の番号の頭が決まります</small></label>
+          )}
         </div>
         <label className="row" style={{ gap: 6 }}>
           <input type="checkbox" checked={carryOver} onChange={(e) => setCarryOver(e.target.checked)} />
-          <span>いまの契約の条件明細と、下の個別契約（条件書・発注書）を新契約に引き継ぐ</span>
+          <span>{toMaster
+            ? "いまの契約の条件明細（と下の覚書）を新しい基本契約に引き継ぐ"
+            : "いまの契約の条件明細と、下の個別契約（条件書・発注書）を新契約に引き継ぐ"}</span>
         </label>
-        <small className="faint">引き継ぐと、条件書・発注書・計算書は新しい基本契約の名前で出ます。番号・料率・期間・これまでの実績は変わりません。</small>
+        <small className="faint">引き継ぐと、条件書・発注書・計算書は新しい{toMaster || !standalone ? "基本契約" : "契約"}の名前で出ます。番号・料率・期間・これまでの実績は変わりません。</small>
         <label className="fld"><span>理由（履歴に残ります）</span>
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="例：2026年12月に契約書式を改め、巻き直した" /></label>
         {error && <div className="alert">{error}</div>}
         <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
           <button className="btn" onClick={onClose} disabled={busy}>やめる</button>
-          <button className="btn primary" disabled={busy || !ready} onClick={() => void go()}>{busy ? "立てています…" : "新契約を立てる"}</button>
+          <button className="btn primary" disabled={busy || !ready} onClick={() => void go()}>{busy ? "立てています…" : toMaster ? "新しい基本契約を立てる" : "新契約を立てる"}</button>
         </div>
       </div>
     </Modal>

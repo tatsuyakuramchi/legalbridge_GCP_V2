@@ -329,7 +329,9 @@ export function App() {
     royalty: ({ partyId, workId }) => openAuthor({ partyId, workId }),
     agreement: (id) => openEntity("agreement", id),
     composeContract: (agreement, partyId, templateKey) =>
-      startCompose([], [], null, templateKey, null, null, null, agreementFlow(agreement), partyId, agreement.id)
+      startCompose([], [], null, templateKey, null, null, null, agreementFlow(agreement), partyId, agreement.id),
+    // 流れの帯を付けないので、作業テーブルの①（要る文書を決める）に条件を渡して開く。
+    composeTerms: (conditionIds) => startCompose(conditionIds)
   };
   /** 画面の中で選んだ行（URL に写す。画面の key には使わないので開き直さない）。 */
   const [pick, setPick] = useState<{ view: View; id: number } | null>(null);

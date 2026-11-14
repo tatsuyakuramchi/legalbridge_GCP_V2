@@ -122,12 +122,23 @@ export interface RepaperInput {
   reason?: string | null;
   /** 旧契約の条件明細と下の個別契約を新契約へ移す（既定は移す）。 */
   carryOver?: boolean;
+  /**
+   * 単体契約を、基本契約＋個別契約に切り替える。新契約を基本契約で立て、条件明細は基本契約に載せる
+   * （個別契約待ち）。条件書・発注書を決定すると、新しい番号の個別契約が基本契約の下に立つ。
+   */
+  toMaster?: boolean;
+  /** toMaster で、旧単体契約に種別が無いときの種別（番号の頭が決まる）。 */
+  domain?: AgreementDomain | null;
 }
 export interface RepaperResult {
   id: number; agreementNo: string | null; oldNo: string | null;
   movedConditions: number; movedChildren: number;
   /** 新契約を締結済みで立てたので、旧契約が終了になった。 */
   oldClosed: boolean;
+  /** 新契約の種類と種別（単体契約から基本契約に切り替えたら master）。 */
+  kind: AgreementKind; domain: AgreementDomain | null;
+  /** 新契約へ移した条件明細（続けて条件書・発注書を作るのに使う）。 */
+  conditionIds: number[];
 }
 export interface RepaperRef {
   id: number; agreementNo: string | null; title: string; status: string; executedOn: string | null; terminatedOn: string | null;
@@ -345,6 +356,18 @@ export class AgreementService {
   }
 
   /**
+   * 渡した契約のうち、巻き直しで別の契約に置き換えられるもの（新契約が未締結でも）。
+   * replaces_id の無い環境（209 の前）でも通るよう、列は行の JSON から読む。
+   */
+  async replacedIds(ids: number[]): Promise<Set<number>> {
+    if (!ids.length) return new Set();
+    const r = await this.database.query(
+      `SELECT (to_jsonb(n) ->> 'replaces_id')::bigint AS id FROM agreements n
+        WHERE (to_jsonb(n) ->> 'replaces_id')::bigint = ANY($1::bigint[])`, [ids]);
+    return new Set((r.rows as Array<{ id: number | string }>).map((x) => Number(x.id)));
+  }
+
+  /**
    * 巻き直しのつながり（infra/v3/209_agreement_repaper.sql）。この契約が置き換えた旧契約と、
    * この契約を置き換えた新契約。209 を流していなければ available=false。
    */
@@ -403,13 +426,25 @@ export class AgreementService {
         const hit = dup.rows[0] as { id: number; agreement_no: string | null } | undefined;
         if (hit) throw new DomainError("CONFLICT", `この契約は ${hit.agreement_no ?? `#${hit.id}`} でもう巻き直しています`);
 
+        // 単体契約 → 基本契約＋個別契約への切り替え。新契約は基本契約で立て、条件明細はいったん基本契約に載せる
+        // （個別契約待ち）。条件書・発注書を決定すると、新しい番号の個別契約が基本契約の下に立つ
+        // （agreements/auto.ts・order-agreement.ts）。
+        const toMaster = input.toMaster === true;
+        if (toMaster && old.kind !== "standalone") {
+          throw new DomainError("VALIDATION", "基本契約＋個別契約に切り替えられるのは単体契約です");
+        }
+        const newKind: AgreementKind = toMaster ? "master" : old.kind;
+        const newDomain: AgreementDomain | null = (toMaster ? input.domain ?? old.domain : old.domain) ?? null;
+        if (toMaster && !newDomain) {
+          throw new DomainError("VALIDATION", "基本契約の種別（業務委託／ライセンス／売買／その他）を選んでください。番号の頭が決まります");
+        }
         const title = String(input.title ?? "").trim() || String(old.title ?? "");
         const external = String(input.agreementNo ?? "").trim();
         if (external) {
           const used = await client.query("SELECT id FROM agreements WHERE lower(btrim(agreement_no)) = lower($1)", [external]);
           if (used.rows[0]) throw new DomainError("CONFLICT", `契約番号 ${external} はもう使われています`);
         }
-        const agreementNo = external || await this.numberFor(client, old.kind, old.domain ?? null, null);
+        const agreementNo = external || await this.numberFor(client, newKind, newDomain, null);
         const executedOn = input.executedOn ?? null;
         const reason = String(input.reason ?? "").trim() || "契約の巻き直し";
         await noteAgreementChange(client, actor, `${reason}（旧 ${old.agreement_no ?? `#${id}`} を置き換え）`);
@@ -419,13 +454,14 @@ export class AgreementService {
               auto_renewal, renewal_months, renewal_notice_months, source_url, replaces_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, $10::date, $11, $12, $13, $14, $15)
            RETURNING id`,
-          [agreementNo, title, old.counterparty_id, old.direction, executedOn ? "executed" : "negotiating", old.kind, old.domain,
+          [agreementNo, title, old.counterparty_id, old.direction, executedOn ? "executed" : "negotiating", newKind, newDomain,
            executedOn, input.effectiveOn ?? executedOn, input.expiresOn ?? null,
            input.autoRenewal ?? (old.auto_renewal === true), input.renewalMonths ?? old.renewal_months ?? null,
            input.renewalNoticeMonths ?? old.renewal_notice_months ?? null, str(input.sourceUrl), id]);
         const newId = Number((made.rows[0] as { id: number }).id);
 
         let movedConditions = 0, movedChildren = 0;
+        let conditionIds: number[] = [];
         if (input.carryOver !== false) {
           await noteAgreementChange(client, actor, `${reason}（${agreementNo ?? `#${newId}`} へ引き継ぎ）`);
           const kids = await client.query(
@@ -436,14 +472,15 @@ export class AgreementService {
             `UPDATE conditions SET agreement_id = $2, updated_at = now()
               WHERE agreement_id = $1 AND status NOT IN ('superseded', 'void') RETURNING id`, [id, newId]);
           movedConditions = conds.rows.length;
+          conditionIds = (conds.rows as Array<{ id: number }>).map((x) => Number(x.id));
         }
         await recordAudit(client, {
           actor, action: "agreement.repaper", targetType: "agreement", targetId: newId,
           detail: { replaces: id, oldNo: old.agreement_no ?? null, agreementNo, reason, carryOver: input.carryOver !== false,
-                    movedConditions, movedChildren, executedOn }
+                    movedConditions, movedChildren, executedOn, toMaster, conditionIds }
         });
         return { id: newId, agreementNo, oldNo: str(old.agreement_no), movedConditions, movedChildren,
-                 oldClosed: Boolean(executedOn) };
+                 oldClosed: Boolean(executedOn), kind: newKind, domain: newDomain, conditionIds };
       });
     } catch (error) { throw translate(error); }
   }
