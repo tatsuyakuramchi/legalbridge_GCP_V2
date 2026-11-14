@@ -55,6 +55,8 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   /** 新しい契約の形。単体契約のときだけ選べる：same＝単体契約のまま／master＝基本契約＋個別契約に切り替える。 */
   const [shape, setShape] = useState<"same" | "master">("same");
   const toMaster = standalone && shape === "master";
+  /** 新契約が基本契約になる（基本契約の巻き直し、または単体契約からの切り替え）。種別を選べる。 */
+  const resultMaster = toMaster || target.kind === "master";
   const [domain, setDomain] = useState<string>(target.domain ?? "");
   const [title, setTitle] = useState(target.title);
   const [no, setNo] = useState("");
@@ -70,7 +72,16 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   const [file, setFile] = useState<File | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
 
-  const ready = title.trim() !== "" && (unsigned || executedOn !== "") && (!toMaster || domain !== "");
+  const ready = title.trim() !== "" && (unsigned || executedOn !== "") && (!resultMaster || domain !== "");
+
+  /**
+   * 基本契約の種別を選ぶ（ライセンスの基本契約／業務委託の基本契約 …）。番号の頭と、基本契約書のひな形が決まる。
+   * 件名が種別の既定（利用許諾基本契約 など）のままなら、選んだ種別の既定に合わせる。
+   */
+  function chooseDomain(next: string) {
+    setDomain(next);
+    if (Object.values(MASTER_TITLE).includes(title) && MASTER_TITLE[next]) setTitle(MASTER_TITLE[next]!);
+  }
 
   /** 形を切り替えたら、件名の初期値を合わせる（単体契約の件名は「条件書（◯◯）」などで、基本契約の名前にならない）。 */
   function chooseShape(next: "same" | "master") {
@@ -87,7 +98,9 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
         title: title.trim(), agreementNo: no.trim() || null,
         executedOn: unsigned ? null : executedOn, effectiveOn: effectiveOn || null,
         reason: reason.trim() || null, carryOver,
-        ...(toMaster ? { toMaster: true, domain: domain || null } : {})
+        ...(toMaster ? { toMaster: true } : {}),
+        // 基本契約の種別（ライセンス／業務委託 …）。旧契約と違う種別にもできる。
+        ...(resultMaster && domain ? { domain } : {})
       });
       setMade(r);
       onDone(`${oldNo} を ${r.agreementNo ?? `#${r.id}`} で巻き直しました`
@@ -114,7 +127,12 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
     const newNo = made.agreementNo ?? `契約 #${made.id}`;
     const isMaster = made.kind === "master";
     // 基本契約書のひな形は、新契約が基本契約のときだけ（単体契約の紙は条件書・発注書）。
-    const template = isMaster ? MASTER_TEMPLATE[made.domain ?? ""] ?? null : null;
+    // ひな形は種別に合うものを先（主）に、もう一方も選べるように並べる（ハイブリッドはどちらも主）。
+    const templates = isMaster
+      ? Object.entries(MASTER_TEMPLATE)
+          .map(([d, t]) => ({ ...t, primary: made.domain === d || made.domain === "hybrid" }))
+          .sort((a, b) => Number(b.primary) - Number(a.primary))
+      : [];
     const switched = standalone && isMaster;
     const termsReady = Boolean(onComposeTerms) && made.conditionIds.length > 0;
     return (
@@ -138,11 +156,12 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
                 <small>文書番号は新契約の番号（{newNo}）と同じになります</small></label>
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <button className="btn" disabled={busy || !file} onClick={() => void upload()}>{busy ? "登録しています…" : "上げて登録する"}</button>
-                {template && onComposeContract && (
-                  <button className="btn primary" disabled={busy}
-                          onClick={() => { onClose(); onComposeContract({ id: made.id, label: newNo }, target.partyId, template.key); }}>
-                    ひな形で作る（{template.label}）</button>
-                )}
+                {onComposeContract && templates.map((t) => (
+                  <button key={t.key} className={`btn${t.primary ? " primary" : ""}`} disabled={busy}
+                          title={t.primary ? undefined : "この契約の種別とは別のひな形です。こちらの書式で作るときに"}
+                          onClick={() => { onClose(); onComposeContract({ id: made.id, label: newNo }, target.partyId, t.key); }}>
+                    ひな形で作る（{t.label}）</button>
+                ))}
               </div>
             </div>
           )}
@@ -189,6 +208,18 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
             )}
           </div>
         )}
+        {resultMaster && (
+          <div className="fld">
+            <span>基本契約の種類 <em>必須</em></span>
+            <div className="chips" role="radiogroup" aria-label="基本契約の種類">
+              {DOMAIN_OPTIONS.map(([v, label]) => (
+                <button key={v} type="button" className="chip" role="radio" aria-checked={domain === v} aria-pressed={domain === v}
+                        onClick={() => chooseDomain(v)}>{v === "license" ? "ライセンスの基本契約" : v === "service" ? "業務委託の基本契約" : label}</button>
+              ))}
+            </div>
+            <small>番号の頭と、基本契約書のひな形（利用許諾基本契約書／業務委託基本契約書）がこれで決まります{target.domain && domain && domain !== target.domain ? "。いまの契約とは別の種類で立てます" : ""}</small>
+          </div>
+        )}
         <div className="grid4">
           <label className="fld"><span>{toMaster ? "新しい基本契約の件名" : "新契約の件名"} <em>必須</em></span>
             <input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
@@ -204,14 +235,6 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
           <label className="fld"><span>有効期間の開始</span>
             <input type="date" value={effectiveOn} onChange={(e) => setEffectiveOn(e.target.value)} />
             <small>空なら締結日。いまの契約の終了日はこの日になります</small></label>
-          {toMaster && !target.domain && (
-            <label className="fld"><span>種別 <em>必須</em></span>
-              <select value={domain} onChange={(e) => setDomain(e.target.value)}>
-                <option value="">選ぶ</option>
-                {DOMAIN_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-              </select>
-              <small>基本契約の番号の頭が決まります</small></label>
-          )}
         </div>
         <label className="row" style={{ gap: 6 }}>
           <input type="checkbox" checked={carryOver} onChange={(e) => setCarryOver(e.target.checked)} />
