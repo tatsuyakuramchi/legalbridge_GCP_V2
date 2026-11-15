@@ -6,6 +6,7 @@ import { DocumentSet } from "./DocumentSet.js";
 import { DocumentImport } from "./DocumentImport.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { BulkOrders } from "./BulkOrders.js";
+import { StoreJudgeOrders } from "./StoreJudgeOrders.js";
 import { SettledImport } from "./SettledImport.js";
 import { MissingContracts } from "./MissingContracts.js";
 import type { DocFlow } from "./FlowBar.js";
@@ -40,12 +41,12 @@ export type WorkbenchEntry =
   /** 文書の画面から：訂正版を作る（revise）／下敷きにして次を作る（derive）。 */
   | { kind: "document"; documentId: number; mode: "revise" | "derive" };
 
-export type BulkMode = "orders" | "settled" | "missing";
+export type BulkMode = "orders" | "judge" | "settled" | "missing";
 const ENTRY_KIND_LABEL: Record<WorkbenchEntry["kind"], string> = {
   task: "デイリータスク", matter: "案件", party: "相手先", round: "取引管理", conditions: "条件明細", bulk: "一括", document: "文書"
 };
 const BULK_LABEL: Record<BulkMode, string> = {
-  orders: "発注書を CSV でまとめて作る", settled: "検収済みをまとめて入れる（遡及）", missing: "契約書の無い相手先にまとめて起こす"
+  orders: "発注書を CSV でまとめて作る", judge: "店舗イベント審判の発注書", settled: "検収済みをまとめて入れる（遡及）", missing: "契約書の無い相手先にまとめて起こす"
 };
 
 /**
@@ -245,6 +246,7 @@ function BulkWorkbench(
         </div>
         <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
           {entry.mode === "orders" ? "CSV の行ごとに 条件・予定・下書き を作り、束で決定して送る。ひな形は発注書"
+            : entry.mode === "judge" ? "店舗 → 担当取引先 → その月の開催日。1 取引先 × 1 か月で発注書 1 枚（同じイベントは 1 行）。ひな形は発注書"
             : entry.mode === "settled" ? "もう終わった取引を CSV から 条件 → 発注書 → 実績 → 検収書 → 支払 まで一度に入れる（遡及）"
             : "基本契約書が無い相手先を一覧し、基本契約＋出版条件書を相手先ごとにまとめて起こす"}
         </div>
@@ -253,6 +255,7 @@ function BulkWorkbench(
         <BulkOrders key={`o${entry.matterId ?? 0}`} templates={templates} initialMatterId={entry.matterId ?? null}
                     onOpenDocument={onOpenDocument} onClose={onClose} onCreated={() => undefined} />
       )}
+      {entry.mode === "judge" && <StoreJudgeOrders onOpenDocument={onOpenDocument} />}
       {entry.mode === "settled" && (
         <SettledImport key={`s${entry.matterId ?? 0}`} initialMatterId={entry.matterId ?? null}
                        onOpenDocument={onOpenDocument} onClose={onClose} onCreated={() => undefined} />

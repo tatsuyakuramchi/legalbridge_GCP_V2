@@ -167,6 +167,7 @@ import { RingiService, type RingiTarget } from "./ringi/service.js";
 import { RptService } from "./rpt/service.js";
 import { RequesterUploadService } from "./intake/upload-service.js";
 import { SnippetService } from "./snippets/service.js";
+import { StoreEventService } from "./store-events/service.js";
 
 const asyncRoute =
   (handler: (req: Request, res: Response) => Promise<unknown>) =>
@@ -4447,6 +4448,80 @@ export function createRoutes(database: Transactable) {
     if (!batch) return res.status(404).json({ error: "取り込みの束が見つかりません" });
     res.json(batch);
   }));
+
+  // ---- 店舗イベント審判業務：店舗マスタ（店舗 × 担当取引先）と発注書の下書き ----
+  const storeEvents = new StoreEventService(database, { conditions: conditionWrites, matters: matterWrites, issues });
+  router.get("/store-events/stores", asyncRoute(async (_req, res) => {
+    res.json({ stores: await storeEvents.listStores() });
+  }));
+  const storeInput = z.object({
+    name: z.string().trim().min(1).max(120), shortName: z.string().trim().min(1).max(40),
+    active: z.boolean().optional(), sortOrder: z.coerce.number().int().min(0).max(9999).nullable().optional()
+  });
+  router.post("/store-events/stores", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await storeEvents.saveStore(storeInput.parse(req.body ?? {}), actor(res)));
+    }));
+  router.put("/store-events/stores/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.json(await storeEvents.saveStore({ ...storeInput.parse(req.body ?? {}), id: Number(req.params.id) }, actor(res)));
+    }));
+  router.delete("/store-events/stores/:id", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      await storeEvents.deleteStore(Number(req.params.id), actor(res));
+      res.status(204).end();
+    }));
+  router.put("/store-events/stores/:id/judges/:partyId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        defaultFeeIncTax: z.coerce.number().int().min(0).max(10_000_000).nullable().optional(),
+        defaultTravelIncTax: z.coerce.number().int().min(0).max(1_000_000).nullable().optional()
+      }).parse(req.body ?? {});
+      await storeEvents.setJudge(Number(req.params.id), { ...input, partyId: Number(req.params.partyId) }, actor(res));
+      res.status(204).end();
+    }));
+  router.delete("/store-events/stores/:id/judges/:partyId", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      await storeEvents.removeJudge(Number(req.params.id), Number(req.params.partyId), actor(res));
+      res.status(204).end();
+    }));
+  // 人ごとの設定（基本契約の扱い）。店舗をまたいで同じ。
+  router.get("/store-events/judges/:partyId/agreements", asyncRoute(async (req, res) => {
+    res.json({ agreements: await storeEvents.agreementsOf(Number(req.params.partyId)) });
+  }));
+  router.put("/store-events/judges/:partyId/settings", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = z.object({
+        agreementMode: z.enum(["auto", "fixed", "none"]),
+        agreementId: z.coerce.number().int().positive().nullable().optional()
+      }).parse(req.body ?? {});
+      await storeEvents.setJudgeSettings(Number(req.params.partyId), input, actor(res));
+      res.status(204).end();
+    }));
+  const judgeOrderInput = z.object({
+    partyId: z.coerce.number().int().positive(),
+    matterId: z.coerce.number().int().positive().nullable().optional(),
+    ownerStaffId: z.coerce.number().int().positive().nullable().optional(),
+    agreement: z.object({
+      mode: z.enum(["auto", "fixed", "none"]),
+      agreementId: z.coerce.number().int().positive().nullable().optional()
+    }).nullable().optional(),
+    days: z.array(z.object({
+      date: z.string().trim().max(10), startTime: z.string().trim().max(5).default(""),
+      eventName: z.string().trim().max(120), storeId: z.coerce.number().int().min(0),
+      feeIncTax: z.coerce.number().min(0).max(10_000_000),
+      travelIncTax: z.coerce.number().min(0).max(1_000_000).nullable().optional().transform((v) => v ?? null)
+    })).max(62)
+  });
+  // 突き合わせ。何も作らない。
+  router.post("/store-events/orders/preview", requireRole("admin", "legal"),
+    asyncRoute(async (req, res) => {
+      res.json(await storeEvents.preview(judgeOrderInput.parse(req.body ?? {})));
+    }));
+  router.post("/store-events/orders", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await storeEvents.createOrder(judgeOrderInput.parse(req.body ?? {}), actor(res)));
+    }));
 
   // ---- 発注書の一括作成（束）。/documents/:id より前に置く（:id に "batches" が当たる）----
   router.get("/documents/batches", asyncRoute(async (_req, res) => {

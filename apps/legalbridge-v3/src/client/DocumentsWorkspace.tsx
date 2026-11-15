@@ -218,7 +218,7 @@ export function DocumentsWorkspace(
      */
     flow?: DocFlow | null;
     /** 「新しく文書を作る」の行き先。文書を作るのは作業テーブル（一括も作業テーブルの一括モード）。 */
-    onOpenWorkbench?: (bulk?: "orders" | "settled") => void;
+    onOpenWorkbench?: (bulk?: "orders" | "judge" | "settled") => void;
     /** 訂正版・下敷きは作業テーブルの①で決める。文書と入り方を渡す。 */
     onOpenWorkbenchFor?: (documentId: number, mode: "revise" | "derive") => void;
     /** 決定した発注書から検収書を作る（支払文書の「発注書から検収書」へ）。 */
@@ -1300,6 +1300,10 @@ export function DocumentsWorkspace(
             <button className="btn" onClick={() => (onOpenWorkbench ? onOpenWorkbench("orders") : (setBulk(true), setSettled(false)))}>
               ↑ 発注書をまとめて作る
             </button>
+            {/* 店舗イベント審判業務は 店舗 → 担当 → 開催日 で決まるので CSV を要らない専用の口。 */}
+            {onOpenWorkbench && (
+              <button className="btn" onClick={() => onOpenWorkbench("judge")}>店舗イベント審判の発注書</button>
+            )}
             {/* 上は「これから出す紙」、こちらは「もう終わった取引」。
                 同じ CSV の口でも作るものが違うので、入口から分ける。 */}
             <button className="btn" onClick={() => (onOpenWorkbench ? onOpenWorkbench("settled") : (setSettled(true), setBulk(false)))}>
