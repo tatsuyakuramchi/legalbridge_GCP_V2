@@ -60,6 +60,7 @@ export function PartiesWorkspace(
   const [kindFilter, setKindFilter] = useState<"all" | "corporate" | "individual">("all");
   const [total, setTotal] = useState<number | null>(null);
   const query = useDebounced(keyword);
+  const [addingStaff, setAddingStaff] = useState(false);
   // 在籍していてメールの無い人。退職者は書類に出ないので数えない。
   const noMail = staff.filter((s) => s.status === "active" && !s.email);
 
@@ -179,7 +180,10 @@ export function PartiesWorkspace(
             <span className="faint">
               検収書の【ご連絡先】と発注書の担当欄に、この部署・氏名・メール・電話が出ます
             </span>
+            <button className="btn btn-sm" style={{ marginLeft: "auto" }} onClick={() => setAddingStaff((v) => !v)}>
+              {addingStaff ? "追加をやめる" : "＋ 担当者を追加"}</button>
           </div>
+          {addingStaff && <StaffAdd onDone={() => { setAddingStaff(false); reload(); }} onCancel={() => setAddingStaff(false)} />}
           {/* メールの空欄は、検収書が「5営業日以内に下記へ異議を」と書いている
               その連絡先が無いということ。件数で見えるようにする。 */}
           {noMail.length > 0 && (
@@ -348,6 +352,52 @@ export function PartiesWorkspace(
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * 自社の担当者を足す。入社・異動で増えた人を登録する（氏名は必須。メールは書類の連絡先に出るので入れておく）。
+ */
+function StaffAdd({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [v, setV] = useState({ name: "", department: "", email: "", phone: "", slackUserId: "", nameEn: "", departmentEn: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const field = (key: keyof typeof v, label: string, placeholder?: string, required = false) => (
+    <label className="fld"><span>{label}{required && <> <em>必須</em></>}</span>
+      <input value={v[key]} placeholder={placeholder} disabled={busy}
+             onChange={(e) => setV({ ...v, [key]: e.target.value })} /></label>
+  );
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      await api.post("/staff", {
+        name: v.name.trim(), department: v.department.trim() || null, email: v.email.trim() || null,
+        phone: v.phone.trim() || null, slackUserId: v.slackUserId.trim() || null,
+        nameEn: v.nameEn.trim() || null, departmentEn: v.departmentEn.trim() || null
+      });
+      onDone();
+    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="panel-bd stack" style={{ gap: 8 }}>
+      <b>担当者を追加</b>
+      <div className="grid4">
+        {field("name", "氏名", "山田 太郎", true)}
+        {field("department", "部門", "ボードゲーム事業部")}
+        {field("email", "メール", "yamada@example.co.jp")}
+        {field("phone", "電話", "03-0000-0000")}
+        {field("slackUserId", "Slack ID", "U0123ABCD")}
+        {field("nameEn", "氏名（英語）", "Taro Yamada")}
+        {field("departmentEn", "部門（英語）", "Board Game Division")}
+      </div>
+      {!v.email.trim() && <small className="faint">メールが空だと、検収書の【ご連絡先】が空欄のまま出ます（あとから「直す」で入れられます）</small>}
+      {error && <div className="alert">{error}</div>}
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn primary" disabled={busy || !v.name.trim()} onClick={() => void save()}>{busy ? "登録しています…" : "登録する"}</button>
+        <button className="btn" disabled={busy} onClick={onCancel}>やめる</button>
+      </div>
+    </div>
   );
 }
 

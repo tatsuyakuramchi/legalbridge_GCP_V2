@@ -517,6 +517,60 @@ export class PartyWriteService {
   }
 
   /**
+   * 自社の担当者を足す。入社・異動で担当者が増えたとき、移行のデータに無い人を画面から登録する。
+   * 氏名は必須。メールは書類の【ご連絡先】に出るので、入れておくのが基本（空でも登録はできる）。
+   * 同じメールの人、同じ氏名・部門で在籍中の人がいれば足さない（二重登録を防ぐ）。
+   */
+  async createStaff(input: StaffInput, actor: string) {
+    const name = String(input.name ?? "").trim();
+    if (!name) throw new DomainError("VALIDATION", "担当者の氏名を入れてください");
+    const blankToNull = (v: string | null | undefined) =>
+      v === null || v === undefined ? null : (String(v).trim() || null);
+    const email = blankToNull(input.email);
+    const department = blankToNull(input.department);
+    const slack = blankToNull(input.slackUserId)?.toUpperCase() ?? null;
+    if (slack && !/^[UW][A-Z0-9]{6,}$/.test(slack)) {
+      throw new DomainError("VALIDATION", "Slack のメンバー ID は U から始まる英数字です（プロフィールの「⋮」→「メンバー ID をコピー」）");
+    }
+    try {
+      return await inTransaction(this.database, async (client) => {
+        if (email) {
+          const dup = (await client.query(
+            "SELECT id, name, status FROM staff WHERE lower(btrim(email)) = lower($1) LIMIT 1", [email])).rows[0] as
+            { id: number; name: string; status: string } | undefined;
+          if (dup) {
+            throw new DomainError("CONFLICT",
+              `このメールの担当者がもういます（${dup.name}${dup.status === "retired" ? "・退職" : ""}）。その行を直してください`);
+          }
+        }
+        const same = (await client.query(
+          `SELECT id FROM staff WHERE status = 'active' AND btrim(name) = $1
+              AND COALESCE(btrim(department), '') = COALESCE($2, '') LIMIT 1`, [name, department])).rows[0];
+        if (same) {
+          throw new DomainError("CONFLICT", `同じ氏名${department ? "・部門" : ""}の担当者がもういます。同姓同名の別の人なら、部門を入れて区別してください`);
+        }
+        const r = await client.query(
+          `INSERT INTO staff (name, email, department, phone, slack_user_id, name_en, department_en, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+           RETURNING id, staff_code, name, email, department, phone, status, name_en, department_en, slack_user_id`,
+          [name, email, department, blankToNull(input.phone), slack, blankToNull(input.nameEn), blankToNull(input.departmentEn)]);
+        const row = r.rows[0] as Record<string, any>;
+        await recordAudit(client, {
+          actor, action: "staff.create", targetType: "staff", targetId: Number(row.id),
+          detail: { name: row.name, email: row.email ?? null, department: row.department ?? null }
+        });
+        return {
+          id: Number(row.id), staffCode: row.staff_code ?? null, name: String(row.name),
+          email: row.email ?? null, department: row.department ?? null,
+          phone: row.phone ?? null, status: String(row.status),
+          nameEn: row.name_en ?? null, departmentEn: row.department_en ?? null,
+          slackUserId: row.slack_user_id ?? null
+        };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 自社の担当者を直す。
    *
    * 検収書は【ご連絡先】に担当者の部署・氏名・メールを差し、そこに

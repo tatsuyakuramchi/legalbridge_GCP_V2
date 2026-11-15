@@ -5551,6 +5551,14 @@ export function createRoutes(database: Transactable) {
       res.json(await partyWrites.updateStaff(Number(req.params.id), input, actor(res)));
     }));
 
+  // 自社の担当者を足す（入社・異動）。氏名は必須。
+  router.post("/staff",
+    requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const input = staffPatchSchema.omit({ status: true }).extend({ name: z.string().trim().max(120) }).parse(req.body ?? {});
+      res.status(201).json(await partyWrites.createStaff(input, actor(res)));
+    }));
+
   router.get("/staff", asyncRoute(async (_req, res) => {
     res.json({ staff: await parties.staff() });
   }));
