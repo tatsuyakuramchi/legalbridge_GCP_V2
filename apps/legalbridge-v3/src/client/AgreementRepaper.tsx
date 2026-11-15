@@ -455,7 +455,7 @@ function TermsRepaper({ target, onClose, onComposeTerms }: {
         )}
         {result.papers.length > 0 && result.papers.length <= 5 && (
           <div className="stack" style={{ gap: 6 }}>
-            <span className="faint">または、いまの条件書の訂正版として出す（同じ番号に -R2。元の条件書は決定で「訂正済み」）：</span>
+            <span className="faint">または、いまの条件書の訂正版として出す（元の条件書は決定で「訂正済み」。番号は、作品ごとに番号の条件書なら新しい番号、それ以外は元の番号に -R2）：</span>
             {result.papers.map((paper) => {
               const draftId = drafts[paper.id];
               return (
@@ -633,7 +633,7 @@ export function RepaperLinksNote({ agreementId, version = 0, onOpen, onChanged, 
           )}
         </div>
       )}
-      {/* いまの版のまま決定していた条件書は、訂正版にする（同じ個別契約のまま、番号に -R2）。予約がある限り出し続ける。 */}
+      {/* いまの版のまま決定していた条件書は、訂正版にする（同じ個別契約のまま）。予約がある限り出し続ける。 */}
       {papers.map((paper) => {
         const draftId = drafts[paper.id] ?? paper.draftId;
         return (

@@ -1010,7 +1010,18 @@ export function DocumentsWorkspace(
       flow?.onIssued?.(done.id);
       // 長いフォームの下で押すと、上に出た結果が見えない。結果まで運ぶ。
       issuedRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-    } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : String(e);
+      // フォームに載せている下書きが、もう決定済みだった（前の決定は通っていたが画面が残っていた、
+      // 別の窓・文書のページで決定した、など）。フォームを閉じ、その文書のページを開く。
+      if (draft && /下書きだけ直せます（この文書は issued）/.test(message)) {
+        const id = draft.id;
+        setDraft(null); setRevise(null); setComposing(false); setRendered(null); setTouched(false);
+        await reload().catch(() => undefined);
+        setSelected(id);
+        setStored(`${draft.no ?? `文書 #${id}`} はもう決定済みです（番号が振られています）。いま画面で直した内容は入っていません。直すときは、下の「訂正版を作る」から`);
+      } else setError(message);
+    }
     finally { setBusy(false); setWorking(null); }
   }
 
@@ -1107,13 +1118,24 @@ export function DocumentsWorkspace(
     setError(null); setIssued(null); setBusy(true);
     try {
       const d = await api.get<{
-        id: number; documentNo: string | null; templateKey: string | null;
+        id: number; documentNo: string | null; templateKey: string | null; status?: string;
         matterId: number | null; agreementId: number | null;
         manualInputs: Record<string, unknown>;
         conditions: Array<{ id: number; currentId?: number; conditionNo?: string | null; status?: string; successorId?: number | null }>;
         eventIds: number[];
         supersedesId: number | null; supersedeReason: string | null;
       }>(`/documents/${id}`);
+      // 決定済み・無効の文書はフォームに載せない。載せると「直して決定する」が出るが、押しても
+      // 「下書きだけ直せます」で止まる（作業テーブルや一覧に残っていた下書きの入口から、決定したあとに開いたとき）。
+      // その文書のページを開き、直すなら訂正版を作ってもらう。
+      if (d.status && d.status !== "draft") {
+        setComposing(false); setDraft(null); setRevise(null); setRendered(null);
+        setSelected(d.id);
+        setStored(d.status === "issued"
+          ? `${d.documentNo ?? `文書 #${d.id}`} はもう決定済みです。中身を直すときは、下の「訂正版を作る」から`
+          : `${d.documentNo ?? `文書 #${d.id}`} は下書きではないので直せません（${d.status}）`);
+        return;
+      }
       // 無効にした条件は外す（載せたままだと決定で「無効または旧版の条件は文書にできません」と止まり、
       // 一覧に無効の条件は出ないので外しようがなかった）。旧版は currentId で今の版に選び直す。
       // 無効の条件に「新しい方」（同じ作品と相手先の生きている条件）があればそれに置き換え、無ければ外す。
