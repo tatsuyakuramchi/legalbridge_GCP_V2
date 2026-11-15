@@ -255,6 +255,10 @@ export function createRoutes(database: Transactable) {
   const receivables = new ReceivableRepository(database);
   const contractCheck = new ContractCheckRepository(database);
   const agreements = new AgreementService(database);
+  // 巻き直しで、適用日が先のとき：条件明細は「適用日からの改訂」として予約する（条件の書き込みの道を借りる）。
+  const repaperDeps = {
+    scheduleRevision: (...args: Parameters<typeof conditionWrites.scheduleRevisionIn>) => conditionWrites.scheduleRevisionIn(...args)
+  };
   const agreementMap = new PartyAgreementMapService(database);
   const search = new SearchRepository(database);
   const exports = new ExportRepository(database);
@@ -753,7 +757,12 @@ export function createRoutes(database: Transactable) {
         toMaster: z.boolean().optional(),
         domain: z.enum(AGREEMENT_DOMAINS).nullable().optional()
       }).parse(req.body ?? {});
-      res.status(201).json(await agreements.repaper(Number(req.params.id), input, actor(res)));
+      res.status(201).json(await agreements.repaper(Number(req.params.id), input, actor(res), repaperDeps));
+    }));
+  // あとから合わせる：巻き直した新契約（適用日が先）の下の「いまの版」を、適用日からの改訂にする。
+  router.post("/agreements/:id/repaper/align", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      res.status(201).json(await agreements.align(Number(req.params.id), actor(res), repaperDeps));
     }));
 
   router.post("/agreements/:id/execute", requireRole("admin", "legal"), requireWritable,

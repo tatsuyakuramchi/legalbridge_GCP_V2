@@ -4,6 +4,7 @@ import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import { termHistory, type TermEvent, type TermHistory, type TermInput } from "./term-history.js";
 import { agreementVersions, noteAgreementChange, type AgreementVersion } from "./versions.js";
+import { TERMS_TEMPLATE_KEYS } from "./auto.js";
 
 /**
  * 契約（合意）。
@@ -144,7 +145,29 @@ export interface RepaperResult {
    * 途中の契約（agreementNo）は、何も載っていなければ消した（removed）。文書などが載っていれば、つながりだけ外して残した。
    */
   redo: { agreementNo: string | null; removed: boolean } | null;
+  /**
+   * 適用日が先の巻き直し：条件明細を移さず、適用日からの改訂として新契約に予約した。
+   * いまの版と下の個別契約は旧契約に残る（適用日が来たら、日次ジョブが新しい版に切り替える）。
+   * conditionIds は予約した版（これで条件書を作ると、許諾開始日が適用日になる）。
+   */
+  forward: ForwardCarry | null;
 }
+export interface ForwardCarry {
+  /** 適用日。 */
+  on: string;
+  scheduled: Array<{ id: number; conditionNo: string | null; fromId: number; fromNo: string | null }>;
+  /** 予約しなかった条件明細（旧契約に残る）と、その理由。 */
+  skipped: Array<{ conditionNo: string | null; name: string; reason: string }>;
+}
+/** 条件明細の改訂を予約する道（conditions/write-service の scheduleRevisionIn）。 */
+export type ScheduleRevision = (
+  client: Queryable, conditionId: number,
+  patch: { termStart?: string | null; termEnd?: string | null; agreementId?: number | null },
+  effectiveFrom: string, actor: string, why: string
+) => Promise<{ id: number; conditionNo: string | null }>;
+export interface RepaperDeps { scheduleRevision?: ScheduleRevision }
+/** あとから合わせる：巻き直した新契約の下にある「いまの版」を、適用日からの改訂にする。 */
+export interface AlignResult { on: string; oldNo: string | null; forward: ForwardCarry; conditionIds: number[] }
 export interface RepaperRef {
   id: number; agreementNo: string | null; title: string; status: string; executedOn: string | null; terminatedOn: string | null;
 }
@@ -155,6 +178,20 @@ export interface RepaperLinks {
    * 直接置き換え、この契約は（何も載っていなければ）消える。
    */
   redo?: boolean;
+  /**
+   * あとから合わせられる：この契約は旧契約を置き換えた契約で、適用日が先。下に「いまの版」の条件明細が載っている
+   * （適用日より前から効いている条件が、新契約の下にある）。count 本を、適用日からの改訂にできる。
+   */
+  align?: { on: string; count: number } | null;
+  /**
+   * 訂正版にする条件書：この契約（適用日が先）の下で、いまの版（適用日より前の開始日）のまま決定している条件書。
+   * 載っている条件すべてに、適用日からの版が予約されているものだけ。conditionIds はその版
+   * （これで訂正版を作ると、許諾開始日が適用日になる）。draftId は、もう起こしてある訂正版の下書き。
+   */
+  papers?: StalePaper[];
+}
+export interface StalePaper {
+  id: number; documentNo: string | null; templateKey: string; on: string; conditionIds: number[]; draftId: number | null;
 }
 
 export interface TerminateInput {
@@ -401,8 +438,49 @@ export class AgreementService {
       };
       const replaces = of("replaces");
       const self = of("self");
+      let align: RepaperLinks["align"] = null;
+      if (replaces) {
+        const n = (await this.database.query(
+          `SELECT a.effective_on::text AS on_date,
+                  (SELECT count(*) FROM conditions c
+                    WHERE c.status = 'active'
+                      AND c.agreement_id IN (SELECT $1::bigint UNION ALL
+                                             SELECT k.id FROM agreements k
+                                              WHERE k.parent_id = $1 AND k.kind = 'supplement'
+                                                AND k.terminated_on IS NULL AND k.order_document_id IS NULL))::int AS n
+             FROM agreements a JOIN agreements o ON o.id = a.replaces_id
+            WHERE a.id = $1 AND a.effective_on > current_date
+              AND (o.terminated_on IS NULL OR o.terminated_on > current_date)`, [id])).rows[0] as
+          { on_date: string; n: number } | undefined;
+        if (n && Number(n.n) > 0) align = { on: String(n.on_date), count: Number(n.n) };
+      }
+      let papers: StalePaper[] = [];
+      if (replaces) {
+        const docs = (await this.database.query(
+          `SELECT d.id, d.document_no, t.template_key, a.effective_on::text AS on_date,
+                  (SELECT x.id FROM documents x WHERE x.supersedes_id = d.id AND x.status = 'draft' ORDER BY x.id LIMIT 1) AS draft_id,
+                  array_agg(n.id ORDER BY dc.condition_id) AS next_ids,
+                  count(*)::int AS conds, count(n.id)::int AS matched
+             FROM agreements a
+             JOIN documents d ON d.status = 'issued'
+                             AND d.agreement_id IN (SELECT a.id UNION ALL SELECT k.id FROM agreements k WHERE k.parent_id = a.id)
+             JOIN document_conditions dc ON dc.document_id = d.id
+             JOIN conditions c ON c.id = dc.condition_id
+             LEFT JOIN conditions n ON COALESCE(n.series_id, n.id) = COALESCE(c.series_id, c.id)
+                                   AND n.id <> c.id AND n.status = 'scheduled' AND n.effective_from = a.effective_on
+             JOIN document_template_versions tv ON tv.id = d.template_version_id
+             JOIN document_templates t ON t.id = tv.template_id
+            WHERE a.id = $1 AND a.effective_on > current_date
+            GROUP BY d.id, d.document_no, t.template_key, a.effective_on
+           HAVING count(*) = count(n.id)
+            ORDER BY d.id`, [id])).rows as Array<Record<string, any>>;
+        papers = docs.filter((d) => TERMS_TEMPLATE_KEYS.has(String(d.template_key))).map((d) => ({
+          id: Number(d.id), documentNo: str(d.document_no), templateKey: String(d.template_key), on: String(d.on_date),
+          conditionIds: (d.next_ids as unknown[]).map(Number), draftId: int(d.draft_id)
+        }));
+      }
       return { available: true, replaces, replacedBy: of("replaced_by"),
-               redo: Boolean(replaces && self && self.status !== "executed") };
+               redo: Boolean(replaces && self && self.status !== "executed"), align, papers };
     } catch (error) {
       // 42703：列が無い（209 をまだ流していない）。
       if ((error as { code?: string }).code === "42703") return { available: false, replaces: null, replacedBy: null };
@@ -418,8 +496,12 @@ export class AgreementService {
    *     条件書・発注書を新しい基本契約の名前で出すには、条件が新契約の下に要る
    *   ・旧契約は、新契約が締結済みになった時点で終了になる（209 のトリガー）。未締結のあいだは有効のまま
    *   ・旧契約の文書・実績・支払・解除合意は旧契約に残る
+   *   ・適用日（有効期間の開始。空なら締結日）が先のときは、条件明細を移さない。いま有効な条件明細について
+   *     「適用日からの改訂」を新契約に予約し（carryForward）、いまの版と下の個別契約は旧契約に残す。
+   *     適用日までは旧契約の条件で計算が続き、適用日に日次ジョブが新しい版へ切り替える
+   *   ・まだ締結していない巻き直し先を巻き直すと「やり直し」：新契約は元の旧契約を直接置き換える
    */
-  async repaper(id: number, input: RepaperInput, actor: string): Promise<RepaperResult> {
+  async repaper(id: number, input: RepaperInput, actor: string, deps: RepaperDeps = {}): Promise<RepaperResult> {
     try {
       return await inTransaction(this.database, async (client) => {
         const cur = await client.query(
@@ -499,7 +581,19 @@ export class AgreementService {
 
         let movedConditions = 0, movedChildren = 0;
         let conditionIds: number[] = [];
-        if (input.carryOver !== false) {
+        // 適用日が先：条件明細は移さず、適用日からの改訂として新契約に予約する。いまの版・下の個別契約は旧契約に残る
+        // （適用日までは旧契約の条件で計算が続き、適用日に新しい版へ切り替わる）。
+        // やり直し（途中の契約を立て直す）は、途中の契約に載っているものをそのまま新契約へ移す。
+        const effectiveOn = input.effectiveOn ?? executedOn;
+        const todayIs = String(((await client.query("SELECT current_date::text AS d")).rows[0] as { d: string }).d);
+        let forward: ForwardCarry | null = null;
+        if (input.carryOver !== false && !origin && effectiveOn && effectiveOn > todayIs && deps.scheduleRevision) {
+          forward = await this.carryForward(client, {
+            from: id, to: newId, on: effectiveOn, termEnd: input.expiresOn ?? null,
+            why: `${reason}（${agreementNo ?? `#${newId}`}。適用日 ${effectiveOn}）`
+          }, actor, deps.scheduleRevision);
+          conditionIds = forward.scheduled.map((x) => x.id);
+        } else if (input.carryOver !== false) {
           await noteAgreementChange(client, actor, `${reason}（${agreementNo ?? `#${newId}`} へ引き継ぎ）`);
           const kids = await client.query(
             `UPDATE agreements SET parent_id = $2, updated_at = now()
@@ -537,10 +631,104 @@ export class AgreementService {
         await recordAudit(client, {
           actor, action: "agreement.repaper", targetType: "agreement", targetId: newId,
           detail: { replaces: replacesId, oldNo: replacedNo ?? null, agreementNo, reason, carryOver: input.carryOver !== false,
-                    movedConditions, movedChildren, executedOn, toMaster, conditionIds, ...(redo ? { redo } : {}) }
+                    movedConditions, movedChildren, executedOn, toMaster, conditionIds, ...(redo ? { redo } : {}),
+                    ...(forward ? { forward: { on: forward.on, scheduled: forward.scheduled.length, skipped: forward.skipped.length } } : {}) }
         });
         return { id: newId, agreementNo, oldNo: str(replacedNo), movedConditions, movedChildren,
-                 oldClosed: Boolean(executedOn), kind: newKind, domain: newDomain, conditionIds, redo };
+                 oldClosed: Boolean(executedOn), kind: newKind, domain: newDomain, conditionIds, redo, forward };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 適用日からの改訂として引き継ぐ。from（と、その下の個別契約。発注書の器は除く）に載っている「いまの版」のうち、
+   * 適用日以降も続くものについて、適用日からの版を予約する。
+   *
+   *   ・予約した版：許諾開始（契約期間の開始）＝適用日、終了＝渡した終了日（無ければ、適用日より後まで続く
+   *     いまの終了日。それも無ければ空）。載せる先は to（渡さなければ、いまの版と同じ契約）。
+   *   ・いまの版：keepOn を渡せばそこへ移す（あとから合わせるとき、旧契約へ戻す）。渡さなければ動かさない。
+   *   ・見送るもの：もう改訂が予定されている／適用日より前に期間が終わる（自動更新でない）／適用日より前に済む取引。
+   */
+  private async carryForward(
+    client: Queryable,
+    input: { from: number; to?: number | null; keepOn?: number | null; on: string; termEnd: string | null; why: string },
+    actor: string, schedule: ScheduleRevision
+  ): Promise<ForwardCarry> {
+    const rows = (await client.query(
+      `SELECT c.id, c.condition_no, c.name, c.kind, c.term_end::text AS term_end,
+              (c.term_end IS NOT NULL AND c.term_end > $2::date) AS runs_past,
+              (c.term_end IS NOT NULL AND c.term_end < $2::date - 1 AND c.auto_renew IS NOT TRUE) AS ended,
+              (c.kind <> 'license' AND (
+                 (EXISTS (SELECT 1 FROM condition_schedules s WHERE s.condition_id = c.id)
+                  AND NOT EXISTS (SELECT 1 FROM condition_schedules s WHERE s.condition_id = c.id AND s.due_on >= $2::date))
+                 OR (NOT EXISTS (SELECT 1 FROM condition_schedules s WHERE s.condition_id = c.id)
+                     AND c.delivery_due IS NOT NULL AND c.delivery_due < $2::date))) AS done,
+              EXISTS (SELECT 1 FROM conditions x
+                       WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id) AND x.status = 'scheduled' AND x.id <> c.id) AS pending
+         FROM conditions c
+        WHERE c.status = 'active'
+          AND c.agreement_id IN (SELECT $1::bigint UNION ALL
+                                 SELECT k.id FROM agreements k
+                                  WHERE k.parent_id = $1 AND k.kind = 'supplement'
+                                    AND k.terminated_on IS NULL AND k.order_document_id IS NULL)
+        ORDER BY c.id FOR UPDATE OF c`, [input.from, input.on])).rows as Array<Record<string, any>>;
+    const out: ForwardCarry = { on: input.on, scheduled: [], skipped: [] };
+    for (const c of rows) {
+      const reason = c.pending ? "もう改訂が予定されています"
+        : c.ended ? "適用日より前に期間が終わります"
+        : c.done ? "適用日より前に済む取引です" : null;
+      if (reason) {
+        out.skipped.push({ conditionNo: str(c.condition_no), name: String(c.name ?? ""), reason });
+        continue;
+      }
+      const made = await schedule(client, Number(c.id), {
+        termStart: input.on,
+        termEnd: input.termEnd ?? (c.runs_past ? String(c.term_end) : null),
+        ...(input.to ? { agreementId: input.to } : {})
+      }, input.on, actor, input.why);
+      if (input.keepOn) {
+        await client.query("UPDATE conditions SET agreement_id = $2, updated_at = now() WHERE id = $1", [c.id, input.keepOn]);
+      }
+      out.scheduled.push({ id: made.id, conditionNo: made.conditionNo, fromId: Number(c.id), fromNo: str(c.condition_no) });
+    }
+    return out;
+  }
+
+  /**
+   * あとから合わせる：巻き直した新契約（適用日が先）の下に「いまの版」の条件明細が載っているとき
+   * （適用日の前に、条件を新契約へ移してしまった）、適用日からの改訂にする。
+   *   ・適用日からの版を予約する（新契約の下の、いま載っている契約にそのまま）
+   *   ・いまの版は旧契約へ戻す（適用日までは旧契約の条件）
+   */
+  async align(id: number, actor: string, deps: RepaperDeps): Promise<AlignResult> {
+    if (!deps.scheduleRevision) throw new DomainError("CONFLICT", "条件明細の改訂を予約できません");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const a = (await client.query(
+          `SELECT a.id, a.agreement_no, a.effective_on::text AS effective_on, a.expires_on::text AS expires_on,
+                  (a.effective_on > current_date) AS later,
+                  o.id AS old_id, o.agreement_no AS old_no,
+                  (o.terminated_on IS NOT NULL AND o.terminated_on <= current_date) AS old_over
+             FROM agreements a JOIN agreements o ON o.id = a.replaces_id WHERE a.id = $1 FOR UPDATE OF a`, [id])).rows[0] as any;
+        if (!a) throw new DomainError("VALIDATION", "巻き直した契約（旧契約を置き換えた契約）ではありません");
+        if (!a.effective_on || !a.later) throw new DomainError("VALIDATION", "適用日（有効期間の開始）が先の契約だけが対象です。先に適用日を入れてください");
+        if (a.old_over) throw new DomainError("CONFLICT", `旧契約 ${a.old_no ?? `#${a.old_id}`} はもう終了しています`);
+        const why = `適用日（${a.effective_on}）からの改訂にする（${a.agreement_no ?? `#${id}`}。いまの版は ${a.old_no ?? `#${a.old_id}`} へ）`;
+        await noteAgreementChange(client, actor, why);
+        const forward = await this.carryForward(client, {
+          from: id, keepOn: Number(a.old_id), on: String(a.effective_on), termEnd: str(a.expires_on), why
+        }, actor, deps.scheduleRevision!);
+        if (!forward.scheduled.length) {
+          throw new DomainError("VALIDATION", forward.skipped.length
+            ? `改訂にできる条件明細がありません（${forward.skipped.map((x) => `${x.conditionNo ?? x.name}：${x.reason}`).join("／")}）`
+            : "この契約の下に、いま有効な条件明細がありません");
+        }
+        await recordAudit(client, {
+          actor, action: "agreement.repaper_align", targetType: "agreement", targetId: id,
+          detail: { on: forward.on, oldId: Number(a.old_id), oldNo: a.old_no ?? null,
+                    scheduled: forward.scheduled, skipped: forward.skipped }
+        });
+        return { on: forward.on, oldNo: str(a.old_no), forward, conditionIds: forward.scheduled.map((x) => x.id) };
       });
     } catch (error) { throw translate(error); }
   }

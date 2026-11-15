@@ -88,7 +88,7 @@ export async function ensureAgreementForTerms(
   const conds = await client.query(
     `SELECT c.id, c.counterparty_id, c.direction, c.agreement_id, a.kind AS agreement_kind,
             a.parent_id AS agreement_parent, a.agreement_no AS agreement_no,
-            a.order_document_id AS agreement_order, w.title AS work_title
+            a.order_document_id AS agreement_order, w.title AS work_title, c.term_start::text AS term_start
        FROM conditions c
        LEFT JOIN agreements a ON a.id = c.agreement_id
        LEFT JOIN works w ON w.id = c.work_id
@@ -133,7 +133,11 @@ export async function ensureAgreementForTerms(
     if (parents.length > 1) return null;   // 基本契約が2本 → 人が決める
   }
 
-  const today = input.issuedOn ?? new Date().toISOString().slice(0, 10);
+  // 個別契約の適用日は決定の日。載せた条件がどれも先の日から始まる（適用日が先の巻き直しで予約した版）なら、
+  // そのいちばん早い開始日（条件書の許諾開始日と同じ日）。
+  const issued = input.issuedOn ?? new Date().toISOString().slice(0, 10);
+  const starts = rows.map((r) => str(r.term_start)).filter((x): x is string => Boolean(x)).sort();
+  const today = starts.length === rows.length && starts[0]! > issued ? starts[0]! : issued;
   const workTitle = str(rows[0].work_title);
   const title = `${input.templateLabel}${workTitle ? `（${workTitle}）` : ""}${payeeId ? "（共著の取り分）" : ""}`;
 
