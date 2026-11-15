@@ -93,6 +93,17 @@ function counterpartyOf(row: Record<string, any>) {
   };
 }
 
+/**
+ * 受取人が、載せた条件すべての相手先（代表）その人か。そのときは受取人宛ての紙にしない（相手先宛ての紙と同じ）。
+ * 条件書の受取人の欄には取り分に入っている人が並ぶので、代表（相手先）も選べてしまう。
+ */
+export function isCounterpartyOfAll(
+  conditions: Array<{ counterpartyId?: number | null }>, payeePartyId: number | null | undefined
+): boolean {
+  return Boolean(payeePartyId) && conditions.length > 0
+    && conditions.every((c) => Number(c.counterpartyId) === Number(payeePartyId));
+}
+
 export class DocumentContextRepository {
   constructor(private readonly database: Transactable) {}
 
@@ -106,26 +117,30 @@ export class DocumentContextRepository {
       // 受取人は載せた条件すべての取り分に入っていること（入っていない人に紙を出さない）。
       // ただし受取人が相手先の条件（その人単独の作品）は、取り分が無くても載せてよい（人ごとに 1 枚）。
       let payee: { partyId: number; name: string } | null = null;
-      if (input.payeePartyId) {
-        const found = await this.partyOnly(client, input.payeePartyId);
-        if (!found) throw new DomainError("NOT_FOUND", `受取人 ${input.payeePartyId} が見つかりません`);
+      // 受取人に、条件の相手先（代表）その人を選んだときは、受取人宛てにしない。ふつうの相手先宛ての紙になる
+      // （料率は全体で書き、取り分は備考に出す）。受取人宛てのままにすると、料率の欄が作品ごとの取り分に
+      // なり（作品ごとに番号の条件書では料率が空欄になる）、備考の取り分も出なかった。
+      const payeePartyId = isCounterpartyOfAll(conditions, input.payeePartyId) ? null : input.payeePartyId ?? null;
+      if (payeePartyId) {
+        const found = await this.partyOnly(client, payeePartyId);
+        if (!found) throw new DomainError("NOT_FOUND", `受取人 ${payeePartyId} が見つかりません`);
         for (const c of conditions) {
           const label = c.conditionNo ?? `#${c.id}`;
-          if (!c.shares.length && c.counterpartyId === input.payeePartyId) continue;
+          if (!c.shares.length && c.counterpartyId === payeePartyId) continue;
           if (!c.shares.length) {
             throw new DomainError("VALIDATION", `条件 ${label} には取り分がありません。受取人は条件の相手先です`);
           }
-          if (!c.shares.some((s) => s.partyId === input.payeePartyId)) {
+          if (!c.shares.some((s) => s.partyId === payeePartyId)) {
             throw new DomainError("VALIDATION", `受取人は条件 ${label} の取り分にありません`);
           }
-          c.counterpartyId = input.payeePartyId;
+          c.counterpartyId = payeePartyId;
           c.counterparty = found.counterparty;
         }
-        payee = { partyId: input.payeePartyId, name: found.counterparty.name };
+        payee = { partyId: payeePartyId, name: found.counterparty.name };
       }
       // 受取人宛ての文書は、条件の相手先（代表）の契約を継がない。基本契約は人が受取人の
       // ものを選ぶ（選ばなければ基本契約なし）。
-      const agreementId = input.agreementId ?? (input.payeePartyId ? null : conditions[0]?.agreementId ?? null);
+      const agreementId = input.agreementId ?? (payeePartyId ? null : conditions[0]?.agreementId ?? null);
       // 案件は文書に指定されていなくても、条件から辿れば分かる。
       // 辿らないと担当者（検収者）と件名が空のままになり、案件を指定して
       // 作ったときだけ埋まる、という不揃いな画面になっていた。

@@ -487,3 +487,15 @@ test("作品ごとに番号を持つ条件書：頭書きの番号は「最小�
   assert.equal(termsNoRange(["ARC-PUBT-2026-0012"]), "ARC-PUBT-2026-0012");
   assert.equal(termsNoRange([]), "");
 });
+
+test("条件書の受取人：載せた条件すべての相手先（代表）その人なら、受取人宛てにしない", async () => {
+  const { isCounterpartyOfAll } = await import("./context-repository.js");
+  const conds = [{ counterpartyId: 800 }, { counterpartyId: 800 }];
+  assert.equal(isCounterpartyOfAll(conds, 800), true);
+  // 共著者（取り分に入っている別の人）は受取人宛てのまま。
+  assert.equal(isCounterpartyOfAll(conds, 801), false);
+  // 受取人が一部の条件の相手先（その人単独の作品が混ざる紙）は、受取人宛てのまま。
+  assert.equal(isCounterpartyOfAll([{ counterpartyId: 800 }, { counterpartyId: 801 }], 801), false);
+  assert.equal(isCounterpartyOfAll(conds, null), false);
+  assert.equal(isCounterpartyOfAll([], 800), false);
+});
