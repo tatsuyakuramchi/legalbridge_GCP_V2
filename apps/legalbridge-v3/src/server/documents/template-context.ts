@@ -1495,7 +1495,7 @@ export function suggestionsFor(
 export function templateWarnings(templateKey: string, context: Ctx, manual: Record<string, unknown> = {}): Warning[] {
   if (isPubTermsTemplate(templateKey)) {
     return isPubTermsMulti(templateKey)
-      ? [...pubTermsWarnings(context, templateKey), ...pubTermsMultiWarnings(context)]
+      ? [...pubTermsWarnings(context, templateKey), ...pubTermsMultiWarnings(context, manual)]
       : pubTermsWarnings(context, templateKey);
   }
   if (templateKey === "intl_purchase_order") return intlCompanyWarnings(context);

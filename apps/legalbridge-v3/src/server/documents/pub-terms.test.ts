@@ -469,11 +469,21 @@ test("行に控えた条件 id が無くなっていても（改訂・重複の�
   assert.equal(row.printRate, "10%");
 });
 
-test("作品ごとに番号を持つ条件書：番号の範囲は続いていれば「〜」、飛んでいれば「・」", async () => {
-  const { termsNoRange } = await import("./pub-terms.js");
+test("作品ごとに番号を持つ条件書：頭書きの番号は「最小〜最大」でまとめ、飛んでいる番号は別に分かる", async () => {
+  const { termsNoRange, termsNoGaps } = await import("./pub-terms.js");
   assert.equal(termsNoRange(["ARC-PUBT-2026-0014", "ARC-PUBT-2026-0012", "ARC-PUBT-2026-0013"]), "ARC-PUBT-2026-0012〜0014");
   assert.equal(termsNoRange(["ARC-PUBT-2026-0030", "ARC-PUBT-2026-0031"]), "ARC-PUBT-2026-0030〜0031");
-  assert.equal(termsNoRange(["ARC-PUBT-2026-0012", "ARC-PUBT-2026-0026"]), "ARC-PUBT-2026-0012・ARC-PUBT-2026-0026");
+  // 途中が飛んでいても 1 つの範囲にする（頭書きが 2 行にならないように）。
+  assert.equal(termsNoRange(["ARC-PUBT-2026-0012", "ARC-PUBT-2026-0026"]), "ARC-PUBT-2026-0012〜0026");
+  assert.equal(termsNoRange(["ARC-PUBT-2026-0029", "ARC-PUBT-2026-0012", "ARC-PUBT-2026-0014", "ARC-PUBT-2026-0013", "ARC-PUBT-2026-0017"]),
+    "ARC-PUBT-2026-0012〜0029");
+  // 頭が違う番号が混ざるときは並べる。
+  assert.equal(termsNoRange(["ARC-PUBT-2026-0012", "ARC-PUBT-2027-0001"]), "ARC-PUBT-2026-0012・ARC-PUBT-2027-0001");
+  // この紙に載っていない番号。
+  assert.deepEqual(termsNoGaps(["ARC-PUBT-2026-0012", "ARC-PUBT-2026-0013", "ARC-PUBT-2026-0014", "ARC-PUBT-2026-0017"]),
+    ["ARC-PUBT-2026-0015", "ARC-PUBT-2026-0016"]);
+  assert.deepEqual(termsNoGaps(["ARC-PUBT-2026-0012", "ARC-PUBT-2026-0013"]), []);
+  assert.deepEqual(termsNoGaps(["ARC-PUBT-2026-0012", "ARC-PUBT-2027-0001"]), []);
   assert.equal(termsNoRange(["ARC-PUBT-2026-0012"]), "ARC-PUBT-2026-0012");
   assert.equal(termsNoRange([]), "");
 });

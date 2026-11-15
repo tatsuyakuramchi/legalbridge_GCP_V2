@@ -893,6 +893,8 @@ export const MULTI_DEFAULTS = {
 /** 作品ごとに番号を持つ条件書の項目（一覧形式の項目に足す）。初期値は v4 の文言。 */
 export const PUB_TERMS_MULTI_EXTRA_VARIABLES: TemplateVariable[] = [
   { name: "締結日", label: "締結日（空なら「年　月　日」の空欄で出る）", type: "date", group: "I. 基本情報", noGuess: true },
+  { name: "個別利用許諾番号", label: "個別利用許諾番号（頭書き）", group: "I. 基本情報", noGuess: true,
+    helpText: "空なら、載せた作品の番号を「最小〜最大」でまとめます（例：ARC-PUBT-2026-0012〜0029）。途中の番号を分けて書くときはここに入れます（例：ARC-PUBT-2026-0012〜0014・0017〜0027・0029）" },
   { name: "副題", label: "副題（タイトルの右。例：1通目／神我狩シリーズ）", group: "I. 基本情報", noGuess: true },
   { name: "前文の追記", label: "前文の追記（点数のあとに続ける文）", type: "textarea", group: "I. 基本情報", noGuess: true,
     default: MULTI_DEFAULTS.preambleExtra },
@@ -910,20 +912,39 @@ export const PUB_TERMS_MULTI_EXTRA_VARIABLES: TemplateVariable[] = [
     type: "textarea", group: "VI. 特記事項", noGuess: true }
 ];
 
-/** 番号の範囲（ARC-PUBT-2026-0012〜0029）。続いていなければ「・」で並べる。 */
+/** 頭が同じ番号の並び（ARC-PUBT-2026-0012 …）を、末尾の数字の順に。頭が違う・数字で終わらない番号が混ざれば null。 */
+function numberedRun(nos: string[]): Array<{ n: string; head: string; digits: string; num: number }> | null {
+  const list = [...new Set(nos.map((n) => n.trim()).filter(Boolean))];
+  const parsed = list.map((n) => ({ n, m: n.match(/^(.*-)(\d+)$/) }));
+  if (!parsed.length || !parsed.every((p) => p.m) || new Set(parsed.map((p) => p.m![1])).size !== 1) return null;
+  return parsed.map((p) => ({ n: p.n, head: p.m![1]!, digits: p.m![2]!, num: Number(p.m![2]) })).sort((a, b) => a.num - b.num);
+}
+
+/**
+ * 頭書きの番号。載せた作品の番号を「最小〜最大」でまとめる（ARC-PUBT-2026-0012〜0029）。
+ * 途中の番号が飛んでいても 1 つの範囲にする（15 個を「・」で並べると頭書きが 2 行になる）。飛んでいる番号は
+ * termsNoGaps で分かるので、画面の注意に出す。頭が違う番号が混ざるときだけ「・」で並べる。
+ */
 export function termsNoRange(nos: string[]): string {
   const list = [...new Set(nos.map((n) => n.trim()).filter(Boolean))];
   if (!list.length) return "";
-  const parsed = list.map((n) => ({ n, m: n.match(/^(.*-)(\d+)$/) }));
-  if (parsed.every((p) => p.m) && new Set(parsed.map((p) => p.m![1])).size === 1) {
-    const sorted = [...parsed].sort((a, b) => Number(a.m![2]) - Number(b.m![2]));
-    const nums = sorted.map((p) => Number(p.m![2]));
-    const contiguous = nums.every((v, i) => i === 0 || v === nums[i - 1]! + 1);
-    if (sorted.length === 1) return sorted[0]!.n;
-    if (contiguous) return `${sorted[0]!.n}〜${sorted[sorted.length - 1]!.m![2]}`;
-    return sorted.map((p) => p.n).join("・");
+  const run = numberedRun(list);
+  if (!run) return list.join("・");
+  if (run.length === 1) return run[0]!.n;
+  return `${run[0]!.n}〜${run[run.length - 1]!.digits}`;
+}
+
+/** 「最小〜最大」の範囲に入るが、この紙に載っていない番号（ARC-PUBT-2026-0015 …）。 */
+export function termsNoGaps(nos: string[]): string[] {
+  const run = numberedRun(nos);
+  if (!run || run.length < 2) return [];
+  const have = new Set(run.map((r) => r.num));
+  const width = run[0]!.digits.length;
+  const out: string[] = [];
+  for (let v = run[0]!.num + 1; v < run[run.length - 1]!.num && out.length < 200; v += 1) {
+    if (!have.has(v)) out.push(`${run[0]!.head}${String(v).padStart(width, "0")}`);
   }
-  return list.join("・");
+  return out;
 }
 
 const lines = (v: string) => v.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
@@ -943,7 +964,8 @@ function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]
   const coAuthor = lines(pick("共著者分の支払"));
   const prior = lines(pick("旧合意"));
   return {
-    termsNoRange: termsNoRange(nos),
+    // 頭書きの番号。欄に入れたらそのまま、空なら載せた作品の番号を「最小〜最大」でまとめる。
+    termsNoRange: pick("個別利用許諾番号").trim() || termsNoRange(nos),
     // 締結日は欄に入れたときだけ（Word と同じく、署名の前の紙は「2026年　　月　　日」）。決定日では埋めない。
     multiSignDate: pick("締結日"),
     // 締結日が空のとき（締結の前に出す紙）、ヘッダは「2026年　　月　　日」と年だけ入れる（Word と同じ）。
@@ -968,7 +990,7 @@ function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]
 }
 
 /** 作品ごとに番号を持つ条件書だけの警告（料率・期間がそろっているか、番号・按分）。 */
-export function pubTermsMultiWarnings(context: Data): Warning[] {
+export function pubTermsMultiWarnings(context: Data, manual: Data = {}): Warning[] {
   const out: Warning[] = [];
   const patch = pubTermsPatch(context, {});
   const titles = list(patch.titles);
@@ -981,6 +1003,16 @@ export function pubTermsMultiWarnings(context: Data): Warning[] {
   if (terms.length > 1) out.push({ kind: "other", message: `許諾期間が作品で違います（${terms.length} 通り）。期間ごとに紙を分けてください` });
   const missing = titles.filter((t) => !text(t.termsNo)).map((t) => text(t.title));
   if (missing.length) out.push({ kind: "other", message: `作品の個別契約がまだ無い作品があります（${missing.slice(0, 5).join("・")}${missing.length > 5 ? ` ほか ${missing.length - 5}` : ""}）。決定のときに作品ごとに個別利用許諾番号を振ります` });
+  // 頭書きの番号は「最小〜最大」でまとめる。途中に、この紙に載っていない番号があれば知らせる
+  // （欄に書いてあれば、書いたとおりに出るので知らせない）。
+  const headNo = text(manual["個別利用許諾番号"] ?? "").trim();
+  const gaps = headNo ? [] : termsNoGaps(titles.map((t) => text(t.termsNo)).filter(Boolean));
+  if (gaps.length) {
+    const tail = (n: string) => n.match(/(\d+)$/)?.[1] ?? n;
+    out.push({ kind: "other", message: `頭書きの個別利用許諾番号は「${text(patch.termsNoRange)}」とまとめています。`
+      + `この範囲のうち ${gaps.slice(0, 8).map(tail).join("・")}${gaps.length > 8 ? ` ほか ${gaps.length - 8}` : ""} はこの紙に載っていません。`
+      + "分けて書くなら「個別利用許諾番号（頭書き）」の欄に入れてください" });
+  }
   // 按分（共著の取り分）と著作権表示の食い違い。
   for (const t of titles) {
     if (t.shareMissing) out.push({ kind: "other", message: `${text(t.title)}：按分に許諾者の取り分がありません（備考は「取り分 0%」で出ます）。按分の相手先を確かめてください` });
