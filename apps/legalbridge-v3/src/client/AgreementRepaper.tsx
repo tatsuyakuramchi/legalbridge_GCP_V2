@@ -3,7 +3,7 @@ import { api, ApiError } from "./api.js";
 import { Modal } from "./Modal.js";
 import { DOMAIN_OPTIONS } from "./agreement-domains.js";
 import { useMapLinks } from "./mapLinks.js";
-import type { AlignResult, ForwardCarry, RepaperLinks, RepaperResult, StalePaper } from "../server/agreements/service.js";
+import type { AlignResult, ForwardCarry, RepaperLinks, RepaperResult, StalePaper, TermsRepaperPlan, TermsRepaperResult } from "../server/agreements/service.js";
 
 const todayStr = () => {
   const d = new Date();
@@ -68,7 +68,7 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   /** 新契約の契約書をひな形で作る（文書の画面へ）。無ければ出さない。 */
   onComposeContract?: (agreement: { id: number; label: string }, partyId: number, templateKey: string) => void;
   /** 引き継いだ条件明細で、条件書・発注書を作る（作業テーブルへ）。無ければ出さない。 */
-  onComposeTerms?: (conditionIds: number[]) => void;
+  onComposeTerms?: (conditionIds: number[], templateKey?: string | null) => void;
 }) {
   // 行き先は、渡されなければ App が配る道（mapLinks）を使う（契約の画面・表・工程表のどこから開いても同じ）。
   const links = useMapLinks();
@@ -93,6 +93,11 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<RepaperResult | null>(null);
+  /**
+   * 何を巻き直すか。contract＝契約ごと（新しい契約を立てて置き換える）／terms＝条件書だけ（契約はそのまま、
+   * 下の条件明細で新しい条件書を出す）。
+   */
+  const [scope, setScope] = useState<"contract" | "terms">("contract");
   // やり直し：この契約が、まだ締結していない巻き直し先のとき。新契約は元の旧契約を直接置き換える。
   const [redoOf, setRedoOf] = useState<string | null>(null);
   useEffect(() => {
@@ -238,9 +243,32 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
     );
   }
 
+  const scopeChooser = (
+    <div className="fld">
+      <span>何を巻き直しますか</span>
+      <div className="chips" role="radiogroup" aria-label="何を巻き直すか">
+        <button type="button" className="chip" role="radio" aria-checked={scope === "contract"} aria-pressed={scope === "contract"}
+                onClick={() => setScope("contract")}>{standalone ? "契約ごと" : "基本契約ごと"}（新しい契約を立てる）</button>
+        <button type="button" className="chip" role="radio" aria-checked={scope === "terms"} aria-pressed={scope === "terms"}
+                onClick={() => setScope("terms")}>条件書だけ（{standalone ? "契約" : "基本契約"}はそのまま）</button>
+      </div>
+    </div>
+  );
+  if (scope === "terms") {
+    return (
+      <Modal title={`${oldNo} の条件書を巻き直す（${standalone ? "契約" : "基本契約"}はそのまま）`} onClose={onClose} wide>
+        <div className="stack" style={{ gap: 10 }}>
+          {scopeChooser}
+          <TermsRepaper target={target} onClose={onClose} onComposeTerms={onComposeTerms} />
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal title={`${oldNo} を巻き直す（新しい契約で置き換える）`} onClose={onClose}>
       <div className="stack" style={{ gap: 10 }}>
+        {scopeChooser}
         {redoOf && (
           <div className="note" role="note">
             <b>やり直しになります。</b>この契約（<span className="code">{oldNo}</span>）は、<span className="code">{redoOf}</span> の巻き直し先で、まだ締結していません。
@@ -324,6 +352,187 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
         </div>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * 条件書だけの巻き直し（基本契約はそのまま）。
+ *
+ * 契約（と下の個別契約）に載っている条件明細を選び、新しい条件書を出し直す。契約ごとの巻き直しと同じく、
+ * 適用日が先なら、選んだ条件明細を「適用日からの改訂」として予約し、その版で条件書を作る
+ * （いまの版は適用日まで有効）。適用日が空・今日以前なら、条件明細は変えず、紙だけ出し直す。
+ * 出版の条件が 2 作品以上なら、作品ごとに番号を持つ条件書 1 枚にまとめる（決定すると旧条件書は差し替え済みになる）。
+ */
+function TermsRepaper({ target, onClose, onComposeTerms }: {
+  target: RepaperTarget; onClose: () => void;
+  onComposeTerms?: (conditionIds: number[], templateKey?: string | null) => void;
+}) {
+  const mapLinks = useMapLinks();
+  const [plan, setPlan] = useState<TermsRepaperPlan | null>(null);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [effectiveOn, setEffectiveOn] = useState("");
+  const [expiresOn, setExpiresOn] = useState("");
+  const [reason, setReason] = useState("条件書の巻き直し");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<TermsRepaperResult | null>(null);
+  const [drafts, setDrafts] = useState<Record<number, number>>({});
+  useEffect(() => {
+    let alive = true;
+    api.get<TermsRepaperPlan>(`/agreements/${target.id}/repaper/terms`)
+      .then((p) => { if (alive) { setPlan(p); setPicked(new Set(p.conditions.map((c) => c.id))); } })
+      .catch((e) => { if (alive) setError((e as ApiError).message); });
+    return () => { alive = false; };
+  }, [target.id]);
+
+  if (!plan) return error ? <div className="alert">{error}</div> : <div className="faint">読み込んでいます…</div>;
+  const forward = effectiveOn !== "" && effectiveOn > plan.today;
+  const chosen = plan.conditions.filter((c) => picked.has(c.id));
+  const works = new Set(chosen.map((c) => c.workId ?? `c${c.id}`)).size;
+  const toggle = (id: number) => setPicked((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  /** 個別契約ごとにまとめて選ぶ・外す。 */
+  const holders = [...new Map(plan.conditions.map((c) => [c.holderId, c])).values()];
+  const toggleHolder = (holderId: number) => {
+    const ids = plan.conditions.filter((c) => c.holderId === holderId).map((c) => c.id);
+    const all = ids.every((id) => picked.has(id));
+    setPicked((prev) => { const n = new Set(prev); for (const id of ids) { if (all) n.delete(id); else n.add(id); } return n; });
+  };
+
+  async function go() {
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<TermsRepaperResult>(`/agreements/${target.id}/repaper/terms`, {
+        conditionIds: [...picked], effectiveOn: effectiveOn || null, expiresOn: forward ? (expiresOn || null) : null,
+        reason: reason.trim() || null
+      });
+      setResult(r);
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+  async function revise(paper: TermsRepaperResult["papers"][number]) {
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ id: number }>(`/documents/${paper.id}/reissue`,
+        { reason: reason.trim() || "条件書の巻き直し", conditionIds: paper.conditionIds });
+      setDrafts((d) => ({ ...d, [paper.id]: r.id }));
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+
+  if (result) {
+    const n = result.conditionIds.length;
+    return (
+      <div className="stack" style={{ gap: 10 }}>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          {result.forward
+            ? <ForwardSummary forward={result.forward} />
+            : <li>条件明細は変えていません。選んだ {n} 本のまま、条件書を出し直します。</li>}
+        </ul>
+        <b>次に、新しい条件書を作ります</b>
+        {onComposeTerms && (
+          <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button className="btn primary" disabled={busy}
+                    onClick={() => { onClose(); onComposeTerms(result.conditionIds, result.templateKey); }}>
+              {result.templateKey
+                ? `1 枚の条件書にまとめて作る（作品ごとに番号・条件 ${n} 本）`
+                : `条件書を作る（作業テーブルへ・条件 ${n} 本）`}</button>
+            <small className="faint">
+              条件 {n} 本を載せた状態で作業テーブルが開きます
+              {result.templateKey ? "。決定すると、載せた作品の旧条件書は自動で「差し替え済み」になり、作品ごとの番号はそのまま残ります" : ""}
+            </small>
+          </div>
+        )}
+        {result.papers.length > 0 && result.papers.length <= 5 && (
+          <div className="stack" style={{ gap: 6 }}>
+            <span className="faint">または、いまの条件書の訂正版として出す（同じ番号に -R2。元の条件書は決定で「訂正済み」）：</span>
+            {result.papers.map((paper) => {
+              const draftId = drafts[paper.id];
+              return (
+                <div key={paper.id} className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <span className="code">{paper.documentNo ?? `#${paper.id}`}</span>
+                  <span className="faint">{paper.label}・条件 {paper.conditionIds.length} 本</span>
+                  {draftId
+                    ? (mapLinks.document
+                        ? <button className="btn" onClick={() => { onClose(); mapLinks.document!(draftId); }}>訂正版の下書き（#{draftId}）を開く</button>
+                        : <span>訂正版の下書き（#{draftId}）を作りました（文書の画面で開けます）</span>)
+                    : <button className="btn" disabled={busy} onClick={() => void revise(paper)}>訂正版を作る</button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {error && <div className="alert">{error}</div>}
+        <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn" onClick={onClose}>閉じる</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <ul className="faint" style={{ margin: 0, paddingLeft: 18 }}>
+        <li>契約はそのままです。下の条件明細を選んで、新しい条件書を出し直します。</li>
+        <li>適用日を先の日付にすると、選んだ条件明細を「適用日からの改訂」として予約し、その版で条件書を作ります（いまの版は適用日まで有効）。</li>
+        <li>適用日が空・今日以前なら、条件明細は変えません（紙だけ出し直します）。</li>
+      </ul>
+      <div className="grid4">
+        <label className="fld"><span>適用日</span>
+          <input type="date" value={effectiveOn} onChange={(e) => setEffectiveOn(e.target.value)} />
+          <small>{forward ? `${effectiveOn} からの改訂を予約します` : "空なら、条件明細はそのまま"}</small></label>
+        <label className="fld"><span>新しい期間の終了</span>
+          <input type="date" value={forward ? expiresOn : ""} disabled={!forward} min={effectiveOn || undefined}
+                 onChange={(e) => setExpiresOn(e.target.value)} />
+          <small>{forward ? "空なら、いまの終了日（適用日より後まで続くとき）" : "適用日が先のときだけ"}</small></label>
+        <label className="fld" style={{ gridColumn: "span 2" }}><span>理由（履歴に残ります）</span>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+      </div>
+      <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <b>載せる条件明細</b>
+        <span className="faint">{chosen.length} 本を選択（{works} 作品）／全 {plan.conditions.length} 本</span>
+        <button className="btn btn-sm" onClick={() => setPicked(new Set(plan.conditions.map((c) => c.id)))}>すべて選ぶ</button>
+        <button className="btn btn-sm" onClick={() => setPicked(new Set())}>すべて外す</button>
+      </div>
+      {plan.conditions.length === 0
+        ? <div className="note">この契約の下に、いま有効なライセンスの条件明細がありません。</div>
+        : (
+          <div className="tablewrap" style={{ maxHeight: 320, overflow: "auto" }}>
+            <table>
+              <thead><tr><th></th><th>個別契約</th><th>条件番号</th><th>条件名</th><th>期間</th><th>料率</th><th></th></tr></thead>
+              <tbody>
+                {holders.map((h) => {
+                  const rows = plan.conditions.filter((c) => c.holderId === h.holderId);
+                  return rows.map((c, i) => (
+                    <tr key={c.id}>
+                      <td><input type="checkbox" checked={picked.has(c.id)} onChange={() => toggle(c.id)} aria-label={`${c.conditionNo ?? c.id} を載せる`} /></td>
+                      <td>{i === 0 && (
+                        <button className="linky code" title="この契約の条件をまとめて選ぶ・外す" onClick={() => toggleHolder(h.holderId)}>
+                          {c.onMaster ? "（契約に直接）" : c.holderNo ?? `#${c.holderId}`}</button>
+                      )}</td>
+                      <td className="code">{c.conditionNo ?? `#${c.id}`}</td>
+                      <td>{c.name}</td>
+                      <td className="faint">{c.termStart ?? "—"} 〜 {c.termEnd ?? "期限なし"}</td>
+                      <td className="faint">{c.ratePpm !== null ? `${c.ratePpm / 10000}%` : "—"}</td>
+                      <td>{c.pendingOn && <span className="tag" title="この条件明細には、もう改訂が予約されています">{c.pendingOn} の改訂あり</span>}</td>
+                    </tr>
+                  ));
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      {plan.papers.length > 0 && (
+        <small className="faint">
+          いまの条件書：{plan.papers.slice(0, 8).map((d) => d.documentNo ?? `#${d.id}`).join("・")}{plan.papers.length > 8 ? ` ほか ${plan.papers.length - 8} 枚` : ""}
+        </small>
+      )}
+      {error && <div className="alert">{error}</div>}
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn" onClick={onClose} disabled={busy}>やめる</button>
+        <button className="btn primary" disabled={busy || chosen.length === 0} onClick={() => void go()}>
+          {busy ? "用意しています…" : forward ? `${effectiveOn} からの改訂を予約して、条件書の作成へ` : "条件書の作成へ"}</button>
+      </div>
+    </div>
   );
 }
 
