@@ -4,7 +4,7 @@ import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import { termHistory, type TermEvent, type TermHistory, type TermInput } from "./term-history.js";
 import { agreementVersions, noteAgreementChange, type AgreementVersion } from "./versions.js";
-import { TERMS_TEMPLATE_KEYS } from "./auto.js";
+import { MULTI_TERMS_TEMPLATE_KEY, TERMS_TEMPLATE_KEYS } from "./auto.js";
 
 /**
  * 契約（合意）。
@@ -166,6 +166,43 @@ export type ScheduleRevision = (
   effectiveFrom: string, actor: string, why: string
 ) => Promise<{ id: number; conditionNo: string | null }>;
 export interface RepaperDeps { scheduleRevision?: ScheduleRevision }
+/**
+ * 条件書だけの巻き直し（基本契約はそのまま）。基本契約（と下の個別契約。発注書の器は除く）に載っている、
+ * いま有効な条件明細と、決定済みの条件書。
+ */
+export interface TermsRepaperPlan {
+  agreementId: number; agreementNo: string | null; today: string;
+  conditions: Array<{
+    id: number; conditionNo: string | null; name: string; workId: number | null; workTitle: string | null;
+    usageType: string | null; ratePpm: number | null; termStart: string | null; termEnd: string | null;
+    /** 載っている契約（個別契約。基本契約に直接なら onMaster）。 */
+    holderId: number; holderNo: string | null; onMaster: boolean;
+    /** もう予約されている改訂の適用日（あれば）。 */
+    pendingOn: string | null;
+  }>;
+  papers: Array<{ id: number; documentNo: string | null; templateKey: string; label: string; conditionIds: number[] }>;
+}
+export interface TermsRepaperInput {
+  conditionIds: number[];
+  /** 適用日。先の日付なら、選んだ条件明細を「適用日からの改訂」として予約する。空・今日以前なら条件明細は変えない。 */
+  effectiveOn?: string | null;
+  /** 適用日が先のときの、新しい版の終了日。空なら、いまの終了日（適用日より後まで続くとき）か、空。 */
+  expiresOn?: string | null;
+  reason?: string | null;
+}
+export interface TermsRepaperResult {
+  /** 新しい条件書に載せる条件明細（適用日が先なら予約した版、そうでなければ選んだ条件そのまま）。 */
+  conditionIds: number[];
+  forward: ForwardCarry | null;
+  /** 1 枚にまとめるひな形（出版の条件が 2 作品以上なら、作品ごとに番号の条件書）。無ければ作業テーブルで選ぶ。 */
+  templateKey: string | null;
+  /**
+   * 訂正版にできる条件書：載っている条件がすべて選ばれている、決定済みの条件書。
+   * conditionIds は、その紙に載せる条件（適用日が先なら予約した版）。
+   */
+  papers: Array<{ id: number; documentNo: string | null; templateKey: string; label: string; conditionIds: number[] }>;
+}
+
 /** あとから合わせる：巻き直した新契約の下にある「いまの版」を、適用日からの改訂にする。 */
 export interface AlignResult { on: string; oldNo: string | null; forward: ForwardCarry; conditionIds: number[] }
 export interface RepaperRef {
@@ -651,7 +688,9 @@ export class AgreementService {
    */
   private async carryForward(
     client: Queryable,
-    input: { from: number; to?: number | null; keepOn?: number | null; on: string; termEnd: string | null; why: string },
+    input: { from: number; to?: number | null; keepOn?: number | null; on: string; termEnd: string | null; why: string;
+             /** これだけを対象にする（条件書だけの巻き直しで、選んだ条件）。渡さなければ下にあるものすべて。 */
+             only?: number[] },
     actor: string, schedule: ScheduleRevision
   ): Promise<ForwardCarry> {
     const rows = (await client.query(
@@ -671,7 +710,8 @@ export class AgreementService {
                                  SELECT k.id FROM agreements k
                                   WHERE k.parent_id = $1 AND k.kind = 'supplement'
                                     AND k.terminated_on IS NULL AND k.order_document_id IS NULL)
-        ORDER BY c.id FOR UPDATE OF c`, [input.from, input.on])).rows as Array<Record<string, any>>;
+          AND ($3::bigint[] IS NULL OR c.id = ANY($3::bigint[]))
+        ORDER BY c.id FOR UPDATE OF c`, [input.from, input.on, input.only ?? null])).rows as Array<Record<string, any>>;
     const out: ForwardCarry = { on: input.on, scheduled: [], skipped: [] };
     for (const c of rows) {
       const reason = c.pending ? "もう改訂が予定されています"
@@ -692,6 +732,128 @@ export class AgreementService {
       out.scheduled.push({ id: made.id, conditionNo: made.conditionNo, fromId: Number(c.id), fromNo: str(c.condition_no) });
     }
     return out;
+  }
+
+  /** 条件書だけの巻き直しの材料：この契約（と下の個別契約）に載っている、いま有効な条件明細と決定済みの条件書。 */
+  async termsRepaperPlan(id: number, q: Queryable = this.database): Promise<TermsRepaperPlan> {
+    try {
+      const a = (await q.query(
+        `SELECT id, agreement_no, COALESCE(kind, 'master') AS kind, terminated_on, current_date::text AS today
+           FROM agreements WHERE id = $1`, [id])).rows[0] as any;
+      if (!a) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
+      if (a.kind !== "master" && a.kind !== "standalone") {
+        throw new DomainError("VALIDATION", "条件書を巻き直せるのは、基本契約か単体契約の画面からです");
+      }
+      if (a.terminated_on) throw new DomainError("CONFLICT", "この契約はもう終了しています");
+      const holders = `(SELECT $1::bigint UNION ALL
+                        SELECT k.id FROM agreements k
+                         WHERE k.parent_id = $1 AND k.kind = 'supplement'
+                           AND k.terminated_on IS NULL AND k.order_document_id IS NULL)`;
+      const conds = (await q.query(
+        `SELECT c.id, c.condition_no, c.name, c.work_id, w.title AS work_title, c.usage_type, c.rate_ppm,
+                c.term_start::text AS term_start, c.term_end::text AS term_end,
+                h.id AS holder_id, h.agreement_no AS holder_no,
+                (SELECT min(x.effective_from)::text FROM conditions x
+                  WHERE COALESCE(x.series_id, x.id) = COALESCE(c.series_id, c.id) AND x.status = 'scheduled' AND x.id <> c.id) AS pending_on
+           FROM conditions c
+           JOIN agreements h ON h.id = c.agreement_id
+           LEFT JOIN works w ON w.id = c.work_id
+          WHERE c.status = 'active' AND c.kind = 'license' AND c.agreement_id IN ${holders}
+          ORDER BY (h.id = $1) DESC, h.agreement_no NULLS LAST, c.id`, [id])).rows as Array<Record<string, any>>;
+      const docs = (await q.query(
+        `SELECT d.id, d.document_no, t.template_key, t.label,
+                array_agg(dc.condition_id ORDER BY dc.condition_id) AS cond_ids
+           FROM documents d
+           JOIN document_conditions dc ON dc.document_id = d.id
+           JOIN document_template_versions tv ON tv.id = d.template_version_id
+           JOIN document_templates t ON t.id = tv.template_id
+          WHERE d.status = 'issued' AND d.agreement_id IN ${holders}
+          GROUP BY d.id, d.document_no, t.template_key, t.label
+          ORDER BY d.document_no NULLS LAST, d.id`, [id])).rows as Array<Record<string, any>>;
+      return {
+        agreementId: id, agreementNo: str(a.agreement_no), today: String(a.today),
+        conditions: conds.map((c) => ({
+          id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""),
+          workId: int(c.work_id), workTitle: str(c.work_title), usageType: str(c.usage_type), ratePpm: int(c.rate_ppm),
+          termStart: str(c.term_start), termEnd: str(c.term_end),
+          holderId: Number(c.holder_id), holderNo: str(c.holder_no), onMaster: Number(c.holder_id) === id,
+          pendingOn: str(c.pending_on)
+        })),
+        papers: docs.filter((d) => TERMS_TEMPLATE_KEYS.has(String(d.template_key))).map((d) => ({
+          id: Number(d.id), documentNo: str(d.document_no), templateKey: String(d.template_key), label: String(d.label ?? ""),
+          conditionIds: (d.cond_ids as unknown[]).map(Number)
+        }))
+      };
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 条件書だけを巻き直す（基本契約はそのまま）。選んだ条件明細で新しい条件書を作る準備をする。
+   *
+   *   ・適用日が先：選んだ条件明細について「適用日からの改訂」を予約する（載っている個別契約はそのまま。
+   *     いまの版は適用日まで有効）。同じ適用日の予約がもうあれば、それを使う。新しい条件書には予約した版を載せる
+   *   ・適用日が空・今日以前：条件明細は変えない。選んだ条件そのままで条件書を出し直す
+   *   ・返すもの：載せる条件明細、1 枚にまとめるひな形（出版の条件が 2 作品以上なら作品ごとに番号の条件書）、
+   *     訂正版にできる決定済みの条件書（載っている条件がすべて選ばれているもの）
+   * 文書は作らない。作るのは作業テーブル（まとめて 1 枚）か、条件書の訂正版（文書の画面）。
+   */
+  async termsRepaper(id: number, input: TermsRepaperInput, actor: string, deps: RepaperDeps): Promise<TermsRepaperResult> {
+    const picked = [...new Set(input.conditionIds.map(Number))].filter((n) => Number.isInteger(n) && n > 0);
+    if (!picked.length) throw new DomainError("VALIDATION", "巻き直す条件明細を選んでください");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const plan = await this.termsRepaperPlan(id, client);
+        const live = new Map(plan.conditions.map((c) => [c.id, c]));
+        const unknown = picked.filter((c) => !live.has(c));
+        if (unknown.length) {
+          throw new DomainError("VALIDATION", "この契約の下に無い（か、もう有効でない）条件明細が混ざっています。画面を開き直してください");
+        }
+        const on = input.effectiveOn ?? null;
+        /** いまの版 → 新しい条件書に載せる版。 */
+        const next = new Map<number, number>(picked.map((c) => [c, c]));
+        let forward: ForwardCarry | null = null;
+        if (on && on > plan.today) {
+          if (!deps.scheduleRevision) throw new DomainError("CONFLICT", "条件明細の改訂を予約できません");
+          // 同じ適用日の予約がもうある条件は、それを使う（やり直しても二重に予約しない）。
+          const reserved = (await client.query(
+            `SELECT c.id AS from_id, n.id, n.condition_no, c.condition_no AS from_no
+               FROM conditions c
+               JOIN conditions n ON COALESCE(n.series_id, n.id) = COALESCE(c.series_id, c.id)
+                                AND n.id <> c.id AND n.status = 'scheduled' AND n.effective_from = $2::date
+              WHERE c.id = ANY($1::bigint[])`, [picked, on])).rows as Array<Record<string, any>>;
+          const have = new Set(reserved.map((r) => Number(r.from_id)));
+          const todo = picked.filter((c) => !have.has(c));
+          const why = `${String(input.reason ?? "").trim() || "条件書の巻き直し"}（${plan.agreementNo ?? `#${id}`}。適用日 ${on}）`;
+          forward = todo.length
+            ? await this.carryForward(client, { from: id, on, termEnd: input.expiresOn ?? null, why, only: todo }, actor, deps.scheduleRevision)
+            : { on, scheduled: [], skipped: [] };
+          for (const r of reserved) {
+            forward.scheduled.push({ id: Number(r.id), conditionNo: str(r.condition_no), fromId: Number(r.from_id), fromNo: str(r.from_no) });
+          }
+          if (!forward.scheduled.length) {
+            throw new DomainError("VALIDATION",
+              `適用日（${on}）からの改訂にできる条件明細がありません（${forward.skipped.map((x) => `${x.conditionNo ?? x.name}：${x.reason}`).join("／")}）`);
+          }
+          const made = new Map(forward.scheduled.map((x) => [x.fromId, x.id]));
+          for (const c of picked) { if (made.has(c)) next.set(c, made.get(c)!); else next.delete(c); }
+          await recordAudit(client, {
+            actor, action: "agreement.repaper_terms", targetType: "agreement", targetId: id,
+            detail: { on, scheduled: forward.scheduled, skipped: forward.skipped, reason: input.reason ?? null }
+          });
+        }
+        const kept = picked.filter((c) => next.has(c));
+        // 出版の条件が 2 作品以上なら、作品ごとに番号を持つ条件書 1 枚にまとめる。
+        const usages = kept.map((c) => String(live.get(c)!.usageType ?? ""));
+        const works = new Set(kept.map((c) => live.get(c)!.workId ?? `c${c}`));
+        const templateKey = kept.length > 0 && usages.every((u) => u.startsWith("pub_")) && works.size >= 2
+          ? MULTI_TERMS_TEMPLATE_KEY : null;
+        const chosen = new Set(kept);
+        const papers = plan.papers
+          .filter((d) => d.conditionIds.length > 0 && d.conditionIds.every((c) => chosen.has(c)))
+          .map((d) => ({ ...d, conditionIds: d.conditionIds.map((c) => next.get(c)!) }));
+        return { conditionIds: kept.map((c) => next.get(c)!), forward, templateKey, papers };
+      });
+    } catch (error) { throw translate(error); }
   }
 
   /**

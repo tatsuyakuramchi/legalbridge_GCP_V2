@@ -760,6 +760,20 @@ export function createRoutes(database: Transactable) {
       }).parse(req.body ?? {});
       res.status(201).json(await agreements.repaper(Number(req.params.id), input, actor(res), repaperDeps));
     }));
+  // 条件書だけの巻き直し（基本契約はそのまま）：材料（下の条件明細・決定済みの条件書）と、載せる条件の用意。
+  router.get("/agreements/:id/repaper/terms", asyncRoute(async (req, res) => {
+    res.json(await agreements.termsRepaperPlan(Number(req.params.id)));
+  }));
+  router.post("/agreements/:id/repaper/terms", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional();
+      const input = z.object({
+        conditionIds: z.array(z.coerce.number().int().positive()).min(1).max(500),
+        effectiveOn: date, expiresOn: date,
+        reason: z.string().trim().max(300).nullable().optional()
+      }).parse(req.body ?? {});
+      res.status(201).json(await agreements.termsRepaper(Number(req.params.id), input, actor(res), repaperDeps));
+    }));
   // あとから合わせる：巻き直した新契約（適用日が先）の下の「いまの版」を、適用日からの改訂にする。
   router.post("/agreements/:id/repaper/align", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
