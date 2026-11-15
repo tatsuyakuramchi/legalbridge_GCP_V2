@@ -141,3 +141,87 @@ test("不備があれば何も作らない", async () => {
   assert.equal(calls.serviceSet.length, 0);
   assert.equal(calls.draft.length, 0);
 });
+
+// ---- 訂正版 -------------------------------------------------------------
+
+/** 元の発注書 #900（決定済み・発注書・条件 50/51・取引先 7）を足した DB。 */
+function reviseDb(opts: { status?: string; template?: string; openDraft?: boolean; events?: number; party?: number;
+                          saved?: unknown } = {}) {
+  return new FakeDatabase((text, params) => {
+    if (text.includes("FROM documents d") && text.includes("template_key")) {
+      return [{ id: 900, document_no: "ARC-PO-2026-1165", status: opts.status ?? "issued", matter_id: 40, agreement_id: null,
+                template_key: opts.template ?? "purchase_order", manual_inputs: opts.saved ? { _storeEvent: { days: opts.saved } } : {} }];
+    }
+    if (text.includes("supersedes_id = $1 AND status = 'draft'")) return opts.openDraft ? [{ id: 901 }] : [];
+    if (text.includes("FROM document_conditions dc")) {
+      return [{ id: 50, counterparty_id: opts.party ?? 7, party_name: "大滝昂" }, { id: 51, counterparty_id: opts.party ?? 7, party_name: "大滝昂" }];
+    }
+    if (text.includes("FROM condition_events WHERE condition_id = ANY")) return [{ n: opts.events ?? 0 }];
+    if (text.includes("FROM matters WHERE id")) return [{ id: 40, matter_no: "MTR-1", title: "店舗事業｜大滝昂｜店舗イベント審判業務" }];
+    return fallback(text, params);
+  });
+}
+/** 訂正版の DB の残り：取引先 7・大宮店の担当・設定なし・締結済みの基本契約なし。 */
+const fallback = (text: string, params: unknown[]) => {
+  if (text.includes("FROM parties WHERE id")) return [{ id: 7, name: "大滝昂", kind: "individual", status: "active" }];
+  if (text.includes("FROM event_stores WHERE id = ANY")) return [{ id: 2, name: "ホビーステーション大宮店", short_name: "HBST大宮" }];
+  if (text.includes("FROM event_store_judges WHERE party_id")) return (params[1] as number[]).includes(2) ? [{ store_id: 2 }] : [];
+  return undefined;
+};
+
+test("訂正版の元：この画面で作ったものは開催日を戻す。手で作ったものは空", async () => {
+  const saved = await new StoreEventService(reviseDb({ saved: days })).reviseSource(900);
+  assert.equal(saved.fromThisScreen, true);
+  assert.equal(saved.days.length, 2);
+  assert.equal(saved.partyId, 7);
+  assert.deepEqual(saved.conditionIds, [50, 51]);
+  assert.deepEqual(saved.issues, []);
+  const manual = await new StoreEventService(reviseDb()).reviseSource(900);
+  assert.equal(manual.fromThisScreen, false);
+  assert.deepEqual(manual.days, []);
+});
+
+test("訂正版の元：決定前・別のひな形・訂正版の下書きあり・実績あり は止める", async () => {
+  const issuesOf = async (o: Parameters<typeof reviseDb>[0]) => (await new StoreEventService(reviseDb(o)).reviseSource(900)).issues.join("／");
+  assert.match(await issuesOf({ status: "draft" }), /決定済み/);
+  assert.match(await issuesOf({ template: "intl_purchase_order" }), /発注書（国内）だけ/);
+  assert.match(await issuesOf({ openDraft: true }), /訂正版の下書きがあります/);
+  assert.match(await issuesOf({ events: 1 }), /実績/);
+});
+
+test("訂正版：理由が無ければ止める。取引先は変えられない", async () => {
+  const s = new StoreEventService(reviseDb());
+  const p1 = await s.preview({ partyId: 7, days, revise: { documentId: 900, reason: "" } });
+  assert.ok(p1.issues.some((i) => /理由/.test(i)));
+  const p2 = await new StoreEventService(reviseDb({ party: 8 })).preview({ partyId: 7, days, revise: { documentId: 900, reason: "日付の追加" } });
+  assert.ok(p2.issues.some((i) => /取引先は変えられません/.test(i)));
+});
+
+test("訂正版を作る：新しい条件明細は下書き、reissue で元を指し、入れ替える相手を控える", async () => {
+  const calls: Record<string, any[]> = { serviceSet: [], reissue: [], update: [], draft: [] };
+  const database = reviseDb();
+  const s = new StoreEventService(database, {
+    conditions: { createServiceSet: async (input: any) => { calls.serviceSet.push(input);
+      return { conditions: input.rows.map((_: unknown, i: number) => ({ id: 200 + i, conditionNo: `C-${200 + i}` })), licenseConditions: [], scheduled: 0 }; } } as any,
+    schedules: { replace: async () => undefined } as any,
+    matters: { create: async () => { throw new Error("案件は作らない"); } } as any,
+    issues: {
+      createDraft: async (input: any) => { calls.draft.push(input); return { id: 1 }; },
+      reissue: async (id: number, reason: string, _a: string, conds: number[]) => { calls.reissue.push({ id, reason, conds }); return { id: 950, supersedesId: id }; },
+      updateDraft: async (id: number, input: any) => { calls.update.push({ id, input }); return { id }; }
+    } as any
+  });
+  const r = await s.createOrder({ partyId: 7, days, revise: { documentId: 900, reason: "11/25 を追加" } }, "tester");
+  assert.equal(r.documentId, 950);
+  assert.equal(r.supersedesId, 900);
+  assert.equal(r.matterId, 40);
+  assert.equal(calls.draft.length, 0);
+  assert.deepEqual(calls.reissue[0], { id: 900, reason: "11/25 を追加", conds: [200, 201] });
+  const mi = calls.update[0].input.manualInputs;
+  assert.deepEqual(mi._storeEvent.newConditionIds, [200, 201]);
+  assert.deepEqual(mi._storeEvent.replacesConditionIds, [50, 51]);
+  assert.equal(mi.items[0].quantity, 2);
+  const drafted = database.find("SET status = 'draft'");
+  assert.ok(drafted, "新しい条件明細を下書きにする");
+  assert.deepEqual(drafted!.params[0], [200, 201]);
+});

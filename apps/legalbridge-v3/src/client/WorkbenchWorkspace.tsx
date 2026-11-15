@@ -37,7 +37,9 @@ export type WorkbenchEntry =
   /** 条件明細・作品・契約・案件の「文書を作る」から（選んだ条件で。ひな形が決まっていればそれを既定に）。 */
   | { kind: "conditions"; conditionIds: number[]; eventIds?: number[]; matterId?: number | null; requestId?: number | null; templateKey?: string | null }
   /** 一括モード：CSV から発注書をまとめて作る／検収済みをまとめて入れる／契約書の無い相手先にまとめて起こす。 */
-  | { kind: "bulk"; mode: BulkMode; matterId?: number | null }
+  | { kind: "bulk"; mode: BulkMode; matterId?: number | null;
+      /** 店舗イベント審判の画面で、この決定済みの発注書の訂正版を作る。 */
+      reviseDocumentId?: number | null }
   /** 文書の画面から：訂正版を作る（revise）／下敷きにして次を作る（derive）。 */
   | { kind: "document"; documentId: number; mode: "revise" | "derive" };
 
@@ -211,7 +213,7 @@ const entryKey = (e: WorkbenchEntry) =>
   e.kind === "task" ? `t${e.taskId}` : e.kind === "matter" ? `m${e.matterId}`
     : e.kind === "round" ? `r${e.conditionId}-${e.scheduleId ?? 0}-${e.eventId ?? 0}`
     : e.kind === "conditions" ? `c${e.conditionIds.join(".")}-${e.matterId ?? 0}-${e.templateKey ?? ""}`
-    : e.kind === "bulk" ? `b${e.mode}-${e.matterId ?? 0}`
+    : e.kind === "bulk" ? `b${e.mode}-${e.matterId ?? 0}${e.reviseDocumentId ? `-r${e.reviseDocumentId}` : ""}`
     : e.kind === "document" ? `d${e.documentId}-${e.mode}`
     : `p${e.partyId}-${(e.workIds ?? []).join(".")}`;
 
@@ -222,7 +224,7 @@ const entryKey = (e: WorkbenchEntry) =>
  */
 function BulkWorkbench(
   { entry, onMode, onOpenDocument, onOpenMatter, onClose }: {
-    entry: { kind: "bulk"; mode: BulkMode; matterId?: number | null };
+    entry: { kind: "bulk"; mode: BulkMode; matterId?: number | null; reviseDocumentId?: number | null };
     onMode: (mode: BulkMode) => void; onOpenDocument: (id: number) => void; onOpenMatter: (id: number) => void; onClose: () => void;
   }
 ) {
@@ -255,7 +257,8 @@ function BulkWorkbench(
         <BulkOrders key={`o${entry.matterId ?? 0}`} templates={templates} initialMatterId={entry.matterId ?? null}
                     onOpenDocument={onOpenDocument} onClose={onClose} onCreated={() => undefined} />
       )}
-      {entry.mode === "judge" && <StoreJudgeOrders onOpenDocument={onOpenDocument} />}
+      {entry.mode === "judge" && <StoreJudgeOrders key={`j${entry.reviseDocumentId ?? 0}`} reviseDocumentId={entry.reviseDocumentId ?? null}
+                                                  onOpenDocument={onOpenDocument} />}
       {entry.mode === "settled" && (
         <SettledImport key={`s${entry.matterId ?? 0}`} initialMatterId={entry.matterId ?? null}
                        onOpenDocument={onOpenDocument} onClose={onClose} onCreated={() => undefined} />

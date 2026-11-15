@@ -673,7 +673,7 @@ export function App() {
             onBack={docBack ? { label: docBack.label, go: () => goBack(docBack) } : undefined}
             flow={docFlow}
             // 新しく作るのは作業テーブルで（相手先を選んで始める）。一括も作業テーブルの一括モードで。
-            onOpenWorkbench={(mode) => { if (mode) startWorkbench({ kind: "bulk", mode }); else { setWorkbench(null); setFocus(null); setView("workbench"); } }}
+            onOpenWorkbench={(mode, reviseDocumentId) => { if (mode) startWorkbench({ kind: "bulk", mode, reviseDocumentId: reviseDocumentId ?? null }); else { setWorkbench(null); setFocus(null); setView("workbench"); } }}
             // 訂正版・下敷きは作業テーブルの①で決める（文書の画面はそこへ送るだけ）。
             onOpenWorkbenchFor={(documentId, mode) => startWorkbench({ kind: "document", documentId, mode })}
             // 発注書から検収書：支払文書の「発注書から検収書」を、この発注書を選んだ状態で開く。

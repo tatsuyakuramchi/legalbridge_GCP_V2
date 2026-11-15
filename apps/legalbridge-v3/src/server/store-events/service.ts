@@ -45,6 +45,23 @@ export interface JudgeOrderInput {
   ownerStaffId?: number | null;
   /** この 1 枚だけの基本契約の扱い。空なら人ごとの設定（それも無ければ自動）。 */
   agreement?: { mode: AgreementMode; agreementId?: number | null } | null;
+  /**
+   * 訂正版。決定済みの発注書（この画面で作ったものでも、手で作ったものでも）を、この中身で作り直す。
+   * 新しい条件明細は下書きで作り、訂正版を決定した時点で元の条件明細と入れ替わる（元は無効になる）。
+   */
+  revise?: { documentId: number; reason: string } | null;
+}
+
+/** 訂正版の元。開催日は、この画面で作った発注書なら控えから戻す。手で作ったものは空（入れ直す）。 */
+export interface ReviseSource {
+  documentId: number; documentNo: string | null; templateKey: string;
+  partyId: number | null; partyName: string | null;
+  matterId: number | null; agreementId: number | null;
+  conditionIds: number[];
+  days: JudgeDay[];
+  /** この画面で作った発注書か（開催日を戻せたか）。 */
+  fromThisScreen: boolean;
+  issues: string[];
 }
 
 export interface JudgeOrderPreview {
@@ -58,11 +75,15 @@ export interface JudgeOrderPreview {
   agreementNote: string;
   /** 選び直せる契約（この取引先のイン契約）。 */
   agreementCandidates: AgreementRef[];
+  /** 訂正版の元（訂正版のときだけ）。 */
+  revise?: ReviseSource | null;
   issues: string[];
 }
 
 export interface JudgeOrderResult {
   documentId: number;
+  /** 訂正版なら元の文書。 */
+  supersedesId?: number | null;
   matterId: number;
   matterCreated: boolean;
   conditions: Array<{ id: number; conditionNo: string | null; kind: string }>;
@@ -279,8 +300,17 @@ export class StoreEventService {
         for (const s of stores) if (!ok.has(s.id)) issues.push(`${party.name} は ${s.name} の担当に登録されていません`);
       }
       const plan = planJudgeOrder({ days: input.days ?? [], stores, partyKind: party?.kind ?? null });
-      const matter = input.matterId
-        ? await this.matterById(input.matterId)
+      // 訂正版は元の発注書の案件に載る（作り直しても案件は動かさない）。
+      const source = input.revise ? await this.reviseSource(input.revise.documentId) : null;
+      if (source) {
+        issues.push(...source.issues);
+        if (party && source.partyId && source.partyId !== Number(party.id)) {
+          issues.push(`元の発注書の取引先は ${source.partyName ?? `#${source.partyId}`} です。訂正版で取引先は変えられません`);
+        }
+        if (!String(input.revise?.reason ?? "").trim()) issues.push("訂正の理由を書いてください（訂正版の記録に残ります）");
+      }
+      const matter = source?.matterId ? await this.matterById(source.matterId)
+        : input.matterId ? await this.matterById(input.matterId)
         : party ? await this.openMatterOf(party.id) : null;
       if (input.matterId && !matter) issues.push(`案件 ${input.matterId} が見つかりません`);
       if (!matter && !input.ownerStaffId) issues.push("この取引先の審判業務の案件がまだ無いので、案件の担当者を選んでください");
@@ -292,6 +322,7 @@ export class StoreEventService {
         plan, matter,
         agreement: resolved.agreement, agreementNote: resolved.note,
         agreementCandidates: party ? await this.agreementsOf(Number(party.id)) : [],
+        revise: source,
         issues: [...issues, ...plan.issues]
       };
     } catch (error) { throw translate(error); }
@@ -337,6 +368,12 @@ export class StoreEventService {
         ]
       }, actor);
       const serviceIds = set.conditions.slice(0, lines.length).map((c) => c.id);
+      const newIds = set.conditions.map((c) => c.id);
+      // 訂正版の条件明細は、決定するまで下書き。元の発注書が生きている間に二重に数えない。
+      if (input.revise) {
+        await this.database.query(
+          "UPDATE conditions SET status = 'draft', updated_at = now() WHERE id = ANY($1::bigint[]) AND status = 'active'", [newIds]);
+      }
       const expenseId = plan.travelTotal > 0 ? set.conditions[lines.length]?.id ?? null : null;
       // 予定明細：委託料の行ごとに 1 回（役務完了報告で 1 行ずつ実績になる）。
       for (const [i, l] of lines.entries()) {
@@ -357,21 +394,78 @@ export class StoreEventService {
         expenses: expenseId ? plan.expenses.map((e) => ({
           condition_id: expenseId, expense_name: "交通費", amount_inc_tax: e.amount, spent_date: e.date, remarks: ""
         })) : [],
-        // 作ったときの入力。開き直して直すときの手がかり（紙には出ない）。
-        _storeEvent: { days: input.days }
+        // 作ったときの入力。開き直して直すとき・訂正版の手がかり（紙には出ない）。
+        // 訂正版なら、決定したときに入れ替える条件明細（新＝下書き → 有効、元 → 無効）も控える。
+        _storeEvent: { days: input.days,
+          ...(input.revise ? { newConditionIds: newIds, replacesConditionIds: preview.revise?.conditionIds ?? [] } : {}) }
       };
-      const draft = await this.issues.createDraft({
-        templateKey: TEMPLATE_KEY, conditionIds: set.conditions.map((c) => c.id), matterId, manualInputs,
-        agreementId: preview.agreement?.id ?? null
-      }, actor);
+      let draft: { id: number };
+      if (input.revise) {
+        // いつもの訂正版と同じ道（元の手入力・依頼を引き継ぎ、決定した瞬間に元が退く）。中身はこの画面のもので置き換える。
+        draft = await this.issues.reissue(input.revise.documentId, input.revise.reason, actor, newIds);
+        await this.issues.updateDraft(draft.id, { manualInputs, agreementId: preview.agreement?.id ?? null }, actor);
+      } else {
+        draft = await this.issues.createDraft({
+          templateKey: TEMPLATE_KEY, conditionIds: newIds, matterId, manualInputs,
+          agreementId: preview.agreement?.id ?? null
+        }, actor);
+      }
       await recordAudit(this.database, { actor, action: "document.store_event_order", targetType: "document",
         targetId: draft.id, detail: { partyId: party.id, month: plan.month, lines: lines.length,
           days: input.days.length, subtotal: plan.subtotal, travelTotal: plan.travelTotal, matterId, matterCreated,
-          agreementId: preview.agreement?.id ?? null } });
+          agreementId: preview.agreement?.id ?? null, supersedes: input.revise?.documentId ?? null } });
       return {
-        documentId: draft.id, matterId, matterCreated,
+        documentId: draft.id, supersedesId: input.revise?.documentId ?? null, matterId, matterCreated,
         conditions: set.conditions.map((c, i) => ({ id: c.id, conditionNo: c.conditionNo ?? null,
           kind: i < lines.length ? "service" : "expense" }))
+      };
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 訂正版の元を読む。決定済みの発注書だけ。取引先は載っている条件明細の相手先から引く。
+   * この画面で作った発注書なら開催日を控え（_storeEvent）から戻す。
+   */
+  async reviseSource(documentId: number): Promise<ReviseSource> {
+    try {
+      const issues: string[] = [];
+      const doc = (await this.database.query(
+        `SELECT d.id, d.document_no, d.status, d.matter_id, d.agreement_id, d.manual_inputs, t.template_key
+           FROM documents d
+           LEFT JOIN document_template_versions v ON v.id = d.template_version_id
+           LEFT JOIN document_templates t ON t.id = v.template_id
+          WHERE d.id = $1`, [documentId])).rows[0] as Record<string, any> | undefined;
+      if (!doc) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+      if (doc.template_key !== TEMPLATE_KEY) issues.push("この画面で訂正版を作れるのは発注書（国内）だけです");
+      if (doc.status !== "issued") issues.push(`決定済みの発注書だけ訂正版を作れます（この文書は ${doc.status}）`);
+      const open = (await this.database.query(
+        "SELECT id FROM documents WHERE supersedes_id = $1 AND status = 'draft' LIMIT 1", [documentId])).rows[0] as { id: number } | undefined;
+      if (open) issues.push(`この発注書にはもう訂正版の下書きがあります（#${open.id}）。それを開いて直すか、消してから作り直してください`);
+      const conds = (await this.database.query(
+        `SELECT c.id, c.counterparty_id, p.name AS party_name
+           FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+           LEFT JOIN parties p ON p.id = c.counterparty_id
+          WHERE dc.document_id = $1 AND c.status NOT IN ('void', 'superseded')
+          ORDER BY dc.condition_id`, [documentId])).rows as Array<Record<string, any>>;
+      const partyIds = [...new Set(conds.map((c) => Number(c.counterparty_id)).filter(Boolean))];
+      if (partyIds.length > 1) issues.push("元の発注書に取引先が複数載っています。この画面では直せません");
+      const conditionIds = conds.map((c) => Number(c.id));
+      // 実績（役務完了報告など）が付いた条件明細を無効にすると、その実績の行き場が無くなる。
+      if (conditionIds.length) {
+        const ev = (await this.database.query(
+          "SELECT count(*)::int AS n FROM condition_events WHERE condition_id = ANY($1::bigint[]) AND status = 'active'",
+          [conditionIds])).rows[0] as { n: number } | undefined;
+        if (Number(ev?.n ?? 0) > 0) {
+          issues.push("元の条件明細に実績（役務完了報告など）が付いています。実績のあとの訂正はこの画面ではできません（いつもの「訂正版を作る」で）");
+        }
+      }
+      const saved = (doc.manual_inputs ?? {})._storeEvent as { days?: JudgeDay[] } | undefined;
+      const days = Array.isArray(saved?.days) ? saved!.days : [];
+      return {
+        documentId: Number(doc.id), documentNo: str(doc.document_no), templateKey: String(doc.template_key ?? ""),
+        partyId: partyIds[0] ?? null, partyName: str(conds[0]?.party_name),
+        matterId: int(doc.matter_id), agreementId: int(doc.agreement_id), conditionIds, days,
+        fromThisScreen: days.length > 0, issues
       };
     } catch (error) { throw translate(error); }
   }
