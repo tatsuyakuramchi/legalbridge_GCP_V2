@@ -8,7 +8,10 @@
 --
 --   直すこと（from= の契約を、to= の契約に寄せて、from= を消す）
 --     1. from に載っている文書・条件明細・下の契約（覚書など）・案件とのつながり・更新の記録を to へ移す
---     2. from を消す（巻き直しのつながりがあれば外す。旧契約が from の締結で終了になっていても、終了はそのまま）
+--     2. from を消す。巻き直しのつながりは繋ぎ直す：
+--          旧 ← from ← 新 の途中（from）を消すとき（to なし、または to が「新」）→ 旧 ← 新 に
+--          from を置き換えた新契約・from が置き換えた旧契約は、残す契約（to）が引き継ぐ
+--        旧契約が from の締結で終了になっていても、終了はそのまま
 --     3. keepno=from を渡せば、残る契約（to）の番号を from の番号にする
 --        （個別契約の番号は条件書の番号と同じ、という決まりに合わせるとき）
 --   to= を渡さなければ、from を消すだけ（載っているものが何も無いときに限る）。
@@ -21,6 +24,7 @@
 --       番号を条件書に合わせる：… keepno=from を足す
 --       書き込む：… 同じ引数 … write=1
 --       消すだけ：… merge-agreements.sql from=ARC-SVC-2026-9000 write=1
+--         （巻き直しをやり直して鎖の途中に残った、空の契約もこれで抜ける）
 -- =====================================================================
 
 \if :{?from}
@@ -56,6 +60,9 @@ DECLARE
   v_docs   int; v_conds int; v_kids int; v_links int; v_terms int;
   has_rep  boolean;
   v_old    text;
+  f_rep    bigint; t_rep bigint;
+  v_new_id bigint; v_new text; v_t_new text;
+  t_id     bigint;   -- 残す契約（to を渡さなければ NULL。t は未代入のレコードなので直接は読めない）
 BEGIN
   SELECT a.id, a.agreement_no, COALESCE(a.kind, 'master') AS kind, a.parent_id, a.counterparty_id, a.direction, a.status,
          a.order_document_id, a.title, r.resolved_id
@@ -83,6 +90,7 @@ BEGIN
            a.order_document_id, a.title, r.resolved_id
       INTO t FROM v3.agreements a JOIN v3.v_party_resolved r ON r.party_id = a.counterparty_id WHERE a.agreement_no = v_to;
     IF t.id IS NULL THEN RAISE EXCEPTION '残す契約 % が見つかりません', v_to; END IF;
+    t_id := t.id;
     IF t.id = f.id THEN RAISE EXCEPTION 'from と to が同じ契約です'; END IF;
     IF t.resolved_id <> f.resolved_id THEN RAISE EXCEPTION '相手先が違います（% と %）', v_from, v_to; END IF;
     IF t.direction IS DISTINCT FROM f.direction THEN RAISE EXCEPTION '向き（IN／OUT）が違います'; END IF;
@@ -119,16 +127,45 @@ BEGIN
   SELECT EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema = 'v3' AND table_name = 'agreements' AND column_name = 'replaces_id') INTO has_rep;
   IF has_rep THEN
-    EXECUTE 'SELECT o.agreement_no FROM v3.agreements a JOIN v3.agreements o ON o.id = a.replaces_id WHERE a.id = $1' INTO v_old USING f.id;
-    IF v_old IS NOT NULL THEN
+    -- from が置き換えた旧契約（f_rep）と、from を置き換えた新契約（v_new）。1 本の旧契約を置き換えられるのは 1 本だけ
+    -- （agreements_replaces_uq）なので、先に from のつながりを外してから付け替える。
+    EXECUTE 'SELECT a.replaces_id, o.agreement_no FROM v3.agreements a LEFT JOIN v3.agreements o ON o.id = a.replaces_id WHERE a.id = $1'
+       INTO f_rep, v_old USING f.id;
+    EXECUTE 'SELECT id, agreement_no FROM v3.agreements WHERE replaces_id = $1' INTO v_new_id, v_new USING f.id;
+    IF v_to <> '' THEN
+      EXECUTE 'SELECT replaces_id FROM v3.agreements WHERE id = $1' INTO t_rep USING t_id;
+      EXECUTE 'SELECT agreement_no FROM v3.agreements WHERE replaces_id = $1 AND id <> $2' INTO v_t_new USING t_id, f.id;
+    END IF;
+    IF f_rep IS NOT NULL THEN EXECUTE 'UPDATE v3.agreements SET replaces_id = NULL WHERE id = $1' USING f.id; END IF;
+
+    IF v_new_id IS NOT NULL AND (v_to = '' OR v_new_id = t_id) THEN
+      -- 鎖の途中を抜く：旧 ← from ← 新 を、旧 ← 新 に（from が何も置き換えていなければ、新のつながりは外れる）。
+      EXECUTE 'UPDATE v3.agreements SET replaces_id = $2 WHERE id = $1' USING v_new_id, f_rep;
+      plan := plan || CASE WHEN f_rep IS NOT NULL
+        THEN format('  巻き直しのつながり：%s ← %s ← %s を、%s ← %s に（途中の %s を抜く）', v_old, v_from, v_new, v_old, v_new, v_from)
+        ELSE format('  巻き直しのつながり：%s が置き換えていた %s が無くなるので、つながりを外す', v_new, v_from) END;
+    ELSIF v_new_id IS NOT NULL THEN
+      -- from を置き換えた新契約は、残す契約（to）を置き換えたことにする。
+      IF v_t_new IS NOT NULL THEN
+        RAISE EXCEPTION '% は % で、% は % で巻き直しています。巻き直しの新契約が 2 本になるので寄せられません（先に新しい側を整理してください）',
+                        v_from, v_new, v_to, v_t_new;
+      END IF;
+      EXECUTE 'UPDATE v3.agreements SET replaces_id = $2 WHERE id = $1' USING v_new_id, t_id;
+      plan := plan || format('  巻き直しのつながり：%s が置き換える相手を %s → %s に', v_new, v_from, t.agreement_no);
+    END IF;
+
+    IF f_rep IS NOT NULL AND v_to <> '' AND f_rep <> t_id AND (v_new_id IS NULL OR v_new_id <> t_id) THEN
+      -- from が置き換えていた旧契約は、残す契約（to）が引き継ぐ（to が別の契約を置き換えていなければ）。
+      IF t_rep IS NULL THEN
+        EXECUTE 'UPDATE v3.agreements SET replaces_id = $2 WHERE id = $1' USING t_id, f_rep;
+        plan := plan || format('  巻き直しのつながり：%s を置き換えた新契約を %s → %s に', v_old, v_from, t.agreement_no);
+      ELSE
+        plan := plan || format('  ※ %s は %s を巻き直した契約でした。%s は別の契約を置き換えているので、このつながりは外れます（%s が終了になっていれば、終了はそのまま）',
+                               v_from, v_old, t.agreement_no, v_old);
+      END IF;
+    ELSIF f_rep IS NOT NULL AND v_new_id IS NULL AND v_to = '' THEN
       plan := plan || format('  ※ %s は %s を巻き直した契約です。消すと巻き直しのつながりが外れます（%s が終了になっていれば、終了はそのまま。戻すなら契約の画面で）',
                              v_from, v_old, v_old);
-    END IF;
-    EXECUTE 'SELECT count(*) FROM v3.agreements WHERE replaces_id = $1' INTO v_n USING f.id;
-    IF v_n > 0 THEN
-      IF v_to = '' THEN RAISE EXCEPTION '% は別の契約で巻き直しています。先に新しい側を整理してください', v_from; END IF;
-      EXECUTE 'UPDATE v3.agreements SET replaces_id = $2 WHERE replaces_id = $1' USING f.id, t.id;
-      plan := plan || format('  巻き直しのつながり（%s を置き換えた新契約）を %s に付け替え', v_from, t.agreement_no);
     END IF;
   END IF;
 
@@ -142,7 +179,7 @@ BEGIN
 
   IF NOT dry THEN
     INSERT INTO v3.audit_events (actor, action, target_type, target_id, detail)
-    VALUES ('sql:merge-agreements', 'agreement.merge', 'agreement', COALESCE(t.id, f.id), jsonb_build_object('plan', to_jsonb(plan)));
+    VALUES ('sql:merge-agreements', 'agreement.merge', 'agreement', COALESCE(t_id, f.id), jsonb_build_object('plan', to_jsonb(plan)));
   END IF;
   IF dry THEN
     RAISE EXCEPTION USING MESSAGE = E'お試し：書き込みは取り消しました（write=1 を付けると書き込みます）\n' || array_to_string(plan, E'\n');

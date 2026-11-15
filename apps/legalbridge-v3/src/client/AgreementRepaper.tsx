@@ -68,6 +68,15 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<RepaperResult | null>(null);
+  // やり直し：この契約が、まだ締結していない巻き直し先のとき。新契約は元の旧契約を直接置き換える。
+  const [redoOf, setRedoOf] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.get<RepaperLinks>(`/agreements/${target.id}/repaper`)
+      .then((l) => { if (alive) setRedoOf(l.redo && l.replaces ? (l.replaces.agreementNo ?? `契約 #${l.replaces.id}`) : null); })
+      .catch(() => { /* 出せなくても巻き直しは進められる */ });
+    return () => { alive = false; };
+  }, [target.id]);
   // 立てたあと：契約書のファイル
   const [file, setFile] = useState<File | null>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
@@ -103,7 +112,7 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
         ...(resultMaster && domain ? { domain } : {})
       });
       setMade(r);
-      onDone(`${oldNo} を ${r.agreementNo ?? `#${r.id}`} で巻き直しました`
+      onDone(`${r.redo ? (r.oldNo ?? oldNo) : oldNo} を ${r.agreementNo ?? `#${r.id}`} で巻き直しました`
         + `${r.movedConditions || r.movedChildren ? `（条件明細 ${r.movedConditions} 本・個別契約 ${r.movedChildren} 本を引き継ぎ）` : ""}`, r);
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -135,12 +144,19 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
       : [];
     const switched = standalone && isMaster;
     const termsReady = Boolean(onComposeTerms) && made.conditionIds.length > 0;
+    // やり直しのときの旧契約は、元の旧契約（途中の契約ではない）。
+    const replacedNo = made.redo ? (made.oldNo ?? oldNo) : oldNo;
     return (
-      <Modal title={`${newNo} を立てました（${oldNo} の巻き直し）`} onClose={onClose}>
+      <Modal title={`${newNo} を立てました（${replacedNo} の巻き直し）`} onClose={onClose}>
         <div className="stack" style={{ gap: 10 }}>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li>新契約：<span className="code">{newNo}</span>（{isMaster ? "基本契約" : "単体契約"}・{made.oldClosed ? "締結済み" : "交渉中"}）</li>
-            <li>旧契約 <span className="code">{oldNo}</span>：{made.oldClosed
+            {made.redo && (
+              <li>やり直し：<span className="code">{made.redo.agreementNo ?? oldNo}</span> は{made.redo.removed
+                ? "、何も載っていなかったので消しました"
+                : "、文書などが載っているので残しました（巻き直しのつながりだけ外しています）"}。新契約が <span className="code">{replacedNo}</span> を直接置き換えます。</li>
+            )}
+            <li>旧契約 <span className="code">{replacedNo}</span>：{made.oldClosed
               ? "終了にしました（置き換え済み）"
               : "まだ有効です。新契約を締結済みにした時点で終了（置き換え済み）になります"}</li>
             <li>引き継ぎ：条件明細 {made.movedConditions} 本・個別契約 {made.movedChildren} 本{!made.movedConditions && !made.movedChildren ? "（移すものはありませんでした）" : ""}</li>
@@ -189,6 +205,13 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   return (
     <Modal title={`${oldNo} を巻き直す（新しい契約で置き換える）`} onClose={onClose}>
       <div className="stack" style={{ gap: 10 }}>
+        {redoOf && (
+          <div className="note" role="note">
+            <b>やり直しになります。</b>この契約（<span className="code">{oldNo}</span>）は、<span className="code">{redoOf}</span> の巻き直し先で、まだ締結していません。
+            巻き直すと、新しい契約が <span className="code">{redoOf}</span> を直接置き換え、この契約は（文書が載っていなければ）消します。
+            種別や番号を選び直すときに使います。
+          </div>
+        )}
         <ul className="faint" style={{ margin: 0, paddingLeft: 18 }}>
           <li>新しい契約を立てます（{toMaster ? "基本契約として。向き・相手先はいまの契約と同じ" : "種類・種別・向き・相手先はいまの契約と同じ"}）。</li>
           <li>いまの契約は、新契約を締結済みにした時点で終了（置き換え済み）になります。それまでは有効のままです。</li>
