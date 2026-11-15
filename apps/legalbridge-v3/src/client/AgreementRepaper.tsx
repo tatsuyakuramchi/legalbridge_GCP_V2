@@ -45,6 +45,11 @@ function ForwardSummary({ forward }: { forward: ForwardCarry }) {
 export interface RepaperTarget {
   id: number; agreementNo: string | null; title: string;
   kind: string; domain: string | null; partyId: number;
+  /**
+   * 個別契約（条件書）から開いた：条件書だけの巻き直しで始め、その個別契約の条件明細だけを選んだ状態にする。
+   * id・番号などは親の基本契約のもの。
+   */
+  terms?: { holderId: number; holderNo: string | null };
 }
 
 /** 種別ごとの基本契約書のひな形（無い種別はファイルを上げる）。 */
@@ -97,7 +102,7 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
    * 何を巻き直すか。contract＝契約ごと（新しい契約を立てて置き換える）／terms＝条件書だけ（契約はそのまま、
    * 下の条件明細で新しい条件書を出す）。
    */
-  const [scope, setScope] = useState<"contract" | "terms">("contract");
+  const [scope, setScope] = useState<"contract" | "terms">(target.terms ? "terms" : "contract");
   // やり直し：この契約が、まだ締結していない巻き直し先のとき。新契約は元の旧契約を直接置き換える。
   const [redoOf, setRedoOf] = useState<string | null>(null);
   useEffect(() => {
@@ -380,10 +385,16 @@ function TermsRepaper({ target, onClose, onComposeTerms }: {
   useEffect(() => {
     let alive = true;
     api.get<TermsRepaperPlan>(`/agreements/${target.id}/repaper/terms`)
-      .then((p) => { if (alive) { setPlan(p); setPicked(new Set(p.conditions.map((c) => c.id))); } })
+      .then((p) => {
+        if (!alive) return;
+        setPlan(p);
+        // 個別契約から開いたときは、その個別契約の条件だけを選んでおく（無ければすべて）。
+        const mine = target.terms ? p.conditions.filter((c) => c.holderId === target.terms!.holderId) : [];
+        setPicked(new Set((mine.length ? mine : p.conditions).map((c) => c.id)));
+      })
       .catch((e) => { if (alive) setError((e as ApiError).message); });
     return () => { alive = false; };
-  }, [target.id]);
+  }, [target.id, target.terms?.holderId]);
 
   if (!plan) return error ? <div className="alert">{error}</div> : <div className="faint">読み込んでいます…</div>;
   const forward = effectiveOn !== "" && effectiveOn > plan.today;
@@ -473,6 +484,10 @@ function TermsRepaper({ target, onClose, onComposeTerms }: {
     <div className="stack" style={{ gap: 10 }}>
       <ul className="faint" style={{ margin: 0, paddingLeft: 18 }}>
         <li>契約はそのままです。下の条件明細を選んで、新しい条件書を出し直します。</li>
+        {target.terms && (
+          <li><span className="code">{target.terms.holderNo ?? `#${target.terms.holderId}`}</span> の条件明細だけを選んであります。
+            同じ基本契約のほかの作品も一緒に出し直すなら、チェックを足してください。</li>
+        )}
         <li>適用日を先の日付にすると、選んだ条件明細を「適用日からの改訂」として予約し、その版で条件書を作ります（いまの版は適用日まで有効）。</li>
         <li>適用日が空・今日以前なら、条件明細は変えません（紙だけ出し直します）。</li>
       </ul>

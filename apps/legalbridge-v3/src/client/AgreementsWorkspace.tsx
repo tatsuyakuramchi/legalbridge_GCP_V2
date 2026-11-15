@@ -15,7 +15,7 @@ import { SignAfterField, useSignReady } from "./SignNext.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
 import type { TermHistory } from "../server/agreements/term-history.js";
 import { AgreementVersionsList } from "./AgreementVersions.js";
-import { RepaperDialog, RepaperLinksNote } from "./AgreementRepaper.js";
+import { RepaperDialog, RepaperLinksNote, type RepaperTarget } from "./AgreementRepaper.js";
 
 /**
  * 契約（合意）。
@@ -126,6 +126,8 @@ export function AgreementsWorkspace(
   const [terminating, setTerminating] = useState(false);
   /** 巻き直す（新しい契約で置き換える）ポップアップ。 */
   const [repapering, setRepapering] = useState(false);
+  /** 個別契約（条件書）から開いた、条件書だけの巻き直し。対象は親の基本契約。 */
+  const [termsRepaper, setTermsRepaper] = useState<RepaperTarget | null>(null);
   const [addingCondition, setAddingCondition] = useState(false);
   /**
    * 条件明細の登録の形。取引を進めると同じ種類別のフォーム（業務委託の明細・許諾セット・
@@ -158,6 +160,16 @@ export function AgreementsWorkspace(
     try {
       await api.post(path, body);
       setNotice(done); bump();
+    } catch (e) { setError((e as ApiError).message); }
+  }
+
+  /** 個別契約から：親の基本契約を引いて、条件書だけの巻き直しを開く。 */
+  async function openTermsRepaper(parentId: number, holderId: number, holderNo: string | null) {
+    setError(null);
+    try {
+      const parent = (await api.get<Detail>(`/agreements/${parentId}`)).agreement;
+      setTermsRepaper({ id: parent.id, agreementNo: parent.agreementNo, title: parent.title, kind: parent.kind, domain: parent.domain,
+                        partyId: parent.counterparty.id, terms: { holderId, holderNo } });
     } catch (e) { setError((e as ApiError).message); }
   }
 
@@ -303,9 +315,15 @@ export function AgreementsWorkspace(
                     <DateAction label="不更新を決めた" disabled={readOnly}
                       onRun={(on) => act(`/agreements/${a.id}/decline`, { on }, "不更新を記録しました。いまの期間は満了まで有効です")} />
                   )}
+                  {/* 個別契約（条件書）：条件書だけを巻き直す。親の基本契約はそのまま。 */}
+                  {a.kind === "supplement" && a.parentId && !a.terminatedOn && detail.conditions.some((c) => c.kind === "license") && (
+                    <button className="btn btn-sm" disabled={readOnly}
+                            title="この条件書を出し直す（基本契約はそのまま）。適用日が先なら、条件明細を適用日からの改訂として予約する"
+                            onClick={() => void openTermsRepaper(a.parentId!, a.id, a.agreementNo)}>条件書を巻き直す</button>
+                  )}
                   {(a.kind === "master" || a.kind === "standalone") && !a.terminatedOn && (
                     <button className="btn btn-sm" disabled={readOnly}
-                            title="新しい契約を立てて、この契約を置き換える。条件明細と個別契約を新契約へ引き継げる"
+                            title="新しい契約を立てて、この契約を置き換える。条件書だけを出し直すこともできる（契約はそのまま）"
                             onClick={() => setRepapering(true)}>巻き直す</button>
                   )}
                   {(a.kind === "master" || a.kind === "standalone") && !a.terminatedOn && (
@@ -320,6 +338,13 @@ export function AgreementsWorkspace(
                 {/* 巻き直しのつながり（旧 → 新）。 */}
                 <RepaperLinksNote agreementId={a.id} version={version} onOpen={(id) => setSelected(id)}
                                   onChanged={(msg) => { setNotice(msg); bump(); }} />
+                {termsRepaper && (
+                  <RepaperDialog target={termsRepaper}
+                    onClose={() => setTermsRepaper(null)}
+                    onDone={(msg) => { setNotice(msg); bump(); }}
+                    onOpenAgreement={(id) => setSelected(id)}
+                    onComposeContract={onComposeContract} />
+                )}
                 {repapering && (
                   <RepaperDialog target={{ id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: a.counterparty.id }}
                     onClose={() => setRepapering(false)}
