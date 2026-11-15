@@ -334,6 +334,13 @@ export function ContractTable(
                             {act("＋ 条件を追加", () => setDialog({ kind: "cond-add", to: k.id, toNo: node.no ?? "" }), "条件明細を探してこの個別契約に載せる")}
                             {act(underMaster ? "解除" : "基本契約に入れる", () => setDialog({ kind: "contract-move", from: k.id, fromNo: node.no ?? "", underMaster }),
                               underMaster ? "この基本契約から外す・ほかの基本契約へ付け替える" : "基本契約を探して、その下に入れる")}
+                            {/* 条件書だけを巻き直す（基本契約はそのまま）。ライセンスの条件が載っている個別契約に出す。 */}
+                            {underMaster && g.master && !agreementOf(g.master.id)?.terminatedOn && /^a\d+$/.test(k.id)
+                              && k.conds.some((c) => c.kind === "license") && act("巻き直す", () => {
+                                const m = agreementOf(g.master!.id);
+                                if (m) setRepaper({ id: m.id, agreementNo: m.agreementNo, title: m.title, kind: m.kind, domain: m.domain, partyId: map.party.id,
+                                                    terms: { holderId: Number(k.id.slice(1)), holderNo: node.no ?? null } });
+                              }, "この条件書を出し直す（基本契約はそのまま）。適用日が先なら、条件明細を適用日からの改訂として予約する")}
                           </div>
                         )}
                       </td>
