@@ -139,11 +139,23 @@ export interface RepaperResult {
   kind: AgreementKind; domain: AgreementDomain | null;
   /** 新契約へ移した条件明細（続けて条件書・発注書を作るのに使う）。 */
   conditionIds: number[];
+  /**
+   * やり直し：まだ締結していない巻き直し先を巻き直した。新契約は元の旧契約（oldNo）を直接置き換える。
+   * 途中の契約（agreementNo）は、何も載っていなければ消した（removed）。文書などが載っていれば、つながりだけ外して残した。
+   */
+  redo: { agreementNo: string | null; removed: boolean } | null;
 }
 export interface RepaperRef {
   id: number; agreementNo: string | null; title: string; status: string; executedOn: string | null; terminatedOn: string | null;
 }
-export interface RepaperLinks { available: boolean; replaces: RepaperRef | null; replacedBy: RepaperRef | null }
+export interface RepaperLinks {
+  available: boolean; replaces: RepaperRef | null; replacedBy: RepaperRef | null;
+  /**
+   * やり直しになる：この契約は、まだ締結していない巻き直し先。これを巻き直すと、新契約は元の旧契約（replaces）を
+   * 直接置き換え、この契約は（何も載っていなければ）消える。
+   */
+  redo?: boolean;
+}
 
 export interface TerminateInput {
   on: string;
@@ -378,13 +390,19 @@ export class AgreementService {
            FROM agreements a JOIN agreements o ON o.id = a.replaces_id WHERE a.id = $1
          UNION ALL
          SELECT 'replaced_by', n.id, n.agreement_no, n.title, n.status, n.executed_on, n.terminated_on
-           FROM agreements n WHERE n.replaces_id = $1`, [id]);
+           FROM agreements n WHERE n.replaces_id = $1
+         UNION ALL
+         SELECT 'self', a.id, a.agreement_no, a.title, a.status, a.executed_on, a.terminated_on
+           FROM agreements a WHERE a.id = $1`, [id]);
       const of = (rel: string): RepaperRef | null => {
         const row = (r.rows as any[]).find((x) => x.rel === rel);
         return row ? { id: Number(row.id), agreementNo: str(row.agreement_no), title: String(row.title ?? ""),
                        status: String(row.status), executedOn: dateStr(row.executed_on), terminatedOn: dateStr(row.terminated_on) } : null;
       };
-      return { available: true, replaces: of("replaces"), replacedBy: of("replaced_by") };
+      const replaces = of("replaces");
+      const self = of("self");
+      return { available: true, replaces, replacedBy: of("replaced_by"),
+               redo: Boolean(replaces && self && self.status !== "executed") };
     } catch (error) {
       // 42703：列が無い（209 をまだ流していない）。
       if ((error as { code?: string }).code === "42703") return { available: false, replaces: null, replacedBy: null };
@@ -405,9 +423,10 @@ export class AgreementService {
     try {
       return await inTransaction(this.database, async (client) => {
         const cur = await client.query(
-          `SELECT id, agreement_no, title, counterparty_id, direction, status, COALESCE(kind, 'master') AS kind, domain,
-                  expires_on, auto_renewal, renewal_months, renewal_notice_months, terminated_on
-             FROM agreements WHERE id = $1 FOR UPDATE`, [id]);
+          `SELECT a.id, a.agreement_no, a.title, a.counterparty_id, a.direction, a.status, COALESCE(a.kind, 'master') AS kind, a.domain,
+                  a.expires_on, a.auto_renewal, a.renewal_months, a.renewal_notice_months, a.terminated_on,
+                  (to_jsonb(a) ->> 'replaces_id')::bigint AS replaces_id
+             FROM agreements a WHERE a.id = $1 FOR UPDATE`, [id]);
         const old = cur.rows[0] as any;
         if (!old) throw new DomainError("NOT_FOUND", `契約 ${id} が見つかりません`);
         if (old.kind !== "master" && old.kind !== "standalone") {
@@ -425,6 +444,22 @@ export class AgreementService {
         }
         const hit = dup.rows[0] as { id: number; agreement_no: string | null } | undefined;
         if (hit) throw new DomainError("CONFLICT", `この契約は ${hit.agreement_no ?? `#${hit.id}`} でもう巻き直しています`);
+
+        // やり直し：まだ締結していない巻き直し先（旧 ← これ）を、さらに巻き直すとき。鎖（旧 ← これ ← 新）にせず、
+        // 新契約が旧契約を直接置き換える（旧 ← 新）。種別を選び直す・番号を取り直す、が主な使い道。
+        // これ（途中の契約）は、文書が無ければ消す。文書があれば、つながりだけ外して残す。
+        let replacesId = id;
+        let origin: { id: number; agreement_no: string | null } | null = null;
+        if (old.replaces_id && old.status !== "executed") {
+          origin = (await client.query("SELECT id, agreement_no FROM agreements WHERE id = $1 FOR UPDATE", [old.replaces_id])).rows[0] as any ?? null;
+          if (origin) {
+            // 1 本の旧契約を置き換えられるのは 1 本だけ（agreements_replaces_uq）。先に途中のつながりを外す。
+            await noteAgreementChange(client, actor, `巻き直しのやり直し（${origin.agreement_no ?? `#${origin.id}`} の巻き直し先を立て直す）`);
+            await client.query("UPDATE agreements SET replaces_id = NULL, updated_at = now() WHERE id = $1", [id]);
+            replacesId = Number(origin.id);
+          }
+        }
+        const replacedNo = origin ? origin.agreement_no : old.agreement_no;
 
         // 単体契約 → 基本契約＋個別契約への切り替え。新契約は基本契約で立て、条件明細はいったん基本契約に載せる
         // （個別契約待ち）。条件書・発注書を決定すると、新しい番号の個別契約が基本契約の下に立つ
@@ -449,7 +484,7 @@ export class AgreementService {
         const agreementNo = external || await this.numberFor(client, newKind, newDomain, null);
         const executedOn = input.executedOn ?? null;
         const reason = String(input.reason ?? "").trim() || "契約の巻き直し";
-        await noteAgreementChange(client, actor, `${reason}（旧 ${old.agreement_no ?? `#${id}`} を置き換え）`);
+        await noteAgreementChange(client, actor, `${reason}（旧 ${replacedNo ?? `#${replacesId}`} を置き換え）`);
         const made = await client.query(
           `INSERT INTO agreements
              (agreement_no, title, counterparty_id, direction, status, kind, domain, executed_on, effective_on, expires_on,
@@ -459,7 +494,7 @@ export class AgreementService {
           [agreementNo, title, old.counterparty_id, old.direction, executedOn ? "executed" : "negotiating", newKind, newDomain,
            executedOn, input.effectiveOn ?? executedOn, input.expiresOn ?? null,
            input.autoRenewal ?? (old.auto_renewal === true), input.renewalMonths ?? old.renewal_months ?? null,
-           input.renewalNoticeMonths ?? old.renewal_notice_months ?? null, str(input.sourceUrl), id]);
+           input.renewalNoticeMonths ?? old.renewal_notice_months ?? null, str(input.sourceUrl), replacesId]);
         const newId = Number((made.rows[0] as { id: number }).id);
 
         let movedConditions = 0, movedChildren = 0;
@@ -476,13 +511,36 @@ export class AgreementService {
           movedConditions = conds.rows.length;
           conditionIds = (conds.rows as Array<{ id: number }>).map((x) => Number(x.id));
         }
+        // やり直しの途中の契約：何も載っていなければ消す（空の契約が鎖の外に残らないように）。
+        let redo: RepaperResult["redo"] = null;
+        if (origin) {
+          const left = (await client.query(
+            `SELECT (SELECT count(*) FROM documents d WHERE d.agreement_id = $1)::int AS docs,
+                    (SELECT count(*) FROM conditions c WHERE c.agreement_id = $1)::int AS conds,
+                    (SELECT count(*) FROM agreements k WHERE k.parent_id = $1)::int AS kids,
+                    (SELECT count(*) FROM term_events e WHERE (e.target_type = 'agreement' AND e.target_id = $1) OR e.ref_agreement_id = $1)::int AS terms`,
+            [id])).rows[0] as { docs: number; conds: number; kids: number; terms: number };
+          const empty = !Number(left.docs) && !Number(left.conds) && !Number(left.kids) && !Number(left.terms);
+          if (empty) {
+            await noteAgreementChange(client, actor, `巻き直しのやり直し（${agreementNo ?? `#${newId}`} で立て直したので消す）`);
+            // 案件とのつながりは新契約へ（同じ案件が既にあれば重ねない）。
+            await client.query(
+              `UPDATE matter_links ml SET target_ref = $2::text
+                WHERE ml.target_type = 'agreement' AND ml.target_ref = $1::text
+                  AND NOT EXISTS (SELECT 1 FROM matter_links x WHERE x.matter_id = ml.matter_id
+                                     AND x.target_type = 'agreement' AND x.target_ref = $2::text)`, [String(id), String(newId)]);
+            await client.query("DELETE FROM matter_links WHERE target_type = 'agreement' AND target_ref = $1::text", [String(id)]);
+            await client.query("DELETE FROM agreements WHERE id = $1", [id]);
+          }
+          redo = { agreementNo: str(old.agreement_no), removed: empty };
+        }
         await recordAudit(client, {
           actor, action: "agreement.repaper", targetType: "agreement", targetId: newId,
-          detail: { replaces: id, oldNo: old.agreement_no ?? null, agreementNo, reason, carryOver: input.carryOver !== false,
-                    movedConditions, movedChildren, executedOn, toMaster, conditionIds }
+          detail: { replaces: replacesId, oldNo: replacedNo ?? null, agreementNo, reason, carryOver: input.carryOver !== false,
+                    movedConditions, movedChildren, executedOn, toMaster, conditionIds, ...(redo ? { redo } : {}) }
         });
-        return { id: newId, agreementNo, oldNo: str(old.agreement_no), movedConditions, movedChildren,
-                 oldClosed: Boolean(executedOn), kind: newKind, domain: newDomain, conditionIds };
+        return { id: newId, agreementNo, oldNo: str(replacedNo), movedConditions, movedChildren,
+                 oldClosed: Boolean(executedOn), kind: newKind, domain: newDomain, conditionIds, redo };
       });
     } catch (error) { throw translate(error); }
   }
