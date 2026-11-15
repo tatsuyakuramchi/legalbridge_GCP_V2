@@ -3,7 +3,26 @@ import { api, ApiError } from "./api.js";
 import { Modal } from "./Modal.js";
 import { DOMAIN_OPTIONS } from "./agreement-domains.js";
 import { useMapLinks } from "./mapLinks.js";
-import type { RepaperLinks, RepaperResult } from "../server/agreements/service.js";
+import type { AlignResult, ForwardCarry, RepaperLinks, RepaperResult, StalePaper } from "../server/agreements/service.js";
+
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** 適用日が先の引き継ぎの結果（予約した版・見送った条件）。巻き直した直後と、あとから合わせたあとで同じ形。 */
+function ForwardSummary({ forward }: { forward: ForwardCarry }) {
+  return (
+    <>
+      <li>条件明細 {forward.scheduled.length} 本を、<b>{forward.on} からの改訂</b>として予約しました
+        {forward.scheduled.length > 0 && <>（{forward.scheduled.map((x) => x.conditionNo ?? `#${x.id}`).join("・")}）</>}。
+        いまの版は旧契約に残り、{forward.on} に新しい版へ切り替わります（それまでの計算は、いまの条件のまま）。</li>
+      {forward.skipped.length > 0 && (
+        <li>旧契約に残したもの：{forward.skipped.map((x) => `${x.conditionNo ?? x.name}（${x.reason}）`).join("、")}</li>
+      )}
+    </>
+  );
+}
 
 /**
  * 契約の巻き直し（infra/v3/209_agreement_repaper.sql）。
@@ -16,6 +35,11 @@ import type { RepaperLinks, RepaperResult } from "../server/agreements/service.j
  * 単体契約は「基本契約＋個別契約」に切り替えて巻き直せる：新契約を基本契約で立て、条件明細を
  * いったん基本契約に載せる（個別契約待ち）。続けて条件書・発注書を決定すると、新しい番号の
  * 個別契約が基本契約の下に立つ。
+ *
+ * 適用日（有効期間の開始）が先のときは、条件明細を移さない。いま有効な条件明細について「適用日からの改訂」を
+ * 新契約に予約し、いまの版は旧契約に残す（適用日に新しい版へ切り替わる）。予約した版で条件書を作ると、
+ * 許諾開始日が適用日になる。先に条件を新契約へ移してしまったときは、契約の画面の「巻き直し」の帯から
+ * あとで合わせられる（条件明細を適用日からの改訂にする → 条件書の訂正版を作る）。
  */
 
 export interface RepaperTarget {
@@ -63,6 +87,7 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   const [unsigned, setUnsigned] = useState(true);
   const [executedOn, setExecutedOn] = useState("");
   const [effectiveOn, setEffectiveOn] = useState("");
+  const [expiresOn, setExpiresOn] = useState("");
   const [reason, setReason] = useState("契約の巻き直し");
   const [carryOver, setCarryOver] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -82,6 +107,9 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
   const [uploaded, setUploaded] = useState<string | null>(null);
 
   const ready = title.trim() !== "" && (unsigned || executedOn !== "") && (!resultMaster || domain !== "");
+  /** 適用日（有効期間の開始。空なら締結日）が先。条件明細は移さず、適用日からの改訂として予約する。 */
+  const startsOn = effectiveOn || (unsigned ? "" : executedOn);
+  const forward = carryOver && !redoOf && startsOn !== "" && startsOn > todayStr();
 
   /**
    * 基本契約の種別を選ぶ（ライセンスの基本契約／業務委託の基本契約 …）。番号の頭と、基本契約書のひな形が決まる。
@@ -105,7 +133,7 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
     try {
       const r = await api.post<RepaperResult>(`/agreements/${target.id}/repaper`, {
         title: title.trim(), agreementNo: no.trim() || null,
-        executedOn: unsigned ? null : executedOn, effectiveOn: effectiveOn || null,
+        executedOn: unsigned ? null : executedOn, effectiveOn: effectiveOn || null, expiresOn: expiresOn || null,
         reason: reason.trim() || null, carryOver,
         ...(toMaster ? { toMaster: true } : {}),
         // 基本契約の種別（ライセンス／業務委託 …）。旧契約と違う種別にもできる。
@@ -113,7 +141,8 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
       });
       setMade(r);
       onDone(`${r.redo ? (r.oldNo ?? oldNo) : oldNo} を ${r.agreementNo ?? `#${r.id}`} で巻き直しました`
-        + `${r.movedConditions || r.movedChildren ? `（条件明細 ${r.movedConditions} 本・個別契約 ${r.movedChildren} 本を引き継ぎ）` : ""}`, r);
+        + `${r.forward ? `（条件明細 ${r.forward.scheduled.length} 本を ${r.forward.on} からの改訂として予約）`
+            : r.movedConditions || r.movedChildren ? `（条件明細 ${r.movedConditions} 本・個別契約 ${r.movedChildren} 本を引き継ぎ）` : ""}`, r);
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
   }
@@ -144,6 +173,8 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
       : [];
     const switched = standalone && isMaster;
     const termsReady = Boolean(onComposeTerms) && made.conditionIds.length > 0;
+    // 適用日が先：予約した版で条件書を作る（基本契約の巻き直しでも、個別契約を新しく立てる）。
+    const forwardTerms = Boolean(made.forward && made.forward.scheduled.length > 0);
     // やり直しのときの旧契約は、元の旧契約（途中の契約ではない）。
     const replacedNo = made.redo ? (made.oldNo ?? oldNo) : oldNo;
     return (
@@ -159,12 +190,17 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
             <li>旧契約 <span className="code">{replacedNo}</span>：{made.oldClosed
               ? "終了にしました（置き換え済み）"
               : "まだ有効です。新契約を締結済みにした時点で終了（置き換え済み）になります"}</li>
-            <li>引き継ぎ：条件明細 {made.movedConditions} 本・個別契約 {made.movedChildren} 本{!made.movedConditions && !made.movedChildren ? "（移すものはありませんでした）" : ""}</li>
+            {made.forward
+              ? <ForwardSummary forward={made.forward} />
+              : <li>引き継ぎ：条件明細 {made.movedConditions} 本・個別契約 {made.movedChildren} 本{!made.movedConditions && !made.movedChildren ? "（移すものはありませんでした）" : ""}</li>}
+            {made.forward && made.forward.scheduled.length > 0 && (
+              <li>予約した版は、いったん新しい{isMaster ? "基本契約" : "契約"}に載せました{isMaster ? "（個別契約待ち）。下の ② で条件書を決定すると、新しい番号の個別契約が基本契約の下に立ち" : "。下で条件書を作ると"}、許諾開始日は {made.forward.on} になります。</li>
+            )}
             {switched && made.movedConditions > 0 && (
               <li>条件明細は、いったん新しい基本契約に載せました（個別契約待ち）。下の ② で条件書・発注書を決定すると、新しい番号の個別契約が基本契約の下に立ちます。</li>
             )}
           </ul>
-          <b>{switched ? "① 新しい基本契約書を用意します" : "次に、新しい契約書を用意します"}</b>
+          <b>{switched || forwardTerms ? "① 新しい基本契約書を用意します" : "次に、新しい契約書を用意します"}</b>
           {uploaded ? <div className="note ok">契約書 {uploaded} を登録しました</div> : (
             <div className="stack" style={{ gap: 6 }}>
               <label className="fld"><span>作成済みの契約書（PDF など）を上げる</span>
@@ -181,14 +217,14 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
               </div>
             </div>
           )}
-          {(switched || !isMaster) && termsReady && (
+          {(switched || !isMaster || forwardTerms) && termsReady && (
             <div className="stack" style={{ gap: 6 }}>
-              <b>{switched ? "② 個別契約（条件書・発注書）を作ります" : "条件書・発注書を作り直すとき"}</b>
+              <b>{switched || forwardTerms ? "② 個別契約（条件書・発注書）を作ります" : "条件書・発注書を作り直すとき"}</b>
               <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <button className={`btn${switched ? " primary" : ""}`} disabled={busy}
+                <button className={`btn${switched || forwardTerms ? " primary" : ""}`} disabled={busy}
                         onClick={() => { onClose(); onComposeTerms!(made.conditionIds); }}>
-                  条件書・発注書を作る（作業テーブルへ・条件 {made.conditionIds.length} 本）</button>
-                {switched && <small className="faint">基本契約書を先に済ませても、あとからでも作れます（条件明細の画面・作業テーブルから）</small>}
+                  条件書・発注書を作る（作業テーブルへ・{made.forward ? `${made.forward.on} からの版` : "条件"} {made.conditionIds.length} 本）</button>
+                {(switched || forwardTerms) && <small className="faint">基本契約書を先に済ませても、あとからでも作れます（条件明細の画面・作業テーブルから）</small>}
               </div>
             </div>
           )}
@@ -258,6 +294,9 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
           <label className="fld"><span>有効期間の開始</span>
             <input type="date" value={effectiveOn} onChange={(e) => setEffectiveOn(e.target.value)} />
             <small>空なら締結日。いまの契約の終了日はこの日になります</small></label>
+          <label className="fld"><span>有効期間の終了</span>
+            <input type="date" value={expiresOn} min={startsOn || undefined} onChange={(e) => setExpiresOn(e.target.value)} />
+            <small>空なら期間の定めなし{forward ? "（予約する条件明細の終了日も空になります）" : ""}</small></label>
         </div>
         <label className="row" style={{ gap: 6 }}>
           <input type="checkbox" checked={carryOver} onChange={(e) => setCarryOver(e.target.checked)} />
@@ -265,7 +304,17 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
             ? "いまの契約の条件明細（と下の覚書）を新しい基本契約に引き継ぐ"
             : "いまの契約の条件明細と、下の個別契約（条件書・発注書）を新契約に引き継ぐ"}</span>
         </label>
-        <small className="faint">引き継ぐと、条件書・発注書・計算書は新しい{toMaster || !standalone ? "基本契約" : "契約"}の名前で出ます。番号・料率・期間・これまでの実績は変わりません。</small>
+        {forward ? (
+          <div className="note" role="note">
+            <b>適用日が先（{startsOn}）なので、条件明細は移しません。</b>
+            いま有効な条件明細について、<b>{startsOn} からの改訂</b>を新しい{toMaster || !standalone ? "基本契約" : "契約"}に予約します
+            （開始日は {startsOn}、終了日は{expiresOn ? ` ${expiresOn}` : "上の「有効期間の終了」"}。料率などはそのまま）。
+            いまの版と下の個別契約・発注書は旧契約に残り、{startsOn} までの計算は変わりません。
+            予約した版で条件書を作ると、許諾開始日が {startsOn} になります。
+          </div>
+        ) : (
+          <small className="faint">引き継ぐと、条件書・発注書・計算書は新しい{toMaster || !standalone ? "基本契約" : "契約"}の名前で出ます。番号・料率・期間・これまでの実績は変わりません。</small>
+        )}
         <label className="fld"><span>理由（履歴に残ります）</span>
           <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="例：2026年12月に契約書式を改め、巻き直した" /></label>
         {error && <div className="alert">{error}</div>}
@@ -279,10 +328,21 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
 }
 
 /** 巻き直しのつながり（旧 → 新）。209 を流していなければ何も出さない。 */
-export function RepaperLinksNote({ agreementId, version = 0, onOpen }: {
+export function RepaperLinksNote({ agreementId, version = 0, onOpen, onChanged, onComposeTerms: composeTermsProp }: {
   agreementId: number; version?: number; onOpen?: (id: number) => void;
+  /** あとから合わせた（一覧・詳細を読み直す）。 */
+  onChanged?: (message: string) => void;
+  onComposeTerms?: (conditionIds: number[]) => void;
 }) {
+  const mapLinks = useMapLinks();
+  const onComposeTerms = composeTermsProp ?? mapLinks.composeTerms;
   const [links, setLinks] = useState<RepaperLinks | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [aligned, setAligned] = useState<AlignResult | null>(null);
+  const [tick, setTick] = useState(0);
+  /** 作った訂正版の下書き（元の条件書 → 下書き）。 */
+  const [drafts, setDrafts] = useState<Record<number, number>>({});
   useEffect(() => {
     let alive = true;
     setLinks(null);
@@ -290,16 +350,87 @@ export function RepaperLinksNote({ agreementId, version = 0, onOpen }: {
       .then((r) => { if (alive) setLinks(r); })
       .catch(() => { if (alive) setLinks(null); });
     return () => { alive = false; };
-  }, [agreementId, version]);
+  }, [agreementId, version, tick]);
+  useEffect(() => { setAligned(null); setError(null); setDrafts({}); }, [agreementId]);
   if (!links?.available || (!links.replaces && !links.replacedBy)) return null;
   const ref = (r: NonNullable<RepaperLinks["replaces"]>) => onOpen
     ? <button className="linky code" onClick={() => onOpen(r.id)}>{r.agreementNo ?? `#${r.id}`}</button>
     : <span className="code">{r.agreementNo ?? `#${r.id}`}</span>;
+  const papers = links.papers ?? [];
+  const ended = (on: string) => on > todayStr() ? `旧契約は ${on} で終了の予定` : `旧契約は ${on} で終了`;
+  async function align() {
+    if (!links?.align) return;
+    if (!window.confirm(`この契約の下にある条件明細 ${links.align.count} 本を、${links.align.on} からの改訂にします。\n`
+      + `・${links.align.on} からの版を予約します（開始日 ${links.align.on}。終了日はこの契約の有効期間の終了）\n`
+      + "・いまの版は旧契約へ戻します（適用日までの計算は変わりません）\nよろしいですか？")) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<AlignResult>(`/agreements/${agreementId}/repaper/align`, {});
+      setAligned(r); setTick((n) => n + 1);
+      onChanged?.(`条件明細 ${r.forward.scheduled.length} 本を ${r.on} からの改訂として予約しました`);
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
+  /** いまの版のまま決定していた条件書の訂正版を、適用日からの版で起こす（下書き。決定は文書の画面で）。 */
+  async function revise(paper: StalePaper) {
+    setBusy(true); setError(null);
+    try {
+      const r = await api.post<{ id: number }>(`/documents/${paper.id}/reissue`,
+        { reason: `適用日を ${paper.on} に（契約の巻き直し）`, conditionIds: paper.conditionIds });
+      setDrafts((d) => ({ ...d, [paper.id]: r.id }));
+    } catch (e) { setError((e as ApiError).message); }
+    finally { setBusy(false); }
+  }
   return (
-    <div className="note" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-      <span className="tag">巻き直し</span>
-      {links.replaces && <span>旧契約 {ref(links.replaces)} を置き換えた契約です{links.replaces.terminatedOn ? `（旧契約は ${links.replaces.terminatedOn} で終了）` : "（旧契約はまだ有効。この契約を締結済みにすると終了になります）"}</span>}
-      {links.replacedBy && <span>この契約は {ref(links.replacedBy)} で巻き直しています{links.replacedBy.status === "executed" ? "（置き換え済み）" : "（新契約は未締結。締結済みになるとこの契約は終了になります）"}</span>}
+    <div className="note stack" style={{ gap: 6 }}>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <span className="tag">巻き直し</span>
+        {links.replaces && <span>旧契約 {ref(links.replaces)} を置き換えた契約です{links.replaces.terminatedOn ? `（${ended(links.replaces.terminatedOn)}）` : "（旧契約はまだ有効。この契約を締結済みにすると終了になります）"}</span>}
+        {links.replacedBy && <span>この契約は {ref(links.replacedBy)} で巻き直しています{links.replacedBy.status === "executed" ? "（置き換え済み）" : "（新契約は未締結。締結済みになるとこの契約は終了になります）"}</span>}
+      </div>
+      {links.align && !aligned && (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <span>適用日は {links.align.on}（先の日付）ですが、いま有効な条件明細 {links.align.count} 本がこの契約の下に載っています。</span>
+          <button className="btn" disabled={busy} onClick={() => void align()}>
+            {busy ? "予約しています…" : `条件明細を ${links.align.on} からの改訂にする`}</button>
+        </div>
+      )}
+      {aligned && (
+        <div className="stack" style={{ gap: 6 }}>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            <ForwardSummary forward={aligned.forward} />
+          </ul>
+          {onComposeTerms && aligned.conditionIds.length > 0 && papers.length === 0 && (
+            <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button className="btn primary" onClick={() => onComposeTerms(aligned.conditionIds)}>
+                条件書を作る（作業テーブルへ・{aligned.on} からの版 {aligned.conditionIds.length} 本）</button>
+              <small className="faint">許諾開始日が {aligned.on} の条件書になります</small>
+            </div>
+          )}
+        </div>
+      )}
+      {/* いまの版のまま決定していた条件書は、訂正版にする（同じ個別契約のまま、番号に -R2）。予約がある限り出し続ける。 */}
+      {papers.map((paper) => {
+        const draftId = drafts[paper.id] ?? paper.draftId;
+        return (
+          <div key={paper.id} className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {draftId ? (
+              <>
+                <span>条件書 <span className="code">{paper.documentNo ?? `#${paper.id}`}</span> の訂正版の下書き（#{draftId}）があります。</span>
+                {mapLinks.document && <button className="btn primary" onClick={() => mapLinks.document!(draftId)}>下書きを開く（確かめて決定する）</button>}
+              </>
+            ) : (
+              <>
+                <span>条件書 <span className="code">{paper.documentNo ?? `#${paper.id}`}</span> は、いまの版（{paper.on} より前の開始日）のまま決定しています。</span>
+                <button className="btn primary" disabled={busy} onClick={() => void revise(paper)}>
+                  訂正版を作る（{paper.on} からの版 {paper.conditionIds.length} 本）</button>
+              </>
+            )}
+            <small className="faint">許諾開始日が {paper.on} の条件書になります。決定すると、元の条件書は「訂正済み」になります</small>
+          </div>
+        );
+      })}
+      {error && <div className="alert">{error}</div>}
     </div>
   );
 }

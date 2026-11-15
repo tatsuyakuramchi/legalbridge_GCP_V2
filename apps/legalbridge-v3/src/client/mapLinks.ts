@@ -19,6 +19,8 @@ export interface MapLinks {
   composeContract?: (agreement: { id: number; label: string }, partyId: number, templateKey: string) => void;
   /** 巻き直しで引き継いだ条件明細の条件書・発注書を作る（作業テーブルへ）。 */
   composeTerms?: (conditionIds: number[]) => void;
+  /** 文書の画面を、その文書を選んだ状態で開く（作った訂正版の下書きを見せる）。 */
+  document?: (documentId: number) => void;
 }
 
 export const MapLinksContext = createContext<MapLinks>({});

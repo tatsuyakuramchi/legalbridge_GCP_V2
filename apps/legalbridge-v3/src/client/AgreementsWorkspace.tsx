@@ -318,7 +318,8 @@ export function AgreementsWorkspace(
                 </div>
 
                 {/* 巻き直しのつながり（旧 → 新）。 */}
-                <RepaperLinksNote agreementId={a.id} version={version} onOpen={(id) => setSelected(id)} />
+                <RepaperLinksNote agreementId={a.id} version={version} onOpen={(id) => setSelected(id)}
+                                  onChanged={(msg) => { setNotice(msg); bump(); }} />
                 {repapering && (
                   <RepaperDialog target={{ id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: a.counterparty.id }}
                     onClose={() => setRepapering(false)}

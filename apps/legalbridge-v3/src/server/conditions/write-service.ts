@@ -2066,6 +2066,48 @@ export class ConditionWriteService {
     ].filter((entry) => entry.rows > 0);
   }
 
+  /**
+   * 適用日からの改訂を予約する（契約の巻き直しで、適用日が先のときの引き継ぎ）。
+   *
+   * 呼び出し側のトランザクションで動く。いまの版は生きたまま残り、適用日が来たら日次ジョブが切り替える
+   * （applyScheduledRevisions）。画面の「改訂を予約」と同じ道（revise）を通るので、範囲・案件の紐づけ・
+   * 適用日以降の予定明細は新しい版へ移る。
+   * 同じ系列にもう予約があれば作らない（CONFLICT）。呼び出し側が先に除いておく。
+   */
+  async scheduleRevisionIn(
+    client: Queryable, id: number,
+    patch: { termStart?: string | null; termEnd?: string | null; agreementId?: number | null },
+    effectiveFrom: string, actor: string, why: string
+  ): Promise<{ id: number; conditionNo: string | null }> {
+    const cur = (await client.query(
+      "SELECT id, condition_no, status, series_id FROM conditions WHERE id = $1 FOR UPDATE", [id])).rows[0] as
+      { condition_no: string | null; status: string; series_id: number | null } | undefined;
+    if (!cur) throw new DomainError("NOT_FOUND", `条件明細 ${id} が見つかりません`);
+    if (cur.status !== "active") {
+      throw new DomainError("CONFLICT", `${cur.condition_no ?? `#${id}`} は有効な版ではないので、改訂を予約できません`);
+    }
+    const pending = (await client.query(
+      `SELECT condition_no, effective_from FROM conditions
+        WHERE series_id = $1 AND status = 'scheduled' AND id <> $2 ORDER BY effective_from LIMIT 1`,
+      [cur.series_id ?? id, id])).rows[0] as { condition_no: string | null; effective_from: unknown } | undefined;
+    if (pending) {
+      throw new DomainError("CONFLICT",
+        `${cur.condition_no ?? `#${id}`} には、すでに ${dateStr(pending.effective_from) ?? "?"} 適用の改訂が予定されています`);
+    }
+    const entries: Array<{ column: string; value: unknown }> = [];
+    if (patch.termStart !== undefined) entries.push({ column: "term_start", value: patch.termStart });
+    if (patch.termEnd !== undefined) entries.push({ column: "term_end", value: patch.termEnd });
+    if (patch.agreementId !== undefined) entries.push({ column: "agreement_id", value: patch.agreementId });
+    const revisedTo = await this.revise(client, id, entries, effectiveFrom, "scheduled");
+    await recordAudit(client, {
+      actor, action: "condition.schedule_revision", targetType: "condition", targetId: id,
+      detail: { patch, revisedTo, effectiveFrom, why }
+    });
+    const made = (await client.query("SELECT condition_no FROM conditions WHERE id = $1", [revisedTo])).rows[0] as
+      { condition_no: string | null } | undefined;
+    return { id: revisedTo, conditionNo: made?.condition_no ?? null };
+  }
+
   private async today(client: Queryable): Promise<string> {
     const r = await client.query("SELECT current_date AS d");
     return String(dateStr((r.rows[0] as { d: unknown }).d));
