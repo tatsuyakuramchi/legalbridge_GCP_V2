@@ -159,7 +159,9 @@ export function WorkbenchWorkspace(
   // 入口から選んだときも、同じ入口の途中の状態があれば続きから。
   if (!state) return <EntryPicker onPick={(entry) => onState(loadWorkbenchState(entry) ?? newWorkbenchState(entry))} />;
   if (state.entry.kind === "bulk") {
-    return <BulkWorkbench entry={state.entry} onMode={(mode) => onState({ ...state, entry: { ...(state.entry as { kind: "bulk"; matterId?: number | null }), kind: "bulk", mode } })}
+    return <BulkWorkbench entry={state.entry} onMode={(mode) => onState({ ...state, entry: { kind: "bulk", mode, matterId: (state.entry as { matterId?: number | null }).matterId ?? null,
+                            // 訂正版の元は持ち越さない（上の切り替えから入るのは新しく作るとき）。
+                            reviseDocumentId: null } })}
                           onOpenDocument={onOpenDocument} onOpenMatter={onOpenMatter} onClose={() => onState(null)} />;
   }
   return <Workbench key={entryKey(state.entry)} state={state} onState={onState} readOnly={readOnly}

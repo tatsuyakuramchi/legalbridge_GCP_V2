@@ -49,7 +49,9 @@ const sameEntry = (a: WorkbenchEntry, b: WorkbenchEntry) =>
     : a.kind === "matter" ? a.matterId === (b as typeof a).matterId
     : a.kind === "round" ? a.conditionId === (b as typeof a).conditionId && a.scheduleId === (b as typeof a).scheduleId && a.eventId === (b as typeof a).eventId
     : a.kind === "conditions" ? a.conditionIds.join(",") === (b as typeof a).conditionIds.join(",") && (a.templateKey ?? null) === ((b as typeof a).templateKey ?? null)
+    // 訂正版の元（店舗イベント審判）も見る。見ないと、別の発注書から入っても前に開いた発注書の訂正版が続く。
     : a.kind === "bulk" ? a.mode === (b as typeof a).mode && (a.matterId ?? null) === ((b as typeof a).matterId ?? null)
+        && (a.reviseDocumentId ?? null) === ((b as typeof a).reviseDocumentId ?? null)
     : a.kind === "document" ? a.documentId === (b as typeof a).documentId && a.mode === (b as typeof a).mode
     : a.partyId === (b as typeof a).partyId);
 
