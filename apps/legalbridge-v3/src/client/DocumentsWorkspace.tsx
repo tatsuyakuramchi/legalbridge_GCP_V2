@@ -218,7 +218,7 @@ export function DocumentsWorkspace(
      */
     flow?: DocFlow | null;
     /** 「新しく文書を作る」の行き先。文書を作るのは作業テーブル（一括も作業テーブルの一括モード）。 */
-    onOpenWorkbench?: (bulk?: "orders" | "judge" | "settled") => void;
+    onOpenWorkbench?: (bulk?: "orders" | "judge" | "settled", reviseDocumentId?: number) => void;
     /** 訂正版・下敷きは作業テーブルの①で決める。文書と入り方を渡す。 */
     onOpenWorkbenchFor?: (documentId: number, mode: "revise" | "derive") => void;
     /** 決定した発注書から検収書を作る（支払文書の「発注書から検収書」へ）。 */
@@ -2092,6 +2092,7 @@ export function DocumentsWorkspace(
               onEditDraft={(id) => void openDraft(id)}
               onIssueDraft={(id) => void issueDraft(id)}
               onReissue={(id, no) => (onOpenWorkbenchFor ? onOpenWorkbenchFor(id, "revise") : void reissue(id, no))}
+              onReissueJudge={onOpenWorkbench ? (id) => onOpenWorkbench("judge", id) : undefined}
               onDerive={(id) => (onOpenWorkbenchFor ? onOpenWorkbenchFor(id, "derive") : setError("下敷きにして次を作るのは作業テーブルからです"))}
               onVoid={(id, no) => void voidDocument(id, no)}
               onStore={(id) => void store(id)}

@@ -116,7 +116,7 @@ function CounterpartyNo({ doc, busy, onChanged }: { doc: DocumentRow; busy: bool
 
 export function DocumentDetail(
   { doc, versions, templates, integrations, busy, onOpen, onChanged, onLinkCondition, openConditions,
-    onEditDraft, onIssueDraft, onReissue, onDerive, onVoid, onStore, onPayment, onSettleFromOrder,
+    onEditDraft, onIssueDraft, onReissue, onReissueJudge, onDerive, onVoid, onStore, onPayment, onSettleFromOrder,
     isAdmin, onSelect, openStep }: {
     /** 決定した発注書から検収書・役務提供完了通知書を作る（支払文書 →「発注書から検収書」へ）。 */
     onSettleFromOrder?: (id: number) => void;
@@ -135,6 +135,8 @@ export function DocumentDetail(
     onIssueDraft: (id: number) => void;
     /** 訂正版を作る（作業テーブルの①へ）。 */
     onReissue: (id: number, no: string | null) => void;
+    /** 店舗イベント審判の画面で訂正版を作る（発注書だけ）。 */
+    onReissueJudge?: (id: number) => void;
     /** この文書を下敷きに、別の（または同じ）ひな形で次の下書きを作る。 */
     /** 下敷きにして次を作る（作業テーブルの①へ。どの文書を作るかはそこで決める）。 */
     onDerive: (id: number) => void;
@@ -253,6 +255,11 @@ export function DocumentDetail(
                           onClick={() => onSelect(pending.id)}>訂正版の下書きを開く</button>
                 : <button className="btn" disabled={busy}
                           onClick={() => onReissue(doc.id, doc.documentNo)}>訂正版を作る</button>
+              )}
+              {/* 審判の発注書は 店舗・開催日 から組み直すほうが早い。手で作った発注書もここから直せる。 */}
+              {!doc.imported && !pending && onReissueJudge && doc.templateKey === "purchase_order" && doc.status === "issued" && (
+                <button className="btn" disabled={busy} title="店舗・取引先・開催日から明細を組み直して訂正版を作る"
+                        onClick={() => onReissueJudge(doc.id)}>訂正版を作る（店舗イベント審判）</button>
               )}
               {/* 当社の支払は検収書か利用許諾計算書から起きる。支払を立てないと
                   経理提出用の一覧に出ない。

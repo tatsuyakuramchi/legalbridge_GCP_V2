@@ -1,3 +1,4 @@
+import { swapStoreEventConditions } from "../store-events/swap.js";
 import { isRoyaltyStatementKey } from "./settlement-docs.js";
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { applyWriteBack, type WriteBackResult } from "./write-back.js";
@@ -1106,6 +1107,8 @@ export class DocumentIssueService {
       `UPDATE condition_events SET document_id = $2 WHERE document_id = $1 RETURNING id`,
       [oldId, newId]);
     await client.query("UPDATE documents SET status = 'superseded' WHERE id = $1", [oldId]);
+    // 店舗イベント審判の訂正版：下書きで作った新しい条件明細を有効に、元の条件明細を無効にする（控えのある文書だけ）。
+    await swapStoreEventConditions(client, newId, newDocumentNo, row.document_no, actor);
 
     await recordAudit(client, {
       actor, action: "document.supersede", targetType: "document", targetId: oldId,

@@ -4506,6 +4506,10 @@ export function createRoutes(database: Transactable) {
       mode: z.enum(["auto", "fixed", "none"]),
       agreementId: z.coerce.number().int().positive().nullable().optional()
     }).nullable().optional(),
+    revise: z.object({
+      documentId: z.coerce.number().int().positive(),
+      reason: z.string().trim().max(500).default("")
+    }).nullable().optional(),
     days: z.array(z.object({
       date: z.string().trim().max(10), startTime: z.string().trim().max(5).default(""),
       eventName: z.string().trim().max(120), storeId: z.coerce.number().int().min(0),
@@ -4513,6 +4517,10 @@ export function createRoutes(database: Transactable) {
       travelIncTax: z.coerce.number().min(0).max(1_000_000).nullable().optional().transform((v) => v ?? null)
     })).max(62)
   });
+  // 訂正版の元（決定済みの発注書）。取引先と、この画面で作ったものなら開催日を返す。
+  router.get("/store-events/orders/source/:documentId", asyncRoute(async (req, res) => {
+    res.json(await storeEvents.reviseSource(Number(req.params.documentId)));
+  }));
   // 突き合わせ。何も作らない。
   router.post("/store-events/orders/preview", requireRole("admin", "legal"),
     asyncRoute(async (req, res) => {

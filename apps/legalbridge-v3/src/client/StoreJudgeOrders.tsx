@@ -37,7 +37,12 @@ interface Preview {
 }
 interface Row { key: number; date: string; startTime: string; eventName: string; storeId: number;
   feeIncTax: string; travelOn: boolean; travel: string }
-interface Created { documentId: number; matterId: number; matterCreated: boolean;
+interface ReviseSource {
+  documentId: number; documentNo: string | null; partyId: number | null; partyName: string | null;
+  days: Array<{ date: string; startTime: string; eventName: string; storeId: number; feeIncTax: number; travelIncTax: number | null }>;
+  fromThisScreen: boolean; issues: string[];
+}
+interface Created { documentId: number; supersedesId?: number | null; matterId: number; matterCreated: boolean;
   conditions: Array<{ id: number; conditionNo: string | null; kind: string }> }
 
 const yen = (n: number) => `¥${Math.round(n).toLocaleString("ja-JP")}`;
@@ -48,7 +53,11 @@ const jaDate = (iso: string | null) => {
 };
 const MODE_LABEL = { auto: "自動（締結済みの基本契約が 1 本ならそれ）", none: "基本契約なし（標準約款）", fixed: "この契約に載せる" } as const;
 
-export function StoreJudgeOrders({ onOpenDocument }: { onOpenDocument: (id: number) => void }) {
+export function StoreJudgeOrders({ onOpenDocument, reviseDocumentId = null }: {
+  onOpenDocument: (id: number) => void;
+  /** 訂正版を作る元の発注書（文書の「訂正版を作る（店舗イベント審判）」から）。 */
+  reviseDocumentId?: number | null;
+}) {
   const readOnly = useReadOnly();
   const [stores, setStores] = useState<Store[]>([]);
   const [storeId, setStoreId] = useState<number | null>(null);
@@ -63,11 +72,39 @@ export function StoreJudgeOrders({ onOpenDocument }: { onOpenDocument: (id: numb
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showMaster, setShowMaster] = useState(false);
+  const [source, setSource] = useState<ReviseSource | null>(null);
+  const [reason, setReason] = useState("");
 
   const reloadStores = () => api.get<{ stores: Store[] }>("/store-events/stores")
     .then((r) => { setStores(r.stores); setStoreId((cur) => cur ?? r.stores.find((s) => s.active)?.id ?? null); })
     .catch((e: ApiError) => setError(e.message));
   useEffect(() => { void reloadStores(); }, []);
+
+  // 訂正版：元の発注書の取引先と、この画面で作ったものなら開催日を入れておく。手で作ったものは開催日を入れ直す。
+  useEffect(() => {
+    if (!reviseDocumentId) return;
+    api.get<ReviseSource>(`/store-events/orders/source/${reviseDocumentId}`)
+      .then(setSource).catch((e: ApiError) => setError(e.message));
+  }, [reviseDocumentId]);
+  useEffect(() => {
+    if (!source?.partyId || !stores.length || partyId) return;
+    const mine = stores.filter((st) => st.active && st.judges.some((j) => j.partyId === source.partyId));
+    const first = source.days[0]?.storeId ?? mine[0]?.id ?? null;
+    setPartyId(source.partyId);
+    if (first) setStoreId(first);
+    if (source.days.length) {
+      setRows(source.days.map((d, i) => ({ key: i + 1, date: d.date, startTime: d.startTime, eventName: d.eventName, storeId: d.storeId,
+        feeIncTax: String(d.feeIncTax || ""), travelOn: Number(d.travelIncTax ?? 0) > 0,
+        travel: Number(d.travelIncTax ?? 0) > 0 ? String(d.travelIncTax) : "" })));
+      setSeq(source.days.length + 1);
+    } else if (first) {
+      const j = stores.find((st) => st.id === first)?.judges.find((x) => x.partyId === source.partyId);
+      const travel = j?.defaultTravelIncTax ?? 0;
+      setRows([{ key: 1, date: "", startTime: "12:00", eventName: "", storeId: first,
+        feeIncTax: j?.defaultFeeIncTax ? String(j.defaultFeeIncTax) : "", travelOn: travel > 0, travel: travel ? String(travel) : "" }]);
+      setSeq(2);
+    }
+  }, [source, stores]);
 
   const activeStores = stores.filter((s) => s.active);
   const store = stores.find((s) => s.id === storeId) ?? null;
@@ -87,6 +124,8 @@ export function StoreJudgeOrders({ onOpenDocument }: { onOpenDocument: (id: numb
   };
 
   const pickJudge = (j: Judge) => {
+    // 訂正版では取引先は変えない。同じ人を押し直して読み込んだ開催日を消さない。
+    if (reviseDocumentId) return;
     setPartyId(j.partyId); setCreated(null); setAgreementChoice("");
     const travel = j.defaultTravelIncTax ?? 0;
     setRows([{ key: seq, date: "", startTime: "12:00", eventName: "", storeId: storeId!,
@@ -103,13 +142,14 @@ export function StoreJudgeOrders({ onOpenDocument }: { onOpenDocument: (id: numb
 
   const body = useMemo(() => partyId ? {
     partyId, ownerStaffId,
+    revise: reviseDocumentId ? { documentId: reviseDocumentId, reason } : null,
     agreement: agreementChoice === "" ? null
       : agreementChoice === "none" ? { mode: "none" as const }
       : agreementChoice === "auto" ? { mode: "auto" as const }
       : { mode: "fixed" as const, agreementId: Number(agreementChoice) },
     days: rows.map((r) => ({ date: r.date, startTime: r.startTime, eventName: r.eventName, storeId: r.storeId,
       feeIncTax: numOf(r.feeIncTax), travelIncTax: r.travelOn ? numOf(r.travel) : null }))
-  } : null, [partyId, ownerStaffId, agreementChoice, rows]);
+  } : null, [partyId, ownerStaffId, agreementChoice, rows, reviseDocumentId, reason]);
 
   // 突き合わせ。打つたびに少し待って引き直す。何も作らない。
   useEffect(() => {
@@ -149,6 +189,24 @@ export function StoreJudgeOrders({ onOpenDocument }: { onOpenDocument: (id: numb
         </div>
         <div className="panel-bd stack">
           {error && <div className="note warn">{error}</div>}
+          {reviseDocumentId && (
+            <div className="note">
+              <b>訂正版を作ります：{source?.documentNo ?? `#${reviseDocumentId}`}</b>（{source?.partyName ?? "…"} 様）
+              <div className="faint">
+                {source?.fromThisScreen ? "元の開催日を読み込みました。直して作ると訂正版の下書きになります。"
+                  : "手で作った発注書なので開催日は読み込めません。この月の開催日を入れ直してください。"}
+                {" "}訂正版を決定した時点で、元の条件明細は無効になり、新しい条件明細に置き換わります（下書きのうちは元のまま）。
+              </div>
+              {source?.issues.map((i) => <div key={i} className="note warn" style={{ marginTop: 6 }}>{i}</div>)}
+              {source?.partyId && !stores.some((st) => st.judges.some((j) => j.partyId === source.partyId)) && stores.length > 0 && (
+                <div className="note warn" style={{ marginTop: 6 }}>
+                  {source.partyName} はどの店舗の担当にも登録されていません。「店舗と担当取引先の設定」で担当に足してください。
+                </div>
+              )}
+              <label className="field" style={{ marginTop: 8 }}><span>訂正の理由</span>
+                <input value={reason} placeholder="例：11/25 の開催を追加" onChange={(e) => { setReason(e.target.value); setCreated(null); }} /></label>
+            </div>
+          )}
           {!activeStores.length && (
             <div className="note">店舗がまだ登録されていません。「店舗と担当取引先の設定」から店舗と担当を足してください。</div>
           )}
@@ -171,7 +229,9 @@ export function StoreJudgeOrders({ onOpenDocument }: { onOpenDocument: (id: numb
               {!store.judges.length && <div className="note warn">この店舗にはまだ担当取引先がいません。「店舗と担当取引先の設定」で足してください。</div>}
               <div className="row">
                 {store.judges.map((j) => (
-                  <button key={j.partyId} type="button" className="chip" aria-pressed={j.partyId === partyId} onClick={() => pickJudge(j)}>
+                  <button key={j.partyId} type="button" className="chip" aria-pressed={j.partyId === partyId}
+                          disabled={Boolean(reviseDocumentId) && j.partyId !== partyId}
+                          title={reviseDocumentId ? "訂正版では取引先は変えられません" : undefined} onClick={() => pickJudge(j)}>
                     {j.name}
                     <span className="faint">
                       {" "}{j.defaultFeeIncTax ? `${yen(j.defaultFeeIncTax)}／日` : "既定額なし"}
@@ -311,12 +371,12 @@ export function StoreJudgeOrders({ onOpenDocument }: { onOpenDocument: (id: numb
             <div className="row">
               <button className="btn primary" disabled={busy || readOnly || preview!.issues.length > 0 || Boolean(created)}
                       title={readOnly ? "いまは読み取り専用です" : undefined} onClick={() => void create()}>
-                {busy ? "作っています…" : "発注書の下書きを作る"}
+                {busy ? "作っています…" : reviseDocumentId ? "訂正版の下書きを作る" : "発注書の下書きを作る"}
               </button>
               {created && (
                 <>
                   <span className="note ok" style={{ padding: "4px 10px" }}>
-                    下書きができました（条件明細 {created.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}{created.matterCreated ? "・案件を新しく作成" : ""}）
+                    {created.supersedesId ? "訂正版の下書きができました" : "下書きができました"}（条件明細 {created.conditions.map((c) => c.conditionNo ?? `#${c.id}`).join("・")}{created.matterCreated ? "・案件を新しく作成" : ""}）
                   </span>
                   <button className="btn" onClick={() => onOpenDocument(created.documentId)}>下書きを開く（決定・送る）</button>
                 </>
