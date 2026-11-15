@@ -87,7 +87,8 @@ export async function ensureAgreementForTerms(
 
   const conds = await client.query(
     `SELECT c.id, c.counterparty_id, c.direction, c.agreement_id, a.kind AS agreement_kind,
-            a.parent_id AS agreement_parent, w.title AS work_title
+            a.parent_id AS agreement_parent, a.agreement_no AS agreement_no,
+            a.order_document_id AS agreement_order, w.title AS work_title
        FROM conditions c
        LEFT JOIN agreements a ON a.id = c.agreement_id
        LEFT JOIN works w ON w.id = c.work_id
@@ -145,6 +146,23 @@ export async function ensureAgreementForTerms(
   if (!payeeId) {
     const prior = await findReusable(client, input, partyId);
     if (prior) return attachToExisting(client, input, actor, prior, parentId);
+    // 載せた条件が、もう 1 本の個別契約（基本契約の下。発注書の器は除く）に載っていれば、その個別契約を使う。
+    // 先に個別契約を立てて条件を載せてから条件書を決定すると（表・工程表の「＋ 個別契約」、巻き直しの引き継ぎ）、
+    // 以前はもう 1 本の個別契約を立てて文書だけを載せていた（同じ作品の個別契約が 2 本並び、片方は条件なし）。
+    // 残りの条件は、契約なしか、その個別契約の親の基本契約に載っているものだけ（attachToExisting が寄せる）。
+    // 別の個別契約・単体契約にまたがるときは決められないので、これまでどおり新しく立てる。
+    const held = rows.filter((r) => r.agreement_kind === "supplement" && !r.agreement_order);
+    const holderIds = [...new Set(held.map((r) => Number(r.agreement_id)))];
+    if (holderIds.length === 1) {
+      const h = held[0];
+      const holderParent = int(h.agreement_parent);
+      const others = rows.filter((r) => Number(r.agreement_id) !== holderIds[0]);
+      const fits = others.every((r) => !r.agreement_id || (holderParent !== null && Number(r.agreement_id) === holderParent));
+      if (fits && (parentId === null || parentId === holderParent)) {
+        return attachToExisting(client, input, actor,
+          { id: holderIds[0]!, agreement_no: str(h.agreement_no), kind: "supplement", parent_id: holderParent }, parentId);
+      }
+    }
   }
   // 番号は条件書の番号（本体）。既に別の契約が使っていれば null（下で従来の採番）。
   const docNo = baseDocumentNumber(input.documentNo);
