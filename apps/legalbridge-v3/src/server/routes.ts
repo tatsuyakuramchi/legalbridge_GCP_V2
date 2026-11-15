@@ -679,6 +679,9 @@ export function createRoutes(database: Transactable) {
         parentId: z.coerce.number().int().positive().nullable().optional(),
         counterpartyId: z.coerce.number().int().positive().optional(),
         executedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        // 有効期間（適用日）。開始と終了。null で消す。
+        effectiveOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+        expiresOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
         // 件名（文書から立てた契約の件名が文書の名前のまま違っているとき直す）。
         title: z.string().trim().min(1).max(200).optional(),
         // 変更の理由（まき直し・更新・訂正など）。契約の版に残る。

@@ -64,7 +64,7 @@ SELECT c.condition_no AS 条件, left(c.name, 36) AS 条件名, c.direction AS �
        c.pricing_model AS 方式,
        CASE WHEN c.rate_ppm IS NOT NULL AND c.rate_ppm > 0 THEN round(c.rate_ppm / 10000.0, 3) || '%'
             WHEN c.flat_amount IS NOT NULL THEN '定額 ' || c.flat_amount ELSE '' END AS 料率・額,
-       w.title AS 作品,
+       w.title AS 作品, c.term_start AS 許諾開始, c.term_end AS 許諾終了,
        a.agreement_no AS 契約, a.kind AS 契約の種類, par.agreement_no AS 親の契約,
        (SELECT string_agg(DISTINCT d.document_no || '(' || d.status || ')', '・')
           FROM v3.document_conditions dc JOIN v3.documents d ON d.id = dc.document_id

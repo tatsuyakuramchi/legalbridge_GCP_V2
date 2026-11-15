@@ -922,6 +922,24 @@ function RemapForm(
   const [executedOn, setExecutedOn] = useState<string>(a.executedOn ?? "");
   /** 変更の理由（契約の版に残る。まき直し・更新・訂正など）。 */
   const [reason, setReason] = useState("");
+  /**
+   * 有効期間（適用日）。図のデータには入っていないので、開いたときに契約から読む。
+   * loaded は読んだ時点の値（変えた欄だけを送る。読めていなければ送らない）。
+   */
+  const [loaded, setLoaded] = useState<{ effectiveOn: string; expiresOn: string } | null>(null);
+  const [effectiveOn, setEffectiveOn] = useState("");
+  const [expiresOn, setExpiresOn] = useState("");
+  useEffect(() => {
+    let alive = true;
+    api.get<{ agreement: { effectiveOn: string | null; expiresOn: string | null } }>(`/agreements/${a.id}`)
+      .then((d) => {
+        if (!alive) return;
+        const now = { effectiveOn: d.agreement.effectiveOn ?? "", expiresOn: d.agreement.expiresOn ?? "" };
+        setLoaded(now); setEffectiveOn(now.effectiveOn); setExpiresOn(now.expiresOn);
+      })
+      .catch(() => { if (alive) setLoaded(null); });
+    return () => { alive = false; };
+  }, [a.id]);
   const [busy, setBusy] = useState(false);
   const needsParent = kind === "supplement" || kind === "termination";
   const isRoot = kind === "master" || kind === "standalone";
@@ -936,6 +954,8 @@ function RemapForm(
         parentId: needsParent && parentId ? Number(parentId) : null,
         counterpartyId: Number(counterpartyId),
         executedOn: executedOn || null,
+        ...(loaded && effectiveOn !== loaded.effectiveOn ? { effectiveOn: effectiveOn || null } : {}),
+        ...(loaded && expiresOn !== loaded.expiresOn ? { expiresOn: expiresOn || null } : {}),
         reason: reason.trim() || null
       });
       onSaved(`${a.agreementNo ?? `#${a.id}`} を保存しました（番号はそのまま。前の内容は「履歴」に残ります）`);
@@ -986,6 +1006,14 @@ function RemapForm(
         {executedOn && (a.status === "draft" || a.status === "negotiating") && (
           <small className="faint">締結日を入れると「締結済み」になります</small>
         )}
+      </label>
+      <label className="field"><span>適用日（有効期間の開始）</span>
+        <input type="date" value={effectiveOn} disabled={!loaded} onChange={(e) => setEffectiveOn(e.target.value)} />
+        <small className="faint">{loaded ? "契約が効き始める日。締結日とは別に持てます（締結より先・後の適用）" : "読み込み中…"}</small>
+      </label>
+      <label className="field"><span>有効期間の終了</span>
+        <input type="date" value={expiresOn} disabled={!loaded} onChange={(e) => setExpiresOn(e.target.value)} />
+        <small className="faint">空なら期限なし</small>
       </label>
       <div className="field"><span>相手先</span>
         <SearchSelect value={counterpartyId} onChange={(v) => setCounterpartyId(v)}
