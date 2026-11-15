@@ -13,7 +13,7 @@ import { blockingPayments } from "../payments/blocking.js";
 import { MatterLinkService } from "../matters/link-service.js";
 import { withImpliedVariables, assertComplete, bindVariables, type BindingResult } from "./binding.js";
 import { documentWarnings, type Warning } from "./preflight.js";
-import { DocumentContextRepository } from "./context-repository.js";
+import { DocumentContextRepository, isCounterpartyOfAll } from "./context-repository.js";
 import { DocumentRepository } from "./repository.js";
 import { voidSuccessors } from "./void-successors.js";
 import { renderDocumentHtml } from "./render.js";
@@ -638,7 +638,12 @@ export class DocumentIssueService {
         // 条件書（個別利用許諾条件書・出版条件書）は相手と結ぶ契約そのもの。
         // 決定した瞬間に合意の器を立てる（基本契約があれば補助文書、無ければ単体契約）。
         // 受取人（共著の取り分）宛ての条件書は、合意の相手が受取人で、親は文書で選んだ受取人の基本契約。
-        const payeeId = int((row.manual_inputs as Record<string, unknown> | null)?._payeePartyId);
+        // 受取人に相手先（代表）その人を選んだ紙は、受取人宛てではない（相手先宛ての紙と同じ扱い）。
+        const rawPayee = int((row.manual_inputs as Record<string, unknown> | null)?._payeePartyId);
+        const owners = rawPayee && conditionIds.length
+          ? (await client.query("SELECT counterparty_id FROM conditions WHERE id = ANY($1::bigint[])", [conditionIds])).rows as Array<{ counterparty_id: unknown }>
+          : [];
+        const payeeId = isCounterpartyOfAll(owners.map((o) => ({ counterpartyId: int(o.counterparty_id) })), rawPayee) ? null : rawPayee;
         const auto = await ensureAgreementForTerms(client, {
           documentId, documentNo, templateKey: template.templateKey, templateLabel: template.label,
           conditionIds, agreementId: payeeId ? null : int(row.agreement_id), issuedOn,

@@ -112,7 +112,13 @@ function PayeePicker(
 }
 
 /** 条件の取り分（共著）。条件書の「受取人」を選ぶ材料。 */
-interface TermsShares { id: number; shares: Array<{ partyId: number; partyName: string; sharePpm: number }>; distribution: "direct" | "representative" }
+interface TermsShares { id: number; shares: Array<{ partyId: number; partyName: string; sharePpm: number }>; distribution: "direct" | "representative";
+                        /** 条件の相手先（代表）。受取人の欄には出さない（代表宛ては「相手先宛て」）。 */
+                        counterpartyId?: number | null }
+
+/** 載せた条件すべての相手先（代表）その人か。受取人には選ばせない（選ぶと料率の欄が取り分になり、備考の取り分が出ない）。 */
+const isTermsCounterparty = (conditions: TermsShares[], partyId: number | null) =>
+  partyId != null && conditions.length > 0 && conditions.every((c) => c.counterpartyId != null && c.counterpartyId === partyId);
 
 /**
  * 条件書の受取人を選ぶ。共著の取り分のある作品の条件書は、相手先（代表）宛てのほかに
@@ -128,6 +134,8 @@ function TermsPayeePicker(
       cur.count += 1; people.set(s.partyId, cur);
     }
   }
+  // 代表（条件の相手先）その人は並べない。代表宛ては「相手先（代表）宛て」で出す。
+  for (const id of [...people.keys()]) { if (isTermsCounterparty(conditions, id)) people.delete(id); }
   if (!people.size) return null;
   const all = conditions.filter((c) => c.shares.length).length;
   return (
@@ -142,7 +150,7 @@ function TermsPayeePicker(
       <small className="faint">
         {value
           ? "甲がこの人になり、一覧の料率（全体）とこの人の取り分を併記します。基本契約はこの人のものを選んでください（選ばなければ単体契約として起こします）"
-          : "取り分のある条件が入っています。共著者ごとに出すなら受取人を選んでください（選んだ条件すべての取り分に入っている人だけ通ります）"}
+          : "取り分のある条件が入っています。相手先（代表）宛てなら、このままで備考に取り分が出ます。共著者ごとに出すなら受取人を選んでください（選んだ条件すべての取り分に入っている人だけ通ります）"}
       </small>
     </div>
   );
@@ -647,7 +655,12 @@ export function DocumentsWorkspace(
     if (!isPubTerms || !picked.length) { setTermsShares([]); return; }
     let live = true;
     api.get<{ conditions: TermsShares[] }>(`/conditions/shares?ids=${[...picked].sort((a, b) => a - b).join(",")}`)
-      .then((r) => { if (live) setTermsShares(r.conditions); })
+      .then((r) => {
+        if (!live) return;
+        setTermsShares(r.conditions);
+        // 前に受取人として代表その人を選んでいた下書きは、相手先宛てに戻す。
+        setPayeePartyId((cur) => (isTermsCounterparty(r.conditions, cur) ? null : cur));
+      })
       .catch(() => { if (live) setTermsShares([]); });
     return () => { live = false; };
   }, [isPubTerms, [...picked].sort((a, b) => a - b).join(",")]);

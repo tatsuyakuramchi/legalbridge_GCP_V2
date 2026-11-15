@@ -1241,7 +1241,12 @@ export function createRoutes(database: Transactable) {
     for (const id of ids) {
       out.push({ id, shares: await loadShares(database, id), distribution: await loadDistribution(database, id) });
     }
-    res.json({ conditions: out });
+    // 条件の相手先（代表）。条件書の受取人の欄から、代表その人を外すのに使う（代表宛ては「相手先宛て」）。
+    const owners = ids.length
+      ? (await database.query("SELECT id, counterparty_id FROM conditions WHERE id = ANY($1::bigint[])", [ids])).rows as Array<{ id: unknown; counterparty_id: unknown }>
+      : [];
+    const ownerOf = new Map(owners.map((o) => [Number(o.id), o.counterparty_id == null ? null : Number(o.counterparty_id)]));
+    res.json({ conditions: out.map((c) => ({ ...c, counterpartyId: ownerOf.get(c.id) ?? null })) });
   }));
 
   router.get("/conditions/:id", asyncRoute(async (req, res) => {
