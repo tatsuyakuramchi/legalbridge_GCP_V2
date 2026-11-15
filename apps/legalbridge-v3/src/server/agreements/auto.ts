@@ -382,6 +382,7 @@ export async function ensureWorkAgreements(
   }
 
   const works: WorkAgreementsResult["works"] = [];
+  const retitled: Array<{ agreementNo: string | null; title: string }> = [];
   for (const group of groups.values()) {
     const workTitle = String(group[0].work_title ?? group[0].name ?? "");
     const existing = group.map(supplementOf).find((x): x is number => x !== null) ?? null;
@@ -391,6 +392,20 @@ export async function ensureWorkAgreements(
     if (existing) {
       agreementId = existing;
       agreementNo = str(group.find((r) => supplementOf(r) === existing)?.agreement_no);
+      // 個別契約の件名を、載っている作品に合わせる。条件明細を付け替えたあと、件名だけが前の作品のまま
+      // 残ることがある（「出版等利用許諾条件書（武装伝奇RPG 神我狩）」に黒剣のスレイヤーの条件）。
+      // 直すのは、自動で付けた形の件名（出版等利用許諾条件書（…））で、その個別契約にこの作品だけが載っているとき。
+      const wantTitle = workTitle ? `出版等利用許諾条件書（${workTitle}）` : "";
+      const sharedByWorks = [...groups.values()].filter((g) => g.some((r) => supplementOf(r) === existing)).length > 1;
+      if (wantTitle && !sharedByWorks) {
+        const renamed = await client.query(
+          `UPDATE agreements SET title = $2, updated_at = now()
+            WHERE id = $1 AND title ~ '^出版等利用許諾条件書（.*）$' AND title <> $2
+              AND NOT EXISTS (SELECT 1 FROM conditions c WHERE c.agreement_id = $1 AND c.status IN ('active', 'scheduled')
+                                 AND c.work_id IS DISTINCT FROM $3::bigint)
+            RETURNING id`, [existing, wantTitle, int(group[0].work_id)]);
+        if (renamed.rowCount) retitled.push({ agreementNo, title: wantTitle });
+      }
     } else {
       // 番号は条件書と同じ PUBT の連番（文書番号・契約番号のどちらにも使われていないもの）。
       let no = await input.nextNumber();
@@ -414,7 +429,7 @@ export async function ensureWorkAgreements(
   await client.query("UPDATE documents SET agreement_id = $2 WHERE id = $1 AND agreement_id IS DISTINCT FROM $2", [input.documentId, Number(master.id)]);
   await recordAudit(client, {
     actor, action: "agreement.work_terms", targetType: "document", targetId: input.documentId,
-    detail: { masterId: Number(master.id), masterNo: str(master.agreement_no), works }
+    detail: { masterId: Number(master.id), masterNo: str(master.agreement_no), works, ...(retitled.length ? { retitled } : {}) }
   });
   return { masterId: Number(master.id), masterNo: str(master.agreement_no), works };
 }
