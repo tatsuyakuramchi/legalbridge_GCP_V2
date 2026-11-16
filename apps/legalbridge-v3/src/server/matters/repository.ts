@@ -137,7 +137,7 @@ export class MatterRepository {
                                   JOIN agreements x ON x.id = c.agreement_id
                                   LEFT JOIN agreements pa ON pa.id = x.parent_id
                                  WHERE ml.matter_id = $1)
-             AND (t.template_key IN ('license_master', 'service_master')
+             AND (t.template_key IN ('license_master', 'license_master_v5', 'service_master')
                   OR COALESCE(d.manual_inputs->>'documentKind', '') LIKE '%基本契約%'))`, [id]),
       this.payments(id),
       this.communications(id),
@@ -202,7 +202,7 @@ export class MatterRepository {
               SELECT party_id FROM v_party_resolved
                WHERE resolved_id = (SELECT resolved_id FROM v_party_resolved WHERE party_id = $3))))
        AND d.status <> 'void'`,
-      [conditions.map((c) => c.id), ["license_master", "service_master"], input.partyId]);
+      [conditions.map((c) => c.id), ["license_master", "license_master_v5", "service_master"], input.partyId]);
     return {
       id: null, matterNo: null, ownerName: null,
       title: [ordered.map((w) => w.title).join("・"), String(party.name ?? "")].filter(Boolean).join("（") + (ordered.length ? "）" : ""),

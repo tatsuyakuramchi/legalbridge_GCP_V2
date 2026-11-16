@@ -44,14 +44,15 @@ test("一覧：条件書の無い条件を相手先ごとに。全部に条件�
   assert.deepEqual(parties[0].conditions.map((c) => [c.conditionNo, c.hasTerms]), [["CL-1", false], ["CL-2", false], ["CL-3", true]]);
 });
 
-test("試算：基本契約の無い個人は出版許諾契約書（個人）を作る計画。必須の欄が空なら「必須の欄が空」。何も作らない", async () => {
-  const d = deps({ pub_master_individual: ["許諾者住所"] });
+test("試算：基本契約の無い相手先は基本契約V5＋V5 の条件書を作る計画。旧基本契約の相手先は旧版の条件書。必須の欄が空なら「必須の欄が空」。何も作らない", async () => {
+  const d = deps({ license_master_v5: ["許諾者住所"] });
   const svc = new MissingContractsService(d.db, d);
   const { outcomes } = await svc.preview({ partyIds: [11, 12, 99], signedOn: "2026-10-07" });
   assert.deepEqual(outcomes.map((o) => [o.partyId, o.status]), [[11, "missing"], [12, "ok"], [99, "nothing"]]);
-  assert.deepEqual(outcomes[0].plan, { master: "create", masterTemplateKey: "pub_master_individual", termsTemplateKey: "pub_license_terms_v3", conditionIds: [1, 2] });
-  assert.match(outcomes[0].problems[0], /pub_master_individual：許諾者住所/);
-  assert.deepEqual(outcomes[1].plan, { master: "existing", masterTemplateKey: null, termsTemplateKey: "pub_license_terms_v3", conditionIds: [4] });
+  assert.deepEqual(outcomes[0].plan, { master: "create", masterTemplateKey: "license_master_v5", termsTemplateKey: "pub_license_terms_v5", conditionIds: [1, 2] });
+  assert.match(outcomes[0].problems[0], /license_master_v5：許諾者住所/);
+  assert.deepEqual(outcomes[1].plan, { master: "existing", masterTemplateKey: null, termsTemplateKey: "pub_license_terms_v3", conditionIds: [4] },
+    "旧基本契約（V5 の文書が無い）の下は従来の V3 の条件書（V5 は基本契約V5 の条を指すので使わない）");
   assert.ok(d.calls.every((c) => c.what === "preview"), "試算は確かめるだけ");
   assert.deepEqual((d.calls[0].args as { manualInputs: Record<string, unknown> }).manualInputs, { 締結日: "2026-10-07", _partyId: 11 },
     "まだ無い基本契約の試算は相手先を渡す（渡さないと宛名・住所が全部空に見える）");
@@ -65,10 +66,10 @@ test("決定：相手先ごとに文書セットを決定する（基本契約�
   assert.equal(r.outcomes[0].status, "ok");
   assert.deepEqual(d.calls.filter((c) => c.what !== "preview").map((c) => c.what), ["agreement", "draft", "issue", "draft", "issue"]);
   const agreement = d.calls.find((c) => c.what === "agreement")!.args as Record<string, unknown>;
-  assert.deepEqual([agreement.counterpartyId, agreement.kind, agreement.domain, agreement.title], [11, "master", "license", "出版等利用許諾基本契約"]);
+  assert.deepEqual([agreement.counterpartyId, agreement.kind, agreement.domain, agreement.title], [11, "master", "license", "著作物利用許諾基本契約書"]);
   const drafts = d.calls.filter((c) => c.what === "draft").map((c) => c.args as Record<string, any>);
-  assert.equal(drafts[0].templateKey, "pub_master_individual");
-  assert.deepEqual([drafts[1].templateKey, drafts[1].conditionIds, drafts[1].agreementId], ["pub_license_terms_v3", [1, 2], null], "条件書には合意を付けない（決定で自動の合意が立つ）");
+  assert.equal(drafts[0].templateKey, "license_master_v5");
+  assert.deepEqual([drafts[1].templateKey, drafts[1].conditionIds, drafts[1].agreementId], ["pub_license_terms_v5", [1, 2], null], "条件書には合意を付けない（決定で自動の合意が立つ）");
   assert.deepEqual(r.outcomes[0].result?.documents.map((x) => x.documentNo), ["DOC-501", "DOC-502"]);
   assert.ok(d.db.find("INSERT INTO audit_events"));
 });
@@ -126,7 +127,7 @@ test("試算：受取人の行は受取人宛て（_payeePartyId）の条件書�
   const svc = new MissingContractsService(d.db, d);
   const { outcomes } = await svc.preview({ keys: ["payee:21", "payee:99"], signedOn: "2026-10-07" });
   assert.deepEqual(outcomes.map((o) => [o.key, o.role, o.status]), [["payee:21", "payee", "ok"], ["payee:99", "payee", "nothing"]]);
-  assert.deepEqual(outcomes[0].plan, { master: "create", masterTemplateKey: "pub_master_individual", termsTemplateKey: "pub_license_terms_v3", conditionIds: [1, 2] });
+  assert.deepEqual(outcomes[0].plan, { master: "create", masterTemplateKey: "license_master_v5", termsTemplateKey: "pub_license_terms_v5", conditionIds: [1, 2] });
   const previews = d.calls.filter((c) => c.what === "preview").map((c) => c.args as Record<string, any>);
   assert.deepEqual(previews[0].manualInputs, { 締結日: "2026-10-07", _partyId: 21 }, "基本契約は受取人と");
   const terms = previews[1];
@@ -141,7 +142,7 @@ test("決定：受取人の行は受取人と基本契約を作り、受取人�
   const agreement = d.calls.find((c) => c.what === "agreement")!.args as Record<string, unknown>;
   assert.equal(agreement.counterpartyId, 21, "基本契約は受取人と");
   const drafts = d.calls.filter((c) => c.what === "draft").map((c) => c.args as Record<string, any>);
-  assert.deepEqual([drafts[1].templateKey, drafts[1].conditionIds, drafts[1].agreementId], ["pub_license_terms_v3", [1, 2], 91],
+  assert.deepEqual([drafts[1].templateKey, drafts[1].conditionIds, drafts[1].agreementId], ["pub_license_terms_v5", [1, 2], 91],
     "受取人の条件書は受取人の基本契約を親に（決定で -S01 が立つ）");
   assert.equal(drafts[1].manualInputs._payeePartyId, 21);
   assert.equal(d.db.find("UPDATE conditions SET agreement_id"), undefined, "条件を受取人の基本契約に載せ替えない");
@@ -156,6 +157,18 @@ test("決定：同じ人が相手先と受取人の両方なら相手先の行�
   assert.deepEqual(r.outcomes[1].plan?.master, "existing");
   const drafts = d.calls.filter((c) => c.what === "draft").map((c) => c.args as Record<string, any>);
   assert.deepEqual(drafts.map((x) => [x.templateKey, x.conditionIds, x.manualInputs._payeePartyId ?? null]), [
-    ["pub_master_individual", [], null], ["pub_license_terms_v3", [6], null], ["pub_license_terms_v3", [1], 14]
+    ["license_master_v5", [], null], ["pub_license_terms_v5", [6], null], ["pub_license_terms_v5", [1], 14]
   ]);
+});
+
+test("試算：既存の基本契約が基本契約V5 の文書なら V5 の条件書。作品が多ければ別紙形式", async () => {
+  const many = Array.from({ length: 13 }, (_, i) => ({ id: 100 + i, condition_no: `CL-${100 + i}`, usage_type: "pub_print", counterparty_id: 15,
+    work_id: 200 + i, work_title: `作品${i}`, party_name: "作家F", party_kind: "corporate", email: null,
+    master: { id: 70, no: "ARC-LIC-2026-0070", title: "著作物利用許諾基本契約書", v5: true }, has_terms: false }));
+  const v5db = new FakeDatabase((text) => (text.includes("AS has_terms") ? many : undefined));
+  const d = { ...deps(), db: v5db };
+  const svc = new MissingContractsService(v5db, d);
+  const { outcomes } = await svc.preview({ partyIds: [15], signedOn: "2026-12-01" });
+  assert.deepEqual(outcomes[0].plan, { master: "existing", masterTemplateKey: null, termsTemplateKey: "pub_license_terms_v5_annex",
+                                      conditionIds: many.map((r) => r.id) });
 });

@@ -190,8 +190,9 @@ export const COMPANION_LABEL: Record<CompanionDocument, string> = { pub_terms: "
 /** ひな形キー → 条件書の種類。条件書でなければ null。 */
 export function companionOfTemplate(templateKey: unknown): CompanionDocument | null {
   const k = String(templateKey ?? "");
-  if (k === "pub_license_terms_v3" || k === "pub_license_terms_v3_annex" || k === "pub_license_terms_multi") return "pub_terms";
-  if (k === "individual_license_terms_v3" || k === "individual_license_terms_v4") return "license_terms";
+  if (k === "pub_license_terms_v3" || k === "pub_license_terms_v3_annex" || k === "pub_license_terms_multi"
+      || k === "pub_license_terms_v5" || k === "pub_license_terms_v5_annex") return "pub_terms";
+  if (k === "individual_license_terms_v3" || k === "individual_license_terms_v4" || k === "individual_license_terms_v5") return "license_terms";
   return null;
 }
 

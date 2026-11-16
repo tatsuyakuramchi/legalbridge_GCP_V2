@@ -80,6 +80,74 @@ const TARGETS = [
 --   ・値は apps/legalbridge-v3/src/server/works/rights-matrix-report.ts が組み立てる（集計は画面と同じ rights-matrix.ts）。
 --   ・登録しなくても画面は既定の本文（works/rights-matrix-report-template.ts）で描ける。
 --     登録すると DB の現行版で描く（本文の手直しを版で残せる）。`
+  },
+  {
+    no: "212", key: "license_master_v5", label: "著作物利用許諾基本契約書V5",
+    body: "templates/license_master_v5.html", mark: "<!-- license_master_v5 r1 -->",
+    prefix: "LIC",
+    categoryFrom: "license_master",
+    out: "212_v5_license_templates.sql",
+    variables: [],
+    title: "著作物利用許諾基本契約書V5（license_master_v5）の登録",
+    intro: `--   出版・ボードゲーム共通の基本契約（著作物利用許諾基本契約書V5）と、その個別条件書V5 の 3 本を一度に登録する。
+--   事業別条項（出版／ボードゲーム）は基本契約に置かず、個別条件書に置く（基本契約V5 第3条第5項）。
+--
+--   ・V5 は新しいキーとして足す。既存のひな形（license_master・pub_master_*・individual_license_terms_v3/v4・
+--     pub_license_terms_v3/_annex/_multi）と、その版で作った文書には触れない（旧基本契約の相手先は従来の条件書）。
+--   ・項目（入力欄）はコードが持つ（LICENSE_MASTER_V5_VARIABLES・LICENSE_TERMS_VARIABLES・PUB_TERMS_VARIABLES）。variables は空。
+--   ・採番は従来の帯を続ける（基本契約 LIC／ボードゲームの条件書 ILT／出版の条件書 PUBT）。
+--   ・アプリ側は V5 のキーを扱う版（documents/license-master-v5.ts ほか）が先に出ていること。`
+  },
+  {
+    no: "212", key: "individual_license_terms_v5", label: "個別利用許諾条件書V5（ボードゲーム）",
+    body: "templates/individual_license_terms_v5.html", mark: "<!-- individual_license_terms_v5 r1 -->",
+    prefix: "ILT",
+    categoryFrom: "individual_license_terms_v4",
+    out: "212_v5_license_templates.sql",
+    variables: [],
+    title: "個別利用許諾条件書V5・ボードゲーム（individual_license_terms_v5）の登録",
+    intro: `--   出版・ボードゲーム共通の基本契約（著作物利用許諾基本契約書V5）と、その個別条件書V5 の 3 本を一度に登録する。
+--   事業別条項（出版／ボードゲーム）は基本契約に置かず、個別条件書に置く（基本契約V5 第3条第5項）。
+--
+--   ・V5 は新しいキーとして足す。既存のひな形（license_master・pub_master_*・individual_license_terms_v3/v4・
+--     pub_license_terms_v3/_annex/_multi）と、その版で作った文書には触れない（旧基本契約の相手先は従来の条件書）。
+--   ・項目（入力欄）はコードが持つ（LICENSE_MASTER_V5_VARIABLES・LICENSE_TERMS_VARIABLES・PUB_TERMS_VARIABLES）。variables は空。
+--   ・採番は従来の帯を続ける（基本契約 LIC／ボードゲームの条件書 ILT／出版の条件書 PUBT）。
+--   ・アプリ側は V5 のキーを扱う版（documents/license-master-v5.ts ほか）が先に出ていること。`
+  },
+  {
+    no: "212", key: "pub_license_terms_v5", label: "個別利用許諾条件書V5（出版・一覧形式）",
+    body: "templates/pub_license_terms_v5.html", mark: "<!-- pub_license_terms_v5 r1 -->",
+    prefix: "PUBT",
+    categoryFrom: "pub_license_terms_v3",
+    out: "212_v5_license_templates.sql",
+    variables: [],
+    title: "個別利用許諾条件書V5・出版 一覧形式（pub_license_terms_v5）の登録",
+    intro: `--   出版・ボードゲーム共通の基本契約（著作物利用許諾基本契約書V5）と、その個別条件書V5 の 3 本を一度に登録する。
+--   事業別条項（出版／ボードゲーム）は基本契約に置かず、個別条件書に置く（基本契約V5 第3条第5項）。
+--
+--   ・V5 は新しいキーとして足す。既存のひな形（license_master・pub_master_*・individual_license_terms_v3/v4・
+--     pub_license_terms_v3/_annex/_multi）と、その版で作った文書には触れない（旧基本契約の相手先は従来の条件書）。
+--   ・項目（入力欄）はコードが持つ（LICENSE_MASTER_V5_VARIABLES・LICENSE_TERMS_VARIABLES・PUB_TERMS_VARIABLES）。variables は空。
+--   ・採番は従来の帯を続ける（基本契約 LIC／ボードゲームの条件書 ILT／出版の条件書 PUBT）。
+--   ・アプリ側は V5 のキーを扱う版（documents/license-master-v5.ts ほか）が先に出ていること。`
+  },
+  {
+    no: "212", key: "pub_license_terms_v5_annex", label: "個別利用許諾条件書V5（出版・別紙形式）",
+    body: "templates/pub_license_terms_v5_annex.html", mark: "<!-- pub_license_terms_v5_annex r1 -->",
+    prefix: "PUBT",
+    categoryFrom: "pub_license_terms_v3_annex",
+    out: "212_v5_license_templates.sql",
+    variables: [],
+    title: "個別利用許諾条件書V5・出版 別紙形式（pub_license_terms_v5_annex）の登録",
+    intro: `--   出版・ボードゲーム共通の基本契約（著作物利用許諾基本契約書V5）と、その個別条件書V5 の 3 本を一度に登録する。
+--   事業別条項（出版／ボードゲーム）は基本契約に置かず、個別条件書に置く（基本契約V5 第3条第5項）。
+--
+--   ・V5 は新しいキーとして足す。既存のひな形（license_master・pub_master_*・individual_license_terms_v3/v4・
+--     pub_license_terms_v3/_annex/_multi）と、その版で作った文書には触れない（旧基本契約の相手先は従来の条件書）。
+--   ・項目（入力欄）はコードが持つ（LICENSE_MASTER_V5_VARIABLES・LICENSE_TERMS_VARIABLES・PUB_TERMS_VARIABLES）。variables は空。
+--   ・採番は従来の帯を続ける（基本契約 LIC／ボードゲームの条件書 ILT／出版の条件書 PUBT）。
+--   ・アプリ側は V5 のキーを扱う版（documents/license-master-v5.ts ほか）が先に出ていること。`
   }
 ];
 
@@ -154,7 +222,10 @@ SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t
 }
 
 export function buildAll() {
-  return TARGETS.map((t) => ({ out: join(root, t.out), sql: build(t) }));
+  // 同じ out のひな形は 1 本の SQL にまとめる（V5 の 4 本は 212 に並べて登録する）。
+  const outs = new Map();
+  for (const t of TARGETS) outs.set(t.out, [...(outs.get(t.out) ?? []), build(t)]);
+  return [...outs].map(([out, parts]) => ({ out: join(root, out), sql: parts.join("\n") }));
 }
 
 if (process.argv[1] && process.argv[1].endsWith("make-template-sql.mjs")) {

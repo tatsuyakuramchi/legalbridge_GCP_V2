@@ -134,6 +134,8 @@ export function revisionFamily(templateKey: string): string {
   if (["pub_license_terms", "pub_license_terms_v3", "pub_license_terms_v3_annex", MULTI_TERMS_TEMPLATE_KEY].includes(templateKey)) {
     return "pub_license_terms";
   }
+  // V5 の出版（一覧形式・別紙形式）どうし。基本契約が違うので V3 とは入れ替えない。
+  if (templateKey === "pub_license_terms_v5" || templateKey === "pub_license_terms_v5_annex") return "pub_license_terms_v5";
   return templateKey;
 }
 

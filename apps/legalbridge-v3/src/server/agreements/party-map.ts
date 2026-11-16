@@ -231,14 +231,16 @@ const UNLINKED_WHERE = `d.agreement_id IS NULL
  * 基本契約の文書。作った基本契約書（ひな形）か、取り込んだ文書で種類が基本契約のもの。
  * 出版許諾契約書は基本契約を兼ねる（出版 IN の取引）。
  */
-const MASTER_DOCUMENT_SQL = `t.template_key IN ('license_master', 'service_master', 'pub_master_individual', 'pub_master_corporate')
+const MASTER_DOCUMENT_SQL = `t.template_key IN ('license_master', 'service_master', 'pub_master_individual', 'pub_master_corporate',
+                                                  'license_master_v5')
   OR COALESCE(d.manual_inputs->>'documentKind', t.label, '') LIKE '%基本契約%'
   -- 取り込んだ業務委託契約書（種別＝業務委託契約書）。基本契約か単体契約かは立てるときに選ぶ。
   OR d.manual_inputs->>'documentKind' = '業務委託契約書'`;
 
 /** 条件書（相手と結ぶ個別の契約そのもの）。取り込んだ利用許諾契約書も同じ扱い。 */
 const TERMS_DOCUMENT_SQL = `t.template_key IN ('individual_license_terms_v3', 'individual_license_terms_v4',
-                                                 'pub_license_terms_v3', 'pub_license_terms_v3_annex', 'pub_license_terms_multi')
+                                                 'pub_license_terms_v3', 'pub_license_terms_v3_annex', 'pub_license_terms_multi',
+                                                 'individual_license_terms_v5', 'pub_license_terms_v5', 'pub_license_terms_v5_annex')
   OR d.manual_inputs->>'documentKind' = '利用許諾契約書'`;
 
 /** 文書から立てられる契約の役割（d・t を使う）。 */

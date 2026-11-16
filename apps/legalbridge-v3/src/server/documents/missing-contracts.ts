@@ -3,7 +3,8 @@ import { int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { recordAudit } from "../core/audit.js";
 import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js";
-import { PUB_TERMS_ANNEX_KEY, PUB_TERMS_KEY, PUB_TITLES_ANNEX_HINT } from "./pub-terms.js";
+import { PUB_TERMS_ANNEX_KEY, PUB_TERMS_KEY, PUB_TERMS_V5_ANNEX_KEY, PUB_TERMS_V5_KEY, PUB_TITLES_ANNEX_HINT } from "./pub-terms.js";
+import { LICENSE_MASTER_V5_KEY, LICENSE_MASTER_V5_TITLE } from "./license-master-v5.js";
 import { issueDocumentSet, type DocumentSetDeps, type DocumentSetResult } from "./document-set.js";
 
 /**
@@ -18,8 +19,10 @@ import { issueDocumentSet, type DocumentSetDeps, type DocumentSetResult } from "
  *   - 対象：有効な IN の出版（紙・電子）の料率条件のうち、決定済みの条件書（出版条件書・
  *     取り込んだ利用許諾契約書）に載っていないもの。相手先ごとにまとめる。
  *   - 基本契約：相手先に基本契約（kind=master, IN）があればそれを使い、無ければ
- *     出版許諾契約書（個人／法人）を基本契約として作る。
- *   - 条件書：出版条件書。作品が多ければ別紙形式。
+ *     著作物利用許諾基本契約書V5（license_master_v5）を作る。
+ *   - 条件書：出版の条件書。作品が多ければ別紙形式。基本契約が V5（新しく作る・既存が V5 の文書）なら
+ *     個別利用許諾条件書V5（出版）、旧基本契約（出版許諾契約書など）の下なら従来の V3。
+ *     V5 の条件書は基本契約V5 の条（第3条第5項）を指すので、旧基本契約の下には出さない。
  *   - 必ず試算（preview）で必須の欄の不足を見てから決定する。相手先ごとに独立して回し、
  *     1 件の失敗で他を止めない。
  *   - 共著の受取人（取り分を直接払う条件の、相手先以外の取り分の人）も 1 行にする。
@@ -41,7 +44,8 @@ export interface MissingContractParty {
   /** 受取人の行：条件の相手先（代表）の名前。 */
   representatives?: string[];
   email: string | null;
-  master: { id: number; agreementNo: string | null; title: string } | null;
+  /** isV5：基本契約の文書が著作物利用許諾基本契約書V5（license_master_v5）か。条件書の版が決まる。 */
+  master: { id: number; agreementNo: string | null; title: string; isV5?: boolean } | null;
   conditions: MissingContractCondition[];
   /** 条件書の無い条件の数。 */
   missingTerms: number;
@@ -56,9 +60,9 @@ export interface MissingContractRun {
   partyIds?: number[];
   /** 締結日（両方の文書）。空なら今日。 */
   signedOn?: string | null;
-  /** 基本契約書のひな形。空なら相手先の区分で 出版許諾契約書（個人／法人）。 */
+  /** 基本契約書のひな形。空なら著作物利用許諾基本契約書V5。 */
   masterTemplateKey?: string | null;
-  /** 条件書のひな形。空なら作品数で 一覧形式／別紙形式。 */
+  /** 条件書のひな形。空なら基本契約の版（V5／旧）と作品数で 一覧形式／別紙形式。 */
   termsTemplateKey?: string | null;
 }
 
@@ -73,9 +77,17 @@ export interface MissingContractOutcome {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+/** 作る基本契約の名前（agreements.title）。V5 は「著作物利用許諾基本契約書」、旧ひな形は従来どおり。 */
+const masterTitleOf = (templateKey: string | null): string =>
+  templateKey === LICENSE_MASTER_V5_KEY ? LICENSE_MASTER_V5_TITLE : "出版等利用許諾基本契約";
 
 /** 相手先の基本契約（IN・出版の基本契約を兼ねるもの）。締結済みを先に、新しいものを先に。 */
-const masterOf = (party: string) => `(SELECT jsonb_build_object('id', a.id, 'no', a.agreement_no, 'title', a.title)
+const masterOf = (party: string) => `(SELECT jsonb_build_object('id', a.id, 'no', a.agreement_no, 'title', a.title,
+                          'v5', EXISTS (SELECT 1 FROM documents md
+                                          JOIN document_template_versions mv ON mv.id = md.template_version_id
+                                          JOIN document_templates mt ON mt.id = mv.template_id
+                                         WHERE md.agreement_id = a.id AND md.status <> 'void'
+                                           AND mt.template_key = '${LICENSE_MASTER_V5_KEY}'))
                    FROM agreements a
                   WHERE a.counterparty_id = ${party} AND COALESCE(a.kind, 'master') = 'master' AND a.direction = 'in'
                     AND a.terminated_on IS NULL
@@ -99,7 +111,7 @@ const termsFor = (addressee: string) => `EXISTS (
 const PUB_CONDITIONS = `c.direction = 'in' AND c.kind = 'license' AND c.status = 'active'
             AND c.pricing_model = 'revenue_rate' AND c.usage_type IN ('pub_print', 'pub_digital')`;
 
-const masterRow = (m: any) => m ? { id: Number(m.id), agreementNo: str(m.no), title: String(m.title ?? "") } : null;
+const masterRow = (m: any) => m ? { id: Number(m.id), agreementNo: str(m.no), title: String(m.title ?? ""), isV5: m.v5 === true } : null;
 
 export class MissingContractsService {
   constructor(private readonly database: Queryable, private readonly deps: DocumentSetDeps) {}
@@ -197,10 +209,12 @@ export class MissingContractsService {
     const conditionIds = party.conditions.filter((c) => !c.hasTerms).map((c) => c.id);
     if (!conditionIds.length) return null;
     const works = new Set(party.conditions.filter((c) => !c.hasTerms).map((c) => c.workId ?? `n:${c.id}`)).size;
+    const masterTemplateKey = party.master ? null : (input.masterTemplateKey?.trim() || LICENSE_MASTER_V5_KEY);
+    // 条件書の版は基本契約の版に合わせる（V5 の基本契約の下だけ V5 の条件書）。
+    const underV5 = party.master ? party.master.isV5 === true : masterTemplateKey === LICENSE_MASTER_V5_KEY;
+    const annex = works > PUB_TITLES_ANNEX_HINT;
     const termsTemplateKey = input.termsTemplateKey?.trim()
-      || (works > PUB_TITLES_ANNEX_HINT ? PUB_TERMS_ANNEX_KEY : PUB_TERMS_KEY);
-    const masterTemplateKey = party.master ? null
-      : (input.masterTemplateKey?.trim() || (party.partyKind === "individual" ? "pub_master_individual" : "pub_master_corporate"));
+      || (underV5 ? (annex ? PUB_TERMS_V5_ANNEX_KEY : PUB_TERMS_V5_KEY) : (annex ? PUB_TERMS_ANNEX_KEY : PUB_TERMS_KEY));
     return { master: party.master ? "existing" as const : "create" as const, masterTemplateKey, termsTemplateKey, conditionIds };
   }
 
@@ -270,11 +284,12 @@ export class MissingContractsService {
             payeePartyId: party.role === "payee" ? party.partyId : null,
             master: plan.master === "existing"
               ? { existingAgreementId: party.master!.id }
-              : { templateKey: plan.masterTemplateKey, title: "出版等利用許諾基本契約", manualInputs: { 締結日: signedOn } },
+              : { templateKey: plan.masterTemplateKey, title: masterTitleOf(plan.masterTemplateKey), manualInputs: { 締結日: signedOn } },
             docs: [{ templateKey: plan.termsTemplateKey, conditionIds: plan.conditionIds, role: "main", manualInputs: { 締結日: signedOn } }]
           }, actor);
           if (result.agreement?.created) {
-            madeMasters.set(party.partyId, { id: result.agreement.id, agreementNo: result.agreement.agreementNo, title: "出版等利用許諾基本契約" });
+            madeMasters.set(party.partyId, { id: result.agreement.id, agreementNo: result.agreement.agreementNo,
+                                             title: masterTitleOf(plan.masterTemplateKey), isV5: plan.masterTemplateKey === LICENSE_MASTER_V5_KEY });
           }
           if (result.error) outcomes.push({ ...head, status: "error", problems: [result.error], plan, result });
           else { issued += 1; outcomes.push({ ...head, status: "ok", problems: [], plan, result }); }

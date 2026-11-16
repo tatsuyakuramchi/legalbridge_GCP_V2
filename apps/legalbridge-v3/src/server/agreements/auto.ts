@@ -31,7 +31,9 @@ import { baseDocumentNumber } from "../documents/numbering.js";
 export const TERMS_TEMPLATE_KEYS = new Set([
   "individual_license_terms_v3", "individual_license_terms_v4", "pub_license_terms_v3", "pub_license_terms_v3_annex",
   "pub_license_terms_multi",
-  "pub_license_terms", "individual_license_terms"
+  "pub_license_terms", "individual_license_terms",
+  // V5（著作物利用許諾基本契約書V5 の個別条件書）
+  "individual_license_terms_v5", "pub_license_terms_v5", "pub_license_terms_v5_annex"
 ]);
 
 export interface AutoAgreementInput {

@@ -19,7 +19,10 @@ import { joinContactParts } from "./contact-line.js";
  * 決定日のまま出し直す。入っている欄は触らない。必ず試算（preview）を見てから出す。
  */
 
-export const TERMS_KEYS = ["pub_license_terms_v3", "pub_license_terms_v3_annex", "pub_license_terms_multi"];
+// V5 の基本契約（license_master_v5）も通知先は条件書と同じ欄（許諾者連絡先・被許諾者連絡先 → licensorContact・licenseeContact）
+// なので、条件書と同じ組み方で埋める。
+export const TERMS_KEYS = ["pub_license_terms_v3", "pub_license_terms_v3_annex", "pub_license_terms_multi",
+  "pub_license_terms_v5", "pub_license_terms_v5_annex", "license_master_v5"];
 export const MASTER_KEYS = ["pub_master_individual", "pub_master_corporate"];
 export const NOTICE_REASON = "通知先を記載する";
 

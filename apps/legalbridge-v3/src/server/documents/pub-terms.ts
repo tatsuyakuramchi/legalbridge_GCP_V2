@@ -46,12 +46,22 @@ export const PUB_TERMS_ANNEX_KEY = "pub_license_terms_v3_annex";
  * 条文のうち、支払時期・共著者分の支払・旧合意・特記事項などは文書ごとに直せる文言（初期値あり）。
  */
 export const PUB_TERMS_MULTI_KEY = "pub_license_terms_multi";
-export const PUB_TERMS_KEYS: readonly string[] = [PUB_TERMS_KEY, PUB_TERMS_ANNEX_KEY, PUB_TERMS_MULTI_KEY];
+/**
+ * V5・出版（一覧形式／別紙形式）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
+ * 体裁はボードゲームの V5（individual_license_terms_v5）と同じで、差し込みは V3 と同じ（pubTermsPatch）。
+ * 07 に事業別条項（出版に関する定め）がある。旧基本契約（出版許諾契約書など）の相手先は V3 のまま。
+ */
+export const PUB_TERMS_V5_KEY = "pub_license_terms_v5";
+export const PUB_TERMS_V5_ANNEX_KEY = "pub_license_terms_v5_annex";
+export const PUB_TERMS_V5_KEYS: readonly string[] = [PUB_TERMS_V5_KEY, PUB_TERMS_V5_ANNEX_KEY];
+export const isPubTermsV5 = (templateKey: string): boolean => PUB_TERMS_V5_KEYS.includes(templateKey);
+export const PUB_TERMS_KEYS: readonly string[] = [PUB_TERMS_KEY, PUB_TERMS_ANNEX_KEY, PUB_TERMS_MULTI_KEY, ...PUB_TERMS_V5_KEYS];
 /** 作品ごとに番号を持つ条件書か。 */
 export const isPubTermsMulti = (templateKey: string): boolean => templateKey === PUB_TERMS_MULTI_KEY;
 export const isPubTermsTemplate = (templateKey: string): boolean => PUB_TERMS_KEYS.includes(templateKey);
 /** 別紙形式か（本文の組み方の違い。警告の出し分けに使う）。 */
-export const isPubTermsAnnex = (templateKey: string): boolean => templateKey === PUB_TERMS_ANNEX_KEY;
+export const isPubTermsAnnex = (templateKey: string): boolean =>
+  templateKey === PUB_TERMS_ANNEX_KEY || templateKey === PUB_TERMS_V5_ANNEX_KEY;
 
 /** これを超えたら別紙形式を勧める作品数。A4 縦で本文の前に表が1ページ以上続く目安。 */
 export const PUB_TITLES_ANNEX_HINT = 12;
@@ -66,7 +76,9 @@ export const PUB_TITLES_ANNEX_HINT = 12;
 export const PUB_TERMS_TEMPLATE_HINT: Record<string, string> = {
   [PUB_TERMS_KEY]: `作品が少ないとき向け。対象著作物の一覧が第１条に出る（${PUB_TITLES_ANNEX_HINT} 点あたりまで）`,
   [PUB_TERMS_ANNEX_KEY]: "作品が多いとき向け。条文を先に読み切れるよう、一覧は末尾の別紙1に出る",
-  [PUB_TERMS_MULTI_KEY]: "作品ごとに個別利用許諾番号を振る形（A4 横）。料率・期間が同じ作品を 1 枚にまとめる"
+  [PUB_TERMS_MULTI_KEY]: "作品ごとに個別利用許諾番号を振る形（A4 横）。料率・期間が同じ作品を 1 枚にまとめる",
+  [PUB_TERMS_V5_KEY]: `基本契約V5の相手先向け。作品が少ないとき（一覧が01に出る。${PUB_TITLES_ANNEX_HINT} 点あたりまで）`,
+  [PUB_TERMS_V5_ANNEX_KEY]: "基本契約V5の相手先向け。作品が多いとき（一覧は末尾の別紙2に出る）"
 };
 
 /** 一覧の行の欄。画面の行編集（LineItems の pub_titles）と本文が同じ名前を読む。 */
@@ -557,12 +569,14 @@ export function pubTermsWarnings(context: Data, templateKey: string = PUB_TERMS_
   if (!isPubTermsAnnex(templateKey) && count > PUB_TITLES_ANNEX_HINT) {
     out.push({ kind: "other",
       message: `対象の作品が ${count} 点あります。一覧が条文の前に何ページも続くので、`
-             + "ひな形を「出版等利用許諾条件書（V3・別紙形式）」にすると読みやすくなります" });
+             + (isPubTermsV5(templateKey) ? "ひな形を「個別利用許諾条件書V5（出版・別紙形式）」" : "ひな形を「出版等利用許諾条件書（V3・別紙形式）」")
+             + "にすると読みやすくなります" });
   }
   if (isPubTermsAnnex(templateKey) && count > 0 && count <= 3) {
     out.push({ kind: "other",
       message: `対象の作品が ${count} 点です。別紙にするほどの量ではないので、`
-             + "ひな形を「出版等利用許諾条件書（V3・一覧形式）」にすると1枚に収まります" });
+             + (isPubTermsV5(templateKey) ? "ひな形を「個別利用許諾条件書V5（出版・一覧形式）」" : "ひな形を「出版等利用許諾条件書（V3・一覧形式）」")
+             + "にすると別紙が要りません" });
   }
   return out;
 }

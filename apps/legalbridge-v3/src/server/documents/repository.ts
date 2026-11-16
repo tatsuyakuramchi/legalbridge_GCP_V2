@@ -4,7 +4,8 @@ import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { parseVariables, type TemplateVariable } from "./binding.js";
 import { LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
-import { PUB_TERMS_MULTI_EXTRA_VARIABLES, PUB_TERMS_VARIABLES, isPubTermsMulti, isPubTermsTemplate } from "./pub-terms.js";
+import { PUB_TERMS_MULTI_EXTRA_VARIABLES, PUB_TERMS_VARIABLES, isPubTermsMulti, isPubTermsTemplate, isPubTermsV5 } from "./pub-terms.js";
+import { LICENSE_MASTER_V5_VARIABLES, isLicenseMasterV5Template } from "./license-master-v5.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { DEFAULT_TAX_ROUNDING, TAX_ROUNDING_INPUT, TAX_ROUNDING_LABEL } from "../core/rounding.js";
 
@@ -215,7 +216,15 @@ function variablesFor(templateKey: string, declared: TemplateVariable[]): Templa
     return [...PUB_TERMS_VARIABLES.filter((v) => !["署名欄", "翻訳物の在庫販売期間", "特記事項", "締結日"].includes(v.name)),
             ...PUB_TERMS_MULTI_EXTRA_VARIABLES];
   }
+  // V5 の出版は署名欄を V5 のボードゲームと同じ選択肢にする（署名／押印／表示しない）。本文は showSignature と 署名欄 を見る。
+  if (isPubTermsV5(templateKey)) {
+    return PUB_TERMS_VARIABLES.map((v) => v.name === "署名欄"
+      ? { ...v, options: ["署名", "押印", "表示しない"], default: "署名",
+          helpText: "署名＝署名日と署名の枠、押印＝署名日と印の枠。基本契約と一括で電子署名する場合は「表示しない」" }
+      : v);
+  }
   if (isPubTermsTemplate(templateKey)) return PUB_TERMS_VARIABLES;
+  if (isLicenseMasterV5Template(templateKey)) return LICENSE_MASTER_V5_VARIABLES;
   return declared;
 }
 

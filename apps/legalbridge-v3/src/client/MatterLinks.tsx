@@ -237,7 +237,8 @@ export function MatterConditions(
             setMade(conditionIds[0] ?? null);
             // セット系（業務委託の明細・許諾セット・出版セット）は matterId 付きでサーバが案件に繋ぐ。
             // 「1 本だけ」と OUT はここで繋ぐ。
-            if (templateKey === "purchase_order" || templateKey === "individual_license_terms_v4" || templateKey === "pub_master_individual") onChanged();
+            if (templateKey === "purchase_order" || templateKey === "individual_license_terms_v4" || templateKey === "pub_master_individual"
+                || templateKey === "individual_license_terms_v5" || templateKey === "pub_license_terms_v5") onChanged();
             else for (const id of conditionIds) void attach(id);
           }}
           onCancel={() => setMaking(false)} />
