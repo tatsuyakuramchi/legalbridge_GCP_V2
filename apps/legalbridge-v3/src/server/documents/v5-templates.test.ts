@@ -203,3 +203,39 @@ test("作業テーブル：IN の基本契約は V5。旧基本契約の相手�
   assert.equal(orderMainDocs(MAIN_DOCS.pub_in, true)[0].key, "pub_license_terms_v3");
   assert.deepEqual(orderMainDocs(MAIN_DOCS.pub_in, false), MAIN_DOCS.pub_in);
 });
+
+test("レビュー反映：基本契約V5 の適用範囲・暫定許諾・終了処理・賠償上限・委託報酬の版", () => {
+  const out = renderMaster(masterContext("corporate")).out;
+  assert.match(out, /委託業務に関する定めは第12条の発注書が発行された業務に適用する/);
+  assert.match(out, /量産、予約の受付、販売および再許諾は、個別条件書にその旨と範囲を定めたときに限り行える/);
+  assert.match(out, /委託先との契約により、当該部分の著作権の譲渡または必要な利用許諾と、その著作者による著作者人格権の不行使を確保する/);
+  assert.match(out, /報酬に含まれるのは初版第1刷の利用に係るものに限る/);
+  assert.match(out, /成果物の無い監修・出演等の役務は、その役務の提供を終えた日/);
+  assert.match(out, /素材の差替え、販売の停止または本製品の回収を要するときは、その費用は紛争の原因を生じた当事者が負担する/);
+  assert.match(out, /個別条件書に許諾期間の更新の方法（自動更新の有無、更新の単位、終了の通知期限等）を定めたときは、本項および前項によらず/);
+  assert.match(out, /本契約が第22条または第25条により解除されたときは、解除した当事者が別段の意思を表示しない限り、すべての個別条件書も同時に終了する/);
+  assert.match(out, /終了日から12か月間（個別条件書に別段の定めがあるときはその期間）販売できる/);
+  assert.match(out, /終了日以後の新規の販売および配信は停止する/);
+  assert.match(out, /支払い、または支払うべき対価の総額と、金100万円のいずれか高い額を上限とする/);
+  // 項の番号が詰まっている（第12条は 10 項まで）。
+  assert.match(out, /10　乙は、甲が前項の相談を行ったことを理由として/);
+});
+
+test("レビュー反映：出版は出版権設定を独占的利用許諾と分け、旧合意は基本契約第27条による", () => {
+  for (const [html, ref] of [[PUB, "第9条（特記事項）"], [PUB_ANNEX, "別紙1「特記事項」"]] as const) {
+    const out = renderPub(html).out;
+    assert.match(out, /独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または.*?に「出版権設定」とある作品は/);
+    assert.match(out, /同条ただし書の別段の定めとして、基本契約第10条（販売）および第11条（販売終了）による/);
+    assert.match(out, /同法第80条第3項により第三者に複製または公衆送信を許諾することを承諾する/);
+    assert.ok(out.includes(`基本契約第27条により${ref}に定める`), ref);
+    assert.ok(!out.includes("これらを本条件書に統合する"), "従前の合意を一律に統合しない");
+    assert.ok(!out.includes("2割"), "改訂の線引きは行為で");
+  }
+});
+
+test("レビュー反映：ボードゲームは明示承認の対象・製品安全・他言語版の優先関係を 04 に持つ", () => {
+  const out = renderDocumentHtml(GAME, { ...gameManual, ...licenseTermsPatch(gameContext, gameManual) });
+  assert.match(out, /基本契約第9条第3項の承認のみなしを適用しない/);
+  assert.match(out, /製品の安全・表示・事故の通知・回収の判断者と費用の負担は、別紙1に定める/);
+  assert.match(out, /第3条及び別紙3により再許諾を認めた他言語版、対象製品の再版/);
+});
