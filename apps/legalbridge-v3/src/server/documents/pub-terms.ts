@@ -376,6 +376,40 @@ export function coAuthorNames(...conditions: Array<Data | null | undefined>): st
   return out;
 }
 
+/**
+ * 「共著者等」欄の文。契約当事者（許諾者）のほかにだれがいるかを、1 人 1 回ずつ並べる。
+ *   ・まず、分配を受ける人（按分の相手先。登録した名前）
+ *   ・次に、行の「第三者権利」に書いてある名前のうち、まだ出ていないもの。
+ *     按分の相手先がいる行では、著作権表示に出ている名前（著者のペンネーム）は足さない
+ *     （按分の相手先と同じ人を、登録名とペンネームで 2 回書くことになる）
+ *   ・契約当事者その人は並べない。だれもいなければ「なし」
+ * 名前の比べ方は、空白（全角・半角）を除いて同じなら同じ。
+ */
+export function jointNamesOf(shareNames: string[], thirdParty = "", copyright = "", contractingParty = ""): string {
+  const norm = (v: string) => v.replace(/[\s\u3000]+/g, "");
+  const self = norm(contractingParty);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (name: string) => {
+    const key = norm(name);
+    if (!key || key === self || seen.has(key)) return;
+    seen.add(key); out.push(name.trim());
+  };
+  for (const name of shareNames) add(name);
+  // 著作権表示の名前（「著：力造／番棚葵」→ 力造・番棚葵）。
+  const authors = new Set(copyright.split(/[／\/、,]/)
+    .flatMap((part) => { const v = part.replace(/^[^：:]*[：:]/, ""); return [v, ...v.split(/[\s\u3000]+/)]; })
+    .map(norm).filter(Boolean));
+  const hasShares = out.length > 0;
+  if (thirdParty.trim() && thirdParty.trim() !== "なし") {
+    for (const part of thirdParty.split(/[／\/、,]/)) {
+      if (hasShares && authors.has(norm(part))) continue;
+      add(part);
+    }
+  }
+  return out.join("、") || "なし";
+}
+
 /** 行に手で書いた共同著作の文（「作家B 66.67%・作家C 33.33%」）から、名前だけを取り出す。 */
 export function namesOfSharesText(value: string, exclude = ""): string[] {
   const out: string[] = [];
@@ -786,11 +820,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       jointLabel: Boolean(coAuthors) || (text(row.third_party) !== "" && text(row.third_party) !== "なし") ? "あり" : "なし",
       // 「共著者等」欄（作品ごとに番号を持つ条件書の 4 版目から）。分配を受ける人の名前と、作品に書いた第三者権利。
       // 許諾者その人は並べない。だれもいなければ「なし」。
-      jointNames: [
-        ...(fromLedger ? coAuthorNames(print, digital, transPrint, transDigital)
-          : namesOfSharesText(text(row.co_authors), text((context.counterparty as Data | undefined)?.name))),
-        ...(text(row.third_party) !== "" && text(row.third_party) !== "なし" ? [text(row.third_party)] : [])
-      ].join("、") || "なし",
+      // 契約当事者（許諾者）のほかにだれがいるか、を 1 人 1 回ずつ。
+      jointNames: jointNamesOf(
+        fromLedger ? coAuthorNames(print, digital, transPrint, transDigital)
+          : namesOfSharesText(text(row.co_authors), text((context.counterparty as Data | undefined)?.name)),
+        text(row.third_party), text(row.copyright), text((context.counterparty as Data | undefined)?.name)),
       printRate: fromLedger ? payeeRateText(context.payee, print) : (text(row.print_rate) || "—"),
       printExclusivity: fromLedger ? (print ? exclusivityText(print) || "—" : "—")
         : (text(row.print_exclusivity) || "—"),
