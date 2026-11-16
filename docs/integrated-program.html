@@ -11,6 +11,7 @@
   --p3:#8a3b5c; --p3s:#f4e3ea;   /* 個人情報保護運用 */
   --p4:#a85a17; --p4s:#f6e7d6;   /* 契約書管理 */
   --p5:#4d6b2b; --p5s:#e6eedb;   /* お金・取引実績 */
+  --c1:#00899e; --c4:#b05a10; --c2:#4352a8; --c0:#8a9592;   /* 予算の棒（検証済み） */
   --lock:#3b4048; --locks:#e4e6e9;
   --gate:#6b5a8e; --gates:#ece6f4;
   --have:#2e8b57; --ext:#c48d0a; --new:#c4403a;
@@ -20,12 +21,12 @@
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
-  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816; --p5:#a9c97c; --p5s:#24301a;
+  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816; --p5:#a9c97c; --p5s:#24301a; --c1:#1fa3b2; --c4:#cf7d26; --c2:#7a88f2; --c0:#6b7774;
   --lock:#c3c8cf; --locks:#262b31; --gate:#b9a6dd; --gates:#2c2540;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }}
 :root[data-theme="dark"]{
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
-  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816; --p5:#a9c97c; --p5s:#24301a;
+  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816; --p5:#a9c97c; --p5s:#24301a; --c1:#1fa3b2; --c4:#cf7d26; --c2:#7a88f2; --c0:#6b7774;
   --lock:#c3c8cf; --locks:#262b31; --gate:#b9a6dd; --gates:#2c2540;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }
 *{box-sizing:border-box}
@@ -210,6 +211,36 @@ td.c{text-align:center;font-size:16px}
 .ln-key{display:inline-block;width:26px;height:0;border-top:2px solid var(--muted)}
 .ln-key.dash{border-top-style:dashed}
 .ln-key.dot{border-top-style:dotted}
+/* budget */
+.budget{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;align-items:end;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+@media (max-width:760px){.budget{grid-template-columns:1fr}}
+.hero{display:grid;gap:4px}
+.hero-k{font-size:12.5px;color:var(--muted);font-weight:700}
+.hero-v{font-family:var(--f-display);font-weight:900;font-size:clamp(40px,6vw,56px);line-height:1.1;font-variant-numeric:tabular-nums}
+.hero-v small{font-size:18px;margin-left:4px;color:var(--muted)}
+.hero-s{font-size:12.5px;color:var(--muted)}
+.bar-wrap{display:grid;gap:10px;min-width:0}
+.bar{display:flex;gap:2px;height:40px}
+.seg{position:relative;border-radius:4px;outline:none;cursor:default}
+.seg:hover,.seg:focus-visible{filter:brightness(1.12)}
+.seg:focus-visible{box-shadow:0 0 0 2px var(--panel),0 0 0 4px var(--ink)}
+.tip{display:none;position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:12px;line-height:1.5;padding:6px 10px;border-radius:6px;white-space:nowrap;z-index:2}
+.seg:hover .tip,.seg:focus-visible .tip{display:block}
+.s1{background:var(--c1)}.s4{background:var(--c4)}.s2{background:var(--c2)}.s0{background:var(--c0)}
+.bar-lbl{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;font-variant-numeric:tabular-nums}
+.bar-lbl>div{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;min-width:0}
+.bar-lbl b{font-weight:700}
+.bar-lbl span{font-family:var(--f-mono);font-variant-numeric:tabular-nums;color:var(--muted)}
+.lbl-tail{flex-direction:column;align-items:flex-start!important}
+.bar-lbl .tail{font-family:var(--f-body);color:var(--ink);white-space:nowrap}
+.k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:0}
+.money-t .num{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.money-t .muted{color:var(--muted);font-family:var(--f-body)}
+.money-t tfoot th,.money-t tfoot td{font-weight:700;border-bottom:none;background:var(--bg)}
+.duo2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;display:grid;gap:10px;align-content:start;min-width:0}
+.card ul{margin:0;padding-left:1.1em;display:grid;gap:6px;font-size:14px}
+.muted-s{font-size:13px;color:var(--muted)}
 .src{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
 .mono{font-family:var(--f-mono);font-size:12px;word-break:break-all}
 </style>
@@ -545,7 +576,7 @@ td.c{text-align:center;font-size:16px}
         <tr><th>反社チェック</th><td class="c own">●</td><td class="c"></td><td class="c use">○</td><td class="c use">○</td><td>Sansan の反社チェックオプション、またはリスクモンスターの反社チェックヒートマップ（どちらか一方に寄せる）。結果だけ台帳へ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
         <tr><th>与信管理</th><td class="c own">●</td><td class="c"></td><td class="c"></td><td class="c use">○</td><td>リスクモンスター（e-与信ナビの RM格付・RM与信限度額、e-管理ファイルの監視）と奉行の支払・入金実績</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
         <tr><th>情報資産台帳管理</th><td class="c"></td><td class="c own">●</td><td class="c own">●</td><td class="c use">○</td><td>SecureNavi（候補）を正本にする。資産台帳・リスク評価・委託先管理台帳を持ち、統合台帳は CSV で受け取って契約とつなぐ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
-        <tr><th>契約書管理</th><td class="c use">○</td><td class="c use">○</td><td class="c use">○</td><td class="c own">●</td><td>統合台帳（登録・期限）。契約書の作成は文書作成ツール</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>契約書管理</th><td class="c use">○</td><td class="c use">○</td><td class="c use">○</td><td class="c own">●</td><td>Sansan 契約管理（契約書のデータ化・関連づけ・期限）。作成は文書作成ツール、統合台帳は写しを持つ</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
         <tr><th>契約締結管理</th><td class="c use">○</td><td class="c"></td><td class="c use">○</td><td class="c own">●</td><td>統合台帳の締結前の確認</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
         <tr><th>電子契約</th><td class="c"></td><td class="c"></td><td class="c"></td><td class="c own">●</td><td>CloudSign（動かさない）</td><td><span class="st"><i class="pip fix"></i>固定</span></td></tr>
       </tbody>
@@ -623,23 +654,67 @@ td.c{text-align:center;font-size:16px}
 
 <section>
   <div class="sec-head">
-    <div class="eyebrow">予算の束ね方</div>
-    <h2>費目を四つのプロジェクトから集め直す</h2>
-    <p class="lead">金額は見積もりを取ってから入れます。ここでは、どの費目を一本にまとめられるかだけを示します。</p>
+    <div class="eyebrow">予算</div>
+    <h2>初年度の見積もり</h2>
+    <p class="lead">いま見積額のある五つの費目を、プロジェクトごとに割り当てました（情報資産管理と個人情報保護は SecureNavi を共用）。単位は万円です。</p>
   </div>
+  <div class="budget">
+    <div class="hero">
+      <span class="hero-k">初年度の合計（見積額のある費目）</span>
+      <span class="hero-v">1,250<small>万円</small></span>
+      <span class="hero-s">2 年目以降に決まっているのは年 150 万円（リスクモンスター 100・データベース 50）。ほかの三つは 2 年目以降の額が未定</span>
+    </div>
+    <div class="bar-wrap">
+      <div class="bar" role="img" aria-label="初年度 1,250 万円の内訳。取引先管理 450、契約書管理 550、情報資産管理・個人情報保護 200、共通 50">
+        <div class="seg s1" style="flex:450" tabindex="0"><span class="tip">取引先管理 ・ 450 万円（36%）<br>Sansan 名刺管理 350 ＋ リスクモンスター 100</span></div>
+        <div class="seg s4" style="flex:550" tabindex="0"><span class="tip">契約書管理 ・ 550 万円（44%）<br>Sansan 契約管理</span></div>
+        <div class="seg s2" style="flex:200" tabindex="0"><span class="tip">情報資産管理・個人情報保護 ・ 200 万円（16%）<br>SecureNavi</span></div>
+        <div class="seg s0" style="flex:50" tabindex="0"><span class="tip">共通 ・ 50 万円（4%）<br>統合台帳のデータベース</span></div>
+      </div>
+      <div class="bar-lbl">
+        <span><i class="k s1"></i><b>取引先管理</b> 450</span>
+        <span><i class="k s4"></i><b>契約書管理</b> 550</span>
+        <span><i class="k s2"></i><b>情報資産・個人情報</b> 200</span>
+        <span><i class="k s0"></i><b>共通</b> 50</span>
+      </div>
+    </div>
+  </div>
+
   <div class="tbl">
-    <table>
-      <thead><tr><th>費目</th><th>中身</th><th>別々なら出していたプロジェクト</th><th>統合後</th></tr></thead>
+    <table class="money-t">
+      <thead><tr><th>費目</th><th>中身</th><th>プロジェクト</th><th class="num">初年度</th><th class="num">2年目以降</th></tr></thead>
       <tbody>
-        <tr><th>共通の台帳</th><td>統合台帳の構築（取引先・人物・契約・情報資産の写し・判断の履歴）。基盤は見積もりで選ぶ</td><td>四つすべて（それぞれ台帳を用意）</td><td>一本にまとめる</td></tr>
-        <tr><th>反社チェック</th><td>Sansan のオプション、またはリスクモンスターの反社チェック（件数課金）</td><td>取引先管理、個人情報保護（委託先）</td><td>取引先管理に寄せ、二つのうち一方だけ契約する</td></tr>
-        <tr><th>与信データ</th><td>リスクモンスターの利用料（e-与信ナビ・e-管理ファイル・API）</td><td>取引先管理</td><td>取引先管理</td></tr>
-        <tr><th>情報資産・委託先の管理</th><td>SecureNavi の利用料（資産台帳・リスク評価・委託先管理・教育・内部監査を含む）</td><td>情報資産管理、個人情報保護</td><td>一つの契約を両方で使う</td></tr>
-        <tr><th>CloudSign との連携</th><td>署名依頼の送信と締結通知の受け取り</td><td>契約書管理</td><td>契約書管理（CloudSign の利用料は今のまま）</td></tr>
-        <tr><th>奉行との連携</th><td>CSV の出力、その後 API。実績の受け取り</td><td>取引先管理（与信）、経理</td><td>一本にまとめる（奉行の利用料は今のまま）</td></tr>
-        <tr><th>移行・データ整備</th><td>既存の取引先・契約・資産の名寄せと登録</td><td>四つすべて</td><td>一回で済ませる</td></tr>
+        <tr><th><i class="k s1"></i>Sansan 名刺管理</th><td>名刺のデータ化・名寄せ・人物と企業情報</td><td>取引先管理</td><td class="num">350</td><td class="num muted">未定</td></tr>
+        <tr><th><i class="k s1"></i>リスクモンスター</th><td>与信の格付・与信限度額・取引先の監視</td><td>取引先管理</td><td class="num">100</td><td class="num">100</td></tr>
+        <tr><th><i class="k s4"></i>Sansan 契約管理</th><td>契約書のデータ化・関連づけ・期限の管理</td><td>契約書管理</td><td class="num">550</td><td class="num muted">未定</td></tr>
+        <tr><th><i class="k s2"></i>SecureNavi</th><td>情報資産台帳・リスク評価・委託先管理・教育・内部監査</td><td>情報資産管理・個人情報保護</td><td class="num">200</td><td class="num muted">未定</td></tr>
+        <tr><th><i class="k s0"></i>統合台帳のデータベース</th><td>社内の文書作成ツールのデータベースで保持する</td><td>共通</td><td class="num">50</td><td class="num">50</td></tr>
       </tbody>
+      <tfoot><tr><th>合計</th><td></td><td></td><td class="num">1,250</td><td class="num">150 ＋ 未定 3 件</td></tr></tfoot>
     </table>
+  </div>
+
+  <div class="duo2">
+    <div class="card">
+      <h3>まだ金額のない費目</h3>
+      <ul>
+        <li>連携の開発：Sansan → 統合台帳、SecureNavi との CSV、奉行への CSV、CloudSign</li>
+        <li>移行・データ整備：既存の取引先・契約・資産の名寄せと登録</li>
+        <li>Sansan 名刺管理・契約管理、SecureNavi の 2 年目以降の利用料</li>
+        <li>反社チェックの件数課金（Sansan のオプションかリスクモンスターかで変わる）</li>
+        <li>社内の作業時間</li>
+      </ul>
+      <p class="muted-s">CloudSign と奉行シリーズの利用料は今のまま続くので、この計画の予算には入れません。</p>
+    </div>
+    <div class="card">
+      <h3>見積もりで確かめること</h3>
+      <ul>
+        <li>Sansan の二つの初年度額に、導入費がいくら含まれるか（2 年目以降の額を出すため）</li>
+        <li>Sansan 名刺管理の 350 万円に反社チェックオプションが入っているか。入っていれば、リスクモンスターは与信だけでよい</li>
+        <li>Sansan 契約管理を入れる場合、契約書の台帳の正本は Sansan 側になる。統合台帳は写しと締結前の確認の記録を持つ</li>
+        <li>リスクモンスターの 100 万円に API の利用が含まれるか</li>
+      </ul>
+    </div>
   </div>
 </section>
 
