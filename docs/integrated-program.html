@@ -288,7 +288,7 @@ td.c{text-align:center;font-size:16px}
 <text x="30" y="70" class="pl pl-p5" text-anchor="start">PHASE 4</text><text x="30" y="90" class="pj" text-anchor="start">取引先管理・契約書管理</text>
 </svg>
   </div>
-  <p class="note">各区画は、向かい合う円弧のフェーズで作ります。PHASE 1 の取引先台帳が軸で、ほかの区画は取引先 ID と契約 ID でつながります。既存のテーブルの構造は変えず、横に足す形で作ります。</p>
+  <p class="note">各区画は、向かい合う円弧のフェーズで作ります。PHASE 1 の取引先台帳が軸で、ほかの区画は取引先 ID と契約 ID でつながります。統合台帳をどの基盤で作るか（自社で作るか、既存のサービスを使うか）は見積もりと合わせて決めます。</p>
 
   <div class="sec-head" style="margin-top:12px">
     <h2>各フェーズの詳細</h2>
@@ -393,7 +393,7 @@ td.c{text-align:center;font-size:16px}
 <text x="14.2" y="161.6" class="nt">点検・棚卸</text>
 <text x="14.2" y="179.6" class="ns">年次</text></g>
 </svg></div>
-      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>資産、持ち主、保管先、分類、個人情報の有無、委託先と評価</dd><dt>外のサービス</dt><dd>SecureNavi（候補）。資産・リスク・委託先管理台帳の正本はここに置き、LegalBridge は CSV で写しを持つ</dd></dl>
+      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>資産、持ち主、保管先、分類、個人情報の有無、委託先と評価</dd><dt>外のサービス</dt><dd>SecureNavi（候補）。資産・リスク・委託先管理台帳の正本はここに置き、統合台帳は CSV で写しを持つ</dd></dl>
     </article>
     <article class="phase ph-p5">
       <div class="ph-head"><span class="ph-no">PHASE 4</span><span class="tag t1">取引先管理</span><span class="tag t4">契約書管理</span></div>
@@ -450,7 +450,7 @@ td.c{text-align:center;font-size:16px}
 <rect x="173" y="20" width="140" height="1120" rx="10" class="lane ln-s"/>
 <text x="243" y="50" class="lh">Sansan</text>
 <rect x="319" y="20" width="140" height="1120" rx="10" class="lane ln-l"/>
-<text x="389" y="50" class="lh">LegalBridge 統合台帳</text>
+<text x="389" y="50" class="lh">統合台帳</text>
 <text x="389" y="72" class="lsub">新しく作る</text>
 <rect x="465" y="20" width="140" height="1120" rx="10" class="lane ln-j"/>
 <text x="535" y="50" class="lh">法務</text>
@@ -484,7 +484,7 @@ td.c{text-align:center;font-size:16px}
 <g class="sb sb-l"><rect x="325" y="314" width="128" height="52" rx="8"/><circle cx="340" cy="331" r="10" class="no"/><text x="340" y="335" class="nn">4</text><text x="356" y="336" class="st">取引先を仮登録</text><text x="335" y="356" class="ss">法人番号で既存と照合</text></g>
 <g class="sb sb-j"><rect x="471" y="388" width="128" height="52" rx="8"/><circle cx="486" cy="405" r="10" class="no"/><text x="486" y="409" class="nn">5</text><text x="502" y="410" class="st">取引先を承認</text><text x="481" y="430" class="ss">反社・与信を確認</text></g>
 <g class="sb sb-u"><rect x="33" y="462" width="128" height="52" rx="8"/><circle cx="48" cy="479" r="10" class="no"/><text x="48" y="483" class="nn">6</text><text x="64" y="484" class="st">契約を依頼</text><text x="43" y="504" class="ss">Slack で取引先を選ぶ</text></g>
-<g class="sb sb-j"><rect x="471" y="536" width="128" height="52" rx="8"/><circle cx="486" cy="553" r="10" class="no"/><text x="486" y="557" class="nn">7</text><text x="502" y="558" class="st">作成・審査</text><text x="481" y="578" class="ss">ひな形・契約チェック</text></g>
+<g class="sb sb-j"><rect x="471" y="536" width="128" height="52" rx="8"/><circle cx="486" cy="553" r="10" class="no"/><text x="486" y="557" class="nn">7</text><text x="502" y="558" class="st">作成・審査</text><text x="481" y="578" class="ss">文書作成ツール</text></g>
 <g class="sb sb-v"><rect x="617" y="610" width="128" height="52" rx="8"/><circle cx="632" cy="627" r="10" class="no"/><text x="632" y="631" class="nn">8</text><text x="648" y="632" class="st">委託先の評価</text><text x="627" y="652" class="ss">チェックシート</text></g>
 <g class="sb sb-l"><rect x="325" y="684" width="128" height="52" rx="8"/><circle cx="340" cy="701" r="10" class="no"/><text x="340" y="705" class="nn">9</text><text x="356" y="706" class="st">締結前の確認</text><text x="335" y="726" class="ss">反社・与信・評価</text></g>
 <g class="sb sb-f"><rect x="763" y="758" width="128" height="52" rx="8"/><circle cx="778" cy="775" r="10" class="no"/><text x="778" y="779" class="nn">10</text><text x="794" y="780" class="st">署名・締結</text><text x="773" y="800" class="ss">署名者は名刺の人物</text></g>
@@ -503,12 +503,12 @@ td.c{text-align:center;font-size:16px}
         <tr><th>2 データ化</th><td>会社名・氏名・部署・役職・メール・電話</td><td>Sansan の中</td><td>OCR とオペレーターの補正、同じ人の名刺を一人にまとめる</td><td><span class="st"><i class="pip have"></i>製品にある</span></td></tr>
         <tr><th>3 反社チェック</th><td>会社名 → ヒットの有無</td><td>Sansan → World-Check</td><td>反社チェックオプション</td><td><span class="st"><i class="pip ext"></i>オプション契約が必要</span></td></tr>
         <tr><th>4 取引先を仮登録</th><td>会社・人物・照合の結果と日付・照合 ID</td><td>Sansan → 統合台帳</td><td>API または CSV。法人番号で既存の取引先と照合し、なければ仮登録</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
-        <tr><th>5 取引先を承認</th><td>承認・与信の限度</td><td>法務 → 統合台帳</td><td>LegalBridge の画面</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>5 取引先を承認</th><td>承認・与信の限度</td><td>法務 → 統合台帳</td><td>統合台帳の画面</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
         <tr><th>6 契約を依頼</th><td>取引先・相手の担当者・依頼内容</td><td>担当者 → 統合台帳</td><td>Slack の依頼。取引先と担当者は名刺から選ぶ</td><td><span class="st"><i class="pip have"></i>既存＋拡張</span></td></tr>
-        <tr><th>7 作成・審査</th><td>契約書の下書き</td><td>法務・統合台帳</td><td>ひな形・契約チェック</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>7 作成・審査</th><td>契約書の下書き</td><td>法務</td><td>文書作成ツールで作成し、取引先と相手の担当者は統合台帳から読む</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
         <tr><th>8 委託先の評価</th><td>委託先の情報 → 評価結果</td><td>統合台帳 ⇄ SecureNavi</td><td>委託・個人情報を含む契約のときだけ。チェックシートの回答を CSV で受け取る</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
         <tr><th>9 締結前の確認</th><td>反社・与信・委託先評価の判定</td><td>統合台帳の中</td><td>どれかが期限切れ・不足なら送信を止める</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
-        <tr><th>10 署名・締結</th><td>契約書・署名者の氏名とメール</td><td>統合台帳 → CloudSign</td><td>CloudSign の API。署名者は名刺の人物から入れる</td><td><span class="st"><i class="pip ext"></i>送信エラーの切り分け中</span></td></tr>
+        <tr><th>10 署名・締結</th><td>契約書・署名者の氏名とメール</td><td>文書作成ツール → CloudSign</td><td>CloudSign の API。署名者は統合台帳の人物（名刺）から入れる</td><td><span class="st"><i class="pip ext"></i>送信エラーの切り分け中</span></td></tr>
         <tr><th>11 契約台帳に記録</th><td>締結の通知・締結済み PDF</td><td>CloudSign → 統合台帳</td><td>締結完了の通知と PDF の保存（Drive）</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
         <tr><th>12 委託先台帳へ</th><td>契約の有無・期間・再委託・個人情報の有無</td><td>統合台帳 → SecureNavi</td><td>CSV</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
         <tr><th>13 取引先・仕訳</th><td>取引先・支払の仕訳</td><td>統合台帳 → 奉行</td><td>汎用データ受入の CSV。後で API</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
@@ -533,9 +533,9 @@ td.c{text-align:center;font-size:16px}
       <tbody>
         <tr><th>反社チェック</th><td class="c own">●</td><td class="c"></td><td class="c use">○</td><td class="c use">○</td><td>Sansan の反社チェックオプション（候補）。結果だけ台帳へ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
         <tr><th>与信管理</th><td class="c own">●</td><td class="c"></td><td class="c"></td><td class="c use">○</td><td>信用調査データ（候補）と奉行の支払・入金実績</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
-        <tr><th>情報資産台帳管理</th><td class="c"></td><td class="c own">●</td><td class="c own">●</td><td class="c use">○</td><td>SecureNavi（候補）を正本にする。資産台帳・リスク評価・委託先管理台帳を持ち、LegalBridge は CSV で受け取って契約とつなぐ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
-        <tr><th>契約書管理</th><td class="c use">○</td><td class="c use">○</td><td class="c use">○</td><td class="c own">●</td><td>LegalBridge（作成・審査・登録・期限）</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
-        <tr><th>契約締結管理</th><td class="c use">○</td><td class="c"></td><td class="c use">○</td><td class="c own">●</td><td>LegalBridge の締結前の確認</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
+        <tr><th>情報資産台帳管理</th><td class="c"></td><td class="c own">●</td><td class="c own">●</td><td class="c use">○</td><td>SecureNavi（候補）を正本にする。資産台帳・リスク評価・委託先管理台帳を持ち、統合台帳は CSV で受け取って契約とつなぐ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>契約書管理</th><td class="c use">○</td><td class="c use">○</td><td class="c use">○</td><td class="c own">●</td><td>統合台帳（登録・期限）。契約書の作成は文書作成ツール</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>契約締結管理</th><td class="c use">○</td><td class="c"></td><td class="c use">○</td><td class="c own">●</td><td>統合台帳の締結前の確認</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
         <tr><th>電子契約</th><td class="c"></td><td class="c"></td><td class="c"></td><td class="c own">●</td><td>CloudSign（動かさない）</td><td><span class="st"><i class="pip fix"></i>固定</span></td></tr>
       </tbody>
     </table>
@@ -593,9 +593,9 @@ td.c{text-align:center;font-size:16px}
       <h3>CloudSign（電子契約）</h3>
       <dl>
         <dt>役割</dt><dd>署名と締結の記録。契約締結管理の出口</dd>
-        <dt>つなぎ方</dt><dd>LegalBridge から署名依頼を送り、締結完了の通知を受けて契約の記録を更新</dd>
-        <dt>今の状態</dt><dd>署名依頼の送信で宛先が拒否されるエラーの切り分け中（<span class="mono">docs/cloudsign-delivery-troubleshooting-fix-plan.md</span>）</dd>
-        <dt>注意</dt><dd>API から送ると CloudSign 側の承認機能が働かないとする解説がある。社内の承認は LegalBridge 側で確かめる</dd>
+        <dt>つなぎ方</dt><dd>文書作成ツールで作った契約書を署名依頼に回し、締結完了の通知で統合台帳の契約の記録を更新</dd>
+        <dt>今の状態</dt><dd>署名依頼の送信で宛先が拒否されるエラーの切り分け中</dd>
+        <dt>注意</dt><dd>API から送ると CloudSign 側の承認機能が働かないとする解説がある。社内の承認は統合台帳の締結前の確認で確かめる</dd>
       </dl>
     </div>
     <div class="fx">
@@ -620,7 +620,7 @@ td.c{text-align:center;font-size:16px}
     <table>
       <thead><tr><th>費目</th><th>中身</th><th>別々なら出していたプロジェクト</th><th>統合後</th></tr></thead>
       <tbody>
-        <tr><th>共通の台帳</th><td>LegalBridge の取引先・人物・情報資産・判断の履歴の拡張</td><td>四つすべて（それぞれ台帳を用意）</td><td>一本にまとめる</td></tr>
+        <tr><th>共通の台帳</th><td>統合台帳の構築（取引先・人物・契約・情報資産の写し・判断の履歴）。基盤は見積もりで選ぶ</td><td>四つすべて（それぞれ台帳を用意）</td><td>一本にまとめる</td></tr>
         <tr><th>反社チェック</th><td>Sansan のオプションなどの利用料・照合件数</td><td>取引先管理、個人情報保護（委託先）</td><td>取引先管理に寄せる</td></tr>
         <tr><th>与信データ</th><td>信用調査データの利用料</td><td>取引先管理</td><td>取引先管理</td></tr>
         <tr><th>情報資産・委託先の管理</th><td>SecureNavi の利用料（資産台帳・リスク評価・委託先管理・教育・内部監査を含む）</td><td>情報資産管理、個人情報保護</td><td>一つの契約を両方で使う</td></tr>
@@ -655,7 +655,7 @@ td.c{text-align:center;font-size:16px}
 <section>
   <div class="sec-head"><div class="eyebrow">出典</div></div>
   <div class="src">
-    <p>サービスの機能は 2026年11月時点の公開情報によります。料金は調べていません。LegalBridge の状態はリポジトリの docs によります。</p>
+    <p>サービスの機能は 2026年11月時点の公開情報によります。料金は調べていません。社内ツールの状態は社内の資料によります。</p>
     <a href="https://www.itmedia.co.jp/news/article/1912/06/1191206067/">ITmedia ・ Sansan の反社チェック機能</a>
     <a href="https://kyodonewsprwire.jp/release/202004169061">共同通信PRワイヤー ・ リフィニティブが Sansan にデータを提供</a>
     <a href="https://www.watch.impress.co.jp/docs/news/1401926.html">Impress Watch ・ Sansan の企業情報（帝国データバンク連携）</a>
