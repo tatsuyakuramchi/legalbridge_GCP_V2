@@ -499,3 +499,23 @@ test("条件書の受取人：載せた条件すべての相手先（代表）�
   assert.equal(isCounterpartyOfAll(conds, null), false);
   assert.equal(isCounterpartyOfAll([], 800), false);
 });
+
+test("作品ごとに番号を持つ条件書：「共著者等」欄は、分配を受ける人の名前だけ（許諾者その人は除く・割合は書かない）", async () => {
+  const { coAuthorNames, namesOfSharesText } = await import("./pub-terms.js");
+  const shares = [
+    { partyId: 800, name: "合同会社 DucQrews", sharePpm: 187500 },
+    { partyId: 802, name: "八木清太", sharePpm: 375000 },
+    { partyId: 803, name: "國場良", sharePpm: 375000 },
+    { partyId: 804, name: "合同会社ハーベストバレー", sharePpm: 62500 }
+  ];
+  const print = { counterpartyId: 800, shares };
+  const digital = { counterpartyId: 800, shares };
+  // 紙・電子で同じ人は 1 回だけ。許諾者（条件の相手先）は並べない。
+  assert.deepEqual(coAuthorNames(print, digital), ["八木清太", "國場良", "合同会社ハーベストバレー"]);
+  // 取り分の無い条件・条件が無いとき。
+  assert.deepEqual(coAuthorNames({ counterpartyId: 800, shares: [] }, undefined), []);
+  // 行に手で書いた文からは、割合を落として名前だけ。
+  assert.deepEqual(namesOfSharesText("代表が分配：合同会社 DucQrews 93.75%・合同会社ハーベストバレー 6.25%", "合同会社 DucQrews"),
+    ["合同会社ハーベストバレー"]);
+  assert.deepEqual(namesOfSharesText(""), []);
+});

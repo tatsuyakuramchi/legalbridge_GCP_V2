@@ -358,6 +358,35 @@ export function sharesText(condition: Data | null | undefined): string {
 }
 
 /**
+ * 分配を受ける人の名前（作品ごとに番号を持つ条件書の「共著者等」欄）。割合は書かない
+ * （配分割合は通知で変わりうるので、紙に固定しない）。許諾者（条件の相手先）その人は並べない。
+ * 紙・電子・翻訳版で同じ人は 1 回だけ。
+ */
+export function coAuthorNames(...conditions: Array<Data | null | undefined>): string[] {
+  const out: string[] = [];
+  for (const c of conditions) {
+    if (!c) continue;
+    const owner = number(c.counterpartyId);
+    for (const s of list(c.shares)) {
+      if (owner != null && number(s.partyId) === owner) continue;
+      const name = text(s.name).trim();
+      if (name && !out.includes(name)) out.push(name);
+    }
+  }
+  return out;
+}
+
+/** 行に手で書いた共同著作の文（「作家B 66.67%・作家C 33.33%」）から、名前だけを取り出す。 */
+export function namesOfSharesText(value: string, exclude = ""): string[] {
+  const out: string[] = [];
+  for (const part of value.replace(/^代表が分配：/, "").split(/[・、]/)) {
+    const name = part.replace(/\s*[0-9０-９.．]+\s*[%％]\s*$/, "").trim();
+    if (name && name !== exclude.trim() && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/**
  * 同じ作品の紙と電子で、取り分の有無や中身が食い違う作品を名指しする（受取人宛ての料率が揃わない原因）。
  */
 export function sharesMismatch(conditions: Data[]): string[] {
@@ -755,6 +784,13 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
       shareMissing: fromLedger && (licensorShareMissing(print) || licensorShareMissing(digital)),
       // 「共同著作・第三者権利」欄（作品ごとに番号を持つ条件書）。共著の取り分か第三者権利があれば「あり」。
       jointLabel: Boolean(coAuthors) || (text(row.third_party) !== "" && text(row.third_party) !== "なし") ? "あり" : "なし",
+      // 「共著者等」欄（作品ごとに番号を持つ条件書の 4 版目から）。分配を受ける人の名前と、作品に書いた第三者権利。
+      // 許諾者その人は並べない。だれもいなければ「なし」。
+      jointNames: [
+        ...(fromLedger ? coAuthorNames(print, digital, transPrint, transDigital)
+          : namesOfSharesText(text(row.co_authors), text((context.counterparty as Data | undefined)?.name))),
+        ...(text(row.third_party) !== "" && text(row.third_party) !== "なし" ? [text(row.third_party)] : [])
+      ].join("、") || "なし",
       printRate: fromLedger ? payeeRateText(context.payee, print) : (text(row.print_rate) || "—"),
       printExclusivity: fromLedger ? (print ? exclusivityText(print) || "—" : "—")
         : (text(row.print_exclusivity) || "—"),
@@ -895,6 +931,8 @@ export const MULTI_DEFAULTS = {
     "許諾者は、第1項の直接支払に必要な共著者の情報（氏名、住所、振込先口座、個人番号その他法令上必要なもの）を取りまとめ、被許諾者に提供する。配分割合に変更が生じたときは、許諾者は、変更後の配分割合およびその適用開始時期を遅滞なく被許諾者に通知し、被許諾者は、当該通知の到達後に行う支払から変更後の配分割合を適用する。被許諾者は、当該情報を当該支払および法令上の手続の目的にのみ利用する。許諾者から当該情報の提供がないために被許諾者が直接支払を行えない場合、被許諾者は当該支払について共著者分を含む全額を許諾者に支払うものとし、この場合、前項の委託料は生じない。"
   ].join("\n"),
   thirdPartyIp: "対象著作物ごとに上記一覧の「共同著作・第三者権利」欄および「備考」欄に記載のとおり。",
+  // 4 版目から、一覧の欄の名前は「共著者等」。
+  thirdPartyIpNames: "対象著作物ごとに上記一覧の「共著者等」欄および「備考」欄に記載のとおり。",
   copyrightNotice: "対象著作物ごとに上記一覧の「著作権表示」欄記載のとおり。",
   priorAgreements: [
     "本条件書の対象著作物および許諾内容に関し、締結日以前に両当事者間で成立した契約、覚書、条件書、発注書、請求書、電子メール、口頭・黙示の合意、取引慣行その他形式を問わない一切の合意（以下「旧契約等」）は、本条件書および基本契約に統合される。",
@@ -998,6 +1036,7 @@ function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]
     coAuthorPay: coAuthor, hasCoAuthorPay: coAuthor.length > 0,
     priorAgreements: prior, hasPriorAgreements: prior.length > 0,
     thirdPartyIp: MULTI_DEFAULTS.thirdPartyIp,
+    thirdPartyIpNames: MULTI_DEFAULTS.thirdPartyIpNames,
     copyrightNoticeText: MULTI_DEFAULTS.copyrightNotice,
     multiSpecial: [...special, MULTI_DEFAULTS.closing]
   };
