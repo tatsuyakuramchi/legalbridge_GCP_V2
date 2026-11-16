@@ -801,7 +801,11 @@ function spanLabel(keys: number[]): string {
 }
 const pctText = (value: number) => `${Math.round(value * 100) / 100}%`;
 /** 料率の欄。共著の取り分を掛けた行は「15%×20%」（報告売上 × 料率 × 取り分 ＝ 許諾料）。 */
-const rateText = (l: BundleLine) => l.sharePct ? `${pctText(l.ratePct)}×${pctText(l.sharePct)}` : pctText(l.ratePct);
+const rateText = (l: BundleLine) => {
+  // 単価 × 部数の条件は料率を掛けない（0% とは出さない）。
+  const rate = l.ratePct ? pctText(l.ratePct) : "—";
+  return l.sharePct ? `${rate}×${pctText(l.sharePct)}` : rate;
+};
 
 /**
  * 共著の取り分の説明（備考の先頭に足す）。取り分を掛けた行が無ければ空。

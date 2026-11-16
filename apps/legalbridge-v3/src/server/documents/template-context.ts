@@ -1498,6 +1498,22 @@ export function templateWarnings(templateKey: string, context: Ctx, manual: Reco
       ? [...pubTermsWarnings(context, templateKey), ...pubTermsMultiWarnings(context, manual)]
       : pubTermsWarnings(context, templateKey);
   }
+  // 出版の計算書（本文に要約／別紙に明細）は、出版（紙・電子）の条件の実績だけを載せる。
+  // それ以外の条件を載せると本文が空のまま出るので、ひな形を選び直してもらう。
+  if (templateKey === "royalty_statement_pub") {
+    const lines = Array.isArray(manual.rs_bundle_lines) ? manual.rs_bundle_lines as Array<Record<string, unknown>> : [];
+    const isPub = (l: Record<string, unknown>) => l.media === "紙" || l.media === "電子";
+    if (lines.length && !lines.some(isPub)) {
+      return [{ kind: "other", message: "このひな形（出版・本文に要約／別紙に明細）は、出版（紙・電子）の条件の計算書です。"
+        + "載せた条件は出版の利用形態ではないので、本文が空のまま出ます。ひな形を「利用許諾料計算書」に替えるか、条件明細の利用形態を出版（紙／電子）にしてください" }];
+    }
+    const others = lines.filter((l) => !isPub(l));
+    if (others.length) {
+      return [{ kind: "other", message: `出版でない条件の行が ${others.length} 行あります（${[...new Set(others.map((l) => String(l.conditionName ?? "")).filter(Boolean))].slice(0, 3).join("・")}）。`
+        + "このひな形の本文と合計には出版（紙・電子）の行だけが出ます。別の計算書に分けてください" }];
+    }
+    return [];
+  }
   if (templateKey === "intl_purchase_order") return intlCompanyWarnings(context);
   if (INSPECTION_KEYS.has(templateKey)) {
     return inLieuInspectionViolations(context, manual).map((v) => ({

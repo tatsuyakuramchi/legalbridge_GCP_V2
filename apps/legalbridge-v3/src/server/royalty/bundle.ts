@@ -151,7 +151,28 @@ export function bundleLineFrom(preview: CalculationPreview): BundleLine {
     occurredOn: preview.occurredOn ?? null,
     quantity: Number(preview.reported.quantity ?? 0) > 0
       ? Math.max(0, Number(preview.reported.quantity ?? 0)
-                  - Number(preview.reported.sampleQuantity ?? 0)) : null
+                  - Number(preview.reported.sampleQuantity ?? 0)) : null,
+    // 出版の計算書（royalty_statement_pub）の要約・別紙に使う。条件 1 本で 1 行にまとめた行にも持たせる
+    // （単価 × 部数の紙出版など、実績ごとの行にならない条件。持たせないと出版の計算書の本文が空になる）。
+    ...pubFieldsOf(preview)
+  };
+}
+
+/**
+ * 条件 1 本で 1 行にまとめた行の、出版の欄（作品名・媒体・単価・期間）。出版（紙・電子）の条件でなければ何も足さない。
+ * 媒体と作品名は、載せた実績が持っている条件の利用形態・作品から引く（実績の無い試算では分からないので足さない）。
+ */
+function pubFieldsOf(preview: CalculationPreview): Partial<BundleLine> {
+  const media = mediaLabel(preview.events.map((e) => e.conditionUsageType).find(Boolean));
+  if (!media) return {};
+  const titles = [...new Set(preview.events.map((e) => String(e.workTitle ?? "").trim()).filter(Boolean))];
+  const c = preview.condition;
+  return {
+    media,
+    workTitle: titles.length === 1 ? titles[0]! : null,
+    unitPrice: c.pricingModel === "unit_rate" && c.unitAmount ? c.unitAmount : null,
+    // 実績が 1 日だけのときの「2026-09-30〜2026-09-30」は 1 つにする。
+    period: String(preview.period ?? "").replace(/^(.+)〜\1$/, "$1") || null
   };
 }
 
