@@ -542,7 +542,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
 
       <g class="src-s"><rect x="20" y="60" width="280" height="64" rx="10"/><text x="36" y="87" class="bt">Sansan</text><text x="36" y="110" class="bs">名刺の人物・会社と反社チェックの結果</text></g>
       <g class="src-n"><rect x="20" y="140" width="280" height="64" rx="10"/><text x="36" y="167" class="bt">国税庁 法人番号</text><text x="36" y="190" class="bs">会社の正式名・所在地・閉鎖の有無</text></g>
-      <g class="src-v"><rect x="20" y="220" width="280" height="64" rx="10"/><text x="36" y="247" class="bt">SecureNavi（2線の匠クラウド）</text><text x="36" y="270" class="bs">委託先の評価・点検結果・再委託の構造</text></g>
+      <g class="src-v"><rect x="20" y="220" width="280" height="64" rx="10"/><text x="36" y="247" class="bt">SecureNavi</text><text x="36" y="270" class="bs">委託先の評価・点検結果・再委託の構造</text></g>
       <g class="src-l"><rect x="20" y="300" width="280" height="64" rx="10"/><text x="36" y="327" class="bt">Slack・Gmail・Backlog</text><text x="36" y="350" class="bs">依頼と、相手から届いた文書</text></g>
       <g class="src-l"><rect x="20" y="380" width="280" height="64" rx="10"/><text x="36" y="407" class="bt">CloudSign・相手方の紙</text><text x="36" y="430" class="bs">締結済みの契約と PDF</text></g>
       <g class="src-a"><rect x="20" y="460" width="280" height="64" rx="10"/><text x="36" y="487" class="bt">奉行クラウド</text><text x="36" y="510" class="bs">支払・消込の結果</text></g>
@@ -600,10 +600,11 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
     <article class="prod v">
       <span class="tag">SecureNavi ・ 委託先のセキュリティ評価</span>
       <ul>
-        <li><b>セキュリティチェックシート</b>：委託先へ送り、回答が自動で登録される</li>
-        <li><b>管理台帳</b>（2026年10月）：委託先企業と管理対象を一つの台帳に統合</li>
-        <li><b>委託先関係図</b>（2026年6月）：再委託以下の多段の構造をツリーで示し、事故の影響範囲を特定</li>
-        <li><b>点検の取りまとめ</b>：点検依頼・回答の回収・未対応事項の把握を一か所で</li>
+        <li><b>ISMS・Pマークの運用をクラウドで</b>：台帳、リスクアセスメント、規程、教育・受講管理、内部監査、委託先管理、申請承認</li>
+        <li><b>情報資産とリスク</b>：資産を登録すると、カテゴリに応じたリスクと対策が自動で提案される。Pマークでは個人情報を利用目的ごとに分けて登録</li>
+        <li><b>委託先管理</b>：委託先へセキュリティチェックシートを送り、回答が自動で登録される。「個人情報の取り扱いを含む」にすると Pマーク用の確認項目に切り替わり、委託先管理台帳を個人情報保護管理者が承認する</li>
+        <li><b>連携</b>：資産・リスクの CSV 入出力（パワーユーザーのみ）、SAML の SSO（ベータ）、マネーフォワード Admina からの資産の自動作成。一般向けの API の資料は見つからなかった</li>
+        <li>同じ会社の別製品「2線の匠クラウド」には、委託先の管理台帳や再委託の関係図がある</li>
       </ul>
       <p class="take"><strong>LegalBridge での使い方</strong><br>業務委託・個人情報の取扱い・NDA の審査で、相手の評価ランクと評価日を表示します。評価が低い、または期限切れなら、再委託の制限・監査・事故報告の条項を提案します。締結後は、契約の有無・期間・再委託の承諾を SecureNavi の委託先台帳へ返します。</p>
     </article>
@@ -715,6 +716,10 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
     <a href="https://www.itmedia.co.jp/news/article/1912/06/1191206067/">ITmedia ・ Sansan の反社チェック機能</a>
     <a href="https://www.bcnretail.com/topics_detail9/20210311_217075.html">BCN ・ 経団連事務局が反社チェックオプションを導入</a>
     <a href="https://kyodonewsprwire.jp/release/202004169061">共同通信PRワイヤー ・ リフィニティブが Sansan にデータを提供</a>
+    <a href="https://secure-navi.jp/">SecureNavi 公式サイト</a>
+    <a href="https://secure-navi.jp/functions">SecureNavi ・ 機能</a>
+    <a href="https://support.secure-navi.jp/hc/ja/articles/12444795773337">SecureNavi ヘルプ ・ 委託先の監督（Pマーク）</a>
+    <a href="https://support.secure-navi.jp/hc/ja/articles/10935639178521">SecureNavi ヘルプ ・ マネーフォワード Admina との連携</a>
     <a href="https://www.itreview.jp/products/secure-navi/profile">ITreview ・ SecureNavi 製品情報</a>
     <a href="https://prtimes.jp/main/html/rd/p/000000179.000089471.html">PR TIMES ・ 2線の匠クラウド 委託先の管理台帳</a>
     <a href="https://prtimes.jp/main/html/rd/p/000000155.000089471.html">PR TIMES ・ 2線の匠クラウド 委託先関係図・影響範囲分析</a>

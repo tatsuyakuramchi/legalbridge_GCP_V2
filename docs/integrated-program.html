@@ -233,7 +233,7 @@ td.c{text-align:center;font-size:16px}
 <text x="576.2" y="530.2" class="wl">契約台帳</text><text x="576.2" y="550.2" class="wi">契約・版・期限・締結</text>
 <line x1="617.2" y1="577.2" x2="706.3" y2="629.5" class="spoke"/>
 <path d="M480.0 520.0 L480.0 630.0 A190 190 0 0 1 290.0 440.0 L400.0 440.0 A80 80 0 0 0 480.0 520.0 Z" class="wedge w-p2"/>
-<text x="383.8" y="530.2" class="wl">情報資産台帳</text><text x="383.8" y="550.2" class="wi">資産・個人情報・委託先</text>
+<text x="383.8" y="530.2" class="wl">情報資産台帳</text><text x="383.8" y="550.2" class="wi">正本は SecureNavi・写しを持つ</text>
 <line x1="342.8" y1="577.2" x2="253.7" y2="629.5" class="spoke"/>
 <path d="M400.0 440.0 L290.0 440.0 A190 190 0 0 1 480.0 250.0 L480.0 360.0 A80 80 0 0 0 400.0 440.0 Z" class="wedge w-p5"/>
 <text x="383.8" y="337.8" class="wl">取引実績台帳</text><text x="383.8" y="357.8" class="wi">支払・入金・延滞</text>
@@ -366,7 +366,7 @@ td.c{text-align:center;font-size:16px}
 <text x="14.2" y="161.6" class="nt">点検・棚卸</text>
 <text x="14.2" y="179.6" class="ns">年次</text></g>
 </svg></div>
-      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>資産、持ち主、保管先、分類、個人情報の有無、委託先と評価</dd><dt>外のサービス</dt><dd>SecureNavi（候補）</dd></dl>
+      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>資産、持ち主、保管先、分類、個人情報の有無、委託先と評価</dd><dt>外のサービス</dt><dd>SecureNavi（候補）。資産・リスク・委託先管理台帳の正本はここに置き、LegalBridge は CSV で写しを持つ</dd></dl>
     </article>
     <article class="phase ph-p5">
       <div class="ph-head"><span class="ph-no">PHASE 4</span><span class="tag t1">取引先管理</span><span class="tag t4">契約書管理</span></div>
@@ -508,7 +508,7 @@ td.c{text-align:center;font-size:16px}
       <tbody>
         <tr><th>反社チェック</th><td class="c own">●</td><td class="c"></td><td class="c use">○</td><td class="c use">○</td><td>Sansan の反社チェックオプション（候補）。結果だけ台帳へ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
         <tr><th>与信管理</th><td class="c own">●</td><td class="c"></td><td class="c"></td><td class="c use">○</td><td>信用調査データ（候補）と奉行の支払・入金実績</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
-        <tr><th>情報資産台帳管理</th><td class="c"></td><td class="c own">●</td><td class="c own">●</td><td class="c use">○</td><td>SecureNavi（候補）。契約で受け渡す情報は台帳から登録</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>情報資産台帳管理</th><td class="c"></td><td class="c own">●</td><td class="c own">●</td><td class="c use">○</td><td>SecureNavi（候補）を正本にする。資産台帳・リスク評価・委託先管理台帳を持ち、LegalBridge は CSV で受け取って契約とつなぐ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
         <tr><th>契約書管理</th><td class="c use">○</td><td class="c use">○</td><td class="c use">○</td><td class="c own">●</td><td>LegalBridge（作成・審査・登録・期限）</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
         <tr><th>契約締結管理</th><td class="c use">○</td><td class="c"></td><td class="c use">○</td><td class="c own">●</td><td>LegalBridge の締結前の確認</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
         <tr><th>電子契約</th><td class="c"></td><td class="c"></td><td class="c"></td><td class="c own">●</td><td>CloudSign（動かさない）</td><td><span class="st"><i class="pip fix"></i>固定</span></td></tr>
@@ -598,7 +598,7 @@ td.c{text-align:center;font-size:16px}
         <tr><th>共通の台帳</th><td>LegalBridge の取引先・人物・情報資産・判断の履歴の拡張</td><td>四つすべて（それぞれ台帳を用意）</td><td>一本にまとめる</td></tr>
         <tr><th>反社チェック</th><td>Sansan のオプションなどの利用料・照合件数</td><td>取引先管理、個人情報保護（委託先）</td><td>取引先管理に寄せる</td></tr>
         <tr><th>与信データ</th><td>信用調査データの利用料</td><td>取引先管理</td><td>取引先管理</td></tr>
-        <tr><th>情報資産・委託先の管理</th><td>SecureNavi などの利用料</td><td>情報資産管理、個人情報保護</td><td>一つの契約を両方で使う</td></tr>
+        <tr><th>情報資産・委託先の管理</th><td>SecureNavi の利用料（資産台帳・リスク評価・委託先管理・教育・内部監査を含む）</td><td>情報資産管理、個人情報保護</td><td>一つの契約を両方で使う</td></tr>
         <tr><th>CloudSign との連携</th><td>署名依頼の送信と締結通知の受け取り</td><td>契約書管理</td><td>契約書管理（CloudSign の利用料は今のまま）</td></tr>
         <tr><th>奉行との連携</th><td>CSV の出力、その後 API。実績の受け取り</td><td>取引先管理（与信）、経理</td><td>一本にまとめる（奉行の利用料は今のまま）</td></tr>
         <tr><th>移行・データ整備</th><td>既存の取引先・契約・資産の名寄せと登録</td><td>四つすべて</td><td>一回で済ませる</td></tr>
@@ -634,7 +634,9 @@ td.c{text-align:center;font-size:16px}
     <a href="https://www.itmedia.co.jp/news/article/1912/06/1191206067/">ITmedia ・ Sansan の反社チェック機能</a>
     <a href="https://kyodonewsprwire.jp/release/202004169061">共同通信PRワイヤー ・ リフィニティブが Sansan にデータを提供</a>
     <a href="https://www.watch.impress.co.jp/docs/news/1401926.html">Impress Watch ・ Sansan の企業情報（帝国データバンク連携）</a>
-    <a href="https://www.itreview.jp/products/secure-navi/profile">ITreview ・ SecureNavi 製品情報</a>
+    <a href="https://secure-navi.jp/">SecureNavi 公式サイト</a>
+    <a href="https://secure-navi.jp/functions">SecureNavi ・ 機能</a>
+    <a href="https://support.secure-navi.jp/hc/ja/articles/12444795773337">SecureNavi ヘルプ ・ 委託先の監督（Pマーク）</a>
     <a href="https://prtimes.jp/main/html/rd/p/000000179.000089471.html">PR TIMES ・ 2線の匠クラウド 委託先の管理台帳</a>
     <a href="https://aurant-technologies.com/blog/selection-implementation-guide-practical-success-integration-3202/">aurant ・ クラウドサイン 業務システム連携ガイド 2026</a>
     <a href="https://www.obc.co.jp/bugyo-cloud/apiservice">OBC ・ 奉行APIコネクトサービス</a>
