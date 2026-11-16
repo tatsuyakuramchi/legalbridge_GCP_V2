@@ -17,6 +17,7 @@ import {
   num, purchaseOrderTotals, rows, taxRatePercentFor, yen, type Row, pickRow } from "./legacy-totals.js";
 import { foldPeriodicLines } from "./periodic-fold.js";
 import { editionPatch, royaltyStatementPatch } from "./royalty-patch.js";
+import { isLicenseMasterV5Template, licenseMasterV5Patch } from "./license-master-v5.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
 import { PUB_TITLES_FIELD, isPubTermsMulti, isPubTermsTemplate, pubTermsMultiWarnings, pubTermsPatch, pubTermsSuggestions,
@@ -749,6 +750,9 @@ export function buildTemplateContext(
   }
   if (isPubTermsTemplate(templateKey)) {
     return { ...common, ...pubTermsPatch(context, { ...manual, ...bound }) };
+  }
+  if (isLicenseMasterV5Template(templateKey)) {
+    return { ...common, ...licenseMasterV5Patch(context, { ...manual, ...bound }) };
   }
   if (isStatementTemplate(templateKey)) {
     const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
@@ -1493,11 +1497,13 @@ export function suggestionsFor(
  * ここで足す。発行は止めない。
  */
 export function templateWarnings(templateKey: string, context: Ctx, manual: Record<string, unknown> = {}): Warning[] {
+  const version = termsVersionWarnings(templateKey, context);
   if (isPubTermsTemplate(templateKey)) {
     return isPubTermsMulti(templateKey)
-      ? [...pubTermsWarnings(context, templateKey), ...pubTermsMultiWarnings(context, manual)]
-      : pubTermsWarnings(context, templateKey);
+      ? [...version, ...pubTermsWarnings(context, templateKey), ...pubTermsMultiWarnings(context, manual)]
+      : [...version, ...pubTermsWarnings(context, templateKey)];
   }
+  if (version.length) return version;
   // 出版の計算書（本文に要約／別紙に明細）は、出版（紙・電子）の条件の実績だけを載せる。
   // それ以外の条件を載せると本文が空のまま出るので、ひな形を選び直してもらう。
   if (templateKey === "royalty_statement_pub") {
@@ -1520,6 +1526,36 @@ export function templateWarnings(templateKey: string, context: Ctx, manual: Reco
       kind: "other" as const,
       message: `${v.name}：検収金額 ¥${v.inspected.toLocaleString("ja-JP")} が発注書の仮計算額 ¥${v.ordered.toLocaleString("ja-JP")} を下回っています。初版の利用許諾料で払う行は仮計算額が下限（特約第3項。減額しない）。金額を直すか、発注書の訂正版を先に起こしてください`
     }));
+  }
+  return [];
+}
+
+/** V5 の個別条件書（著作物利用許諾基本契約書V5 の条を指す）。 */
+const V5_TERMS_KEYS = new Set(["individual_license_terms_v5", "pub_license_terms_v5", "pub_license_terms_v5_annex"]);
+/** V5 より前の個別条件書（旧基本契約の下で使うもの）。 */
+const LEGACY_TERMS_KEYS = new Set(["individual_license_terms_v3", "individual_license_terms_v4",
+  "pub_license_terms_v3", "pub_license_terms_v3_annex", "pub_license_terms_multi"]);
+
+/**
+ * 個別条件書と基本契約の版の組み合わせ。V5 の条件書は基本契約V5 の条（第3条第5項の事業別条項など）を指すので、
+ * 旧基本契約の下や基本契約なしでは条文の参照先が無い。逆に基本契約V5 の下で旧版の条件書を出すと事業別条項が抜ける。
+ * 発行は止めない（人が選び直す）。
+ */
+export function termsVersionWarnings(templateKey: string, context: Ctx): Warning[] {
+  const master = contextMasterAgreement(context) as Ctx | null;
+  if (V5_TERMS_KEYS.has(templateKey)) {
+    if (!master) {
+      return [{ kind: "other", message: "基本契約が選ばれていません。V5 の個別条件書は著作物利用許諾基本契約書V5 の下で使います。"
+        + "先に基本契約V5 を作るか、契約を選んでください" }];
+    }
+    if (master.isV5Master !== true) {
+      return [{ kind: "other", message: `基本契約「${String(master.title ?? master.no ?? "")}」は基本契約V5（著作物利用許諾基本契約書V5）ではありません。`
+        + "V5 の個別条件書は基本契約V5 の条を指すので、旧基本契約の相手先には従来の条件書（出版はV3、ボードゲームはV4）を使ってください" }];
+    }
+  }
+  if (LEGACY_TERMS_KEYS.has(templateKey) && master?.isV5Master === true) {
+    return [{ kind: "other", message: "基本契約が著作物利用許諾基本契約書V5 です。事業別条項の入った V5 の個別条件書"
+      + "（出版：個別利用許諾条件書V5（出版）、ボードゲーム：個別利用許諾条件書V5（ボードゲーム））を使ってください" }];
   }
   return [];
 }

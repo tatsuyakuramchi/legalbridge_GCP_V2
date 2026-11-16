@@ -24,7 +24,12 @@ import { dealIdOfUsage } from "../core/condition-usage.js";
 export const LICENSE_TERMS_KEY = "individual_license_terms_v3";
 /** V4。新しく作る条件書はこちら（V3 で作った文書は V3 のまま）。 */
 export const LICENSE_TERMS_V4_KEY = "individual_license_terms_v4";
-export const LICENSE_TERMS_KEYS = [LICENSE_TERMS_KEY, LICENSE_TERMS_V4_KEY];
+/**
+ * V5・ボードゲーム。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。V4 の体裁・差し込みに
+ * 事業別条項（04 ボードゲームに関する定め）を足したもの。旧基本契約の相手先は V4 のまま。
+ */
+export const LICENSE_TERMS_V5_KEY = "individual_license_terms_v5";
+export const LICENSE_TERMS_KEYS = [LICENSE_TERMS_KEY, LICENSE_TERMS_V4_KEY, LICENSE_TERMS_V5_KEY];
 export const isLicenseTermsTemplate = (templateKey: string): boolean =>
   LICENSE_TERMS_KEYS.includes(templateKey);
 

@@ -38,7 +38,7 @@ export interface LicenseDraft {
   creditFromWork: boolean;
   creditNotice: string;
   /** 併せて作る条件書（A-080）。 */
-  companion: "" | "pub_license_terms_v3" | "individual_license_terms_v4";
+  companion: "" | "pub_license_terms_v3" | "individual_license_terms_v4" | "pub_license_terms_v5" | "individual_license_terms_v5";
   /** 再許諾の可否（A-079）。 */
   sublicense: "no" | "consent" | "covered";
   /** 別途のときの料率・定額。 */

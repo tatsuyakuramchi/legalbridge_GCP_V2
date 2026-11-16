@@ -1,0 +1,282 @@
+<!-- pub_license_terms_v5 r1 -->
+<!--
+  個別利用許諾条件書V5・出版（pub_license_terms_v5）。少数作品用（一覧を01に載せる。別紙なし）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
+  本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
+  体裁は individual_license_terms_v5 と同じ（head・CSS を共有）。差し込みは pubTermsPatch の値（pub_license_terms_v3 と同じ名前）。
+  07 が事業別条項（出版。基本契約V5 第3条第5項）。
+-->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>個別利用許諾条件書 {{docNo}}</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm 11mm;
+    @top-right {
+      content: "ARC-LICENSE / INDIVIDUAL TERMS / PUBLISHING";
+      font: 6pt "Aptos", "Yu Gothic", "Noto Sans CJK JP", "IPAGothic", sans-serif; color: #888;
+      vertical-align: bottom; padding-bottom: 3mm;
+    }
+    @bottom-right {
+      content: "{{docNo}}　個別利用許諾条件書（出版）";
+      font: 6pt "Aptos", "Yu Gothic", "Noto Sans CJK JP", "IPAGothic", sans-serif; color: #777;
+      vertical-align: top; padding-top: 3mm;
+    }
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Aptos", "Yu Gothic", "Noto Sans CJK JP", "IPAGothic", sans-serif;
+    font-size: 7pt; line-height: 1.5; color: #1c1c1c;
+  }
+  p { margin: 0 0 1.2mm; }
+  .en { color: #777; font-weight: normal; letter-spacing: .04em; }
+  h1 { font-size: 19pt; margin: 0; letter-spacing: .04em; }
+  .title-en { font-size: 7pt; color: #777; margin: 0 0 3mm; letter-spacing: .08em; }
+
+  /* 罫線は上の濃い線と行の下の薄い線だけ（縦線なし）。 */
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: .6mm 1.2mm; vertical-align: top; text-align: left; font-weight: normal; }
+  .meta td { border-top: 1px solid #222; border-bottom: .5px solid #bebebe; }
+  .meta .k, .party .k { color: #888; font-weight: bold; margin-right: 1.5em; }
+  .meta b { font-weight: bold; }
+  .parties { margin: 1.5mm 0 2mm; }
+  .parties td { width: 50%; border-top: 1px solid #222; border-bottom: .5px solid #bebebe; padding: 1.2mm 1.5mm; }
+  .party .k { display: block; margin: 0 0 .5mm; letter-spacing: .06em; }
+  .party .name { font-weight: bold; }
+
+  h2 { font-size: 9pt; margin: 3mm 0 1.2mm; padding-bottom: .6mm; border-bottom: 1px solid #222;
+       break-after: avoid; page-break-after: avoid; }
+  h2 .no { color: #999; font-size: 7.5pt; margin-right: 1.2em; }
+  h2 .en { font-size: 6.5pt; margin-left: 1.2em; }
+  h3 { font-size: 7pt; margin: 2.5mm 0 1mm; break-after: avoid; }
+
+  .kv td { border-bottom: .5px solid #d0d0d0; }
+  .kv tr:first-child td { border-top: .5px solid #555; }
+  .kv td.k { width: 22mm; background: #f5f5f5; font-weight: bold; white-space: nowrap; }
+  .kv tr { break-inside: avoid; page-break-inside: avoid; }
+
+  .grid th { background: #f2f2f2; font-weight: bold; border-top: 1px solid #555; border-bottom: .5px solid #999; }
+  .grid td { border-bottom: .5px solid #d0d0d0; }
+  .grid td.c, .grid th.c { text-align: center; }
+  .grid tr { break-inside: avoid; page-break-inside: avoid; }
+  .grid thead { display: table-header-group; }
+  .grid tfoot td { background: #f5f5f5; font-weight: bold; border-top: .5px solid #555; }
+  .grid td.sub { color: #555; border-bottom: .5px solid #d0d0d0; }
+  .grid tr.has-sub td { border-bottom: none; }
+  .grid tr.memo td { background: #fafafa; color: #555; }
+  .role { color: #777; display: block; }
+
+  /* 許諾料の欄。取引モデルごとのカードを横に並べる。 */
+  .cards { display: flex; gap: 2mm; margin: 1mm 0 2mm; break-inside: avoid; }
+  .card { flex: 1; border-top: 1px solid #555; border-bottom: .5px solid #d0d0d0; padding: 1mm 1.5mm; }
+  .card .en { display: block; color: #1c1c1c; font-weight: bold; letter-spacing: .06em; }
+  .card .name { font-weight: bold; }
+  .card .rate { margin-top: .6mm; }
+  .card .rate b { font-size: 10pt; margin-left: .6em; }
+  .card .f { color: #555; }
+
+  .sign { margin-top: 4mm; break-inside: avoid; page-break-inside: avoid; }
+  .sign td { width: 50%; border-top: 1px solid #222; padding: 1.5mm 1.5mm 2mm; }
+  .sign td + td { padding-left: 5mm; }
+  .sign .who { color: #888; font-weight: bold; letter-spacing: .06em; }
+  .party-sign { display: flex; align-items: flex-start; gap: 3mm; min-height: 9mm; }
+  .party-sign .names { flex: 1; }
+  /* 印の枠。 */
+  .stamp { width: 15mm; height: 15mm; border: .5px dashed #888; border-radius: 50%;
+           display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 8pt; }
+  /* 署名日・署名の枠。高さは 12pt 固定（CloudSign の入力欄をこの枠に合わせる）。 */
+  .field { display: flex; align-items: center; gap: 2mm; margin-top: 1.2mm; }
+  .field .lbl { width: 10mm; color: #555; }
+  .field .box { flex: 1; height: 12pt; box-sizing: border-box; border: .5px solid #999; }
+  /* 通知先は 12pt 固定の枠（1行。長い連絡先ははみ出さず切る）。 */
+  .notice td { padding-top: 0; padding-bottom: 0; vertical-align: middle; }
+  .notice .fix { height: 12pt; line-height: 12pt; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* 通知先と署名欄は割らない（署名欄だけが次のページに送られないように）。 */
+  .tail { break-inside: avoid; page-break-inside: avoid; }
+
+  .annex { break-before: page; page-break-before: always; }
+  /* 別紙の見出しは3つとも同じ形（本文の 01〜04 と同じ組み方で、少し大きく）。 */
+  .annex h2 { font-size: 10pt; margin: 0 0 1.5mm; }
+  .annex h2 .no { font-size: 8pt; }
+  .annex .part + .part { margin-top: 6mm; }
+  .lead { color: #555; }
+  .grid th .l2 { display: block; font-weight: normal; font-size: 6.5pt; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1>個別利用許諾条件書</h1>
+<p class="title-en">INDIVIDUAL LICENSE TERMS ／ 出版</p>
+
+<table class="meta">
+  <tr>
+    <td><span class="k">ISSUED</span><b>{{formatDateDot signDate}}</b></td>
+    <td><span class="k">NO.</span><b>{{docNo}}</b></td>
+    <td>{{#if agreementNo}}<span class="k">MASTER</span><b>{{agreementNo}}</b>{{/if}}</td>
+  </tr>
+</table>
+
+<table class="parties">
+  <tr>
+    <td class="party">
+      <span class="k">LICENSOR / 許諾者（甲）</span>
+      <div class="name">{{licensorName}}</div>
+      <div>{{licensorAddress}}</div>
+      {{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}
+      {{#if licensorInvoiceNo}}<div>登録番号 {{licensorInvoiceNo}}</div>{{/if}}
+    </td>
+    <td class="party">
+      <span class="k">LICENSEE / 被許諾者（乙）</span>
+      <div class="name">{{licenseeName}}</div>
+      <div>{{licenseeAddress}}</div>
+      {{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}
+      {{#if licenseeInvoiceNo}}<div>登録番号 {{licenseeInvoiceNo}}</div>{{/if}}
+    </td>
+  </tr>
+</table>
+
+<p>甲と乙は、両者間の{{agreementTitle}}{{#if agreementNo}}（{{agreementNo}}）{{/if}}（以下「基本契約」という。）に基づき、以下のとおり個別の利用許諾条件を定める。本条件書に定めのない事項は基本契約による。</p>
+{{#if payeeTerms}}<p>本条件書は、甲が対象著作物の共同著作者（権利者の一人）として有する取り分に係る許諾条件を定める。第1条の一覧の「料率」は甲に帰属する料率（対象著作物全体の料率に甲の取り分を乗じたもの）であり、括弧内は対象著作物全体の料率、甲の取り分は同一覧の「共同著作」欄に記載のとおりとする。甲に支払う許諾料は、甲に帰属する料率により算定する。</p>{{/if}}
+
+<h2><span class="no">01</span>対象著作物<span class="en">LICENSED WORKS</span></h2>
+<p class="lead">一覧の1行が作品1点（備考がある作品は同じNo.の下に続ける）。紙・電子の料率と独占区分は、それぞれの媒体について甲乙間で合意した条件を示す。「—」はその媒体の許諾が無いことを示す。許諾期間は作品ごとに同じNo.の下の行に示し、「更新 n 回」は許諾開始日（刊行日）から本条件書の締結日までに自動更新した回数を示す（第3条）。自動更新しない作品は「更新なし」、更新を止めた作品は「以後更新しない」と付す。{{#if hasTranslationConditions}}{{#if translationDerivative}}翻訳の条件を定めた作品は、同じNo.の下の「{{translationLabel}}」の行に、翻訳について別途合意するときの料率の目安を示す（第2条）。{{else}}翻訳版の再許諾がある作品は、同じNo.の下の「{{translationLabel}}」の行に、紙・電子の料率と別途合意の要否を示す（第2条・第4条）。{{/if}}{{/if}}</p>
+<table class="grid">
+  <thead>
+    <tr>
+      <th class="c" style="width:7mm">No.</th>
+      <th>原著作物名／対象出版物名</th>
+      <th style="width:30mm">著作権表示</th>
+      <th style="width:26mm">共同著作・第三者権利</th>
+      <th class="c" style="width:20mm">紙<span class="l2">料率／独占区分</span></th>
+      <th class="c" style="width:20mm">電子<span class="l2">料率／独占区分</span></th>
+    </tr>
+  </thead>
+  {{#each titles}}
+  <tbody>
+    <tr{{#if hasNoteRow}} class="has-sub"{{/if}}>
+      <td class="c">{{no}}</td>
+      <td><b>{{title}}</b>{{#if edition}}<span class="role">{{edition}}</span>{{/if}}</td>
+      <td>{{copyright}}</td>
+      <td>{{thirdParty}}</td>
+      <td class="c">{{printRate}}{{#if hasPrint}}／{{printExclusivity}}{{/if}}</td>
+      <td class="c">{{digitalRate}}{{#if hasDigital}}／{{digitalExclusivity}}{{/if}}</td>
+    </tr>
+    {{#if hasNoteRow}}
+    <tr>
+      <td class="sub"></td>
+      <td class="sub" colspan="5">{{#if hasTerm}}許諾期間　{{term}}{{/if}}{{#if hasTranslation}}{{#if hasTerm}}　／　{{/if}}{{translationLabel}}　{{translation}}{{#unless translationDerivative}}（別途合意 {{translationConsent}}）{{/unless}}{{/if}}{{#if hasShares}}　／　共同著作　{{coAuthors}}{{#if payeeShare}}（{{payeeShare}}）{{/if}}{{/if}}{{#if note}}　／　備考　{{note}}{{/if}}</td>
+    </tr>
+    {{/if}}
+  </tbody>
+  {{/each}}
+  {{#unless titles.length}}
+  <tbody><tr><td></td><td colspan="5">（対象著作物がありません。条件明細を選んでください）</td></tr></tbody>
+  {{/unless}}
+</table>
+
+<h2><span class="no">02</span>許諾内容<span class="en">LICENSE SCOPE</span></h2>
+<table class="kv">
+  <tr><td class="k">紙媒体出版</td><td>対象出版物の複製・頒布。独占・非独占の別は第1条の一覧の「紙」欄による。</td></tr>
+  <tr><td class="k">電子書籍配信</td><td>主要電子書店における配信（DRM付き）。独占・非独占の別は第1条の一覧の「電子」欄による。「電子」欄が「—」の作品は対象外とする。</td></tr>
+  {{#if hasTranslation}}{{#unless translationDerivative}}
+  <tr><td class="k">翻訳版</td><td>乙が第三者に再許諾して行わせる翻訳版の出版。{{#if hasTranslationConditions}}対象作品と料率は第1条の一覧の各作品の「{{translationLabel}}」の行による。{{/if}}{{#if translationConsentMixed}}同行に「別途合意 要」とある作品は、再許諾ごとに再許諾先・言語・条件について甲乙が別途書面で合意する。同行に「別途合意 不要」とある作品は、本条件書に定める条件の範囲内であれば甲の個別の事前承諾を要しない。{{else}}{{#if translationConsentRequired}}再許諾ごとに、再許諾先・言語・条件について甲乙が別途書面で合意する。{{else}}本条件書に定める条件の範囲内で行う再許諾については、甲の個別の事前承諾を要しない。{{/if}}{{/if}}いずれの場合も、乙は再許諾ごとに再許諾先・言語・受領する対価を甲へ通知する。</td></tr>
+  {{/unless}}{{/if}}
+  <tr><td class="k">販促・広告利用</td><td>対象出版物の販売促進に必要な範囲での書影・抜粋の利用。</td></tr>
+  <tr><td class="k">二次利用</td><td>{{#if translationDerivative}}翻訳（二次的著作物の作成）及び翻訳物の出版・配信、映像化・商品化その他の二次利用は、いずれも本条件書の対象外とし、甲乙の別途合意による。翻訳権その他著作権法第27条・第28条に定める権利は甲に留保され、本条件書による許諾には含まれない。{{#if hasTranslationConditions}}翻訳について別途合意するときの許諾料の料率は、第1条の一覧の各作品の「{{translationLabel}}」の行を目安とする。{{/if}}{{else}}映像化・商品化その他の二次利用は本条件書の対象外とし、別途合意による。{{/if}}</td></tr>
+</table>
+
+<h2><span class="no">03</span>許諾期間・地域・言語<span class="en">TERM / TERRITORY / LANGUAGE</span></h2>
+<table class="kv">
+  <tr><td class="k">許諾期間</td><td>{{#if hasWorkTerms}}対象著作物ごとに第1条の一覧の「許諾期間」の行による（自動更新した回数は同行のとおり）。{{else}}{{formatDate termStart}}{{#if termEnd}} 〜 {{formatDate termEnd}}{{else}} から（期間の定めなし）{{/if}}{{/if}}</td></tr>
+  {{#if termEnd}}
+  <tr><td class="k">更新</td><td>{{#if autoRenew}}期間満了の{{noticeBefore}}前までにいずれの当事者からも書面による終了の通知がない場合、同一条件で{{renewPeriod}}ごとに自動更新する。{{else}}自動更新しない。延長は甲乙協議のうえ書面で定める。{{/if}}</td></tr>
+  {{/if}}
+  <tr><td class="k">地域</td><td>{{region}}</td></tr>
+  <tr><td class="k">言語</td><td>{{language}}{{#if hasTranslation}}（翻訳版は第2条による）{{/if}}</td></tr>
+</table>
+
+<h2><span class="no">04</span>許諾料<span class="en">ROYALTY</span></h2>
+<table class="kv">
+  <tr><td class="k">紙媒体出版</td><td>税抜定価 × 印税対象部数 × 料率（第1条の一覧の「紙」欄）。印税対象部数は刷部数とし、見本・献本・破損分を除く。増刷時に刷部数の一部を印税対象部数から除く定め（非加算）のある作品は、一覧の備考欄の率による。初版部数その他の個別の取り決めは一覧の備考欄による。</td></tr>
+  <tr><td class="k">電子書籍配信</td><td>{{#if digitalReceiptBasis}}乙が電子書店その他の配信事業者から受領する金額（税抜）× 料率（第1条の一覧の「電子」欄）。{{else}}配信価格（税抜）× ダウンロード数 × 料率（第1条の一覧の「電子」欄）。{{#if digitalBasisMixed}}ただし、一覧の備考欄に「電子の料率は乙の入金額に対する率」とある作品は、乙が配信事業者から受領する金額（税抜）× 料率とする。{{/if}}{{/if}}「電子」欄が「—」の作品には電子書籍配信の許諾料は発生しない。</td></tr>
+  {{#unless translationDerivative}}{{#if hasTranslationConditions}}
+  <tr><td class="k">{{translationLabel}}</td><td>乙が再許諾先から受領する対価（税抜）× 料率（第1条の一覧の「{{translationLabel}}」の行）。紙と電子で料率が異なる場合は、同行の媒体ごとの率による。当該の行が無い作品には翻訳版の許諾料は発生しない。算定の細目に別段の定めをするときは、一覧の備考欄又は特記事項による。</td></tr>
+  {{else}}{{#if hasTranslation}}
+  <tr><td class="k">翻訳版</td><td>乙が再許諾先から受領する対価（税抜）の {{translationShare}}。</td></tr>
+  {{/if}}{{/if}}{{/unless}}
+</table>
+
+<h2><span class="no">05</span>支払時期・方法<span class="en">PAYMENT</span></h2>
+<table class="kv">
+  <tr><td class="k">紙媒体出版</td><td>{{#if hasPrintMedia}}刷部数確定の都度、{{payPrint}}までに支払う。{{else}}—{{/if}}</td></tr>
+  <tr><td class="k">電子書籍配信</td><td>{{#if hasDigitalMedia}}毎年{{digitalPeriod}}を集計期間とし、{{payDigital}}までに支払う。{{else}}—{{/if}}</td></tr>
+  {{#if hasTranslation}}{{#unless translationDerivative}}
+  <tr><td class="k">翻訳版</td><td>乙が再許諾先から対価を受領した日の{{payTranslation}}までに支払う。</td></tr>
+  {{/unless}}{{/if}}
+  <tr><td class="k">消費税・源泉</td><td>上記金額は税抜とし、消費税（{{taxRate}}%）を別途加算する。{{#if withholding}}乙は法令に基づき所得税及び復興特別所得税を源泉徴収し、その残額を支払う。{{else}}甲が法人であるため源泉徴収は行わない。{{/if}}</td></tr>
+  <tr><td class="k">報告</td><td>乙は支払の際、作品ごとの刷部数・定価・ダウンロード数・配信価格（受領する金額を基準とする作品はその額）を記載した明細を甲に提出する。</td></tr>
+  <tr><td class="k">振込先</td><td>{{#if hasBank}}{{BANK_INFO}}　{{/if}}振込手数料は乙の負担とする。</td></tr>
+</table>
+
+<h2><span class="no">06</span>権利処理・著作権表示<span class="en">RIGHTS / CREDIT</span></h2>
+<table class="kv">
+  <tr><td class="k">第三者の知的財産</td><td>一覧の「共同著作・第三者権利」欄に記載のある作品について、当該第三者の権利処理は甲が行い、甲は当該第三者に対する対価の支払について乙に責任が及ばないことを保証する。</td></tr>
+  <tr><td class="k">著作権表示</td><td>乙は対象出版物の奥付その他甲乙が合意した位置に、一覧の「著作権表示」欄の表示を行う。表示位置に個別の指定がある場合は備考欄による。{{#if translationDerivative}}別途合意により翻訳物を出版するときは、原著作物の題号及び原著作者名を、翻訳物であることが分かる形で表示する。{{/if}}</td></tr>
+</table>
+
+<h2><span class="no">07</span>出版に関する定め<span class="en">PUBLISHING TERMS</span></h2>
+<p>本条は、基本契約第3条第5項に定める事業別条項（出版）とし、変更するときは第9条（特記事項）に定める。</p>
+<table class="kv">
+  <tr><td class="k">紙媒体の権利の形</td><td>第1条の一覧の「紙」欄が非独占の作品は非独占の利用許諾、独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または第9条（特記事項）に「出版権設定」とある作品は、甲は乙に著作権法第80条第1項第1号の出版権を設定する。</td></tr>
+  <tr><td class="k">出版権の内容</td><td>出版権を設定した作品について、出版権の存続期間は当該作品の許諾期間とする。著作権法第81条の出版の時期および継続出版の義務は、同条ただし書の別段の定めとして、基本契約第10条（販売）および第11条（販売終了）による。乙は、改めて複製しようとするときは、その都度あらかじめ甲に通知する（同法第82条第2項）。甲は、乙が同法第80条第3項により第三者に複製または公衆送信を許諾することを承諾する。甲は出版権の設定の登録に協力し、出版権が消滅したときは乙が抹消の登録に協力する。</td></tr>
+  <tr><td class="k">電子書籍・貸与</td><td>電子書籍は、第1条の一覧の「電子」欄に独占と明示した作品を除き非独占の利用許諾とし、乙は適切な技術的保護手段を施す。乙は、紙媒体出版物の貸与および図書館等による電子書籍の貸出について、管理団体を通じて許諾し、使用料を受領することができる。甲への配分は第9条（特記事項）に定め、定めがないときは乙が受領した使用料に当該作品の紙・電子の料率を乗じた額とする。</td></tr>
+  <tr><td class="k">原稿の引渡し・校正</td><td>原稿を新たに引き渡す作品について、甲は、甲乙が別に定める期日までに完全な原稿（乙が出版に適すると合理的に認めたものをいう。）を乙に引き渡す。校正は甲乙が協力して行い、甲は乙に校正を委ねることができる。</td></tr>
+  <tr><td class="k">改訂版・新版</td><td>誤植・誤記の訂正、組版・装丁・判型の変更その他の軽微な修正は本条件書による。本文の実質的な変更、書名の変更、増補、改訂版、新装版その他の新たな版は、甲の承諾を得て、新たな条件書による。甲が改訂版等を第三者から出版しようとするときは、乙に優先交渉の機会を与える。</td></tr>
+</table>
+
+<h2><span class="no">08</span>旧合意との関係<span class="en">PRIOR AGREEMENTS</span></h2>
+<p>対象著作物に関する甲乙間の従前の合意（覚書・電子メールその他形式を問わない）の扱いは、基本契約第27条により第9条（特記事項）に定める。定めのない従前の合意は存続し、本条件書と抵触する部分は本条件書が優先する。本条件書と基本契約が矛盾する場合は本条件書が優先する。</p>
+
+<h2><span class="no">09</span>特記事項<span class="en">SPECIAL TERMS</span></h2>
+{{#if specialNotes}}<p>{{specialNotes}}</p>{{else}}<p>なし</p>{{/if}}
+
+<div class="tail">
+<h2><span class="no">10</span>通知先<span class="en">NOTICES</span></h2>
+<table class="kv notice">
+  <tr><td class="k"><div class="fix">甲</div></td><td><div class="fix">{{licensorContact}}</div></td></tr>
+  <tr><td class="k"><div class="fix">乙</div></td><td><div class="fix">{{licenseeContact}}</div></td></tr>
+</table>
+
+{{#if showSignature}}
+<!-- 署名欄。署名日・署名の枠は空のまま刷る（CloudSign の入力欄を重ねる）。署名欄=押印 なら署名の枠の代わりに印の枠。 -->
+<table class="sign">
+  <tr>
+    <td>
+      <span class="who">LICENSOR / 許諾者（甲）</span>
+      <div class="party-sign">
+        <div class="names"><div class="name"><b>{{licensorName}}</b></div>{{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}</div>
+        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
+      </div>
+      <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
+      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+    </td>
+    <td>
+      <span class="who">LICENSEE / 被許諾者（乙）</span>
+      <div class="party-sign">
+        <div class="names"><div class="name"><b>{{licenseeName}}</b></div>{{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}</div>
+        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
+      </div>
+      <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
+      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+    </td>
+  </tr>
+</table>
+{{/if}}
+</div>
+
+
+
+</body>
+</html>

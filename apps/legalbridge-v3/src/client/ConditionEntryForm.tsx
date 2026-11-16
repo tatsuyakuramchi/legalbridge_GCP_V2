@@ -19,8 +19,8 @@ import type { WorkOption } from "./WorkChooser.js";
 export type ConditionEntryKind = "game_in" | "pub_in" | "out" | "service" | "lump_in" | "one";
 
 export const ENTRY_KINDS: Array<{ value: ConditionEntryKind; label: string; hint: string; templateKey: string | null }> = [
-  { value: "game_in", label: "ゲーム IN（権利を取得）", hint: "作品 1 点の自社製造・再許諾・他社販売を 1 回で。個別利用許諾条件書に畳む", templateKey: "individual_license_terms_v4" },
-  { value: "pub_in", label: "出版 IN（紙・電子）", hint: "作品 1 点の紙・電子（と翻訳の再許諾）を 1 回で。出版条件書に畳む", templateKey: "pub_master_individual" },
+  { value: "game_in", label: "ゲーム IN（権利を取得）", hint: "作品 1 点の自社製造・再許諾・他社販売を 1 回で。個別利用許諾条件書に畳む", templateKey: "individual_license_terms_v5" },
+  { value: "pub_in", label: "出版 IN（紙・電子）", hint: "作品 1 点の紙・電子（と翻訳の再許諾）を 1 回で。出版条件書に畳む", templateKey: "pub_license_terms_v5" },
   { value: "out", label: "OUT（許諾先）", hint: "許諾先 1 社の利用形態 1 つ。IN 条件の範囲内で", templateKey: "pub_license_terms_v3" },
   { value: "service", label: "業務委託（発注）", hint: "委託料に実費・手数料を組にして 1 回で。発注書に載せる", templateKey: "purchase_order" },
   { value: "lump_in", label: "一括の利用料（イラスト等）", hint: "既存のイラストなどを定額で使う。料率は掛けず、実績の金額をそのまま払う（計算書は「定額」）", templateKey: null },
@@ -74,11 +74,11 @@ export function ConditionEntryForm(
       </div>
       {kind === "game_in" && (
         <LicenseSetForm preset={common} presetLabels={labels}
-                        onDone={(r) => done(r.conditions.map((c) => c.id), "individual_license_terms_v4")} onCancel={onCancel} />
+                        onDone={(r) => done(r.conditions.map((c) => c.id), "individual_license_terms_v5")} onCancel={onCancel} />
       )}
       {kind === "pub_in" && (
         <PubConditionSetForm preset={common}
-                             onDone={(r) => done([r.print, r.digital, r.translationPrint, r.translationDigital].flatMap((c) => (c ? [c.id] : [])), "pub_master_individual")}
+                             onDone={(r) => done([r.print, r.digital, r.translationPrint, r.translationDigital].flatMap((c) => (c ? [c.id] : [])), "pub_license_terms_v5")}
                              onCancel={onCancel} />
       )}
       {kind === "out" && (

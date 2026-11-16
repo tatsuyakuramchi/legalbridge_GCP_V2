@@ -26,7 +26,8 @@ export interface DocFlow {
  */
 export const templateKeyFor = (direction: string | null | undefined, kind: string | null | undefined): string | null => {
   if (direction === "in" && (kind === "service" || kind === "expense" || kind === "fee")) return "purchase_order";
-  if (kind === "license") return direction === "out" ? "pub_license_terms_v3" : "individual_license_terms_v4";
+  // IN は基本契約V5 の個別条件書（旧基本契約の相手先なら、文書の画面の警告で旧版に選び直す）。
+  if (kind === "license") return direction === "out" ? "pub_license_terms_v3" : "individual_license_terms_v5";
   return null;
 };
 

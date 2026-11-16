@@ -846,7 +846,13 @@ export class DocumentContextRepository {
               a.executed_on, a.effective_on, a.expires_on,
               a.auto_renewal, a.renewal_notice_months, a.renewal_months, a.counterparty_id,
               p.name AS party_name, p.name_kana AS party_kana, p.kind AS party_kind,
-              p.invoice_no, p.corporate_no
+              p.invoice_no, p.corporate_no,
+              -- 基本契約の文書が著作物利用許諾基本契約書V5 か。条件書の版（V5／旧）の警告に使う。
+              EXISTS (SELECT 1 FROM documents md
+                        JOIN document_template_versions mv ON mv.id = md.template_version_id
+                        JOIN document_templates mt ON mt.id = mv.template_id
+                       WHERE md.agreement_id = a.id AND md.status <> 'void'
+                         AND mt.template_key = 'license_master_v5') AS is_v5_master
          FROM agreements a LEFT JOIN parties p ON p.id = a.counterparty_id
         WHERE a.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -871,6 +877,8 @@ export class DocumentContextRepository {
       renewalMonths: int(row.renewal_months),
       /** 契約の相手先。条件の無い文書（基本契約書）の相手先はここから。 */
       counterpartyId: int(row.counterparty_id),
+      /** 基本契約の文書が著作物利用許諾基本契約書V5（license_master_v5）か。 */
+      isV5Master: row.is_v5_master === true,
       counterparty: {
         name: str(row.party_name) ?? "",
         kana: str(row.party_kana),
@@ -969,7 +977,8 @@ export class DocumentContextRepository {
                  JOIN document_templates t ON t.id = v.template_id
                 WHERE dc.condition_id = c.id AND d.status IN ('draft', 'issued')
                   AND t.template_key IN ('pub_license_terms_v3', 'pub_license_terms_v3_annex', 'pub_license_terms_multi',
-                                         'individual_license_terms_v3', 'individual_license_terms_v4')
+                                         'individual_license_terms_v3', 'individual_license_terms_v4',
+                                         'individual_license_terms_v5', 'pub_license_terms_v5', 'pub_license_terms_v5_annex')
                 ORDER BY d.id DESC LIMIT 1) AS companion_template_key,
               -- 初版の算定の基礎（A-077）。特約の第 2 項と明細の注記が使う。
               c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm, c.confirm_within_days,

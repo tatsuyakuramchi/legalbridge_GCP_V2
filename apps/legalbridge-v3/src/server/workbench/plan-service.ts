@@ -7,7 +7,7 @@ import type { AgreementService, AgreementRow } from "../agreements/service.js";
 import type { IntakeRepository } from "../intake/repository.js";
 import type { ConditionRepository } from "../conditions/repository.js";
 import { isQuasiMandate } from "../conditions/time-settlement.js";
-import { conditionMatches, inferPattern, MAIN_DOCS, MASTER_DOC, SERVICE_COMPLETION_DOC, SETTLEMENT_DOC, SET_DOMAIN, type WorkbenchPattern } from "./catalog.js";
+import { conditionMatches, inferPattern, MAIN_DOCS, MASTER_DOC, orderMainDocs, SERVICE_COMPLETION_DOC, SETTLEMENT_DOC, SET_DOMAIN, type WorkbenchPattern } from "./catalog.js";
 
 /**
  * 作業テーブルの ①「要る文書と用意の仕方を決める」に出す材料。
@@ -279,6 +279,8 @@ export class WorkbenchPlanService {
     const out: WorkbenchCandidate[] = [];
 
     const master = MASTER_DOC[p];
+    // 旧基本契約の相手先（有効な基本契約はあるが、基本契約V5 の文書が無い）。本体の文書の既定を旧版にする。
+    let legacyMaster = false;
     if (master) {
       const rows = ctx.partyId ? await this.deps.agreements.list({ partyId: ctx.partyId }) : [];
       const domain = SET_DOMAIN[p];
@@ -291,6 +293,7 @@ export class WorkbenchPlanService {
         .map((a) => ({ id: a.id, agreementNo: a.agreementNo, title: a.title, status: a.status, live: isLive(a, today), currentEnd: a.currentEnd }));
       const existing = byKeys([master.key]);
       const hasLive = masters.some((a) => a.live) || existing.length > 0;
+      legacyMaster = master.key === "license_master_v5" && existing.length === 0 && masters.some((a) => a.live);
       out.push({
         id: "master", role: "master", templateKey: master.key, options: [master], label: master.label,
         why: hasLive ? "この相手先と結んだものがある" : "この相手先とはまだ結んでいない。本体の文書より先に作る",
@@ -298,7 +301,7 @@ export class WorkbenchPlanService {
       });
     }
 
-    const mains = MAIN_DOCS[p];
+    const mains = orderMainDocs(MAIN_DOCS[p], legacyMaster);
     // 回から来たとき：本体の文書（発注書・条件書）がこの条件に既にあるかを見る。
     const roundMain = ctx.round
       ? partyDocs.filter((d) => d.templateKey && mains.some((m) => m.key === d.templateKey)

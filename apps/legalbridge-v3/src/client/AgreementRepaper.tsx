@@ -52,8 +52,12 @@ export interface RepaperTarget {
   terms?: { holderId: number; holderNo: string | null };
 }
 
-/** 種別ごとの基本契約書のひな形（無い種別はファイルを上げる）。 */
+/**
+ * 種別ごとの基本契約書のひな形（無い種別はファイルを上げる）。キーの _v5 は同じ種別の新しい版。
+ * 出版・ボードゲームの IN の相手先を基本契約V5 に巻き直すときは「著作物利用許諾基本契約書V5」を選ぶ（先に並ぶ）。
+ */
 const MASTER_TEMPLATE: Record<string, { key: string; label: string }> = {
+  license_v5: { key: "license_master_v5", label: "著作物利用許諾基本契約書V5（出版・ボードゲーム／IN）" },
   license: { key: "license_master", label: "利用許諾基本契約書" },
   service: { key: "service_master", label: "業務委託基本契約書" }
 };
@@ -178,7 +182,7 @@ export function RepaperDialog({ target, onDone, onClose, onOpenAgreement, onComp
     // ひな形は種別に合うものを先（主）に、もう一方も選べるように並べる（ハイブリッドはどちらも主）。
     const templates = isMaster
       ? Object.entries(MASTER_TEMPLATE)
-          .map(([d, t]) => ({ ...t, primary: made.domain === d || made.domain === "hybrid" }))
+          .map(([d, t]) => ({ ...t, primary: made.domain === d.replace(/_v5$/, "") || made.domain === "hybrid" }))
           .sort((a, b) => Number(b.primary) - Number(a.primary))
       : [];
     const switched = standalone && isMaster;

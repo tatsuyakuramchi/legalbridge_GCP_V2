@@ -17,6 +17,7 @@ import { translate } from "../core/errors.js";
 export const BUNDLE_TEMPLATE_KEYS = [
   "pub_master_individual", "pub_master_corporate", "license_master",
   "pub_license_terms_v3", "pub_license_terms_v3_annex", "pub_license_terms_multi", "individual_license_terms_v3", "individual_license_terms_v4",
+  "license_master_v5", "individual_license_terms_v5", "pub_license_terms_v5", "pub_license_terms_v5_annex",
   "royalty_statement", "royalty_statement_pub"
 ];
 

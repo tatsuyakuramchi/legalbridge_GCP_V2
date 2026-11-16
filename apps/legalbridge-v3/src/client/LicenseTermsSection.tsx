@@ -261,8 +261,10 @@ export function LicenseTermsSection(
           <label className="field"><span>条件書も併せて作る（任意）</span>
             <select value={d.companion} onChange={(e) => onChange({ companion: e.target.value as LicenseDraft["companion"] })}>
               <option value="">作らない（発注書だけ）</option>
-              <option value="pub_license_terms_v3">出版等利用許諾条件書（作品追加の合意）{d.rates.some((r) => r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
-              <option value="individual_license_terms_v4">個別利用許諾条件書（ゲーム）{d.mode !== "in_lieu" || d.rates.every((r) => !r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
+              <option value="pub_license_terms_v5">個別利用許諾条件書V5（出版）{d.rates.some((r) => r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
+              <option value="individual_license_terms_v5">個別利用許諾条件書V5（ボードゲーム）{d.mode !== "in_lieu" || d.rates.every((r) => !r.usageType.startsWith("pub_")) ? "（おすすめ）" : ""}</option>
+              <option value="pub_license_terms_v3">出版等利用許諾条件書V3（旧基本契約の相手先）</option>
+              <option value="individual_license_terms_v4">個別利用許諾条件書V4（ゲーム・旧基本契約の相手先）</option>
             </select>
             <small className="faint">利用許諾条件を載せた条件書の下書きを発注書とは別に起こします（既存のひな形）。発注書の特約に「本発注書の利用許諾の条件はこの条件書に当たる」と入ります</small></label>
           <div className="field wide stack" style={{ gap: 4 }}>
