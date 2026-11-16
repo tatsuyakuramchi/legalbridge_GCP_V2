@@ -181,6 +181,33 @@ td.c{text-align:center;font-size:16px}
 .pl{font:700 13px var(--f-mono)}
 .pl-p1{fill:var(--p1)}.pl-p2{fill:var(--p2)}.pl-p4{fill:var(--p4)}.pl-p5{fill:var(--p5)}
 .pj{fill:var(--ink);font:700 14px var(--f-display)}
+/* lanes */
+.figure.lanes svg{min-width:900px}
+.lane{fill:var(--bg);stroke:none}
+.ln-l{fill:var(--ink);opacity:.06}
+.ln-f{fill:var(--locks)}
+.lh{fill:var(--ink);font:700 13.5px var(--f-display);text-anchor:middle}
+.lsub{fill:var(--muted);font:500 11px var(--f-body);text-anchor:middle}
+.fl{stroke:var(--muted);stroke-width:1.8;fill:none}
+.fl-d{stroke-dasharray:5 4}
+.fl-loop{stroke-dasharray:2 4}
+.loopt{fill:var(--muted);font:500 11px var(--f-body);text-anchor:middle}
+.sb rect{stroke-width:2}
+.sb-u rect{fill:var(--panel);stroke:var(--muted)}
+.sb-s rect{fill:var(--p1s);stroke:var(--p1)}
+.sb-l rect{fill:var(--ink);stroke:var(--ink)}
+.sb-j rect{fill:var(--p4s);stroke:var(--p4)}
+.sb-v rect{fill:var(--p2s);stroke:var(--p2)}
+.sb-f rect{fill:var(--panel);stroke:var(--lock);stroke-width:2.5}
+.no{fill:var(--muted)}
+.sb-l .no{fill:var(--bg);opacity:.85}
+.nn{fill:var(--panel);font:700 11px var(--f-mono);text-anchor:middle}
+.sb-l .nn{fill:var(--ink)}
+.st{fill:var(--ink);font:700 13px var(--f-display)}
+.ss{fill:var(--muted);font:400 11px var(--f-body)}
+.sb-l .st{fill:var(--bg)} .sb-l .ss{fill:var(--bg);opacity:.75}
+.ln-key{display:inline-block;width:26px;height:0;border-top:2px solid var(--muted)}
+.ln-key.dash{border-top-style:dashed}
 .src{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
 .mono{font-family:var(--f-mono);font-size:12px;word-break:break-all}
 </style>
@@ -406,95 +433,93 @@ td.c{text-align:center;font-size:16px}
 
 <section>
   <div class="sec-head">
-    <div class="eyebrow">構造</div>
-    <h2>統合計画の構造（台帳がそろった後）</h2>
+    <div class="eyebrow">情報の流れ</div>
+    <h2>名刺のスキャンから始まる一周</h2>
+    <p class="lead">事業部の担当者が名刺を撮影したところから、情報がどのシステムを通って統合台帳に入り、どこへ出ていくかを順に示します。横の列がシステムと人、上から下が時間の順です。</p>
   </div>
   <div class="legend">
-    <span><i class="sw"></i>そのプロジェクトが主に持つ機能</span>
-    <span><i class="sw share"></i>ほかのプロジェクトと共有して使う</span>
-    <span><i class="sw gate"></i>プロジェクトをまたぐ確認</span>
-    <span><i class="sw fixed"></i>動かせないシステム（入れ替えない）</span>
+    <span><i class="ln-key solid"></i>仕組みがある、または作れば済む</span>
+    <span><i class="ln-key dash"></i>連携の方式が要確認（API か CSV か）</span>
+    <span><i class="sw fixed"></i>動かせないシステム</span>
   </div>
-  <div class="figure" role="img" aria-label="統合計画を屋根、四つのプロジェクトを柱、共通の台帳を土台、外のサービスを地面とした構造図。CloudSign と奉行シリーズは動かせないシステムとして鍵の印で示す。">
-    <svg viewBox="0 0 960 700" xmlns="http://www.w3.org/2000/svg">
-      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahd"/></marker></defs>
-
-      <!-- roof -->
-      <path d="M30 86 L480 18 L930 86 Z" class="roof"/>
-      <text x="480" y="62" class="roof-t">取引先・情報・契約 統合計画</text>
-      <text x="480" y="80" class="roof-s">一つの予算 ・ 一つの台帳 ・ 一つの判断の記録</text>
-
-      <!-- pillar 1 -->
-      <g class="pil pil1">
-        <rect class="body" x="30" y="100" width="210" height="300" rx="10"/>
-        <rect class="hd" x="30" y="100" width="210" height="46" rx="10"/><rect class="hd" x="30" y="130" width="210" height="16"/>
-        <text x="44" y="122" class="ph">取引先管理</text><text x="44" y="139" class="pk">PJ-1</text>
-        <rect class="chip" x="44" y="160" width="182" height="52" rx="8"/><text x="56" y="182" class="ct">反社チェック</text><text x="56" y="201" class="cs">新規の相手・定期の見直し</text>
-        <rect class="chip" x="44" y="222" width="182" height="52" rx="8"/><text x="56" y="244" class="ct">与信管理</text><text x="56" y="263" class="cs">企業情報・取引実績・限度</text>
-      </g>
-      <!-- pillar 2 -->
-      <g class="pil pil2">
-        <rect class="body" x="260" y="100" width="210" height="300" rx="10"/>
-        <rect class="hd" x="260" y="100" width="210" height="46" rx="10"/><rect class="hd" x="260" y="130" width="210" height="16"/>
-        <text x="274" y="122" class="ph">情報資産管理</text><text x="274" y="139" class="pk">PJ-2</text>
-        <rect class="chip" x="274" y="160" width="182" height="52" rx="8"/><text x="286" y="182" class="ct">情報資産台帳管理</text><text x="286" y="201" class="cs">資産・持ち主・保管先・分類</text>
-        <rect class="chip share" x="274" y="222" width="182" height="52" rx="8"/><text x="286" y="244" class="ct">契約で受け渡す情報</text><text x="286" y="263" class="cs">NDA・委託契約から登録</text>
-      </g>
-      <!-- pillar 3 -->
-      <g class="pil pil3">
-        <rect class="body" x="490" y="100" width="210" height="300" rx="10"/>
-        <rect class="hd" x="490" y="100" width="210" height="46" rx="10"/><rect class="hd" x="490" y="130" width="210" height="16"/>
-        <text x="504" y="122" class="ph">個人情報保護運用</text><text x="504" y="139" class="pk">PJ-3</text>
-        <rect class="chip share" x="504" y="160" width="182" height="52" rx="8"/><text x="516" y="182" class="ct">情報資産台帳管理</text><text x="516" y="201" class="cs">個人情報を含む資産を特定</text>
-        <rect class="chip" x="504" y="222" width="182" height="52" rx="8"/><text x="516" y="244" class="ct">委託先の確認</text><text x="516" y="263" class="cs">委託先の評価・再委託</text>
-      </g>
-      <!-- pillar 4 -->
-      <g class="pil pil4">
-        <rect class="body" x="720" y="100" width="210" height="300" rx="10"/>
-        <rect class="hd" x="720" y="100" width="210" height="46" rx="10"/><rect class="hd" x="720" y="130" width="210" height="16"/>
-        <text x="734" y="122" class="ph">契約書管理</text><text x="734" y="139" class="pk">PJ-4</text>
-        <rect class="chip" x="734" y="160" width="182" height="52" rx="8"/><text x="746" y="182" class="ct">契約書管理</text><text x="746" y="201" class="cs">作成・審査・保管・期限</text>
-        <rect class="chip" x="734" y="222" width="182" height="52" rx="8"/><text x="746" y="244" class="ct">契約締結管理</text><text x="746" y="263" class="cs">承認・締結前の確認</text>
-        <rect class="chip" x="734" y="284" width="182" height="52" rx="8"/><text x="746" y="306" class="ct">電子契約</text><text x="746" y="325" class="cs">CloudSign で署名</text>
-      </g>
-
-      <!-- cross-project gate -->
-      <g class="gate"><rect x="20" y="346" width="700" height="44" rx="10"/>
-        <text x="36" y="373" class="gate-t">締結前の確認</text>
-        <text x="146" y="373" class="gate-s">反社チェック ・ 与信の限度 ・ 委託先の評価 ・ 情報資産の登録 → そろえば電子契約へ</text>
-      </g>
-      <path d="M720 368 H730" class="ar" marker-end="url(#ah)"/>
-
-      <!-- foundation -->
-      <g class="found">
-        <rect class="fb" x="20" y="418" width="920" height="110" rx="12"/>
-        <text x="40" y="448" class="ft">共通の台帳（LegalBridge）</text>
-        <g class="fc"><rect x="40" y="462" width="210" height="48" rx="8"/></g><text x="145" y="491" class="fcl">取引先・人物</text>
-        <g class="fc"><rect x="262" y="462" width="210" height="48" rx="8"/></g><text x="367" y="491" class="fcl">情報資産・個人情報</text>
-        <g class="fc"><rect x="484" y="462" width="210" height="48" rx="8"/></g><text x="589" y="491" class="fcl">契約・締結の記録</text>
-        <g class="fc"><rect x="706" y="462" width="214" height="48" rx="8"/></g><text x="813" y="491" class="fcl">確認と判断の履歴</text>
-      </g>
-      <path d="M135 400 V414" class="ar"/><path d="M365 400 V414" class="ar"/><path d="M595 400 V414" class="ar"/><path d="M825 400 V414" class="ar"/>
-
-      <!-- external -->
-      <text x="20" y="566" class="lbl">外のサービス</text>
-      <path d="M105 528 V582" class="ar ar-d" marker-start="url(#ah)"/>
-      <path d="M288 528 V582" class="ar ar-d" marker-start="url(#ah)"/>
-      <path d="M471 528 V582" class="ar ar-d" marker-start="url(#ah)"/>
-      <path d="M654 528 V582" class="ar" marker-start="url(#ah)" marker-end="url(#ah)"/>
-      <path d="M837 528 V582" class="ar" marker-start="url(#ah)" marker-end="url(#ah)"/>
-
-      <g class="ext cand"><rect x="20" y="586" width="170" height="80" rx="10"/><text x="34" y="614" class="et">Sansan</text><text x="34" y="636" class="es">名刺・反社チェック</text><text x="34" y="654" class="es">企業情報（候補）</text></g>
-      <g class="ext cand"><rect x="203" y="586" width="170" height="80" rx="10"/><text x="217" y="614" class="et">信用調査データ</text><text x="217" y="636" class="es">与信の評点・財務</text><text x="217" y="654" class="es">（候補）</text></g>
-      <g class="ext cand"><rect x="386" y="586" width="170" height="80" rx="10"/><text x="400" y="614" class="et">SecureNavi</text><text x="400" y="636" class="es">ISMS・Pマーク</text><text x="400" y="654" class="es">委託先評価（候補）</text></g>
-      <g class="ext fixed"><rect x="569" y="586" width="170" height="80" rx="10"/><text x="583" y="614" class="et">CloudSign</text><text x="583" y="636" class="es">電子契約</text><text x="583" y="654" class="es">動かさない</text>
-        <path d="M713 606 v-6 a7 7 0 0 1 14 0 v6" class="lk"/><rect x="709" y="606" width="22" height="16" rx="3" class="lkb"/></g>
-      <g class="ext fixed"><rect x="752" y="586" width="178" height="80" rx="10"/><text x="766" y="614" class="et">奉行シリーズ</text><text x="766" y="636" class="es">会計・支払・入金</text><text x="766" y="654" class="es">動かさない</text>
-        <path d="M904 606 v-6 a7 7 0 0 1 14 0 v6" class="lk"/><rect x="900" y="606" width="22" height="16" rx="3" class="lkb"/></g>
-    </svg>
+  <div class="figure lanes" role="img" aria-label="名刺の撮影から、Sansan のデータ化と反社チェック、統合台帳への仮登録、法務の承認、契約の依頼と審査、SecureNavi の委託先評価、締結前の確認、CloudSign の締結、契約台帳への記録、SecureNavi と奉行への連携、実績の取り込み、見直しまでの15の手順の図">
+    <svg viewBox="0 0 1070 1148" xmlns="http://www.w3.org/2000/svg" class="lane-svg">
+<defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahd"/></marker></defs>
+<rect x="27" y="20" width="140" height="1120" rx="10" class="lane ln-u"/>
+<text x="97" y="50" class="lh">事業部の担当者</text>
+<rect x="173" y="20" width="140" height="1120" rx="10" class="lane ln-s"/>
+<text x="243" y="50" class="lh">Sansan</text>
+<rect x="319" y="20" width="140" height="1120" rx="10" class="lane ln-l"/>
+<text x="389" y="50" class="lh">LegalBridge 統合台帳</text>
+<text x="389" y="72" class="lsub">新しく作る</text>
+<rect x="465" y="20" width="140" height="1120" rx="10" class="lane ln-j"/>
+<text x="535" y="50" class="lh">法務</text>
+<rect x="611" y="20" width="140" height="1120" rx="10" class="lane ln-v"/>
+<text x="681" y="50" class="lh">SecureNavi</text>
+<rect x="757" y="20" width="140" height="1120" rx="10" class="lane ln-f"/>
+<text x="827" y="50" class="lh">CloudSign</text>
+<path d="M822 70 v-4 a5 5 0 0 1 10 0 v4" class="lk"/><rect x="819" y="70" width="16" height="11" rx="2" class="lkb"/>
+<rect x="903" y="20" width="140" height="1120" rx="10" class="lane ln-f"/>
+<text x="973" y="50" class="lh">奉行シリーズ</text>
+<path d="M968 70 v-4 a5 5 0 0 1 10 0 v4" class="lk"/><rect x="965" y="70" width="16" height="11" rx="2" class="lkb"/>
+<path d="M97 144 V155 H243 V163" class="fl" marker-end="url(#ah3)"/>
+<path d="M243 218 V237" class="fl" marker-end="url(#ah3)"/>
+<path d="M243 292 V303 H389 V311" class="fl fl-d" marker-end="url(#ah3)"/>
+<path d="M389 366 V377 H535 V385" class="fl" marker-end="url(#ah3)"/>
+<path d="M535 440 V451 H97 V459" class="fl" marker-end="url(#ah3)"/>
+<path d="M97 514 V525 H535 V533" class="fl" marker-end="url(#ah3)"/>
+<path d="M535 588 V599 H681 V607" class="fl fl-d" marker-end="url(#ah3)"/>
+<path d="M681 662 V673 H389 V681" class="fl fl-d" marker-end="url(#ah3)"/>
+<path d="M389 736 V747 H827 V755" class="fl" marker-end="url(#ah3)"/>
+<path d="M827 810 V821 H389 V829" class="fl" marker-end="url(#ah3)"/>
+<path d="M389 884 V895 H681 V903" class="fl fl-d" marker-end="url(#ah3)"/>
+<path d="M389 884 V895 H973 V903" class="fl fl-d" marker-end="url(#ah3)"/>
+<path d="M973 958 V969 H389 V977" class="fl fl-d" marker-end="url(#ah3)"/>
+<path d="M389 1032 V1043 H243 V1051" class="fl fl-d" marker-end="url(#ah3)"/>
+<path d="M179 1080 H165 V266 H176" class="fl fl-loop" marker-end="url(#ah3)"/>
+<text x="161" y="673" class="loopt" transform="rotate(-90 161 673)">次の周へ</text>
+<g class="sb sb-u"><rect x="33" y="92" width="128" height="52" rx="8"/><circle cx="48" cy="109" r="10" class="no"/><text x="48" y="113" class="nn">1</text><text x="64" y="114" class="st">名刺を撮影</text><text x="43" y="134" class="ss">スマホ・スキャナ</text></g>
+<g class="sb sb-s"><rect x="179" y="166" width="128" height="52" rx="8"/><circle cx="194" cy="183" r="10" class="no"/><text x="194" y="187" class="nn">2</text><text x="210" y="188" class="st">データ化</text><text x="189" y="208" class="ss">OCR・名寄せ</text></g>
+<g class="sb sb-s"><rect x="179" y="240" width="128" height="52" rx="8"/><circle cx="194" cy="257" r="10" class="no"/><text x="194" y="261" class="nn">3</text><text x="210" y="262" class="st">反社チェック</text><text x="189" y="282" class="ss">World-Check と照合</text></g>
+<g class="sb sb-l"><rect x="325" y="314" width="128" height="52" rx="8"/><circle cx="340" cy="331" r="10" class="no"/><text x="340" y="335" class="nn">4</text><text x="356" y="336" class="st">取引先を仮登録</text><text x="335" y="356" class="ss">法人番号で既存と照合</text></g>
+<g class="sb sb-j"><rect x="471" y="388" width="128" height="52" rx="8"/><circle cx="486" cy="405" r="10" class="no"/><text x="486" y="409" class="nn">5</text><text x="502" y="410" class="st">取引先を承認</text><text x="481" y="430" class="ss">反社・与信を確認</text></g>
+<g class="sb sb-u"><rect x="33" y="462" width="128" height="52" rx="8"/><circle cx="48" cy="479" r="10" class="no"/><text x="48" y="483" class="nn">6</text><text x="64" y="484" class="st">契約を依頼</text><text x="43" y="504" class="ss">Slack で取引先を選ぶ</text></g>
+<g class="sb sb-j"><rect x="471" y="536" width="128" height="52" rx="8"/><circle cx="486" cy="553" r="10" class="no"/><text x="486" y="557" class="nn">7</text><text x="502" y="558" class="st">作成・審査</text><text x="481" y="578" class="ss">ひな形・契約チェック</text></g>
+<g class="sb sb-v"><rect x="617" y="610" width="128" height="52" rx="8"/><circle cx="632" cy="627" r="10" class="no"/><text x="632" y="631" class="nn">8</text><text x="648" y="632" class="st">委託先の評価</text><text x="627" y="652" class="ss">チェックシート</text></g>
+<g class="sb sb-l"><rect x="325" y="684" width="128" height="52" rx="8"/><circle cx="340" cy="701" r="10" class="no"/><text x="340" y="705" class="nn">9</text><text x="356" y="706" class="st">締結前の確認</text><text x="335" y="726" class="ss">反社・与信・評価</text></g>
+<g class="sb sb-f"><rect x="763" y="758" width="128" height="52" rx="8"/><circle cx="778" cy="775" r="10" class="no"/><text x="778" y="779" class="nn">10</text><text x="794" y="780" class="st">署名・締結</text><text x="773" y="800" class="ss">署名者は名刺の人物</text></g>
+<g class="sb sb-l"><rect x="325" y="832" width="128" height="52" rx="8"/><circle cx="340" cy="849" r="10" class="no"/><text x="340" y="853" class="nn">11</text><text x="356" y="854" class="st">契約台帳に記録</text><text x="335" y="874" class="ss">締結通知・PDF</text></g>
+<g class="sb sb-v"><rect x="617" y="906" width="128" height="52" rx="8"/><circle cx="632" cy="923" r="10" class="no"/><text x="632" y="927" class="nn">12</text><text x="648" y="928" class="st">委託先台帳へ</text><text x="627" y="948" class="ss">契約の有無・期間</text></g>
+<g class="sb sb-f"><rect x="909" y="906" width="128" height="52" rx="8"/><circle cx="924" cy="923" r="10" class="no"/><text x="924" y="927" class="nn">13</text><text x="940" y="928" class="st">取引先・仕訳</text><text x="919" y="948" class="ss">CSV で受け入れ</text></g>
+<g class="sb sb-l"><rect x="325" y="980" width="128" height="52" rx="8"/><circle cx="340" cy="997" r="10" class="no"/><text x="340" y="1001" class="nn">14</text><text x="356" y="1002" class="st">実績を取り込む</text><text x="335" y="1022" class="ss">支払・入金 → 与信</text></g>
+<g class="sb sb-s"><rect x="179" y="1054" width="128" height="52" rx="8"/><circle cx="194" cy="1071" r="10" class="no"/><text x="194" y="1075" class="nn">15</text><text x="210" y="1076" class="st">見直し</text><text x="189" y="1096" class="ss">1年後・異動のとき</text></g>
+</svg>
   </div>
-  <p class="note">点線の箱は導入候補のサービスで、まだ決まっていません。鍵の印の二つは入れ替えず、台帳からつなぐだけにします。奉行シリーズからは支払・入金の実績を受け取り、与信管理に使います。</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>手順</th><th>流れる情報</th><th>どこからどこへ</th><th>方式</th><th>状態</th></tr></thead>
+      <tbody>
+        <tr><th>1 名刺を撮影</th><td>名刺の画像</td><td>担当者 → Sansan</td><td>Sansan のスマホアプリ・スキャナ</td><td><span class="st"><i class="pip have"></i>製品にある</span></td></tr>
+        <tr><th>2 データ化</th><td>会社名・氏名・部署・役職・メール・電話</td><td>Sansan の中</td><td>OCR とオペレーターの補正、同じ人の名刺を一人にまとめる</td><td><span class="st"><i class="pip have"></i>製品にある</span></td></tr>
+        <tr><th>3 反社チェック</th><td>会社名 → ヒットの有無</td><td>Sansan → World-Check</td><td>反社チェックオプション</td><td><span class="st"><i class="pip ext"></i>オプション契約が必要</span></td></tr>
+        <tr><th>4 取引先を仮登録</th><td>会社・人物・照合の結果と日付・照合 ID</td><td>Sansan → 統合台帳</td><td>API または CSV。法人番号で既存の取引先と照合し、なければ仮登録</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
+        <tr><th>5 取引先を承認</th><td>承認・与信の限度</td><td>法務 → 統合台帳</td><td>LegalBridge の画面</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>6 契約を依頼</th><td>取引先・相手の担当者・依頼内容</td><td>担当者 → 統合台帳</td><td>Slack の依頼。取引先と担当者は名刺から選ぶ</td><td><span class="st"><i class="pip have"></i>既存＋拡張</span></td></tr>
+        <tr><th>7 作成・審査</th><td>契約書の下書き</td><td>法務・統合台帳</td><td>ひな形・契約チェック</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>8 委託先の評価</th><td>委託先の情報 → 評価結果</td><td>統合台帳 ⇄ SecureNavi</td><td>委託・個人情報を含む契約のときだけ。チェックシートの回答を CSV で受け取る</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
+        <tr><th>9 締結前の確認</th><td>反社・与信・委託先評価の判定</td><td>統合台帳の中</td><td>どれかが期限切れ・不足なら送信を止める</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>10 署名・締結</th><td>契約書・署名者の氏名とメール</td><td>統合台帳 → CloudSign</td><td>CloudSign の API。署名者は名刺の人物から入れる</td><td><span class="st"><i class="pip ext"></i>送信エラーの切り分け中</span></td></tr>
+        <tr><th>11 契約台帳に記録</th><td>締結の通知・締結済み PDF</td><td>CloudSign → 統合台帳</td><td>締結完了の通知と PDF の保存（Drive）</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
+        <tr><th>12 委託先台帳へ</th><td>契約の有無・期間・再委託・個人情報の有無</td><td>統合台帳 → SecureNavi</td><td>CSV</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
+        <tr><th>13 取引先・仕訳</th><td>取引先・支払の仕訳</td><td>統合台帳 → 奉行</td><td>汎用データ受入の CSV。後で API</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>14 実績を取り込む</th><td>支払・入金・延滞</td><td>奉行 → 統合台帳</td><td>CSV または API。与信の見直しに使う</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
+        <tr><th>15 見直し</th><td>新しい名刺・再チェックの期限</td><td>Sansan ⇄ 統合台帳</td><td>1 年ごとの反社の再チェック、異動の名刺で人物を更新し、3 に戻る</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">統合台帳に入るのは結果と日付まで。反社の照合の中身は Sansan、委託先の回答は SecureNavi、仕訳は奉行に正本を置きます。</p>
 </section>
+
 
 <section>
   <div class="sec-head">
