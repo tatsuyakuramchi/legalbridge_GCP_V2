@@ -14,6 +14,7 @@
   --core-soft:#e2e5f4;
   --both:#6b5a8e; --both-soft:#ebe5f3;
   --acct:#4d6b2b; --acct-soft:#e6eedb;
+  --sec:#8a3b5c; --sec-soft:#f4e3ea;
   --have:#2e8b57; --ext:#d49b12; --new:#c4403a;
   --f-display:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
   --f-body:"Noto Sans JP","Hiragino Sans","Yu Gothic",sans-serif;
@@ -22,12 +23,12 @@
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
   --card:#5cbcc4; --card-soft:#163235; --contract:#e3a160; --contract-soft:#3a2816;
-  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540; --acct:#a9c97c; --acct-soft:#24301a;
+  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540; --acct:#a9c97c; --acct-soft:#24301a; --sec:#e39bb9; --sec-soft:#3a1f2b;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }}
 :root[data-theme="dark"]{
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
   --card:#5cbcc4; --card-soft:#163235; --contract:#e3a160; --contract-soft:#3a2816;
-  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540; --acct:#a9c97c; --acct-soft:#24301a;
+  --core:#9aa6ea; --core-soft:#232946; --both:#b9a6dd; --both-soft:#2c2540; --acct:#a9c97c; --acct-soft:#24301a; --sec:#e39bb9; --sec-soft:#3a1f2b;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.75;
@@ -176,6 +177,20 @@ td .st{display:inline-flex;align-items:center;gap:6px;font-weight:700;white-spac
 .jl{fill:var(--ink);font:400 13px var(--f-body)}
 .jv{fill:var(--ink);font:500 13px var(--f-mono)}
 .acct ~ .duo .prod h3{font-size:15px}
+/* inflow */
+.flow svg{min-width:760px}
+.src-s rect{fill:var(--card-soft);stroke:var(--card);stroke-width:2}
+.src-n rect{fill:var(--panel);stroke:var(--line);stroke-width:2}
+.src-v rect{fill:var(--sec-soft);stroke:var(--sec);stroke-width:2}
+.src-l rect{fill:var(--core-soft);stroke:var(--core);stroke-width:2}
+.src-a rect{fill:var(--acct-soft);stroke:var(--acct);stroke-width:2}
+.gate rect{fill:var(--panel);stroke:var(--ink);stroke-width:2;stroke-dasharray:7 5}
+.gn{fill:var(--muted);font:500 13px var(--f-mono)}
+.hubbox rect{fill:var(--ink)}
+.hubbox .bt,.hubbox .al{fill:var(--bg)}
+.hubbox .am{fill:var(--bg);opacity:.7}
+.usebox rect{fill:var(--both-soft);stroke:var(--both);stroke-width:2}
+.prod.v .tag{background:var(--sec-soft);color:var(--sec)}
 .src{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
 .src a{color:var(--muted)}
 a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
@@ -240,7 +255,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
 <circle cx="521.0" cy="77.0" r="5" class="dot d-new"><title>新規</title></circle></g>
 <g class="node n-s"><rect x="559.0" y="107.9" width="170" height="64" rx="10"/>
 <text x="573.0" y="133.9" class="nt"><tspan class="nn">02</tspan> 取引先を確定</text>
-<text x="573.0" y="155.9" class="ns">法人番号で名寄せ</text>
+<text x="573.0" y="155.9" class="ns">法人番号で名寄せ・反社</text>
 <circle cx="715.0" cy="121.9" r="5" class="dot d-ext"><title>拡張</title></circle></g>
 <g class="node n-s"><rect x="678.8" y="225.4" width="170" height="64" rx="10"/>
 <text x="692.8" y="251.4" class="nt"><tspan class="nn">03</tspan> 人と接点を記録</text>
@@ -256,7 +271,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
 <circle cx="715.0" cy="502.1" r="5" class="dot d-have"><title>既存</title></circle></g>
 <g class="node n-l"><rect x="365.0" y="533.0" width="170" height="64" rx="10"/>
 <text x="379.0" y="559.0" class="nt"><tspan class="nn">06</tspan> 締結</text>
-<text x="379.0" y="581.0" class="ns">CloudSign・署名者を指名</text>
+<text x="379.0" y="581.0" class="ns">反社・評価を確かめて送信</text>
 <circle cx="521.0" cy="547.0" r="5" class="dot d-have"><title>既存</title></circle></g>
 <g class="node n-c"><rect x="171.0" y="488.1" width="170" height="64" rx="10"/>
 <text x="185.0" y="514.1" class="nt"><tspan class="nn">07</tspan> 契約をデータ化</text>
@@ -294,6 +309,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
         <li><b>異動・昇進の更新</b>：新しい名刺や人事情報で、部署・役職を最新に保つ</li>
         <li><b>企業情報</b>：取引先の会社に、外部の企業データベースの情報を付ける</li>
         <li><b>接点の記録</b>：誰が誰と会ったか、商談の記録を社内で共有</li>
+        <li><b>反社チェックオプション</b>：取り込んだ会社名を Refinitiv の World-Check と照合し、リスクがあれば通知。接点がない会社や海外の会社を調べる「リスクチェック」もある</li>
         <li><b>AI 組織図分析</b>（2026年3月、Sansan Labs）：相手企業の意思決定者や部署の関係を可視化</li>
         <li><b>他システム連携</b>：CRM などへ人物・企業データを渡す</li>
       </ul>
@@ -335,7 +351,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
       <!-- vendors -->
       <g class="ent e-l"><rect x="30" y="40" width="200" height="150" rx="8"/><rect class="hd" x="30" y="40" width="200" height="30" rx="8"/><rect class="hd" x="30" y="58" width="200" height="12"/>
         <text x="44" y="61" class="eh">取引先 vendors</text>
-        <text x="44" y="92" class="ef">vendor_code</text><text x="44" y="112" class="ef">法人番号（名寄せの鍵）</text><text x="44" y="132" class="ef">代表者・住所・口座</text><text x="44" y="152" class="ef k">+ 企業情報（外部DB）</text><text x="44" y="172" class="ef k">+ 反社・与信チェック日</text></g>
+        <text x="44" y="92" class="ef">vendor_code</text><text x="44" y="112" class="ef">法人番号（名寄せの鍵）</text><text x="44" y="132" class="ef">代表者・住所・口座</text><text x="44" y="152" class="ef k">+ 企業情報（外部DB）</text><text x="44" y="172" class="ef k">+ 反社・セキュリティ評価</text></g>
       <!-- contacts -->
       <g class="ent e-s e-new"><rect x="330" y="40" width="160" height="150" rx="8"/><rect class="hd" x="330" y="40" width="160" height="30" rx="8"/><rect class="hd" x="330" y="58" width="160" height="12"/>
         <text x="344" y="61" class="eh">人物 contacts</text>
@@ -381,7 +397,8 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
         <span class="meta mono">VEN-00412 ・ 法人番号 1010001000000 ・ 東京都千代田区</span>
       </div>
       <div class="chips">
-        <span class="chip ok">反社チェック済 2026-09-30</span>
+        <span class="chip ok">反社チェック ヒットなし 2026-09-30</span>
+        <span class="chip ok">セキュリティ評価 B 2026-08-21</span>
         <span class="chip">取引開始 2019</span>
         <span class="chip warn">更新通告 期限まで 38 日</span>
       </div>
@@ -512,6 +529,106 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
 
 <section>
   <div class="sec-head">
+    <div class="eyebrow">情報の流入</div>
+    <h2>外から入る情報を、関門を通して台帳へ</h2>
+    <p class="lead">取引先の台帳は、外のサービスから入ってくる情報で育ちます。どこから何が入るかを決め、入口で名寄せと確認をしてから台帳に載せます。反社チェックは Sansan、委託先のセキュリティ評価は SecureNavi の結果を取り込みます。</p>
+  </div>
+  <div class="figure flow" role="img" aria-label="Sansan、法人番号、SecureNavi、Slack・Gmail・Backlog、CloudSign、奉行クラウドから入る情報が、取り込みの関門を通って LegalBridge の台帳に入り、契約審査や締結前の確認に使われる図">
+    <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahd"/></marker></defs>
+      <text x="20" y="40" class="col-h">入ってくる情報</text>
+      <text x="376" y="40" class="col-h">取り込みの関門</text>
+      <text x="652" y="40" class="col-h">LegalBridge</text>
+
+      <g class="src-s"><rect x="20" y="60" width="280" height="64" rx="10"/><text x="36" y="87" class="bt">Sansan</text><text x="36" y="110" class="bs">名刺の人物・会社と反社チェックの結果</text></g>
+      <g class="src-n"><rect x="20" y="140" width="280" height="64" rx="10"/><text x="36" y="167" class="bt">国税庁 法人番号</text><text x="36" y="190" class="bs">会社の正式名・所在地・閉鎖の有無</text></g>
+      <g class="src-v"><rect x="20" y="220" width="280" height="64" rx="10"/><text x="36" y="247" class="bt">SecureNavi（2線の匠クラウド）</text><text x="36" y="270" class="bs">委託先の評価・点検結果・再委託の構造</text></g>
+      <g class="src-l"><rect x="20" y="300" width="280" height="64" rx="10"/><text x="36" y="327" class="bt">Slack・Gmail・Backlog</text><text x="36" y="350" class="bs">依頼と、相手から届いた文書</text></g>
+      <g class="src-l"><rect x="20" y="380" width="280" height="64" rx="10"/><text x="36" y="407" class="bt">CloudSign・相手方の紙</text><text x="36" y="430" class="bs">締結済みの契約と PDF</text></g>
+      <g class="src-a"><rect x="20" y="460" width="280" height="64" rx="10"/><text x="36" y="487" class="bt">奉行クラウド</text><text x="36" y="510" class="bs">支払・消込の結果</text></g>
+
+      <path d="M300 92 H372" class="ar" marker-end="url(#ah2)"/>
+      <path d="M300 172 H372" class="ar" marker-end="url(#ah2)"/>
+      <path d="M304 252 H372" class="ar ar-d" marker-start="url(#ah2)" marker-end="url(#ah2)"/>
+      <path d="M300 332 H372" class="ar" marker-end="url(#ah2)"/>
+      <path d="M300 412 H372" class="ar" marker-end="url(#ah2)"/>
+      <path d="M304 492 H372" class="ar ar-d" marker-start="url(#ah2)" marker-end="url(#ah2)"/>
+
+      <g class="gate"><rect x="376" y="60" width="200" height="464" rx="14"/>
+        <text x="394" y="96" class="gn">1</text><text x="414" y="96" class="al">出どころと日付を残す</text>
+        <text x="394" y="176" class="gn">2</text><text x="414" y="176" class="al">法人番号で名寄せ</text>
+        <text x="394" y="256" class="gn">3</text><text x="414" y="256" class="al">正本はどちらか決める</text>
+        <text x="394" y="336" class="gn">4</text><text x="414" y="336" class="al">差分を人が確かめる</text>
+        <text x="394" y="416" class="gn">5</text><text x="414" y="416" class="al">見える人を絞る</text>
+        <text x="414" y="438" class="am">口座＝管理者のみ</text>
+        <text x="414" y="456" class="am">反社＝法務・管理者</text>
+      </g>
+
+      <path d="M576 175 H648" class="ar" marker-end="url(#ah2)"/>
+
+      <g class="hubbox"><rect x="652" y="60" width="288" height="230" rx="14"/>
+        <text x="670" y="94" class="bt">取引先の台帳</text>
+        <text x="670" y="124" class="al">会社・人物</text>
+        <text x="670" y="150" class="al">反社チェック：結果・日付・照合 ID</text>
+        <text x="670" y="176" class="al">セキュリティ評価：ランク・評価日</text>
+        <text x="670" y="202" class="al">契約・再委託の承諾</text>
+        <text x="670" y="228" class="al">入出金</text>
+        <text x="670" y="268" class="am">詳細は各サービスに残し、結果だけ持つ</text>
+      </g>
+      <path d="M796 290 V326" class="ar" marker-end="url(#ah2)"/>
+      <g class="usebox"><rect x="652" y="330" width="288" height="194" rx="14"/>
+        <text x="670" y="362" class="bt">使い道</text>
+        <text x="670" y="392" class="al">・締結前の確認（期限切れなら止める）</text>
+        <text x="670" y="420" class="al">・委託契約の審査で条項を提案</text>
+        <text x="670" y="448" class="al">・再チェック・再評価の期限アラート</text>
+        <text x="670" y="476" class="al">・取引先 360° に表示</text>
+        <text x="670" y="508" class="am">点線の矢印は結果を返す双方向の連携</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="duo">
+    <article class="prod s">
+      <span class="tag">Sansan ・ 反社チェック</span>
+      <ul>
+        <li><b>反社チェックオプション</b>：取り込んだ会社名を Refinitiv の World-Check と照合し、リスクのある会社・団体ならアラートを出す（2020年提供開始）</li>
+        <li><b>リスクチェック</b>：名刺の接点がない会社や海外の会社も調べられる</li>
+        <li>経団連事務局、セブン-イレブン・ジャパンなどが導入</li>
+      </ul>
+      <p class="take"><strong>LegalBridge での使い方</strong><br>結果（ヒットの有無）・照合日・照合 ID だけを取引先に取り込みます。照合の中身は Sansan に残し、見られるのは法務と管理者に限ります。契約を CloudSign で送る前に、照合が有効期限内（例：1 年以内）でヒットがないことを確かめ、満たさなければ送信を止めます。</p>
+    </article>
+    <article class="prod v">
+      <span class="tag">SecureNavi ・ 委託先のセキュリティ評価</span>
+      <ul>
+        <li><b>セキュリティチェックシート</b>：委託先へ送り、回答が自動で登録される</li>
+        <li><b>管理台帳</b>（2026年10月）：委託先企業と管理対象を一つの台帳に統合</li>
+        <li><b>委託先関係図</b>（2026年6月）：再委託以下の多段の構造をツリーで示し、事故の影響範囲を特定</li>
+        <li><b>点検の取りまとめ</b>：点検依頼・回答の回収・未対応事項の把握を一か所で</li>
+      </ul>
+      <p class="take"><strong>LegalBridge での使い方</strong><br>業務委託・個人情報の取扱い・NDA の審査で、相手の評価ランクと評価日を表示します。評価が低い、または期限切れなら、再委託の制限・監査・事故報告の条項を提案します。締結後は、契約の有無・期間・再委託の承諾を SecureNavi の委託先台帳へ返します。</p>
+    </article>
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th>入ってくる情報</th><th>出どころ</th><th>取り込み方</th><th>正本</th><th>見られる人</th><th>状態</th></tr></thead>
+      <tbody>
+        <tr><th>人物・名刺</th><td>Sansan</td><td>API または CSV（要確認）</td><td>Sansan</td><td>社内の利用者</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>反社チェックの結果</th><td>Sansan 反社チェックオプション</td><td>結果・照合日・照合 ID だけ</td><td>Sansan</td><td>法務・管理者</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>会社の正式名・所在地</th><td>国税庁 法人番号</td><td>法人番号で照会</td><td>法人番号公表サイト</td><td>全員</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
+        <tr><th>委託先のセキュリティ評価</th><td>SecureNavi</td><td>CSV（API は未確認）</td><td>SecureNavi</td><td>法務・情報システム</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>依頼・相手からの文書</th><td>Slack・Gmail・Backlog</td><td>既存の取り込み</td><td>LegalBridge</td><td>案件の関係者</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>締結済みの契約</th><td>CloudSign・相手方の紙</td><td>既存の連携・登録 wizard</td><td>LegalBridge</td><td>案件の関係者</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>口座情報</th><td>取引先からの届出</td><td>手入力</td><td>LegalBridge</td><td>管理者のみ</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>支払・消込の結果</th><td>奉行クラウド</td><td>API（要確認）</td><td>奉行</td><td>経理・管理者</td><td><span class="st"><i class="pip ext"></i>要確認</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Sansan と SecureNavi の連携方法（API か CSV か、出せる項目）は公開情報では確かめられていません。導入している契約内容で何が出せるかを先に確認します。</p>
+</section>
+
+<section>
+  <div class="sec-head">
     <div class="eyebrow">機能の対応表</div>
     <h2>どこから持ってきて、どこまであるか</h2>
   </div>
@@ -529,6 +646,8 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
         <tr><th>契約の関連づけ</th><td class="dash">—</td><td>自動ツリー・任意単位</td><td>契約の版履歴・条件明細</td><td><span class="st"><i class="pip ext"></i>拡張</span> 基本⇔個別⇔覚書の親子と、作品単位の束ね</td></tr>
         <tr><th>期限・更新</th><td class="dash">—</td><td>覚書を自動反映</td><td>満了・更新通告の日次チェック</td><td><span class="st"><i class="pip ext"></i>拡張</span> 覚書の登録で満了日とアラートが動く</td></tr>
         <tr><th>横断検索・AI</th><td>AI 組織図分析</td><td>AI エージェント・MCP</td><td>横断検索</td><td><span class="st"><i class="pip ext"></i>拡張</span> 取引先・人・契約・条件を一度に問い合わせ</td></tr>
+        <tr><th>反社チェック</th><td>反社チェックオプション（World-Check）</td><td class="dash">—</td><td class="dash">なし</td><td><span class="st"><i class="pip new"></i>新規</span> 結果と日付を取引先に取り込み、締結前に確かめる</td></tr>
+        <tr><th>委託先のセキュリティ評価</th><td class="dash">—</td><td class="dash">—</td><td class="dash">なし</td><td><span class="st"><i class="pip new"></i>新規</span> SecureNavi の評価を委託契約の審査に使う</td></tr>
         <tr><th>会計への連携</th><td>CRM 連携</td><td>新リース会計の CSV</td><td>経理提出用エクセル・入出金台帳</td><td><span class="st"><i class="pip new"></i>新規</span> 奉行へ取引先と仕訳を CSV → API で渡す</td></tr>
         <tr><th>取引先 360°</th><td>企業ページ</td><td>契約ツリー</td><td>取引先マスタ画面</td><td><span class="st"><i class="pip new"></i>新規</span> 上の画面の絵</td></tr>
       </tbody>
@@ -549,6 +668,7 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
         <li>人物テーブルを追加し、取引先にひも付け</li>
         <li>法人番号で重複取引先の候補を一覧化</li>
         <li>CloudSign の宛先・文書の通知先を人物から選ぶ</li>
+        <li>反社チェックとセキュリティ評価の結果を取り込み、締結前に確かめる</li>
       </ul>
     </div>
     <div class="step">
@@ -592,6 +712,13 @@ a:focus-visible{outline:2px solid var(--core);outline-offset:2px}
     <a href="https://cloud.watch.impress.co.jp/docs/news/2075981.html">クラウド Watch ・ Contract One 取適法対応の新機能</a>
     <a href="https://it.impress.co.jp/articles/-/29687">IT Leaders ・ Contract One の新機能</a>
     <a href="https://cloud.watch.impress.co.jp/docs/news/2130495.html">クラウド Watch ・ Contract One 関連記事</a>
+    <a href="https://www.itmedia.co.jp/news/article/1912/06/1191206067/">ITmedia ・ Sansan の反社チェック機能</a>
+    <a href="https://www.bcnretail.com/topics_detail9/20210311_217075.html">BCN ・ 経団連事務局が反社チェックオプションを導入</a>
+    <a href="https://kyodonewsprwire.jp/release/202004169061">共同通信PRワイヤー ・ リフィニティブが Sansan にデータを提供</a>
+    <a href="https://www.itreview.jp/products/secure-navi/profile">ITreview ・ SecureNavi 製品情報</a>
+    <a href="https://prtimes.jp/main/html/rd/p/000000179.000089471.html">PR TIMES ・ 2線の匠クラウド 委託先の管理台帳</a>
+    <a href="https://prtimes.jp/main/html/rd/p/000000155.000089471.html">PR TIMES ・ 2線の匠クラウド 委託先関係図・影響範囲分析</a>
+    <a href="https://prtimes.jp/main/html/rd/p/000000180.000089471.html">PR TIMES ・ SecureNavi 点検項目・質問票の無償提供</a>
     <a href="https://www.obc.co.jp/bugyo-cloud/apiservice">OBC ・ 奉行APIコネクトサービス</a>
     <a href="https://www.obc.co.jp/bugyo-cloud/apiservice/billone">OBC ・ 奉行APIコネクト × Bill One</a>
     <a href="https://www.obc.co.jp/bugyo-cloud/kanjo/function/api">OBC ・ 勘定奉行クラウド API連携</a>
