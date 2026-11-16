@@ -1,0 +1,377 @@
+<title>取引先・情報・契約の統合計画</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: 一枚の「建物」の図（屋根＝統合計画、柱＝四つのプロジェクト、土台＝共通の台帳、地面＝外のサービス）を主役に、下へ対応表・つなぎ目・予算の束ね方・進め方 */
+:root{
+  --bg:#f4f5f3; --panel:#ffffff; --ink:#1c2321; --muted:#5c6764; --line:#d4dad7;
+  --p1:#1f6f78; --p1s:#dcefed;   /* 取引先管理 */
+  --p2:#3d4a8a; --p2s:#e2e5f4;   /* 情報資産管理 */
+  --p3:#8a3b5c; --p3s:#f4e3ea;   /* 個人情報保護運用 */
+  --p4:#a85a17; --p4s:#f6e7d6;   /* 契約書管理 */
+  --lock:#3b4048; --locks:#e4e6e9;
+  --gate:#6b5a8e; --gates:#ece6f4;
+  --have:#2e8b57; --ext:#c48d0a; --new:#c4403a;
+  --f-display:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+  --f-body:"Noto Sans JP","Hiragino Sans","Yu Gothic",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
+  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816;
+  --lock:#c3c8cf; --locks:#262b31; --gate:#b9a6dd; --gates:#2c2540;
+  --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
+  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816;
+  --lock:#c3c8cf; --locks:#262b31; --gate:#b9a6dd; --gates:#2c2540;
+  --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 64px}
+.wrap{max-width:1080px;margin:0 auto;display:grid;gap:56px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.35}
+h1{font-size:clamp(28px,4.4vw,44px);font-weight:900}
+h2{font-size:clamp(21px,2.6vw,27px);font-weight:700}
+h3{font-size:16px;font-weight:700}
+p{margin:0;max-width:70ch}
+.eyebrow{font-size:12px;letter-spacing:.14em;color:var(--muted);font-weight:700}
+.lead{color:var(--muted);font-size:16px}
+.note{font-size:13.5px;color:var(--muted)}
+header,section{display:grid;gap:18px}
+.sec-head{display:grid;gap:6px}
+a{color:inherit}
+a:focus-visible{outline:2px solid var(--p2);outline-offset:2px}
+
+.figure{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;overflow-x:auto}
+.figure svg{display:block;width:100%;min-width:780px;height:auto}
+
+/* svg */
+.roof{fill:var(--ink)}
+.roof-t{fill:var(--bg);font:900 20px var(--f-display);text-anchor:middle}
+.roof-s{fill:var(--bg);opacity:.75;font:500 12px var(--f-body);text-anchor:middle}
+.pil rect.body{stroke-width:2;fill:var(--panel)}
+.pil .hd{stroke:none}
+.pil1 rect.body{stroke:var(--p1)} .pil1 .hd{fill:var(--p1)} .pil1 .chip{fill:var(--p1s);stroke:var(--p1)}
+.pil2 rect.body{stroke:var(--p2)} .pil2 .hd{fill:var(--p2)} .pil2 .chip{fill:var(--p2s);stroke:var(--p2)}
+.pil3 rect.body{stroke:var(--p3)} .pil3 .hd{fill:var(--p3)} .pil3 .chip{fill:var(--p3s);stroke:var(--p3)}
+.pil4 rect.body{stroke:var(--p4)} .pil4 .hd{fill:var(--p4)} .pil4 .chip{fill:var(--p4s);stroke:var(--p4)}
+.chip{stroke-width:1.5}
+.chip.share{fill:var(--panel)!important;stroke-dasharray:4 3}
+.ph{fill:var(--bg);font:700 15px var(--f-display)}
+.pk{fill:var(--bg);opacity:.8;font:500 11px var(--f-mono)}
+.ct{fill:var(--ink);font:700 14px var(--f-display)}
+.cs{fill:var(--muted);font:400 11.5px var(--f-body)}
+.gate rect{fill:var(--gates);stroke:var(--gate);stroke-width:2;stroke-dasharray:7 5}
+.gate-t{fill:var(--gate);font:700 13.5px var(--f-display)}
+.gate-s{fill:var(--ink);font:400 12.5px var(--f-body)}
+.found rect.fb{fill:var(--ink)}
+.ft{fill:var(--bg);font:900 16px var(--f-display)}
+.fc rect{fill:var(--bg);opacity:.12}
+.fcl{fill:var(--bg);font:500 12.5px var(--f-body);text-anchor:middle}
+.ext rect{fill:var(--panel);stroke:var(--line);stroke-width:2}
+.ext.cand rect{stroke-dasharray:6 4}
+.ext.fixed rect{fill:var(--locks);stroke:var(--lock);stroke-width:2.5}
+.et{fill:var(--ink);font:700 14px var(--f-display)}
+.es{fill:var(--muted);font:400 11.5px var(--f-body)}
+.lk{fill:none;stroke:var(--lock);stroke-width:2}
+.lkb{fill:var(--lock)}
+.ar{stroke:var(--muted);stroke-width:1.8;fill:none}
+.ar-d{stroke-dasharray:5 5}
+.ahd{fill:var(--muted)}
+.lbl{fill:var(--muted);font:700 11.5px var(--f-body);letter-spacing:.1em}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.sw{width:16px;height:12px;border-radius:3px;border:2px solid var(--muted)}
+.sw.share{border-style:dashed}
+.sw.fixed{background:var(--locks);border-color:var(--lock)}
+.sw.gate{background:var(--gates);border-color:var(--gate);border-style:dashed}
+
+/* table */
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px}
+table{border-collapse:collapse;width:100%;min-width:820px;font-size:13.5px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font-family:var(--f-display);font-size:13px;color:var(--muted);background:var(--bg)}
+tbody th{white-space:nowrap}
+td.c{text-align:center;font-size:16px}
+.own{color:var(--ink)} .use{color:var(--muted)}
+.ph1{color:var(--p1)}.ph2{color:var(--p2)}.ph3{color:var(--p3)}.ph4{color:var(--p4)}
+.st{display:inline-flex;align-items:center;gap:6px;font-weight:700;white-space:nowrap}
+.pip{width:10px;height:10px;border-radius:50%;display:inline-block}
+.pip.have{background:var(--have)}.pip.ext{background:var(--ext)}.pip.new{background:var(--new)}.pip.fix{background:var(--lock)}
+
+/* seams */
+.seams{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.seam{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;display:grid;gap:8px;align-content:start;min-width:0}
+.seam .who{display:flex;flex-wrap:wrap;gap:6px}
+.tag{font-size:11.5px;font-weight:700;padding:1px 9px;border-radius:999px;white-space:nowrap}
+.t1{background:var(--p1s);color:var(--p1)}.t2{background:var(--p2s);color:var(--p2)}.t3{background:var(--p3s);color:var(--p3)}.t4{background:var(--p4s);color:var(--p4)}
+.seam p{font-size:14px}
+.seam .dup{font-size:13px;color:var(--muted);border-top:1px dashed var(--line);padding-top:8px}
+
+/* fixed */
+.fixed-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.fx{background:var(--locks);border:2px solid var(--lock);border-radius:12px;padding:18px 20px;display:grid;gap:10px;align-content:start;min-width:0}
+.fx dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+.fx dt{color:var(--muted);font-weight:700;white-space:nowrap}
+.fx dd{margin:0}
+
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px}
+.step{border-top:4px solid var(--ink);padding-top:14px;display:grid;gap:8px;align-content:start}
+.step .k{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.step ul{margin:0;padding-left:1.1em;display:grid;gap:4px;font-size:14px}
+.src{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
+.mono{font-family:var(--f-mono);font-size:12px;word-break:break-all}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">予算統合のための構想図 ・ 2026年11月</div>
+  <h1>四つのプロジェクトを、<br>一つの台帳の上に建てる</h1>
+  <p class="lead">取引先管理、情報資産管理、個人情報保護運用、契約書管理の四つは、同じ「取引先」と「契約」のデータを別々に扱おうとしています。土台の台帳を一つにして、四つを柱として載せれば、重複する費用をまとめて一本の予算にできます。CloudSign と奉行シリーズは動かさず、統合する側が合わせます。</p>
+</header>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">全体の絵</div>
+    <h2>統合計画の構造</h2>
+  </div>
+  <div class="legend">
+    <span><i class="sw"></i>そのプロジェクトが主に持つ機能</span>
+    <span><i class="sw share"></i>ほかのプロジェクトと共有して使う</span>
+    <span><i class="sw gate"></i>プロジェクトをまたぐ確認</span>
+    <span><i class="sw fixed"></i>動かせないシステム（入れ替えない）</span>
+  </div>
+  <div class="figure" role="img" aria-label="統合計画を屋根、四つのプロジェクトを柱、共通の台帳を土台、外のサービスを地面とした構造図。CloudSign と奉行シリーズは動かせないシステムとして鍵の印で示す。">
+    <svg viewBox="0 0 960 700" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahd"/></marker></defs>
+
+      <!-- roof -->
+      <path d="M30 86 L480 18 L930 86 Z" class="roof"/>
+      <text x="480" y="62" class="roof-t">取引先・情報・契約 統合計画</text>
+      <text x="480" y="80" class="roof-s">一つの予算 ・ 一つの台帳 ・ 一つの判断の記録</text>
+
+      <!-- pillar 1 -->
+      <g class="pil pil1">
+        <rect class="body" x="30" y="100" width="210" height="300" rx="10"/>
+        <rect class="hd" x="30" y="100" width="210" height="46" rx="10"/><rect class="hd" x="30" y="130" width="210" height="16"/>
+        <text x="44" y="122" class="ph">取引先管理</text><text x="44" y="139" class="pk">PJ-1</text>
+        <rect class="chip" x="44" y="160" width="182" height="52" rx="8"/><text x="56" y="182" class="ct">反社チェック</text><text x="56" y="201" class="cs">新規の相手・定期の見直し</text>
+        <rect class="chip" x="44" y="222" width="182" height="52" rx="8"/><text x="56" y="244" class="ct">与信管理</text><text x="56" y="263" class="cs">企業情報・取引実績・限度</text>
+      </g>
+      <!-- pillar 2 -->
+      <g class="pil pil2">
+        <rect class="body" x="260" y="100" width="210" height="300" rx="10"/>
+        <rect class="hd" x="260" y="100" width="210" height="46" rx="10"/><rect class="hd" x="260" y="130" width="210" height="16"/>
+        <text x="274" y="122" class="ph">情報資産管理</text><text x="274" y="139" class="pk">PJ-2</text>
+        <rect class="chip" x="274" y="160" width="182" height="52" rx="8"/><text x="286" y="182" class="ct">情報資産台帳管理</text><text x="286" y="201" class="cs">資産・持ち主・保管先・分類</text>
+        <rect class="chip share" x="274" y="222" width="182" height="52" rx="8"/><text x="286" y="244" class="ct">契約で受け渡す情報</text><text x="286" y="263" class="cs">NDA・委託契約から登録</text>
+      </g>
+      <!-- pillar 3 -->
+      <g class="pil pil3">
+        <rect class="body" x="490" y="100" width="210" height="300" rx="10"/>
+        <rect class="hd" x="490" y="100" width="210" height="46" rx="10"/><rect class="hd" x="490" y="130" width="210" height="16"/>
+        <text x="504" y="122" class="ph">個人情報保護運用</text><text x="504" y="139" class="pk">PJ-3</text>
+        <rect class="chip share" x="504" y="160" width="182" height="52" rx="8"/><text x="516" y="182" class="ct">情報資産台帳管理</text><text x="516" y="201" class="cs">個人情報を含む資産を特定</text>
+        <rect class="chip" x="504" y="222" width="182" height="52" rx="8"/><text x="516" y="244" class="ct">委託先の確認</text><text x="516" y="263" class="cs">委託先の評価・再委託</text>
+      </g>
+      <!-- pillar 4 -->
+      <g class="pil pil4">
+        <rect class="body" x="720" y="100" width="210" height="300" rx="10"/>
+        <rect class="hd" x="720" y="100" width="210" height="46" rx="10"/><rect class="hd" x="720" y="130" width="210" height="16"/>
+        <text x="734" y="122" class="ph">契約書管理</text><text x="734" y="139" class="pk">PJ-4</text>
+        <rect class="chip" x="734" y="160" width="182" height="52" rx="8"/><text x="746" y="182" class="ct">契約書管理</text><text x="746" y="201" class="cs">作成・審査・保管・期限</text>
+        <rect class="chip" x="734" y="222" width="182" height="52" rx="8"/><text x="746" y="244" class="ct">契約締結管理</text><text x="746" y="263" class="cs">承認・締結前の確認</text>
+        <rect class="chip" x="734" y="284" width="182" height="52" rx="8"/><text x="746" y="306" class="ct">電子契約</text><text x="746" y="325" class="cs">CloudSign で署名</text>
+      </g>
+
+      <!-- cross-project gate -->
+      <g class="gate"><rect x="20" y="346" width="700" height="44" rx="10"/>
+        <text x="36" y="373" class="gate-t">締結前の確認</text>
+        <text x="146" y="373" class="gate-s">反社チェック ・ 与信の限度 ・ 委託先の評価 ・ 情報資産の登録 → そろえば電子契約へ</text>
+      </g>
+      <path d="M720 368 H730" class="ar" marker-end="url(#ah)"/>
+
+      <!-- foundation -->
+      <g class="found">
+        <rect class="fb" x="20" y="418" width="920" height="110" rx="12"/>
+        <text x="40" y="448" class="ft">共通の台帳（LegalBridge）</text>
+        <g class="fc"><rect x="40" y="462" width="210" height="48" rx="8"/></g><text x="145" y="491" class="fcl">取引先・人物</text>
+        <g class="fc"><rect x="262" y="462" width="210" height="48" rx="8"/></g><text x="367" y="491" class="fcl">情報資産・個人情報</text>
+        <g class="fc"><rect x="484" y="462" width="210" height="48" rx="8"/></g><text x="589" y="491" class="fcl">契約・締結の記録</text>
+        <g class="fc"><rect x="706" y="462" width="214" height="48" rx="8"/></g><text x="813" y="491" class="fcl">確認と判断の履歴</text>
+      </g>
+      <path d="M135 400 V414" class="ar"/><path d="M365 400 V414" class="ar"/><path d="M595 400 V414" class="ar"/><path d="M825 400 V414" class="ar"/>
+
+      <!-- external -->
+      <text x="20" y="566" class="lbl">外のサービス</text>
+      <path d="M105 528 V582" class="ar ar-d" marker-start="url(#ah)"/>
+      <path d="M288 528 V582" class="ar ar-d" marker-start="url(#ah)"/>
+      <path d="M471 528 V582" class="ar ar-d" marker-start="url(#ah)"/>
+      <path d="M654 528 V582" class="ar" marker-start="url(#ah)" marker-end="url(#ah)"/>
+      <path d="M837 528 V582" class="ar" marker-start="url(#ah)" marker-end="url(#ah)"/>
+
+      <g class="ext cand"><rect x="20" y="586" width="170" height="80" rx="10"/><text x="34" y="614" class="et">Sansan</text><text x="34" y="636" class="es">名刺・反社チェック</text><text x="34" y="654" class="es">企業情報（候補）</text></g>
+      <g class="ext cand"><rect x="203" y="586" width="170" height="80" rx="10"/><text x="217" y="614" class="et">信用調査データ</text><text x="217" y="636" class="es">与信の評点・財務</text><text x="217" y="654" class="es">（候補）</text></g>
+      <g class="ext cand"><rect x="386" y="586" width="170" height="80" rx="10"/><text x="400" y="614" class="et">SecureNavi</text><text x="400" y="636" class="es">ISMS・Pマーク</text><text x="400" y="654" class="es">委託先評価（候補）</text></g>
+      <g class="ext fixed"><rect x="569" y="586" width="170" height="80" rx="10"/><text x="583" y="614" class="et">CloudSign</text><text x="583" y="636" class="es">電子契約</text><text x="583" y="654" class="es">動かさない</text>
+        <path d="M713 606 v-6 a7 7 0 0 1 14 0 v6" class="lk"/><rect x="709" y="606" width="22" height="16" rx="3" class="lkb"/></g>
+      <g class="ext fixed"><rect x="752" y="586" width="178" height="80" rx="10"/><text x="766" y="614" class="et">奉行シリーズ</text><text x="766" y="636" class="es">会計・支払・入金</text><text x="766" y="654" class="es">動かさない</text>
+        <path d="M904 606 v-6 a7 7 0 0 1 14 0 v6" class="lk"/><rect x="900" y="606" width="22" height="16" rx="3" class="lkb"/></g>
+    </svg>
+  </div>
+  <p class="note">点線の箱は導入候補のサービスで、まだ決まっていません。鍵の印の二つは入れ替えず、台帳からつなぐだけにします。奉行シリーズからは支払・入金の実績を受け取り、与信管理に使います。</p>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">対応表</div>
+    <h2>中核の機能と、それを持つプロジェクト</h2>
+    <p class="lead">● は主に持つプロジェクト、○ はそのデータを使うプロジェクトです。○ が多い機能ほど、別々に作ると重複します。</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>中核の機能</th><th class="ph1">取引先管理</th><th class="ph2">情報資産管理</th><th class="ph3">個人情報保護</th><th class="ph4">契約書管理</th><th>担う仕組み</th><th>今の状態</th></tr></thead>
+      <tbody>
+        <tr><th>反社チェック</th><td class="c own">●</td><td class="c"></td><td class="c use">○</td><td class="c use">○</td><td>Sansan の反社チェックオプション（候補）。結果だけ台帳へ</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>与信管理</th><td class="c own">●</td><td class="c"></td><td class="c"></td><td class="c use">○</td><td>信用調査データ（候補）と奉行の支払・入金実績</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>情報資産台帳管理</th><td class="c"></td><td class="c own">●</td><td class="c own">●</td><td class="c use">○</td><td>SecureNavi（候補）。契約で受け渡す情報は台帳から登録</td><td><span class="st"><i class="pip new"></i>新規</span></td></tr>
+        <tr><th>契約書管理</th><td class="c use">○</td><td class="c use">○</td><td class="c use">○</td><td class="c own">●</td><td>LegalBridge（作成・審査・登録・期限）</td><td><span class="st"><i class="pip have"></i>既存</span></td></tr>
+        <tr><th>契約締結管理</th><td class="c use">○</td><td class="c"></td><td class="c use">○</td><td class="c own">●</td><td>LegalBridge の締結前の確認</td><td><span class="st"><i class="pip ext"></i>拡張</span></td></tr>
+        <tr><th>電子契約</th><td class="c"></td><td class="c"></td><td class="c"></td><td class="c own">●</td><td>CloudSign（動かさない）</td><td><span class="st"><i class="pip fix"></i>固定</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">つなぎ目</div>
+    <h2>プロジェクトが重なる五つの場所</h2>
+    <p class="lead">別々に予算を取ると、ここで同じものを二度作ることになります。統合する理由はこの五つです。</p>
+  </div>
+  <div class="seams">
+    <article class="seam">
+      <div class="who"><span class="tag t1">取引先</span><span class="tag t2">情報資産</span><span class="tag t3">個人情報</span><span class="tag t4">契約</span></div>
+      <h3>取引先は一つの台帳に</h3>
+      <p>委託先台帳、取引先マスタ、契約の相手方を法人番号で一つにまとめます。</p>
+      <p class="dup">別々だと：三つの台帳に同じ会社を登録し、名前の揺れで突き合わせができない</p>
+    </article>
+    <article class="seam">
+      <div class="who"><span class="tag t1">取引先</span><span class="tag t4">契約</span></div>
+      <h3>締結前の確認を一回で</h3>
+      <p>反社チェックと与信の限度を、契約を CloudSign で送る直前にまとめて確かめます。</p>
+      <p class="dup">別々だと：部署ごとに反社チェックを頼み、結果が契約の記録に残らない</p>
+    </article>
+    <article class="seam">
+      <div class="who"><span class="tag t2">情報資産</span><span class="tag t4">契約</span></div>
+      <h3>契約で受け渡す情報を資産に</h3>
+      <p>NDA や委託契約で受け取る・渡す情報を、締結と同時に情報資産台帳へ載せます。</p>
+      <p class="dup">別々だと：契約は結んだが、その情報がどこに保管されているか誰も知らない</p>
+    </article>
+    <article class="seam">
+      <div class="who"><span class="tag t3">個人情報</span><span class="tag t1">取引先</span><span class="tag t4">契約</span></div>
+      <h3>個人情報の委託は三点セット</h3>
+      <p>委託先の評価、委託契約（再委託・事故報告の条項）、預ける個人情報の台帳を一つの記録でつなぎます。</p>
+      <p class="dup">別々だと：委託先の評価と契約条項が食い違っても気づけない</p>
+    </article>
+    <article class="seam">
+      <div class="who"><span class="tag t1">取引先</span><span class="tag t4">契約</span></div>
+      <h3>お金の実績を与信に戻す</h3>
+      <p>奉行シリーズの支払・入金の実績を取引先ごとに受け取り、与信の見直しに使います。</p>
+      <p class="dup">別々だと：経理と法務が同じ取引先の状況を別々に調べる</p>
+    </article>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">動かせないもの</div>
+    <h2>CloudSign と奉行シリーズには合わせる</h2>
+    <p class="lead">二つとも入れ替えません。予算に入るのは「つなぐ費用」だけで、乗り換えの費用は入れません。</p>
+  </div>
+  <div class="fixed-grid">
+    <div class="fx">
+      <h3>CloudSign（電子契約）</h3>
+      <dl>
+        <dt>役割</dt><dd>署名と締結の記録。契約締結管理の出口</dd>
+        <dt>つなぎ方</dt><dd>LegalBridge から署名依頼を送り、締結完了の通知を受けて契約の記録を更新</dd>
+        <dt>今の状態</dt><dd>署名依頼の送信で宛先が拒否されるエラーの切り分け中（<span class="mono">docs/cloudsign-delivery-troubleshooting-fix-plan.md</span>）</dd>
+        <dt>注意</dt><dd>API から送ると CloudSign 側の承認機能が働かないとする解説がある。社内の承認は LegalBridge 側で確かめる</dd>
+      </dl>
+    </div>
+    <div class="fx">
+      <h3>奉行シリーズ（会計）</h3>
+      <dl>
+        <dt>役割</dt><dd>仕訳・支払・入金の正本</dd>
+        <dt>つなぎ方</dt><dd>まず CSV（汎用データ受入）で取引先と仕訳を渡し、API の契約後に直接送る。支払・入金の実績は与信管理へ受け取る</dd>
+        <dt>今の状態</dt><dd>連携なし。経理提出用エクセルを手で渡している</dd>
+        <dt>注意</dt><dd>API の利用には「API バージョン」の契約が要るとする事例がある。使っている製品と版の確認が先</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">予算の束ね方</div>
+    <h2>費目を四つのプロジェクトから集め直す</h2>
+    <p class="lead">金額は見積もりを取ってから入れます。ここでは、どの費目を一本にまとめられるかだけを示します。</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>費目</th><th>中身</th><th>別々なら出していたプロジェクト</th><th>統合後</th></tr></thead>
+      <tbody>
+        <tr><th>共通の台帳</th><td>LegalBridge の取引先・人物・情報資産・判断の履歴の拡張</td><td>四つすべて（それぞれ台帳を用意）</td><td>一本にまとめる</td></tr>
+        <tr><th>反社チェック</th><td>Sansan のオプションなどの利用料・照合件数</td><td>取引先管理、個人情報保護（委託先）</td><td>取引先管理に寄せる</td></tr>
+        <tr><th>与信データ</th><td>信用調査データの利用料</td><td>取引先管理</td><td>取引先管理</td></tr>
+        <tr><th>情報資産・委託先の管理</th><td>SecureNavi などの利用料</td><td>情報資産管理、個人情報保護</td><td>一つの契約を両方で使う</td></tr>
+        <tr><th>CloudSign との連携</th><td>署名依頼の送信と締結通知の受け取り</td><td>契約書管理</td><td>契約書管理（CloudSign の利用料は今のまま）</td></tr>
+        <tr><th>奉行との連携</th><td>CSV の出力、その後 API。実績の受け取り</td><td>取引先管理（与信）、経理</td><td>一本にまとめる（奉行の利用料は今のまま）</td></tr>
+        <tr><th>移行・データ整備</th><td>既存の取引先・契約・資産の名寄せと登録</td><td>四つすべて</td><td>一回で済ませる</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">進め方</div>
+    <h2>土台から順に建てる</h2>
+  </div>
+  <div class="steps">
+    <div class="step"><span class="k">STEP 0 ・ 予算と決め事</span><h3>統合の合意</h3>
+      <ul><li>四つのプロジェクトの予算を一本の計画にまとめる</li><li>台帳の正本と、見られる人を決める</li><li>候補サービスの見積もりを取る</li></ul></div>
+    <div class="step"><span class="k">STEP 1 ・ 土台</span><h3>取引先を一つに</h3>
+      <ul><li>取引先・委託先・相手方を法人番号で名寄せ</li><li>反社チェックの結果を取り込む</li><li>CloudSign の送信エラーを解消する</li></ul></div>
+    <div class="step"><span class="k">STEP 2 ・ 締結</span><h3>締結前の確認</h3>
+      <ul><li>反社・与信の確認がそろってから CloudSign へ送る</li><li>締結完了で契約の記録を更新</li></ul></div>
+    <div class="step"><span class="k">STEP 3 ・ 情報</span><h3>情報資産と個人情報</h3>
+      <ul><li>情報資産台帳を整え、個人情報を含むものに印</li><li>委託契約と委託先評価をつなぐ</li></ul></div>
+    <div class="step"><span class="k">STEP 4 ・ お金</span><h3>奉行と与信</h3>
+      <ul><li>CSV で奉行へ取引先と仕訳を渡す</li><li>支払・入金の実績で与信を見直す</li></ul></div>
+  </div>
+  <p class="note">機能の調査の詳細は「名刺から契約満了まで」の構想図にまとめています。</p>
+</section>
+
+<section>
+  <div class="sec-head"><div class="eyebrow">出典</div></div>
+  <div class="src">
+    <p>サービスの機能は 2026年11月時点の公開情報によります。料金は調べていません。LegalBridge の状態はリポジトリの docs によります。</p>
+    <a href="https://www.itmedia.co.jp/news/article/1912/06/1191206067/">ITmedia ・ Sansan の反社チェック機能</a>
+    <a href="https://kyodonewsprwire.jp/release/202004169061">共同通信PRワイヤー ・ リフィニティブが Sansan にデータを提供</a>
+    <a href="https://www.watch.impress.co.jp/docs/news/1401926.html">Impress Watch ・ Sansan の企業情報（帝国データバンク連携）</a>
+    <a href="https://www.itreview.jp/products/secure-navi/profile">ITreview ・ SecureNavi 製品情報</a>
+    <a href="https://prtimes.jp/main/html/rd/p/000000179.000089471.html">PR TIMES ・ 2線の匠クラウド 委託先の管理台帳</a>
+    <a href="https://aurant-technologies.com/blog/selection-implementation-guide-practical-success-integration-3202/">aurant ・ クラウドサイン 業務システム連携ガイド 2026</a>
+    <a href="https://www.obc.co.jp/bugyo-cloud/apiservice">OBC ・ 奉行APIコネクトサービス</a>
+    <a href="https://www.lets-co.com/consideration/letsgenkakanrigo2/07-14/ad19/">レッツ原価管理Go2 ・ 奉行クラウドAPI連動</a>
+  </div>
+</section>
+
+</div>
