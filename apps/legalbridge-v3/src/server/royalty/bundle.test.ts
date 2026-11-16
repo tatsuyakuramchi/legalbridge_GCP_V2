@@ -145,3 +145,25 @@ test("源泉は 1 枚の税込合計に 1 回掛ける（条件ごとに切り�
   assert.equal(t.withholdingTax, 33564);
   assert.equal(t.netTransfer, 295926 + 29592 + 2928 + 292 - 33564);
 });
+
+test("束ねの行：出版（紙・電子）の条件は、条件 1 本にまとめた行にも媒体と作品名を持たせる", () => {
+  // 単価 × 部数の紙出版は実績ごとの行にならない。媒体が無いと、出版の計算書の本文が空になる。
+  const pub = bundleLineFrom(preview({
+    condition: { pricingModel: "unit_rate", unitAmount: 3000, ratePct: 10 },
+    reported: { quantity: 1000 }, period: "2026-09-30〜2026-09-30",
+    events: [{ eventId: 1, conditionUsageType: "pub_print", workTitle: "ケダモノオペラ" }]
+  }));
+  assert.equal(pub.media, "紙");
+  assert.equal(pub.workTitle, "ケダモノオペラ");
+  assert.equal(pub.unitPrice, 3000);
+  // 実績が 1 日だけのときの「X〜X」は 1 つにする。
+  assert.equal(pub.period, "2026-09-30");
+
+  const digital = bundleLineFrom(preview({ events: [{ eventId: 2, conditionUsageType: "pub_digital", workTitle: "作品" }] }));
+  assert.equal(digital.media, "電子");
+  assert.equal(digital.unitPrice, null);
+
+  // 出版でない条件・実績の無い試算には足さない（ふつうの計算書の行は変わらない）。
+  assert.equal(bundleLineFrom(preview({ events: [{ eventId: 3, conditionUsageType: "in_house" }] })).media, undefined);
+  assert.equal(bundleLineFrom(preview()).media, undefined);
+});
