@@ -163,6 +163,24 @@ td.c{text-align:center;font-size:16px}
 .lg-main ellipse{stroke-width:4}
 .lgn{fill:var(--muted);font:500 11px var(--f-mono);text-anchor:middle}
 .lgt{fill:var(--ink);font:900 18px var(--f-display);text-anchor:middle}
+/* big ring */
+.figure.big svg{min-width:720px}
+.arc{fill:none;stroke-width:14;stroke-linecap:round;opacity:.45}
+.a-p1{stroke:var(--p1)}.a-p2{stroke:var(--p2)}.a-p4{stroke:var(--p4)}.a-p5{stroke:var(--p5)}
+.wedge{stroke:var(--panel);stroke-width:4}
+.w-p1{fill:var(--p1s)}.w-p2{fill:var(--p2s)}.w-p4{fill:var(--p4s)}.w-p5{fill:var(--p5s)}
+.wl{fill:var(--ink);font:900 16px var(--f-display);text-anchor:middle}
+.wi{fill:var(--muted);font:400 11px var(--f-body);text-anchor:middle}
+.core{fill:var(--ink)}
+.ck{fill:var(--bg);opacity:.7;font:700 11px var(--f-body);letter-spacing:.12em;text-anchor:middle}
+.ct2{fill:var(--bg);font:900 20px var(--f-display);text-anchor:middle}
+.spoke{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 5}
+.bn rect{stroke-width:2}
+.n-p1 rect{fill:var(--p1s);stroke:var(--p1)}.n-p2 rect{fill:var(--p2s);stroke:var(--p2)}.n-p4 rect{fill:var(--p4s);stroke:var(--p4)}.n-p5 rect{fill:var(--p5s);stroke:var(--p5)}
+.big-svg .bn.fix rect{fill:var(--locks);stroke:var(--lock);stroke-width:2.5}
+.pl{font:700 13px var(--f-mono)}
+.pl-p1{fill:var(--p1)}.pl-p2{fill:var(--p2)}.pl-p4{fill:var(--p4)}.pl-p5{fill:var(--p5)}
+.pj{fill:var(--ink);font:700 14px var(--f-display)}
 .src{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
 .mono{font-family:var(--f-mono);font-size:12px;word-break:break-all}
 </style>
@@ -171,20 +189,83 @@ td.c{text-align:center;font-size:16px}
 
 <header>
   <div class="eyebrow">予算統合のための構想図 ・ 2026年11月</div>
-  <h1>四つのプロジェクトを、<br>四つの台帳で一つにする</h1>
+  <h1>四つのプロジェクトを、<br>一つの円と一つの台帳に</h1>
   <p class="lead">取引先管理、情報資産管理、個人情報保護運用、契約書管理の四つは、同じ「取引先」と「契約」のデータを別々に扱おうとしています。土台の台帳を一つにして、四つを柱として載せれば、重複する費用をまとめて一本の予算にできます。CloudSign と奉行シリーズは動かさず、統合する側が合わせます。</p>
 </header>
 
 <section>
   <div class="sec-head">
-    <div class="eyebrow">フェーズごとの循環</div>
-    <h2>フェーズごとに、循環の中心へ台帳を一つ作る</h2>
-    <p class="lead">各フェーズでは、業務が一周する流れを決め、その中心に新しい台帳を一つ作ります。業務は台帳を読み書きしながら回り、次のフェーズの台帳は前の台帳に取引先 ID でつながります。</p>
+    <div class="eyebrow">全体の絵</div>
+    <h2>四つのフェーズを一つの円に、中心に統合台帳</h2>
+    <p class="lead">取引先 → 契約 → 契約で受け渡す情報 → お金 → 次の取引、と業務が一周します。中心には新しく作る統合台帳を一つ置き、四つの区画をそれぞれのフェーズで作ります。業務の一歩はすべてこの台帳を読み書きします。</p>
   </div>
   <div class="legend">
-    <span><i class="sw"></i>業務の一歩</span>
+    <span><i class="sw"></i>業務の一歩（色はフェーズ）</span>
     <span><i class="sw fixed"></i>動かせないシステム（鍵の印）</span>
-    <span><i class="sw ledger"></i>そのフェーズで新しく作る台帳</span>
+    <span><i class="sw ledger"></i>新しく作る統合台帳</span>
+  </div>
+  <div class="figure big" role="img" aria-label="16の業務の一歩が四つのフェーズに分かれて一つの円を作り、中心の統合台帳が取引先台帳・契約台帳・情報資産台帳・取引実績台帳の四区画に分かれている図">
+    <svg viewBox="0 0 960 880" xmlns="http://www.w3.org/2000/svg" class="big-svg">
+<path d="M493.3 120.2 A380 320 0 0 1 859.8 428.8" class="arc a-p1"/>
+<path d="M859.8 451.2 A380 320 0 0 1 493.3 759.8" class="arc a-p4"/>
+<path d="M466.7 759.8 A380 320 0 0 1 100.2 451.2" class="arc a-p2"/>
+<path d="M100.2 428.8 A380 320 0 0 1 466.7 120.2" class="arc a-p5"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(480.0,120.0) rotate(0.0)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(625.4,144.4) rotate(19.2)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(748.7,213.7) rotate(40.1)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(831.1,317.5) rotate(63.8)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(860.0,440.0) rotate(90.0)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(831.1,562.5) rotate(116.2)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(748.7,666.3) rotate(139.9)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(625.4,735.6) rotate(160.8)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(480.0,760.0) rotate(180.0)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(334.6,735.6) rotate(-160.8)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(211.3,666.3) rotate(-139.9)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(128.9,562.5) rotate(-116.2)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(100.0,440.0) rotate(-90.0)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(128.9,317.5) rotate(-63.8)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(211.3,213.7) rotate(-40.1)"/>
+<path d="M-7,-6 L5,0 L-7,6" class="chev" transform="translate(334.6,144.4) rotate(-19.2)"/>
+<path d="M480.0 360.0 L480.0 250.0 A190 190 0 0 1 670.0 440.0 L560.0 440.0 A80 80 0 0 0 480.0 360.0 Z" class="wedge w-p1"/>
+<text x="576.2" y="337.8" class="wl">取引先台帳</text><text x="576.2" y="357.8" class="wi">会社・人物・反社・与信</text>
+<line x1="617.2" y1="302.8" x2="706.3" y2="250.5" class="spoke"/>
+<path d="M560.0 440.0 L670.0 440.0 A190 190 0 0 1 480.0 630.0 L480.0 520.0 A80 80 0 0 0 560.0 440.0 Z" class="wedge w-p4"/>
+<text x="576.2" y="530.2" class="wl">契約台帳</text><text x="576.2" y="550.2" class="wi">契約・版・期限・締結</text>
+<line x1="617.2" y1="577.2" x2="706.3" y2="629.5" class="spoke"/>
+<path d="M480.0 520.0 L480.0 630.0 A190 190 0 0 1 290.0 440.0 L400.0 440.0 A80 80 0 0 0 480.0 520.0 Z" class="wedge w-p2"/>
+<text x="383.8" y="530.2" class="wl">情報資産台帳</text><text x="383.8" y="550.2" class="wi">資産・個人情報・委託先</text>
+<line x1="342.8" y1="577.2" x2="253.7" y2="629.5" class="spoke"/>
+<path d="M400.0 440.0 L290.0 440.0 A190 190 0 0 1 480.0 250.0 L480.0 360.0 A80 80 0 0 0 400.0 440.0 Z" class="wedge w-p5"/>
+<text x="383.8" y="337.8" class="wl">取引実績台帳</text><text x="383.8" y="357.8" class="wi">支払・入金・延滞</text>
+<line x1="342.8" y1="302.8" x2="253.7" y2="250.5" class="spoke"/>
+<circle cx="480" cy="440" r="76" class="core"/><text x="480" y="428" class="ck">新しく作る</text><text x="480" y="456" class="ct2">統合台帳</text>
+<g class="bn n-p1"><rect x="487.1" y="102.1" width="134" height="48" rx="8"/><text x="497.1" y="122.1" class="nt">登録の申請</text><text x="497.1" y="140.1" class="ns">事業部から</text></g>
+<g class="bn n-p1"><rect x="624.1" y="149.9" width="134" height="48" rx="8"/><text x="634.1" y="169.9" class="nt">名寄せ</text><text x="634.1" y="187.9" class="ns">法人番号で一社に</text></g>
+<g class="bn n-p1"><rect x="729.0" y="238.2" width="134" height="48" rx="8"/><text x="739.0" y="258.2" class="nt">反社チェック</text><text x="739.0" y="276.2" class="ns">Sansan（候補）</text></g>
+<g class="bn n-p1"><rect x="785.7" y="353.6" width="134" height="48" rx="8"/><text x="795.7" y="373.6" class="nt">与信の設定</text><text x="795.7" y="391.6" class="ns">評点・限度</text></g>
+<g class="bn n-p4"><rect x="785.7" y="478.4" width="134" height="48" rx="8"/><text x="795.7" y="498.4" class="nt">依頼・審査</text><text x="795.7" y="516.4" class="ns">ひな形・チェック</text></g>
+<g class="bn n-p4"><rect x="729.0" y="593.8" width="134" height="48" rx="8"/><text x="739.0" y="613.8" class="nt">締結前の確認</text><text x="739.0" y="631.8" class="ns">反社・与信・委託先</text></g>
+<g class="bn n-p4 fix"><rect x="624.1" y="682.1" width="134" height="48" rx="8"/><text x="634.1" y="702.1" class="nt">電子契約</text><text x="634.1" y="720.1" class="ns">CloudSign</text><path d="M739.1166885474488 700.0702759368145 v-4 a5 5 0 0 1 10 0 v4" class="lk"/><rect x="736.1166885474488" y="700.0702759368145" width="16" height="12" rx="2" class="lkb"/></g>
+<g class="bn n-p4"><rect x="487.1" y="729.9" width="134" height="48" rx="8"/><text x="497.1" y="749.9" class="nt">保管・期限</text><text x="497.1" y="767.9" class="ns">満了・更新通告</text></g>
+<g class="bn n-p2"><rect x="338.9" y="729.9" width="134" height="48" rx="8"/><text x="348.9" y="749.9" class="nt">受け渡す情報</text><text x="348.9" y="767.9" class="ns">NDA・委託契約から</text></g>
+<g class="bn n-p2"><rect x="201.9" y="682.1" width="134" height="48" rx="8"/><text x="211.9" y="702.1" class="nt">分類</text><text x="211.9" y="720.1" class="ns">個人情報の有無</text></g>
+<g class="bn n-p2"><rect x="97.0" y="593.8" width="134" height="48" rx="8"/><text x="107.0" y="613.8" class="nt">委託先の評価</text><text x="107.0" y="631.8" class="ns">SecureNavi（候補）</text></g>
+<g class="bn n-p2"><rect x="40.3" y="478.4" width="134" height="48" rx="8"/><text x="50.3" y="498.4" class="nt">点検・棚卸</text><text x="50.3" y="516.4" class="ns">年次</text></g>
+<g class="bn n-p5 fix"><rect x="40.3" y="353.6" width="134" height="48" rx="8"/><text x="50.3" y="373.6" class="nt">支払・入金</text><text x="50.3" y="391.6" class="ns">奉行シリーズ</text><path d="M155.30159344677242 371.57109695483905 v-4 a5 5 0 0 1 10 0 v4" class="lk"/><rect x="152.30159344677242" y="371.57109695483905" width="16" height="12" rx="2" class="lkb"/></g>
+<g class="bn n-p5"><rect x="97.0" y="238.2" width="134" height="48" rx="8"/><text x="107.0" y="258.2" class="nt">実績の取り込み</text><text x="107.0" y="276.2" class="ns">CSV・API</text></g>
+<g class="bn n-p5"><rect x="201.9" y="149.9" width="134" height="48" rx="8"/><text x="211.9" y="169.9" class="nt">与信の見直し</text><text x="211.9" y="187.9" class="ns">延滞・限度</text></g>
+<g class="bn n-p5"><rect x="338.9" y="102.1" width="134" height="48" rx="8"/><text x="348.9" y="122.1" class="nt">次の取引へ</text><text x="348.9" y="140.1" class="ns">更新・条件の見直し</text></g>
+<text x="930" y="70" class="pl pl-p1" text-anchor="end">PHASE 1</text><text x="930" y="90" class="pj" text-anchor="end">取引先管理</text>
+<text x="930" y="830" class="pl pl-p4" text-anchor="end">PHASE 2</text><text x="930" y="850" class="pj" text-anchor="end">契約書管理</text>
+<text x="30" y="830" class="pl pl-p2" text-anchor="start">PHASE 3</text><text x="30" y="850" class="pj" text-anchor="start">情報資産管理・個人情報保護</text>
+<text x="30" y="70" class="pl pl-p5" text-anchor="start">PHASE 4</text><text x="30" y="90" class="pj" text-anchor="start">取引先管理・契約書管理</text>
+</svg>
+  </div>
+  <p class="note">各区画は、向かい合う円弧のフェーズで作ります。PHASE 1 の取引先台帳が軸で、ほかの区画は取引先 ID と契約 ID でつながります。既存のテーブルの構造は変えず、横に足す形で作ります。</p>
+
+  <div class="sec-head" style="margin-top:12px">
+    <h2>各フェーズの詳細</h2>
+    <p class="lead">円の一つの弧を取り出し、そのフェーズで回す業務と作る区画を示します。</p>
   </div>
   <div class="phase-grid">
     <article class="phase ph-p1">
@@ -321,30 +402,11 @@ td.c{text-align:center;font-size:16px}
     </article>
   </div>
 
-  <div class="sec-head" style="margin-top:12px">
-    <h2>四つの台帳がつながった姿</h2>
-    <p class="lead">四つの台帳は取引先台帳を軸につながり、最後に一つの統合台帳として使えるようになります。</p>
-  </div>
-  <div class="figure" role="img" aria-label="取引先台帳を中心に、契約台帳、情報資産台帳、取引実績台帳がつながる図">
-    <svg viewBox="0 0 960 360" xmlns="http://www.w3.org/2000/svg" class="link-svg">
-      <path d="M290 160 H360" class="lk-e"/><text x="325" y="150" class="lk-l" text-anchor="middle">相手方</text>
-      <path d="M598 140 L672 92" class="lk-e"/><text x="660" y="132" class="lk-l">委託先・提供先</text>
-      <path d="M598 200 L672 250" class="lk-e"/><text x="660" y="214" class="lk-l">取引先コード</text>
-      <path d="M170 110 C 230 10, 640 0, 700 60" class="lk-e lk-d"/><text x="430" y="18" class="lk-l" text-anchor="middle">NDA・委託契約で受け渡す情報</text>
-      <path d="M170 210 C 230 330, 640 345, 700 296" class="lk-e lk-d"/><text x="430" y="352" class="lk-l" text-anchor="middle">契約ごとの支払・入金</text>
-
-      <g class="lg lg-p4"><ellipse cx="170" cy="160" rx="120" ry="52"/><text x="170" y="150" class="lgn">PHASE 2</text><text x="170" y="176" class="lgt">契約台帳</text></g>
-      <g class="lg lg-p1 lg-main"><ellipse cx="480" cy="170" rx="124" ry="62"/><text x="480" y="156" class="lgn">PHASE 1 ・ 軸</text><text x="480" y="184" class="lgt">取引先台帳</text></g>
-      <g class="lg lg-p2"><ellipse cx="790" cy="76" rx="124" ry="46"/><text x="790" y="66" class="lgn">PHASE 3</text><text x="790" y="92" class="lgt">情報資産台帳</text></g>
-      <g class="lg lg-p5"><ellipse cx="790" cy="270" rx="124" ry="46"/><text x="790" y="260" class="lgn">PHASE 4</text><text x="790" y="286" class="lgt">取引実績台帳</text></g>
-    </svg>
-  </div>
-  <p class="note">実線は取引先 ID でのつながり、点線は契約 ID でのつながりです。どの台帳も既存のテーブルの構造は変えず、横に足す形で作ります。</p>
 </section>
 
 <section>
   <div class="sec-head">
-    <div class="eyebrow">全体の絵</div>
+    <div class="eyebrow">構造</div>
     <h2>統合計画の構造（台帳がそろった後）</h2>
   </div>
   <div class="legend">
