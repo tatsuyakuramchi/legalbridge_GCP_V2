@@ -10,6 +10,7 @@
   --p2:#3d4a8a; --p2s:#e2e5f4;   /* 情報資産管理 */
   --p3:#8a3b5c; --p3s:#f4e3ea;   /* 個人情報保護運用 */
   --p4:#a85a17; --p4s:#f6e7d6;   /* 契約書管理 */
+  --p5:#4d6b2b; --p5s:#e6eedb;   /* お金・取引実績 */
   --lock:#3b4048; --locks:#e4e6e9;
   --gate:#6b5a8e; --gates:#ece6f4;
   --have:#2e8b57; --ext:#c48d0a; --new:#c4403a;
@@ -19,12 +20,12 @@
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
-  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816;
+  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816; --p5:#a9c97c; --p5s:#24301a;
   --lock:#c3c8cf; --locks:#262b31; --gate:#b9a6dd; --gates:#2c2540;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }}
 :root[data-theme="dark"]{
   --bg:#121816; --panel:#1a2220; --ink:#e6ecea; --muted:#9aa8a4; --line:#2e3a37;
-  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816;
+  --p1:#5cbcc4; --p1s:#163235; --p2:#9aa6ea; --p2s:#232946; --p3:#e39bb9; --p3s:#3a1f2b; --p4:#e3a160; --p4s:#3a2816; --p5:#a9c97c; --p5s:#24301a;
   --lock:#c3c8cf; --locks:#262b31; --gate:#b9a6dd; --gates:#2c2540;
   --have:#5fc58b; --ext:#e8b84a; --new:#ef7a73; color-scheme:dark }
 *{box-sizing:border-box}
@@ -124,6 +125,44 @@ td.c{text-align:center;font-size:16px}
 .step{border-top:4px solid var(--ink);padding-top:14px;display:grid;gap:8px;align-content:start}
 .step .k{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
 .step ul{margin:0;padding-left:1.1em;display:grid;gap:4px;font-size:14px}
+/* phases */
+.sw.ledger{background:var(--ink);border-color:var(--ink)}
+.phase-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:18px}
+.phase{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;display:grid;gap:10px;align-content:start;min-width:0}
+.ph-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ph-no{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.ring-box svg{display:block;width:100%;height:auto}
+.rg{fill:none;stroke:var(--line);stroke-width:3}
+.chev{fill:none;stroke:var(--muted);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.ledger{fill:var(--ink)}
+.lg-k{fill:var(--bg);opacity:.7;font:700 11px var(--f-body);letter-spacing:.12em;text-anchor:middle}
+.lg-t{fill:var(--bg);font:900 19px var(--f-display);text-anchor:middle}
+.lg-s{fill:var(--bg);opacity:.75;font:400 11px var(--f-body);text-anchor:middle}
+.nd rect{stroke-width:2}
+.r-p1 .nd rect{fill:var(--p1s);stroke:var(--p1)}
+.r-p2 .nd rect{fill:var(--p2s);stroke:var(--p2)}
+.r-p3 .nd rect{fill:var(--p3s);stroke:var(--p3)}
+.r-p4 .nd rect{fill:var(--p4s);stroke:var(--p4)}
+.r-p5 .nd rect{fill:var(--p5s);stroke:var(--p5)}
+.ring-svg .nd.fix rect{fill:var(--locks);stroke:var(--lock);stroke-width:2.5}
+.nt{fill:var(--ink);font:700 13.5px var(--f-display)}
+.ns{fill:var(--muted);font:400 11px var(--f-body)}
+.ph-dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13.5px}
+.ph-dl dt{color:var(--muted);font-weight:700;white-space:nowrap}
+.ph-dl dd{margin:0}
+.link-svg{min-width:760px}
+.lk-e{stroke:var(--muted);stroke-width:2;fill:none}
+.lk-d{stroke-dasharray:6 5}
+.lk-l{fill:var(--muted);font:500 12px var(--f-body)}
+.lg ellipse{stroke-width:2.5}
+.lg-p1 ellipse{fill:var(--p1s);stroke:var(--p1)}
+.lg-p2 ellipse{fill:var(--p2s);stroke:var(--p2)}
+.lg-p3 ellipse{fill:var(--p3s);stroke:var(--p3)}
+.lg-p4 ellipse{fill:var(--p4s);stroke:var(--p4)}
+.lg-p5 ellipse{fill:var(--p5s);stroke:var(--p5)}
+.lg-main ellipse{stroke-width:4}
+.lgn{fill:var(--muted);font:500 11px var(--f-mono);text-anchor:middle}
+.lgt{fill:var(--ink);font:900 18px var(--f-display);text-anchor:middle}
 .src{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
 .mono{font-family:var(--f-mono);font-size:12px;word-break:break-all}
 </style>
@@ -132,14 +171,181 @@ td.c{text-align:center;font-size:16px}
 
 <header>
   <div class="eyebrow">予算統合のための構想図 ・ 2026年11月</div>
-  <h1>四つのプロジェクトを、<br>一つの台帳の上に建てる</h1>
+  <h1>四つのプロジェクトを、<br>四つの台帳で一つにする</h1>
   <p class="lead">取引先管理、情報資産管理、個人情報保護運用、契約書管理の四つは、同じ「取引先」と「契約」のデータを別々に扱おうとしています。土台の台帳を一つにして、四つを柱として載せれば、重複する費用をまとめて一本の予算にできます。CloudSign と奉行シリーズは動かさず、統合する側が合わせます。</p>
 </header>
 
 <section>
   <div class="sec-head">
+    <div class="eyebrow">フェーズごとの循環</div>
+    <h2>フェーズごとに、循環の中心へ台帳を一つ作る</h2>
+    <p class="lead">各フェーズでは、業務が一周する流れを決め、その中心に新しい台帳を一つ作ります。業務は台帳を読み書きしながら回り、次のフェーズの台帳は前の台帳に取引先 ID でつながります。</p>
+  </div>
+  <div class="legend">
+    <span><i class="sw"></i>業務の一歩</span>
+    <span><i class="sw fixed"></i>動かせないシステム（鍵の印）</span>
+    <span><i class="sw ledger"></i>そのフェーズで新しく作る台帳</span>
+  </div>
+  <div class="phase-grid">
+    <article class="phase ph-p1">
+      <div class="ph-head"><span class="ph-no">PHASE 1</span><span class="tag t1">取引先管理</span></div>
+      <h3>取引先台帳をつくる</h3>
+      <div class="ring-box"><svg viewBox="0 0 460 420" xmlns="http://www.w3.org/2000/svg" class="ring-svg r-p1">
+<ellipse cx="230" cy="212" rx="168" ry="150" class="rg"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(328.7,90.6) rotate(33.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(389.8,258.4) rotate(110.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(230.0,362.0) rotate(180.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(70.2,258.4) rotate(-110.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(131.3,90.6) rotate(-33.0)"/>
+<ellipse cx="230" cy="212" rx="92" ry="58" class="ledger"/>
+<text x="230" y="190" class="lg-k">新しく作る</text>
+<text x="230" y="216" class="lg-t">取引先台帳</text>
+<text x="230" y="238" class="lg-s">取引先・人物・反社・与信</text>
+<g class="nd"><rect x="164.0" y="38.0" width="132" height="48" rx="8"/>
+<text x="174.0" y="58.0" class="nt">登録の申請</text>
+<text x="174.0" y="76.0" class="ns">事業部から</text></g>
+<g class="nd"><rect x="323.8" y="141.6" width="132" height="48" rx="8"/>
+<text x="333.8" y="161.6" class="nt">名寄せ</text>
+<text x="333.8" y="179.6" class="ns">法人番号で一社に</text></g>
+<g class="nd"><rect x="262.7" y="309.4" width="132" height="48" rx="8"/>
+<text x="272.7" y="329.4" class="nt">反社チェック</text>
+<text x="272.7" y="347.4" class="ns">Sansan（候補）</text></g>
+<g class="nd"><rect x="65.3" y="309.4" width="132" height="48" rx="8"/>
+<text x="75.3" y="329.4" class="nt">与信の設定</text>
+<text x="75.3" y="347.4" class="ns">評点・限度</text></g>
+<g class="nd"><rect x="4.2" y="141.6" width="132" height="48" rx="8"/>
+<text x="14.2" y="161.6" class="nt">定期の見直し</text>
+<text x="14.2" y="179.6" class="ns">年1回・変化時</text></g>
+</svg></div>
+      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>会社（法人番号）、人物、反社チェックの結果と日付、与信の評点と限度</dd><dt>外のサービス</dt><dd>Sansan、信用調査データ（どちらも候補）</dd></dl>
+    </article>
+    <article class="phase ph-p4">
+      <div class="ph-head"><span class="ph-no">PHASE 2</span><span class="tag t4">契約書管理</span></div>
+      <h3>契約台帳をつくる</h3>
+      <div class="ring-box"><svg viewBox="0 0 460 420" xmlns="http://www.w3.org/2000/svg" class="ring-svg r-p4">
+<ellipse cx="230" cy="212" rx="168" ry="150" class="rg"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(314.0,82.1) rotate(27.3)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(398.0,212.0) rotate(90.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(314.0,341.9) rotate(152.7)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(146.0,341.9) rotate(-152.7)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(62.0,212.0) rotate(-90.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(146.0,82.1) rotate(-27.3)"/>
+<ellipse cx="230" cy="212" rx="92" ry="58" class="ledger"/>
+<text x="230" y="190" class="lg-k">新しく作る</text>
+<text x="230" y="216" class="lg-t">契約台帳</text>
+<text x="230" y="238" class="lg-s">契約・版・期限・締結</text>
+<g class="nd"><rect x="164.0" y="38.0" width="132" height="48" rx="8"/>
+<text x="174.0" y="58.0" class="nt">依頼</text>
+<text x="174.0" y="76.0" class="ns">Slack・Backlog</text></g>
+<g class="nd"><rect x="309.5" y="113.0" width="132" height="48" rx="8"/>
+<text x="319.5" y="133.0" class="nt">作成・審査</text>
+<text x="319.5" y="151.0" class="ns">ひな形・チェック</text></g>
+<g class="nd"><rect x="309.5" y="263.0" width="132" height="48" rx="8"/>
+<text x="319.5" y="283.0" class="nt">締結前の確認</text>
+<text x="319.5" y="301.0" class="ns">反社・与信</text></g>
+<g class="nd fix"><rect x="164.0" y="338.0" width="132" height="48" rx="8"/>
+<text x="174.0" y="358.0" class="nt">電子契約</text>
+<text x="174.0" y="376.0" class="ns">CloudSign</text><path d="M277 356 v-4 a5 5 0 0 1 10 0 v4" class="lk"/><rect x="274" y="356" width="16" height="12" rx="2" class="lkb"/></g>
+<g class="nd"><rect x="18.5" y="263.0" width="132" height="48" rx="8"/>
+<text x="28.5" y="283.0" class="nt">保管・期限</text>
+<text x="28.5" y="301.0" class="ns">満了・更新通告</text></g>
+<g class="nd"><rect x="18.5" y="113.0" width="132" height="48" rx="8"/>
+<text x="28.5" y="133.0" class="nt">更新・終了</text>
+<text x="28.5" y="151.0" class="ns">覚書・解約</text></g>
+</svg></div>
+      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>契約、版、期間と満了日、更新通告、締結の記録、締結前の確認の結果</dd><dt>外のサービス</dt><dd>CloudSign（動かさない）</dd></dl>
+    </article>
+    <article class="phase ph-p2">
+      <div class="ph-head"><span class="ph-no">PHASE 3</span><span class="tag t2">情報資産管理</span><span class="tag t3">個人情報保護</span></div>
+      <h3>情報資産台帳をつくる</h3>
+      <div class="ring-box"><svg viewBox="0 0 460 420" xmlns="http://www.w3.org/2000/svg" class="ring-svg r-p2">
+<ellipse cx="230" cy="212" rx="168" ry="150" class="rg"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(328.7,90.6) rotate(33.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(389.8,258.4) rotate(110.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(230.0,362.0) rotate(180.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(70.2,258.4) rotate(-110.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(131.3,90.6) rotate(-33.0)"/>
+<ellipse cx="230" cy="212" rx="92" ry="58" class="ledger"/>
+<text x="230" y="190" class="lg-k">新しく作る</text>
+<text x="230" y="216" class="lg-t">情報資産台帳</text>
+<text x="230" y="238" class="lg-s">資産・個人情報・委託先</text>
+<g class="nd"><rect x="164.0" y="38.0" width="132" height="48" rx="8"/>
+<text x="174.0" y="58.0" class="nt">洗い出し</text>
+<text x="174.0" y="76.0" class="ns">部署ごとの資産</text></g>
+<g class="nd"><rect x="323.8" y="141.6" width="132" height="48" rx="8"/>
+<text x="333.8" y="161.6" class="nt">分類</text>
+<text x="333.8" y="179.6" class="ns">個人情報の有無</text></g>
+<g class="nd"><rect x="262.7" y="309.4" width="132" height="48" rx="8"/>
+<text x="272.7" y="329.4" class="nt">リスク評価</text>
+<text x="272.7" y="347.4" class="ns">SecureNavi（候補）</text></g>
+<g class="nd"><rect x="65.3" y="309.4" width="132" height="48" rx="8"/>
+<text x="75.3" y="329.4" class="nt">委託先の評価</text>
+<text x="75.3" y="347.4" class="ns">チェックシート</text></g>
+<g class="nd"><rect x="4.2" y="141.6" width="132" height="48" rx="8"/>
+<text x="14.2" y="161.6" class="nt">点検・棚卸</text>
+<text x="14.2" y="179.6" class="ns">年次</text></g>
+</svg></div>
+      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>資産、持ち主、保管先、分類、個人情報の有無、委託先と評価</dd><dt>外のサービス</dt><dd>SecureNavi（候補）</dd></dl>
+    </article>
+    <article class="phase ph-p5">
+      <div class="ph-head"><span class="ph-no">PHASE 4</span><span class="tag t1">取引先管理</span><span class="tag t4">契約書管理</span></div>
+      <h3>取引実績台帳をつくる</h3>
+      <div class="ring-box"><svg viewBox="0 0 460 420" xmlns="http://www.w3.org/2000/svg" class="ring-svg r-p5">
+<ellipse cx="230" cy="212" rx="168" ry="150" class="rg"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(328.7,90.6) rotate(33.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(389.8,258.4) rotate(110.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(230.0,362.0) rotate(180.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(70.2,258.4) rotate(-110.0)"/>
+<path d="M-6,-5 L4,0 L-6,5" class="chev" transform="translate(131.3,90.6) rotate(-33.0)"/>
+<ellipse cx="230" cy="212" rx="92" ry="58" class="ledger"/>
+<text x="230" y="190" class="lg-k">新しく作る</text>
+<text x="230" y="216" class="lg-t">取引実績台帳</text>
+<text x="230" y="238" class="lg-s">支払・入金・延滞</text>
+<g class="nd fix"><rect x="164.0" y="38.0" width="132" height="48" rx="8"/>
+<text x="174.0" y="58.0" class="nt">仕訳・支払</text>
+<text x="174.0" y="76.0" class="ns">奉行シリーズ</text><path d="M277 56 v-4 a5 5 0 0 1 10 0 v4" class="lk"/><rect x="274" y="56" width="16" height="12" rx="2" class="lkb"/></g>
+<g class="nd"><rect x="323.8" y="141.6" width="132" height="48" rx="8"/>
+<text x="333.8" y="161.6" class="nt">実績の取り込み</text>
+<text x="333.8" y="179.6" class="ns">CSV・API</text></g>
+<g class="nd"><rect x="262.7" y="309.4" width="132" height="48" rx="8"/>
+<text x="272.7" y="329.4" class="nt">延滞の検知</text>
+<text x="272.7" y="347.4" class="ns">入金の遅れ</text></g>
+<g class="nd"><rect x="65.3" y="309.4" width="132" height="48" rx="8"/>
+<text x="75.3" y="329.4" class="nt">与信の見直し</text>
+<text x="75.3" y="347.4" class="ns">限度の更新</text></g>
+<g class="nd"><rect x="4.2" y="141.6" width="132" height="48" rx="8"/>
+<text x="14.2" y="161.6" class="nt">取引条件へ</text>
+<text x="14.2" y="179.6" class="ns">次の契約に反映</text></g>
+</svg></div>
+      <dl class="ph-dl"><dt>台帳に持つもの</dt><dd>取引先ごと・契約ごとの支払と入金、延滞、与信の見直しの記録</dd><dt>外のサービス</dt><dd>奉行シリーズ（動かさない）</dd></dl>
+    </article>
+  </div>
+
+  <div class="sec-head" style="margin-top:12px">
+    <h2>四つの台帳がつながった姿</h2>
+    <p class="lead">四つの台帳は取引先台帳を軸につながり、最後に一つの統合台帳として使えるようになります。</p>
+  </div>
+  <div class="figure" role="img" aria-label="取引先台帳を中心に、契約台帳、情報資産台帳、取引実績台帳がつながる図">
+    <svg viewBox="0 0 960 360" xmlns="http://www.w3.org/2000/svg" class="link-svg">
+      <path d="M290 160 H360" class="lk-e"/><text x="325" y="150" class="lk-l" text-anchor="middle">相手方</text>
+      <path d="M598 140 L672 92" class="lk-e"/><text x="660" y="132" class="lk-l">委託先・提供先</text>
+      <path d="M598 200 L672 250" class="lk-e"/><text x="660" y="214" class="lk-l">取引先コード</text>
+      <path d="M170 110 C 230 10, 640 0, 700 60" class="lk-e lk-d"/><text x="430" y="18" class="lk-l" text-anchor="middle">NDA・委託契約で受け渡す情報</text>
+      <path d="M170 210 C 230 330, 640 345, 700 296" class="lk-e lk-d"/><text x="430" y="352" class="lk-l" text-anchor="middle">契約ごとの支払・入金</text>
+
+      <g class="lg lg-p4"><ellipse cx="170" cy="160" rx="120" ry="52"/><text x="170" y="150" class="lgn">PHASE 2</text><text x="170" y="176" class="lgt">契約台帳</text></g>
+      <g class="lg lg-p1 lg-main"><ellipse cx="480" cy="170" rx="124" ry="62"/><text x="480" y="156" class="lgn">PHASE 1 ・ 軸</text><text x="480" y="184" class="lgt">取引先台帳</text></g>
+      <g class="lg lg-p2"><ellipse cx="790" cy="76" rx="124" ry="46"/><text x="790" y="66" class="lgn">PHASE 3</text><text x="790" y="92" class="lgt">情報資産台帳</text></g>
+      <g class="lg lg-p5"><ellipse cx="790" cy="270" rx="124" ry="46"/><text x="790" y="260" class="lgn">PHASE 4</text><text x="790" y="286" class="lgt">取引実績台帳</text></g>
+    </svg>
+  </div>
+  <p class="note">実線は取引先 ID でのつながり、点線は契約 ID でのつながりです。どの台帳も既存のテーブルの構造は変えず、横に足す形で作ります。</p>
+</section>
+
+<section>
+  <div class="sec-head">
     <div class="eyebrow">全体の絵</div>
-    <h2>統合計画の構造</h2>
+    <h2>統合計画の構造（台帳がそろった後）</h2>
   </div>
   <div class="legend">
     <span><i class="sw"></i>そのプロジェクトが主に持つ機能</span>
