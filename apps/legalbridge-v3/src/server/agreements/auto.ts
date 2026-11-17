@@ -3,6 +3,7 @@ import { recordAudit } from "../core/audit.js";
 import { allocateNumber } from "../core/numbering.js";
 import { DomainError } from "../core/errors.js";
 import { baseDocumentNumber } from "../documents/numbering.js";
+import { noteAgreementChange } from "./versions.js";
 
 /**
  * 条件書を決定したとき、合意を自動で起こす（合意の生まれ方 ②）。発注書は order-agreement.ts。
@@ -456,4 +457,56 @@ export async function applyToWorkAgreements(
                      WHERE d.id = $1 AND t.template_key = $4)
       RETURNING a.id`, [documentId, status, onDate, MULTI_TERMS_TEMPLATE_KEY]);
   return r.rowCount ?? 0;
+}
+
+/**
+ * 基本契約書のひな形。決定すると、載っている基本契約の番号を文書の番号（本体）に合わせる。
+ * 出版許諾契約書（pub_master_*）は基本契約を兼ねる 1 通なので同じ扱い。
+ */
+export const MASTER_TEMPLATE_KEYS = new Set([
+  "license_master_v5", "license_master", "service_master", "pub_master_individual", "pub_master_corporate"
+]);
+
+/** システムが採番した基本契約の番号（ARC-HYB-2026-0001 など）。外部で付けた番号（紙の契約の番号）は動かさない。 */
+const SYSTEM_MASTER_NO = /^ARC-(SVC|LIC|HYB|SAL|OTH)-\d{4}-\d+$/;
+
+export interface MasterNumberResult { agreementId: number; from: string; to: string; children: number }
+
+/**
+ * 基本契約書を決定したとき、基本契約（合意）の番号を紙の番号にそろえる。
+ *
+ * 合意の番号（agreements）と文書の番号（documents）は採番表が別なので、巻き直し・一括作成で先に基本契約を
+ * 立てると ARC-HYB-2026-9000 の契約に ARC-LIC-2026-9003 の紙が載り、画面と紙で番号が食い違う。
+ * 条件書（ensureAgreementForTerms）と同じく「契約と紙が同じ番号で並ぶ」ようにする。
+ *
+ * そろえないとき：基本契約でない／番号が外部で付けたもの／もう同じ番号／その番号を別の契約が使っている。
+ * 下の個別契約・解除合意で「親番号-S01」の形のものは、頭を新しい番号に付け替える。
+ */
+export async function alignMasterNumber(
+  client: Queryable,
+  input: { documentNo: string; templateKey: string; agreementId: number | null },
+  actor: string
+): Promise<MasterNumberResult | null> {
+  if (!MASTER_TEMPLATE_KEYS.has(input.templateKey) || !input.agreementId) return null;
+  const to = baseDocumentNumber(input.documentNo);
+  const a = (await client.query(
+    "SELECT id, agreement_no, COALESCE(kind, 'master') AS kind FROM agreements WHERE id = $1 FOR UPDATE",
+    [input.agreementId])).rows[0] as { id: number; agreement_no: string | null; kind: string } | undefined;
+  const from = str(a?.agreement_no);
+  if (!a || a.kind !== "master" || !from || from === to || !SYSTEM_MASTER_NO.test(from)) return null;
+  const used = await client.query("SELECT id FROM agreements WHERE agreement_no = $1 AND id <> $2 LIMIT 1", [to, input.agreementId]);
+  if (used.rows.length) return null;
+  await noteAgreementChange(client, actor, `基本契約書 ${to} の決定（契約番号を紙の番号にそろえる。旧 ${from}）`);
+  await client.query("UPDATE agreements SET agreement_no = $2, updated_at = now() WHERE id = $1", [input.agreementId, to]);
+  const kids = await client.query(
+    `UPDATE agreements SET agreement_no = $3 || substr(agreement_no, length($2) + 1), updated_at = now()
+      WHERE parent_id = $1 AND left(agreement_no, length($2) + 2) IN ($2 || '-S', $2 || '-T')
+        AND NOT EXISTS (SELECT 1 FROM agreements x WHERE x.agreement_no = $3 || substr(agreements.agreement_no, length($2) + 1))
+      RETURNING id`,
+    [input.agreementId, from, to]);
+  await recordAudit(client, {
+    actor, action: "agreement.renumber", targetType: "agreement", targetId: input.agreementId,
+    detail: { from, to, reason: "基本契約書の番号にそろえる", children: kids.rows.length }
+  });
+  return { agreementId: input.agreementId, from, to, children: kids.rows.length };
 }

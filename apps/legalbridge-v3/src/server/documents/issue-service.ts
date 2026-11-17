@@ -3,7 +3,7 @@ import { isRoyaltyStatementKey } from "./settlement-docs.js";
 import { inTransaction, int, str, type Queryable, type Transactable } from "../core/db.js";
 import { applyWriteBack, type WriteBackResult } from "./write-back.js";
 import { isAutoInLieuTerms } from "../conditions/royalty-in-lieu.js";
-import { MULTI_TERMS_TEMPLATE_KEY, ensureAgreementForTerms, ensureWorkAgreements } from "../agreements/auto.js";
+import { MULTI_TERMS_TEMPLATE_KEY, alignMasterNumber, ensureAgreementForTerms, ensureWorkAgreements } from "../agreements/auto.js";
 import { TERMS_TEMPLATES } from "../conditions/contracts.js";
 import { ensureAgreementForOrder } from "../agreements/order-agreement.js";
 import { inContractRef } from "../royalty/in-contract.js";
@@ -653,6 +653,11 @@ export class DocumentIssueService {
           revision: Boolean(int(row.supersedes_id))
         }, actor);
 
+        // 基本契約書は、載っている基本契約の番号を紙の番号にそろえる（契約と紙が別の番号で並ばないように）。
+        const renumbered = await alignMasterNumber(client, {
+          documentNo, templateKey: template.templateKey, agreementId: int(row.agreement_id)
+        }, actor);
+
         // 発注書は基本契約の下の個別契約（基本契約が無ければ単体契約）。決定した瞬間に器を立て、
         // 載せた条件明細はその器のものになる（基本契約は条件明細ではなく個別契約を持つ）。
         const order = (template.templateKey === "purchase_order" || template.templateKey === "intl_purchase_order")
@@ -674,6 +679,7 @@ export class DocumentIssueService {
           detail: { documentNo, templateKey: template.templateKey, conditions: conditionIds,
                     ...(printedNo !== documentNo ? { printedNo } : {}),
                     ...(auto ? { agreement: auto } : {}),
+                    ...(renumbered ? { agreementRenumbered: renumbered } : {}),
                     ...(workTerms ? { workAgreements: workTerms } : {}),
                     ...(coveredTerms.length ? { supersededTerms: coveredTerms } : {}),
                     ...(order ? { orderAgreement: order } : {}),
