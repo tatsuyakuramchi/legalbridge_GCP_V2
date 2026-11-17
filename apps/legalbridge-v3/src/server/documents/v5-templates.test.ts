@@ -81,11 +81,12 @@ test("基本契約V5：個人は源泉あり・代表者は省略、法人は登
   assert.match(corp, /<b>第30条（存続）<\/b>/);
 });
 
-test("基本契約V5：署名欄は 署名（電子署名の枠）／押印（印の枠）", () => {
-  assert.match(renderMaster(masterContext("corporate")).out, /電子<br>署名/);
-  const stamped = renderMaster(masterContext("corporate"), { 署名欄: "押印" }).out;
-  assert.ok(!stamped.includes("電子<br>署名"));
-  assert.match(stamped, /<div class="seal">印<\/div>/);
+test("基本契約V5：署名欄は署名・押印のどちらでもよい枠（選ぶ欄は無い）。記名は自動", () => {
+  const out = renderMaster(masterContext("corporate")).out;
+  assert.equal(out.split('<div class="seal">署名<br>／押印</div>').length - 1, 2, "甲・乙の両方");
+  assert.match(out, /<div class="f">会社名<\/div><div class="v">株式会社甲<\/div>/);
+  assert.match(out, /<div class="f">会社名<\/div><div class="v">株式会社サンプル<\/div>/);
+  assert.ok(!LICENSE_MASTER_V5_VARIABLES.some((v) => v.name === "署名欄"), "署名／押印を選ぶ欄は無い");
 });
 
 // ---------------------------------------------------------------- 個別条件書V5（ボードゲーム）
@@ -168,11 +169,20 @@ test("条件書V5（出版）：一覧形式は 01 に表・09 特記事項・�
   assert.ok(!annex.includes("第1条の一覧"), "参照先は別紙2");
 });
 
-test("条件書V5（出版）：署名欄は 署名／押印／表示しない", () => {
-  assert.match(renderPub(PUB, { 署名欄: "署名" }).out, /<span class="lbl">署名<\/span>/);
-  const stamped = renderPub(PUB, { 署名欄: "押印" }).out;
-  assert.match(stamped, /<div class="stamp">印<\/div>/);
-  assert.ok(!renderPub(PUB, { 署名欄: "表示しない" }).out.includes('class="sign"'));
+test("条件書V5（出版・ボードゲーム）：署名欄は記名（自動）＋署名／押印の枠。出さないときだけ「表示しない」", () => {
+  for (const html of [PUB, PUB_ANNEX]) {
+    const out = renderPub(html, { 署名欄: "表示する" }).out;
+    assert.match(out, /記名<br>署名／押印<\/span><span class="box sign-box"><span class="pname"><b>甲野 甲太<\/b><\/span><span class="stamp">印<\/span>/);
+    assert.match(out, /<span class="pname"><b>株式会社サンプル<\/b><br>代表取締役 乙山 乙子<\/span><span class="stamp">印<\/span>/);
+    assert.equal(out.split('<span class="lbl">署名日</span>').length - 1, 2);
+    // 以前の値（署名・押印）で保存した下書きも同じ枠で出る。
+    assert.match(renderPub(html, { 署名欄: "押印" }).out, /class="box sign-box"/);
+    assert.ok(!renderPub(html, { 署名欄: "表示しない" }).out.includes('class="sign"'));
+  }
+  const game = renderDocumentHtml(GAME, { ...gameManual, ...licenseTermsPatch(gameContext, gameManual) });
+  assert.match(game, /<span class="pname"><b>株式会社オリジナル<\/b><br>代表取締役 甲野 甲太<\/span><span class="stamp">印<\/span>/);
+  assert.match(game, /<span class="pname"><b>株式会社アークライト<\/b>/);
+  assert.ok(!renderDocumentHtml(GAME, { ...gameManual, 署名欄: "表示しない", ...licenseTermsPatch(gameContext, gameManual) }).includes('class="sign"'));
 });
 
 test("条件書V5（出版）：作品数の警告は V5 のひな形の名前を出す", () => {

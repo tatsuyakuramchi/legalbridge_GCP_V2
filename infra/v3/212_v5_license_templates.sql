@@ -22,7 +22,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- license_master_v5 r1 -->
+  html constant text := $tpl$<!-- license_master_v5 r2 -->
 <!--
   著作物利用許諾基本契約書V5（license_master_v5）。出版・ボードゲーム共通の基本契約。本番へは infra/v3/212 が運ぶ
   （infra/v3/tools/make-template-sql.mjs で本文から作る。直すときはここを直して SQL を作り直す）。
@@ -226,12 +226,12 @@ DECLARE
     <div class="f">住所</div><div class="v">{{licensorAddress}}</div>
     <div class="f">{{#if licensorIsCorp}}会社名{{else}}氏名{{/if}}</div><div class="v">{{licensorName}}</div>
     <div class="f">代表者名</div><div class="v">{{#if licensorIsCorp}}{{licensorRep}}{{else}}（個人のため省略）{{/if}}</div>
-    <div class="seal">{{#if (eq 署名欄 "押印")}}印{{else}}電子<br>署名{{/if}}</div></div>
+    <div class="seal">署名<br>／押印</div></div>
   <div><div class="t">被許諾者（乙）</div>
     <div class="f">住所</div><div class="v">{{licenseeAddress}}</div>
     <div class="f">会社名</div><div class="v">{{licenseeName}}</div>
     <div class="f">代表者名</div><div class="v">{{licenseeRep}}</div>
-    <div class="seal">{{#if (eq 署名欄 "押印")}}印{{else}}電子<br>署名{{/if}}</div></div>
+    <div class="seal">署名<br>／押印</div></div>
 </div>
 
 </body>
@@ -276,7 +276,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- license_master_v5 r1 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- license_master_v5 r2 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'license_master_v5';
@@ -305,7 +305,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- individual_license_terms_v5 r1 -->
+  html constant text := $tpl$<!-- individual_license_terms_v5 r2 -->
 <!--
   個別利用許諾条件書V5・ボードゲーム（individual_license_terms_v5）。著作物利用許諾基本契約書V5（license_master_v5）の
   個別条件書。本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -398,6 +398,13 @@ DECLARE
   .field { display: flex; align-items: center; gap: 2mm; margin-top: 1.2mm; }
   .field .lbl { width: 10mm; color: #555; }
   .field .box { flex: 1; height: 12pt; box-sizing: border-box; border: .5px solid #999; }
+  /* 記名＋署名／押印の枠（ハイブリッド）。名称・代表者を左に刷り、右に印の丸。署名はこの枠に重ねる。 */
+  .field.seal-row { align-items: stretch; }
+  .sign .field .lbl { width: 14mm; }
+  .field.seal-row .lbl { line-height: 1.3; align-self: center; white-space: nowrap; }
+  .field .sign-box { height: 17mm; display: flex; align-items: center; justify-content: space-between; padding: 0 2mm; }
+  .sign-box .pname { line-height: 1.45; }
+  .sign-box .stamp { width: 13mm; height: 13mm; flex: none; }
   /* 通知先は 12pt 固定の枠（1行。長い連絡先ははみ出さず切る）。 */
   .notice td { padding-top: 0; padding-bottom: 0; vertical-align: middle; }
   .notice .fix { height: 12pt; line-height: 12pt; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -510,31 +517,19 @@ DECLARE
 </table>
 
 {{#unless (eq 署名欄 "表示しない")}}
-<!-- 署名欄。署名日・署名の枠は空のまま刷る（CloudSign の入力欄を重ねる。年月日は刷らない）。
-     署名欄=押印 なら署名の枠の代わりに印の枠。 -->
+<!-- 署名欄（署名・押印のどちらでもよい）。記名（名称・代表者）は自動で刷る。署名日の枠と、記名の枠の
+     「署名／押印」の場所は空のまま（電子署名は CloudSign の入力欄をこの枠に重ね、紙なら印の丸に押印する）。 -->
 <table class="sign">
   <tr>
     <td>
       <span class="who">LICENSOR / 許諾者</span>
-      <div class="party-sign">
-        <div class="names">
-          <div class="name"><b>{{licensorName}}</b></div>{{#if licensorIsCorp}}{{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}{{/if}}
-        </div>
-        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
-      </div>
       <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
-      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+      <div class="field seal-row"><span class="lbl">記名<br>署名／押印</span><span class="box sign-box"><span class="pname"><b>{{licensorName}}</b>{{#if licensorIsCorp}}{{#if licensorRep}}<br>{{licensorRep}}{{/if}}{{/if}}</span><span class="stamp">印</span></span></div>
     </td>
     <td>
       <span class="who">LICENSEE / 被許諾者</span>
-      <div class="party-sign">
-        <div class="names">
-          <div class="name"><b>{{licenseeName}}</b></div>{{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}
-        </div>
-        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
-      </div>
       <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
-      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+      <div class="field seal-row"><span class="lbl">記名<br>署名／押印</span><span class="box sign-box"><span class="pname"><b>{{licenseeName}}</b>{{#if licenseeRep}}<br>{{licenseeRep}}{{/if}}</span><span class="stamp">印</span></span></div>
     </td>
   </tr>
 </table>
@@ -654,7 +649,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- individual_license_terms_v5 r1 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- individual_license_terms_v5 r2 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'individual_license_terms_v5';
@@ -683,7 +678,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5 r2 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5 r3 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5）。少数作品用（一覧を01に載せる。別紙なし）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -775,6 +770,13 @@ DECLARE
   .field { display: flex; align-items: center; gap: 2mm; margin-top: 1.2mm; }
   .field .lbl { width: 10mm; color: #555; }
   .field .box { flex: 1; height: 12pt; box-sizing: border-box; border: .5px solid #999; }
+  /* 記名＋署名／押印の枠（ハイブリッド）。名称・代表者を左に刷り、右に印の丸。署名はこの枠に重ねる。 */
+  .field.seal-row { align-items: stretch; }
+  .sign .field .lbl { width: 14mm; }
+  .field.seal-row .lbl { line-height: 1.3; align-self: center; white-space: nowrap; }
+  .field .sign-box { height: 17mm; display: flex; align-items: center; justify-content: space-between; padding: 0 2mm; }
+  .sign-box .pname { line-height: 1.45; }
+  .sign-box .stamp { width: 13mm; height: 13mm; flex: none; }
   /* 通知先は 12pt 固定の枠（1行。長い連絡先ははみ出さず切る）。 */
   .notice td { padding-top: 0; padding-bottom: 0; vertical-align: middle; }
   .notice .fix { height: 12pt; line-height: 12pt; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -941,26 +943,18 @@ DECLARE
 </table>
 
 {{#if showSignature}}
-<!-- 署名欄。署名日・署名の枠は空のまま刷る（CloudSign の入力欄を重ねる）。署名欄=押印 なら署名の枠の代わりに印の枠。 -->
+<!-- 署名欄（署名・押印のどちらでもよい）。記名（名称・代表者）は自動で刷る。署名日の枠と「署名／押印」の場所は空のまま。 -->
 <table class="sign">
   <tr>
     <td>
       <span class="who">LICENSOR / 許諾者（甲）</span>
-      <div class="party-sign">
-        <div class="names"><div class="name"><b>{{licensorName}}</b></div>{{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}</div>
-        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
-      </div>
       <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
-      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+      <div class="field seal-row"><span class="lbl">記名<br>署名／押印</span><span class="box sign-box"><span class="pname"><b>{{licensorName}}</b>{{#if licensorRep}}<br>{{licensorRep}}{{/if}}</span><span class="stamp">印</span></span></div>
     </td>
     <td>
       <span class="who">LICENSEE / 被許諾者（乙）</span>
-      <div class="party-sign">
-        <div class="names"><div class="name"><b>{{licenseeName}}</b></div>{{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}</div>
-        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
-      </div>
       <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
-      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+      <div class="field seal-row"><span class="lbl">記名<br>署名／押印</span><span class="box sign-box"><span class="pname"><b>{{licenseeName}}</b>{{#if licenseeRep}}<br>{{licenseeRep}}{{/if}}</span><span class="stamp">印</span></span></div>
     </td>
   </tr>
 </table>
@@ -1011,7 +1005,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5 r2 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5 r3 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5';
@@ -1040,7 +1034,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5_annex r2 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5_annex r3 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5_annex）。多数作品用（一覧を別紙2に載せる）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -1132,6 +1126,13 @@ DECLARE
   .field { display: flex; align-items: center; gap: 2mm; margin-top: 1.2mm; }
   .field .lbl { width: 10mm; color: #555; }
   .field .box { flex: 1; height: 12pt; box-sizing: border-box; border: .5px solid #999; }
+  /* 記名＋署名／押印の枠（ハイブリッド）。名称・代表者を左に刷り、右に印の丸。署名はこの枠に重ねる。 */
+  .field.seal-row { align-items: stretch; }
+  .sign .field .lbl { width: 14mm; }
+  .field.seal-row .lbl { line-height: 1.3; align-self: center; white-space: nowrap; }
+  .field .sign-box { height: 17mm; display: flex; align-items: center; justify-content: space-between; padding: 0 2mm; }
+  .sign-box .pname { line-height: 1.45; }
+  .sign-box .stamp { width: 13mm; height: 13mm; flex: none; }
   /* 通知先は 12pt 固定の枠（1行。長い連絡先ははみ出さず切る）。 */
   .notice td { padding-top: 0; padding-bottom: 0; vertical-align: middle; }
   .notice .fix { height: 12pt; line-height: 12pt; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -1262,26 +1263,18 @@ DECLARE
 </table>
 
 {{#if showSignature}}
-<!-- 署名欄。署名日・署名の枠は空のまま刷る（CloudSign の入力欄を重ねる）。署名欄=押印 なら署名の枠の代わりに印の枠。 -->
+<!-- 署名欄（署名・押印のどちらでもよい）。記名（名称・代表者）は自動で刷る。署名日の枠と「署名／押印」の場所は空のまま。 -->
 <table class="sign">
   <tr>
     <td>
       <span class="who">LICENSOR / 許諾者（甲）</span>
-      <div class="party-sign">
-        <div class="names"><div class="name"><b>{{licensorName}}</b></div>{{#if licensorRep}}<div>{{licensorRep}}</div>{{/if}}</div>
-        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
-      </div>
       <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
-      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+      <div class="field seal-row"><span class="lbl">記名<br>署名／押印</span><span class="box sign-box"><span class="pname"><b>{{licensorName}}</b>{{#if licensorRep}}<br>{{licensorRep}}{{/if}}</span><span class="stamp">印</span></span></div>
     </td>
     <td>
       <span class="who">LICENSEE / 被許諾者（乙）</span>
-      <div class="party-sign">
-        <div class="names"><div class="name"><b>{{licenseeName}}</b></div>{{#if licenseeRep}}<div>{{licenseeRep}}</div>{{/if}}</div>
-        {{#if (eq 署名欄 "押印")}}<div class="stamp">印</div>{{/if}}
-      </div>
       <div class="field"><span class="lbl">署名日</span><span class="box"></span></div>
-      {{#unless (eq 署名欄 "押印")}}<div class="field"><span class="lbl">署名</span><span class="box"></span></div>{{/unless}}
+      <div class="field seal-row"><span class="lbl">記名<br>署名／押印</span><span class="box sign-box"><span class="pname"><b>{{licenseeName}}</b>{{#if licenseeRep}}<br>{{licenseeRep}}{{/if}}</span><span class="stamp">印</span></span></div>
     </td>
   </tr>
 </table>
@@ -1380,7 +1373,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r2 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r3 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5_annex';

@@ -21,8 +21,6 @@ export const LICENSE_MASTER_V5_VARIABLES: TemplateVariable[] = [
   { name: "書類番号", label: "書類番号", group: "I. 基本情報", dbField: "auto.docNumber", noGuess: true },
   { name: "締結日", label: "締結日", type: "date", group: "I. 基本情報", required: true,
     dbField: "auto.today", noGuess: true },
-  { name: "署名欄", label: "署名欄", type: "select", options: ["署名", "押印"], group: "I. 基本情報",
-    noGuess: true, default: "署名", helpText: "署名＝電子署名の枠、押印＝印の枠" },
 
   { name: "許諾者名称", label: "許諾者（甲）名称", group: "II. 許諾者（甲）", required: true,
     from: "condition.counterparty.name", helpText: "個人で筆名があれば「氏名（筆名：◯◯）」の形にする" },
@@ -70,7 +68,6 @@ export function licenseMasterV5Patch(context: Data, manual: Data = {}): Data {
   return {
     docNo: pick("書類番号") || text(context.document?.number),
     signDate: pick("締結日") || text(context.document?.issuedOn),
-    署名欄: pick("署名欄") || "署名",
 
     licensorName: pick("許諾者名称") || text(counterparty.name),
     licensorAddress: pick("許諾者住所") || text(counterparty.address),

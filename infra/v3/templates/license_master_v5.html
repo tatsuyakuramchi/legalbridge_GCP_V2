@@ -1,4 +1,4 @@
-<!-- license_master_v5 r1 -->
+<!-- license_master_v5 r2 -->
 <!--
   著作物利用許諾基本契約書V5（license_master_v5）。出版・ボードゲーム共通の基本契約。本番へは infra/v3/212 が運ぶ
   （infra/v3/tools/make-template-sql.mjs で本文から作る。直すときはここを直して SQL を作り直す）。
@@ -202,12 +202,12 @@
     <div class="f">住所</div><div class="v">{{licensorAddress}}</div>
     <div class="f">{{#if licensorIsCorp}}会社名{{else}}氏名{{/if}}</div><div class="v">{{licensorName}}</div>
     <div class="f">代表者名</div><div class="v">{{#if licensorIsCorp}}{{licensorRep}}{{else}}（個人のため省略）{{/if}}</div>
-    <div class="seal">{{#if (eq 署名欄 "押印")}}印{{else}}電子<br>署名{{/if}}</div></div>
+    <div class="seal">署名<br>／押印</div></div>
   <div><div class="t">被許諾者（乙）</div>
     <div class="f">住所</div><div class="v">{{licenseeAddress}}</div>
     <div class="f">会社名</div><div class="v">{{licenseeName}}</div>
     <div class="f">代表者名</div><div class="v">{{licenseeRep}}</div>
-    <div class="seal">{{#if (eq 署名欄 "押印")}}印{{else}}電子<br>署名{{/if}}</div></div>
+    <div class="seal">署名<br>／押印</div></div>
 </div>
 
 </body>
