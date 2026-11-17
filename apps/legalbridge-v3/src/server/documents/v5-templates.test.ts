@@ -137,7 +137,7 @@ const renderPub = (html: string, manual: Record<string, unknown> = {}) => {
 };
 const PUB_ROW_NAMES = new Set(["no", "title", "edition", "copyright", "thirdParty", "printRate", "printExclusivity", "digitalRate",
   "digitalExclusivity", "note", "hasPrint", "hasDigital", "translation", "hasTranslation", "translationConsent", "hasNoteRow",
-  "translationLabel", "translationDerivative", "term", "hasTerm", "hasShares", "coAuthors", "payeeShare"]);
+  "translationLabel", "translationDerivative", "term", "hasTerm", "hasShares", "coAuthors", "payeeShare", "digitalBasisTag", "digitalBasis"]);
 
 test("条件書V5（出版）：一覧形式・別紙形式とも V3 と同じ差し込みで描ける", () => {
   for (const html of [PUB, PUB_ANNEX]) {
@@ -298,8 +298,8 @@ test("条件書V5（出版）：紙・電子が再許諾を含む（再許諾の
   }
   // 電子の条件が入金額基準なら、V5 では直すよう警告する（V3 では警告しない）。
   const receipts = { ...pubContext, conditions: pubContext.conditions.map((c: any) => c.id === 2 ? { ...c, priceBasis: "receipts" } : c) };
-  assert.ok(pubTermsWarnings(receipts, "pub_license_terms_v5").some((w) => /価格の基準が「入金額」/.test(w.message)));
-  assert.ok(!pubTermsWarnings(receipts, "pub_license_terms_v3").some((w) => /価格の基準が「入金額」/.test(w.message)));
+  // 算定の基礎が入っていれば警告しない（受領額でも配信価格でも）。
+  assert.ok(!pubTermsWarnings(receipts, "pub_license_terms_v5").some((w) => /算定の基礎が未設定/.test(w.message)));
 });
 
 test("基本契約V5：有効期間は 5年（既定）／3年を選べ、基本条件と第23条に出る。特約事項の節。タイトル下の副題は無い", () => {
@@ -337,4 +337,48 @@ test("条件書V5（出版）：基本契約V5 の有効期間が更新の単位
   assert.match(renderPub(PUB).out, /09<\/span>特約事項/);
   assert.ok(!renderPub(PUB_ANNEX).out.includes("特記事項"));
   assert.ok(!renderDocumentHtml(GAME, { ...gameManual, ...licenseTermsPatch(gameContext, gameManual) }).includes("特記事項"), "ボードゲームも「特約事項」");
+});
+
+test("条件書V5（出版）：電子の算定の基礎は条件明細ごと（配信価格 × DL数／受領額）。全部受領額・混在・未設定", () => {
+  const withBasis = (bases: Array<string | null>) => {
+    const conditions = [
+      ...bases.map((b, i) => [
+        cond({ id: 100 + i * 2, conditionNo: `CL-P${i}`, name: `作品${i}`, workId: 50 + i, work: { title: `作品${i}` }, ratePct: 10,
+          usageType: "pub_print", scopes: { region: ["日本"], language: ["日本語"], media: ["紙"] } }),
+        cond({ id: 101 + i * 2, conditionNo: `CL-D${i}`, name: `作品${i}`, workId: 50 + i, work: { title: `作品${i}` }, ratePct: 42.5,
+          usageType: "pub_digital", priceBasis: b, scopes: { region: ["日本"], language: ["日本語"], media: ["電子"] } })
+      ]).flat()
+    ];
+    return { ...pubContext, conditions, condition: { ...conditions[0], counterparty: pubContext.condition.counterparty } };
+  };
+  const render = (ctx: any, html = PUB) => {
+    const rows = pubTitleSeeds(ctx).map((r: Record<string, unknown>) => ({ ...r, copyright: "© 甲", third_party: "なし" }));
+    const m = { pub_titles: rows };
+    const values = { taxRate: 10, BANK_INFO: "", ...m, ...pubTermsPatch(ctx, m, { v5: true }) };
+    assert.deepEqual(blankPlaceholders(html, values, PUB_TERMS_VARIABLES.map((v) => v.name)).filter((n) => !PUB_ROW_NAMES.has(n)), []);
+    const out = renderDocumentHtml(html, values);
+    return { out, art4: out.slice(out.indexOf("04</span>許諾料"), out.indexOf("05</span>支払時期・方法")) };
+  };
+  // 全部受領額：受領額の式と「受領した金額」の定義。備考に入金額の注記は出さない。
+  for (const html of [PUB, PUB_ANNEX]) {
+    const { out, art4 } = render(withBasis(["receipts", "receipts"]), html);
+    assert.match(art4, /乙が再許諾先その他の配信事業者から受領した金額（税抜）× 料率（.*?の「電子」欄）。「受領した金額」とは、再許諾先その他の配信事業者から当該作品の電子書籍配信の対価として乙が現実に受領した額をいい、消費税相当額を含まない。/);
+    assert.ok(!art4.includes("ダウンロード数 × 料率"), "配信価格の式は出ない");
+    assert.ok(!out.includes("電子の料率は乙の入金額に対する率"), "V5 は備考に注記を足さない");
+    assert.ok(!out.includes("（受領額）"), "全部同じ基礎なら一覧に添えない");
+  }
+  // 全部配信価格：配信価格の式だけ。
+  const gross = render(withBasis(["list", "list"])).art4;
+  assert.match(gross, /乙又は再許諾先による配信の配信価格（税抜）× ダウンロード数 × 料率/);
+  assert.ok(!gross.includes("受領した金額"));
+  // 混在：両方の式。一覧の電子の欄に基礎を添える。
+  const mixed = render(withBasis(["receipts", "list"]));
+  assert.match(mixed.art4, /「電子」欄に「受領額」とある作品は乙が再許諾先その他の配信事業者から受領した金額（税抜）× 料率.*?、「配信価格」とある作品は乙又は再許諾先による配信の配信価格（税抜）× ダウンロード数 × 料率.*?とする。「受領した金額」とは/);
+  assert.match(mixed.out, /42\.5%<span class="l2">（受領額）<\/span>／/);
+  assert.match(mixed.out, /42\.5%<span class="l2">（配信価格）<\/span>／/);
+  // 未設定は名指しで警告（V5 のみ）。
+  const unset = withBasis([null, "receipts"]);
+  const warn = pubTermsWarnings(unset, "pub_license_terms_v5").map((w) => w.message).join("\n");
+  assert.match(warn, /電子の条件明細 CL-D0 は算定の基礎が未設定です/);
+  assert.ok(!pubTermsWarnings(unset, "pub_license_terms_v3").some((w) => /算定の基礎が未設定/.test(w.message)));
 });

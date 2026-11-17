@@ -1,4 +1,5 @@
 import { IN_LIEU_REWARD_LABEL, firstEditionBasisText, firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
+import { DIGITAL_BASIS_OPTIONS, digitalBasisCheck, isDigitalBasis } from "../server/conditions/digital-basis.js";
 import { PaymentBlock, blockingPaymentsOf, type BlockingPayment } from "./PaymentBlock.js";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react";
 import { BundleImpact } from "./BundleImpact.js";
@@ -417,6 +418,12 @@ export function ConditionEdit(
    * 新しい版は相手先も範囲も元から写すので、先に元を直しておく。
    */
   async function save() {
+    // 電子（出版）は算定の基礎を必ず選ぶ。料率が基礎に対して珍しければ確かめる（受領額の契約を配信価格で登録する取り違えを防ぐ）。
+    if (kindNow === "license" && detail.direction === "in" && v.usageType === "pub_digital" && v.licenseFeeBasis !== "in_lieu") {
+      const check = digitalBasisCheck(v.priceBasis, v.ratePct);
+      if (check.error) { setError(check.error); return; }
+      if (check.confirm && !window.confirm(check.confirm)) return;
+    }
     setBusy(true); setError(null); setBlocked(null);
     try {
       if (counterpartyChanged) {
@@ -927,6 +934,18 @@ export function ConditionEdit(
               <textarea rows={2} value={v.creditNotice} onChange={(e) => set("creditNotice", e.target.value)}
                         placeholder={v.creditFromWork ? "（作品に表記が無いときの控え）" : "© 2026 著作者名／イラスト：◯◯"} />
               <small className="faint">発注書の利用許諾条件の下と特約に出る（A-076）</small>
+            </label>
+          )}
+          {/* 電子（出版）の算定の基礎。配信価格 × ダウンロード数（グロス）か、受領額（再許諾先・配信事業者から受け取った額）か。
+              同じ料率でも払う額が大きく違うので必ず選ぶ（未設定のままは保存できない）。条件書V5 の第4条と一覧の電子の欄に出る。 */}
+          {kindNow === "license" && detail.direction === "in" && v.usageType === "pub_digital" && v.licenseFeeBasis !== "in_lieu" && (
+            <label className="field" id="f-priceBasisDigital">
+              <span>電子 算定の基礎{!isDigitalBasis(v.priceBasis) && <b style={{ color: "var(--danger, #b42318)" }}>　未設定</b>}</span>
+              <select value={isDigitalBasis(v.priceBasis) ? v.priceBasis : ""} onChange={(e) => set("priceBasis", e.target.value)}>
+                <option value="">選んでください</option>
+                {DIGITAL_BASIS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <small className="faint">契約書どおりに。例：受領額 × 42.5%（KADOKAWA 等の再許諾先から受け取った額に掛ける）／配信価格 × ダウンロード数 × 15%</small>
             </label>
           )}
           {kindNow === "license" && detail.direction === "in" && v.licenseFeeBasis === "in_lieu" && (<>

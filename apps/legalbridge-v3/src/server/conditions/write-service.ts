@@ -38,6 +38,11 @@ export interface PublishingTerms {
   payMonth?: number | null;
   /** 支払日。"end" は末日。 */
   payDay?: PayDay | null;
+  /**
+   * 電子の算定の基礎。list＝配信価格（税抜）× ダウンロード数 × 料率／receipts＝受領額（税抜）× 料率。
+   * 条件書V5 の第4条の電子の式と、一覧の電子の欄がここから決まる。
+   */
+  priceBasis?: "list" | "receipts" | null;
 }
 /**
  * 翻訳版の再許諾（A-033）。乙が第三者に出させ、受領額から甲へ払う。
@@ -806,7 +811,7 @@ export class ConditionWriteService {
       // 文だけ年 4 回で周期が年 1 回のままだと、紙面と計算書の回が食い違う。
       const cycleOfTerms = spec?.cycle ?? readDigitalCycle(digitalTerms)?.cycle ?? "year";
       rows.push({ usageType: "pub_digital", ratePct: input.digital.ratePct, exclusivity: input.digital.exclusivity ?? null,
-                  paymentTerms: digitalTerms,
+                  paymentTerms: digitalTerms, priceBasis: input.digital.priceBasis ?? null,
                   // 電子は集計期間ごと＝時限式（term_bound）。集計のしかたが無ければ支払条件の文、それも無ければ年 1 回。
                   settlementMode: "term_bound" as const, settlementCycle: settlementCycleOf(cycleOfTerms) });
     }

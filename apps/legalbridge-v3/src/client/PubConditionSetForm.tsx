@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DIGITAL_BASIS_OPTIONS, digitalBasisCheck, isDigitalBasis } from "../server/conditions/digital-basis.js";
 import { api } from "./api.js";
 import { parseLanguages, parseRegions } from "../server/core/rights-scope.js";
 import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, PAY_DAYS, digitalPaymentTerms, payDayLabel, payScheduleText, type DigitalCycle, type PayDay } from "../server/conditions/pub-digital-cycle.js";
@@ -98,6 +99,16 @@ export function PubConditionSetForm(
       title="出版の条件を登録（紙・電子）"
       submitLabel="紙・電子の条件を登録する"
       path="/conditions/publishing-set"
+      submitOverride={(v) => {
+        // 電子の料率が算定の基礎に対して珍しい（配信価格に 30% 超・受領額に 15% 未満）なら確かめてから保存する。
+        if (!String(v.digitalRate ?? "").trim()) return null;
+        const check = digitalBasisCheck(v.digitalPriceBasis, v.digitalRate);
+        if (check.error) return Promise.reject(new Error(check.error));
+        if (check.confirm && !window.confirm(check.confirm)) {
+          return Promise.reject(new Error("登録をやめました。電子の料率と算定の基礎を確かめてください"));
+        }
+        return null;
+      }}
       initial={{ printExclusivity: "non_exclusive", digitalExclusivity: "non_exclusive", digitalCycle: "year",
                  sublicenseExclusivity: "non_exclusive", transConsent: "covered",
                  taxCategory: "taxable", ...preset }}
@@ -139,7 +150,12 @@ export function PubConditionSetForm(
           options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
           visibleWhen: (v) => String(v.printRate ?? "").trim() !== "" },
         { name: "digitalRate", label: "電子 料率（%）", type: "number", placeholder: "15",
-          hint: "配信価格 × ダウンロード数 × 料率。空なら電子の条件は作らない（条件書は「—」）" },
+          hint: "空なら電子の条件は作らない（条件書は「—」）。何に掛ける率かは次の「電子 算定の基礎」で選ぶ" },
+        // 電子の算定の基礎。同じ料率でも配信価格と受領額では払う額が大きく違うので、必ず選ばせる（初期値なし）。
+        { name: "digitalPriceBasis", label: "電子 算定の基礎", type: "select", required: true,
+          options: DIGITAL_BASIS_OPTIONS,
+          visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
+          hint: "契約書どおりに。例：受領額 × 42.5%（KADOKAWA 等の再許諾先から受け取った額に掛ける）／配信価格 × ダウンロード数 × 15%" },
         { name: "digitalExclusivity", label: "電子 独占区分", type: "select",
           options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "" },
@@ -232,6 +248,7 @@ export function PubConditionSetForm(
           scopes: scopes.length ? scopes : undefined,
           print: print === null ? null : { ratePct: print, exclusivity: v.printExclusivity || null },
           digital: digital === null ? null : { ratePct: digital, exclusivity: v.digitalExclusivity || null,
+                                               priceBasis: isDigitalBasis(v.digitalPriceBasis) ? v.digitalPriceBasis : null,
                                                ...digitalCycleOf(v) },
           translationPrint: transPrint === null ? null : translation(transPrint),
           translationDigital: transDigital === null ? null : translation(transDigital)

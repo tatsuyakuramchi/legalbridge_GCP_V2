@@ -598,13 +598,13 @@ export function pubTermsWarnings(context: Data, templateKey: string = PUB_TERMS_
     out.push({ kind: "other", message: `条件明細の支払条件から支払の表の語を読めません：${u}。紙面は画面の欄（空なら既定）で出ます。条件明細の支払条件を「毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。」の形にすると連動します` });
   }
   for (const c of payment.conflicts) out.push({ kind: "other", message: c });
-  // V5 の電子書籍配信は「配信価格 × ダウンロード数 × 料率」に統一（乙の入金額を基準にしない）。
+  // V5：電子の算定の基礎（配信価格 × ダウンロード数／受領額）は条件明細ごとに選ぶ。未設定は配信価格の式で出るので名指しする。
   if (isPubTermsV5(templateKey)) {
-    const receipts = conditions.filter((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c)
-      && String(c.priceBasis) === "receipts");
-    if (receipts.length) {
-      out.push({ kind: "other", message: `電子の条件明細 ${receipts.map((c) => text(c.conditionNo) || `#${c.id}`).join("・")} は価格の基準が「入金額」です。`
-        + "V5 の条件書の電子書籍配信は「配信価格（税抜）× ダウンロード数 × 料率」で書くので、条件明細の価格の基準を配信価格に直してください（一覧の備考に入金額基準の注記が出たままになります）" });
+    const unset = conditions.filter((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c)
+      && String(c.licenseFeeBasis ?? "") !== "in_lieu" && !["list", "receipts"].includes(String(c.priceBasis ?? "")));
+    if (unset.length) {
+      out.push({ kind: "other", message: `電子の条件明細 ${unset.map((c) => text(c.conditionNo) || `#${c.id}`).join("・")} は算定の基礎が未設定です。`
+        + "このままだと「配信価格（税抜）× ダウンロード数 × 料率」で出ます。条件明細で「配信価格 × ダウンロード数」か「受領額」を選んでください" });
     }
   }
   for (const condition of conditions) {
@@ -743,7 +743,15 @@ const joinContact = (parts: unknown[]) =>
  * 独占区分は、行を直していても条件から引き直す（紙は台帳の写し。料率を
  * 変えるなら条件を直す）。
  */
-export function pubTermsPatch(context: Data, manual: Data = {}): Data {
+export interface PubTermsOptions {
+  /**
+   * V5（pub_license_terms_v5/_annex）。電子の算定の基礎（配信価格／受領額）は第4条と一覧の料率の欄で示すので、
+   * 備考に「電子の料率は乙の入金額に対する率」を足さない。基礎が混ざるときは一覧の電子の欄に基礎を添える。
+   */
+  v5?: boolean;
+}
+
+export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTermsOptions = {}): Data {
   const pick = (...keys: string[]): string => {
     for (const key of keys) {
       const value = manual[key] ?? context[key];
@@ -819,7 +827,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
                                                priceBasis: paidCond.priceBasis, partyName: paidCond.targetPartyName }) : "";
       // 増刷時の非加算と電子の料率の基準も台帳から引き直す（行を直していてもそちらが正）。
       const exempt = fromLedger ? exemptLaterNote(number(print?.royaltyExemptLaterPct)) : "";
-      const receipts = fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
+      const receipts = !options.v5 && fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
       return [fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
     })();
     // 作品の個別契約の番号。条件から出た行は条件の個別契約が正（決定のときに作品ごとに立てる）。
@@ -854,6 +862,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
         : (text(row.digital_exclusivity) || "—"),
       hasPrint: fromLedger ? Boolean(print) : text(row.print_rate) !== "" && text(row.print_rate) !== "—",
       hasDigital: fromLedger ? Boolean(digital) : text(row.digital_rate) !== "" && text(row.digital_rate) !== "—",
+      /** 電子の算定の基礎（V5 で基礎が混ざるとき、一覧の電子の欄に添える）。receipts＝受領額、それ以外＝配信価格。 */
+      digitalBasis: digital ? (String(digital.priceBasis) === "receipts" ? "受領額" : "配信価格") : "",
       // 翻訳版の再許諾（A-033）。紙・電子の率を1つにまとめ、別途合意の要否を添える。
       // 作品ごとに率が違うので、条文ではなく一覧で持つ。列にすると紙・電子・要否の
       // 3行を 22mm に押し込むことになるので、備考と同じ全幅の行に1文で出す（A-035）。
@@ -960,7 +970,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     specialNotes: pick("特記事項"),
 
     hasBank: Boolean(bank),
-    titles,
+    // V5：電子の算定の基礎が作品で混ざるときだけ、一覧の電子の欄に「（受領額）」「（配信価格）」を添える。
+    titles: options.v5 && digitalConds.some((c) => String(c.priceBasis) === "receipts")
+      && !digitalConds.every((c) => String(c.priceBasis) === "receipts")
+      ? titles.map((t) => ({ ...t, digitalBasisTag: t.hasDigital && t.digitalBasis ? `（${t.digitalBasis}）` : "" }))
+      : titles,
     /** 一覧に載る作品の点数。第１条の要約と別紙1の見出しに出る（r5）。 */
     titleCount: titles.length,
     hasAnyDigital: titles.some((t) => t.hasDigital),

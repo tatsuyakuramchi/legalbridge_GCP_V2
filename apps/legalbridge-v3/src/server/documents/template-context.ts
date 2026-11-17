@@ -20,7 +20,7 @@ import { editionPatch, royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseMasterV5Template, licenseMasterV5Patch } from "./license-master-v5.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
-import { PUB_TITLES_FIELD, isPubTermsMulti, isPubTermsTemplate, pubTermsMultiWarnings, pubTermsPatch, pubTermsSuggestions,
+import { PUB_TITLES_FIELD, isPubTermsMulti, isPubTermsTemplate, isPubTermsV5, pubTermsMultiWarnings, pubTermsPatch, pubTermsSuggestions,
          pubTermsWarnings, pubTitleSeeds } from "./pub-terms.js";
 import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
@@ -749,7 +749,7 @@ export function buildTemplateContext(
     return { ...common, ...licenseTermsPatch(context, { ...manual, ...bound }) };
   }
   if (isPubTermsTemplate(templateKey)) {
-    return { ...common, ...pubTermsPatch(context, { ...manual, ...bound }) };
+    return { ...common, ...pubTermsPatch(context, { ...manual, ...bound }, { v5: isPubTermsV5(templateKey) }) };
   }
   if (isLicenseMasterV5Template(templateKey)) {
     return { ...common, ...licenseMasterV5Patch(context, { ...manual, ...bound }) };

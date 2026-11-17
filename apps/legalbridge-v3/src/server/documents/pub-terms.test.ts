@@ -149,7 +149,7 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
   assert.equal(patch.hasAnyDigital, true);
   assert.deepEqual(patch.titles[1], {
     no: 2, termsNo: "", jointLabel: "なし", jointNames: "なし", title: "ねこの図書館", edition: "ねこの図書館 ①", copyright: "", thirdParty: "なし", note: "",
-    printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—",
+    printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—", digitalBasis: "",
     hasPrint: true, hasDigital: false,
     // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
     translation: "—", hasTranslation: false, translationConsent: "",
