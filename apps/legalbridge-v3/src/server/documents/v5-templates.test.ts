@@ -244,7 +244,7 @@ test("レビュー反映：ボードゲームは明示承認の対象・製品�
   assert.match(out, /第3条及び別紙3により再許諾を認めた他言語版、対象製品の再版/);
 });
 
-test("条件書V5（出版）：翻訳版再許諾の条件があれば、第4条・第5条に再許諾（紙）・再許諾（電子）の行。支払は四半期の報告受領ベース", () => {
+test("条件書V5（出版）：再許諾（pub_sub_*）の条件があれば、第4条・第5条に再許諾（紙）・再許諾（電子）の行。支払は四半期の報告受領ベース", () => {
   const withSub = { ...pubContext, conditions: [
     ...pubContext.conditions,
     cond({ id: 3, conditionNo: "CL-3", name: "星の本（中文）", workId: 10, work: { title: "星の本" }, ratePct: 50, usageType: "pub_sub_print",
@@ -260,8 +260,8 @@ test("条件書V5（出版）：翻訳版再許諾の条件があれば、第4�
     const out = renderDocumentHtml(html, values);
     const art4 = out.slice(out.indexOf("04</span>許諾料"), out.indexOf("05</span>支払時期・方法"));
     const art5 = out.slice(out.indexOf("05</span>支払時期・方法"), out.indexOf("06</span>"));
-    assert.match(art4, /再許諾（紙）<\/td><td>乙が紙媒体出版の再許諾先から受領した対価（税抜）× 料率（.*?「翻訳版再許諾」の行の「紙」の率）/);
-    assert.match(art4, /再許諾（電子）<\/td><td>乙が電子書籍配信の再許諾先から受領した対価（税抜）× 料率（.*?「翻訳版再許諾」の行の「電子」の率）/);
+    assert.match(art4, /再許諾（紙）<\/td><td>乙が紙媒体出版の再許諾先から受領した対価（税抜）× 料率（.*?「再許諾」の行の「紙」の率）/);
+    assert.match(art4, /再許諾（電子）<\/td><td>乙が電子書籍配信の再許諾先から受領した対価（税抜）× 料率（.*?「再許諾」の行の「電子」の率）/);
     for (const k of ["再許諾（紙）", "再許諾（電子）"]) {
       assert.ok(art5.includes(`${k}</td><td>毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。`
         + "乙は、各集計期間に再許諾先から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。"), k);

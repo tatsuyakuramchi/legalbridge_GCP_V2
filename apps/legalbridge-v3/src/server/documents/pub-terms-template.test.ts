@@ -159,10 +159,10 @@ test("翻訳版再許諾：一覧に「紙 50%／電子 40%」と別途合意の
   const patch = pubTermsPatch(ctx, { "許諾者連絡先": "甲 ／ k@example.test" });
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
   assert.ok(!out.includes("{{"));
-  assert.ok(out.includes('<span class="lbl">翻訳版再許諾</span>紙 50%／電子 40%（別途合意 要）'),
+  assert.ok(out.includes('<span class="lbl">再許諾</span>紙 50%／電子 40%（別途合意 要）'),
     "作品の下の行に1文で出る");
   assert.ok(!out.includes('class="trans"'), "列は作らない（表の幅は翻訳版なしと同じ）");
-  assert.ok(out.includes("別紙1の「翻訳版再許諾」の行"), "第４条は一覧の行を指す");
+  assert.ok(out.includes("別紙1の「再許諾」の行"), "第４条は一覧の行を指す");
   assert.ok(!out.includes("対価（税抜）の 50%"), "条文に率は書かない（作品ごとに違う）");
   assert.ok(out.includes("甲乙が別途書面で合意する"), "第２条は「要」の書き方");
   // 翻訳版が無い作品には、その行を作らない（備考があれば備考だけの行）。
@@ -198,7 +198,7 @@ test("翻訳版の条件が無ければ、これまでどおり手入力の取�
   const patch = pubTermsPatch(context, { "翻訳版取り分": "50", "許諾者連絡先": "甲 ／ k@example.test" });
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
   assert.ok(out.includes("対価（税抜）の 50%"), "第４条は手入力の取り分");
-  assert.ok(!out.includes('<span class="lbl">翻訳版再許諾</span>'), "一覧に翻訳版の行は出ない");
+  assert.ok(!out.includes('<span class="lbl">再許諾</span>'), "一覧に翻訳版の行は出ない");
 });
 
 /**
@@ -238,7 +238,7 @@ test("既定（再許諾）のままなら、これまでの書き方で出る",
   const out = renderDocumentHtml(annexHtml, { taxRate: 10, BANK_INFO: "", ...patch });
   assert.ok(out.includes("乙が第三者に再許諾して行わせる翻訳版の出版"));
   assert.ok(out.includes("乙が再許諾先から受領する対価（税抜）× 料率"));
-  assert.ok(out.includes('<span class="lbl">翻訳版再許諾</span>'));
+  assert.ok(out.includes('<span class="lbl">再許諾</span>'));
   assert.ok(out.includes("別途合意 要）"), "行に要否が出る");
   assert.ok(out.includes("映像化・商品化その他の二次利用は本条件書の対象外とし、別途合意による。"),
     "二次利用の行はこれまでどおり");

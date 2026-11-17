@@ -674,7 +674,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   const hasPrintMedia = conditions.some((c) => mediaOfCondition(c) === "print");
   const hasDigitalMedia = conditions.some((c) => mediaOfCondition(c) === "digital");
   const digitalConds = conditions.filter((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c));
-  // 再許諾（翻訳版再許諾）の条件が載っている媒体。V5 の条件書は第４条・第５条に媒体ごとの行を出す。
+  // 再許諾（pub_sub_*）の条件が載っている媒体。V5 の条件書は第４条・第５条に媒体ごとの行を出す。
   const hasSubPrint = conditions.some((c) => isTranslationCondition(c) && mediaOfCondition(c) === "print");
   const hasSubDigital = conditions.some((c) => isTranslationCondition(c) && mediaOfCondition(c) === "digital");
   const byId = new Map(conditions.map((c) => [Number(c.id), c]));
@@ -687,7 +687,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   // 保存するので、あとから回数が増えても過去の紙は変わらない。
   const asOf = pick("締結日") || text(context.document?.issuedOn) || todayStr();
   const translationDerivative = pick("翻訳の扱い") === "二次的著作物";
-  const translationLabel = translationDerivative ? "翻訳版" : "翻訳版再許諾";
+  // 再許諾は翻訳版に限らない（子会社の版元・電子書籍の配信事業者への再許諾もある）ので「再許諾」。
+  const translationLabel = translationDerivative ? "翻訳版" : "再許諾";
 
   // 行に控えた条件 id が、いまの条件に無いことがある（条件を改訂した・重複を無効にして新しい方に付け替えた）。
   // そのときは同じ作品（題名）の種の行から引き直す。引けないと、行に書いてある古い料率・独占区分が紙に出続ける。
