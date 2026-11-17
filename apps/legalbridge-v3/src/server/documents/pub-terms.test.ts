@@ -538,3 +538,27 @@ test("作品ごとに番号を持つ条件書：「共著者等」欄は、契�
   assert.equal(jointNamesOf([], "なし", "著：力造", duc), "なし");
   assert.equal(jointNamesOf([], "", "", duc), "なし");
 });
+
+test("作品ごとに番号を持つ条件書：翻訳版の条件明細を載せていなくても、翻訳版の行を出す（料率は欄の値）", async () => {
+  const { pubTermsPatch, MULTI_DEFAULTS } = await import("./pub-terms.js");
+  const context = {
+    counterparty: { id: 1, name: "合同会社テスト", kind: "corporate" }, company: { name: "株式会社アークライト" },
+    conditions: [
+      { id: 1, name: "作品A｜紙出版", usageType: "pub_print", ratePct: 11, counterpartyId: 1, work: { title: "作品A" }, shares: [] },
+      { id: 2, name: "作品A｜電子出版", usageType: "pub_digital", ratePct: 16, counterpartyId: 1, work: { title: "作品A" }, shares: [] }
+    ]
+  };
+  // 欄の初期値が入った状態（フォームは初期値を入れて渡す）。
+  const base = { "許諾内容_翻訳": MULTI_DEFAULTS.grantTranslation, "翻訳版の料率": MULTI_DEFAULTS.translationRate,
+                 "翻訳版の算定の基礎": MULTI_DEFAULTS.translationBasis };
+  const p = pubTermsPatch(context, base);
+  assert.equal(p.multiHasTranslation, true);
+  assert.equal(p.translationRateAll, "50%");
+  assert.equal(p.grantTranslation, MULTI_DEFAULTS.grantTranslation);
+  // 前の版のひな形が見る値は変わらない（翻訳版の条件が無ければ出さない）。
+  assert.equal(p.hasTranslation, false);
+  // 料率の欄を直せば、その率。
+  assert.equal(pubTermsPatch(context, { ...base, "翻訳版の料率": "40%" }).translationRateAll, "40%");
+  // 翻訳版を書かない紙。
+  assert.equal(pubTermsPatch(context, { ...base, "翻訳版の行": "出さない" }).multiHasTranslation, false);
+});
