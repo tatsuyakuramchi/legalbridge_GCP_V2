@@ -1,4 +1,4 @@
-<!-- pub_license_terms_v5 r1 -->
+<!-- pub_license_terms_v5 r2 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5）。少数作品用（一覧を01に載せる。別紙なし）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -202,7 +202,8 @@
   <tr><td class="k">紙媒体出版</td><td>税抜定価 × 印税対象部数 × 料率（第1条の一覧の「紙」欄）。印税対象部数は刷部数とし、見本・献本・破損分を除く。増刷時に刷部数の一部を印税対象部数から除く定め（非加算）のある作品は、一覧の備考欄の率による。初版部数その他の個別の取り決めは一覧の備考欄による。</td></tr>
   <tr><td class="k">電子書籍配信</td><td>{{#if digitalReceiptBasis}}乙が電子書店その他の配信事業者から受領する金額（税抜）× 料率（第1条の一覧の「電子」欄）。{{else}}配信価格（税抜）× ダウンロード数 × 料率（第1条の一覧の「電子」欄）。{{#if digitalBasisMixed}}ただし、一覧の備考欄に「電子の料率は乙の入金額に対する率」とある作品は、乙が配信事業者から受領する金額（税抜）× 料率とする。{{/if}}{{/if}}「電子」欄が「—」の作品には電子書籍配信の許諾料は発生しない。</td></tr>
   {{#unless translationDerivative}}{{#if hasTranslationConditions}}
-  <tr><td class="k">{{translationLabel}}</td><td>乙が再許諾先から受領する対価（税抜）× 料率（第1条の一覧の「{{translationLabel}}」の行）。紙と電子で料率が異なる場合は、同行の媒体ごとの率による。当該の行が無い作品には翻訳版の許諾料は発生しない。算定の細目に別段の定めをするときは、一覧の備考欄又は特記事項による。</td></tr>
+  {{#if hasSubPrint}}<tr><td class="k">再許諾（紙）</td><td>乙が紙媒体出版の再許諾先から受領した対価（税抜）× 料率（第1条の一覧の「{{translationLabel}}」の行の「紙」の率）。当該の行が無い作品には紙媒体出版の再許諾の許諾料は発生しない。算定の細目に別段の定めをするときは、一覧の備考欄又は特記事項による。</td></tr>{{/if}}
+  {{#if hasSubDigital}}<tr><td class="k">再許諾（電子）</td><td>乙が電子書籍配信の再許諾先から受領した対価（税抜）× 料率（第1条の一覧の「{{translationLabel}}」の行の「電子」の率）。当該の行が無い作品には電子書籍配信の再許諾の許諾料は発生しない。算定の細目に別段の定めをするときは、一覧の備考欄又は特記事項による。</td></tr>{{/if}}
   {{else}}{{#if hasTranslation}}
   <tr><td class="k">翻訳版</td><td>乙が再許諾先から受領する対価（税抜）の {{translationShare}}。</td></tr>
   {{/if}}{{/if}}{{/unless}}
@@ -213,10 +214,15 @@
   <tr><td class="k">紙媒体出版</td><td>{{#if hasPrintMedia}}刷部数確定の都度、{{payPrint}}までに支払う。{{else}}—{{/if}}</td></tr>
   <tr><td class="k">電子書籍配信</td><td>{{#if hasDigitalMedia}}毎年{{digitalPeriod}}を集計期間とし、{{payDigital}}までに支払う。{{else}}—{{/if}}</td></tr>
   {{#if hasTranslation}}{{#unless translationDerivative}}
-  <tr><td class="k">翻訳版</td><td>乙が再許諾先から対価を受領した日の{{payTranslation}}までに支払う。</td></tr>
+  {{#if hasTranslationConditions}}
+  {{#if hasSubPrint}}<tr><td class="k">再許諾（紙）</td><td>毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。乙は、各集計期間に再許諾先から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。</td></tr>{{/if}}
+  {{#if hasSubDigital}}<tr><td class="k">再許諾（電子）</td><td>毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。乙は、各集計期間に再許諾先から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。</td></tr>{{/if}}
+  {{else}}
+  <tr><td class="k">翻訳版</td><td>毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。乙は、各集計期間に再許諾先から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。</td></tr>
+  {{/if}}
   {{/unless}}{{/if}}
   <tr><td class="k">消費税・源泉</td><td>上記金額は税抜とし、消費税（{{taxRate}}%）を別途加算する。{{#if withholding}}乙は法令に基づき所得税及び復興特別所得税を源泉徴収し、その残額を支払う。{{else}}甲が法人であるため源泉徴収は行わない。{{/if}}</td></tr>
-  <tr><td class="k">報告</td><td>乙は支払の際、作品ごとの刷部数・定価・ダウンロード数・配信価格（受領する金額を基準とする作品はその額）を記載した明細を甲に提出する。</td></tr>
+  <tr><td class="k">報告</td><td>乙は支払の際、作品ごとの刷部数・定価・ダウンロード数・配信価格（受領する金額を基準とする作品はその額）を記載した明細を甲に提出する。{{#if hasTranslation}}{{#unless translationDerivative}}再許諾については、再許諾先ごとに、受領した報告の対象期間・数量・受領額を記載する。{{/unless}}{{/if}}</td></tr>
   <tr><td class="k">振込先</td><td>{{#if hasBank}}{{BANK_INFO}}　{{/if}}振込手数料は乙の負担とする。</td></tr>
 </table>
 

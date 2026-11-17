@@ -674,6 +674,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
   const hasPrintMedia = conditions.some((c) => mediaOfCondition(c) === "print");
   const hasDigitalMedia = conditions.some((c) => mediaOfCondition(c) === "digital");
   const digitalConds = conditions.filter((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c));
+  // 再許諾（翻訳版再許諾）の条件が載っている媒体。V5 の条件書は第４条・第５条に媒体ごとの行を出す。
+  const hasSubPrint = conditions.some((c) => isTranslationCondition(c) && mediaOfCondition(c) === "print");
+  const hasSubDigital = conditions.some((c) => isTranslationCondition(c) && mediaOfCondition(c) === "digital");
   const byId = new Map(conditions.map((c) => [Number(c.id), c]));
   const seeds = pubTitleSeeds(context);
   const rows = list(manual[PUB_TITLES_FIELD]).length ? list(manual[PUB_TITLES_FIELD]) : seeds;
@@ -843,6 +846,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     hasTranslation: translationShare != null || transTitles.length > 0,
     // 第５条の支払の行の枠。載っていない媒体は本文（188 以降のひな形）が行ごと「—」にする（A-111）。
     hasPrintMedia, hasDigitalMedia,
+    hasSubPrint, hasSubDigital,
     // 第４条 電子：電子の条件が全部「入金額」基準なら 乙の受領額 × 料率。混ざれば本文は配信価格の式のまま、備考の行を指す（197 以降のひな形）。
     digitalReceiptBasis: hasDigitalMedia && digitalConds.length > 0 && digitalConds.every((c) => String(c.priceBasis) === "receipts"),
     digitalBasisMixed: digitalConds.some((c) => String(c.priceBasis) === "receipts") && !digitalConds.every((c) => String(c.priceBasis) === "receipts"),

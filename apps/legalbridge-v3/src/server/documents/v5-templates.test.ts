@@ -243,3 +243,33 @@ test("レビュー反映：ボードゲームは明示承認の対象・製品�
   assert.match(out, /製品の安全・表示・事故の通知・回収の判断者と費用の負担は、別紙1に定める/);
   assert.match(out, /第3条及び別紙3により再許諾を認めた他言語版、対象製品の再版/);
 });
+
+test("条件書V5（出版）：翻訳版再許諾の条件があれば、第4条・第5条に再許諾（紙）・再許諾（電子）の行。支払は四半期の報告受領ベース", () => {
+  const withSub = { ...pubContext, conditions: [
+    ...pubContext.conditions,
+    cond({ id: 3, conditionNo: "CL-3", name: "星の本（中文）", workId: 10, work: { title: "星の本" }, ratePct: 50, usageType: "pub_sub_print",
+      scopes: { region: ["中国"], language: ["中国語"], media: ["紙"] } }),
+    cond({ id: 4, conditionNo: "CL-4", name: "星の本（中文）", workId: 10, work: { title: "星の本" }, ratePct: 40, usageType: "pub_sub_digital",
+      scopes: { region: ["中国"], language: ["中国語"], media: ["電子"] } })
+  ] };
+  for (const html of [PUB, PUB_ANNEX]) {
+    const rows = pubTitleSeeds(withSub).map((r: Record<string, unknown>) => ({ ...r, copyright: "© 甲", third_party: "なし" }));
+    const m = { pub_titles: rows };
+    const values = { taxRate: 10, BANK_INFO: "", ...m, ...pubTermsPatch(withSub, m) };
+    assert.deepEqual(blankPlaceholders(html, values, PUB_TERMS_VARIABLES.map((v) => v.name)).filter((n) => !PUB_ROW_NAMES.has(n)), []);
+    const out = renderDocumentHtml(html, values);
+    const art4 = out.slice(out.indexOf("04</span>許諾料"), out.indexOf("05</span>支払時期・方法"));
+    const art5 = out.slice(out.indexOf("05</span>支払時期・方法"), out.indexOf("06</span>"));
+    assert.match(art4, /再許諾（紙）<\/td><td>乙が紙媒体出版の再許諾先から受領した対価（税抜）× 料率（.*?「翻訳版再許諾」の行の「紙」の率）/);
+    assert.match(art4, /再許諾（電子）<\/td><td>乙が電子書籍配信の再許諾先から受領した対価（税抜）× 料率（.*?「翻訳版再許諾」の行の「電子」の率）/);
+    for (const k of ["再許諾（紙）", "再許諾（電子）"]) {
+      assert.ok(art5.includes(`${k}</td><td>毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。`
+        + "乙は、各集計期間に再許諾先から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。"), k);
+    }
+    assert.match(art5, /再許諾については、再許諾先ごとに、受領した報告の対象期間・数量・受領額を記載する/);
+  }
+  // 再許諾の条件が無い紙には行が出ない。
+  const plain = renderPub(PUB).out;
+  assert.ok(!plain.includes("再許諾（紙）") && !plain.includes("再許諾（電子）"));
+  assert.ok(!plain.includes("再許諾については"));
+});
