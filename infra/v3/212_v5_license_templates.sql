@@ -22,7 +22,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- license_master_v5 r2 -->
+  html constant text := $tpl$<!-- license_master_v5 r3 -->
 <!--
   著作物利用許諾基本契約書V5（license_master_v5）。出版・ボードゲーム共通の基本契約。本番へは infra/v3/212 が運ぶ
   （infra/v3/tools/make-template-sql.mjs で本文から作る。直すときはここを直して SQL を作り直す）。
@@ -63,9 +63,10 @@ DECLARE
   h3 { font-size: 9pt; background: #eee; padding: 2px 6px; margin: 10px 0 4px; }
   .kv { display: grid; grid-template-columns: 25% 75%; row-gap: 3px; margin: 0 0 4px 6px; }
   .kv .k { color: #555; }
-  .art { break-inside: avoid; margin: 0 0 3px; text-align: justify; }
+  /* 条は項の境目でページを分けてよい（条ごと送ると長い条の前に大きな空白が出る）。項の途中・見出しの直後では分けない。 */
+  .art { margin: 0 0 3px; text-align: justify; orphans: 3; widows: 3; }
   .art b { font-weight: 700; }
-  .art .p { display: block; padding-left: 1.1em; text-indent: -1.1em; }
+  .art .p { display: block; padding-left: 1.1em; text-indent: -1.1em; break-inside: avoid; }
   .chap { break-after: avoid; font-weight: 700; color: #555; font-size: 8.2pt; margin: 8px 0 2px; }
   .end { text-align: right; color: #555; margin-top: 4px; }
   .sig { break-inside: avoid; display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #ccc; margin-top: 6px; }
@@ -75,6 +76,7 @@ DECLARE
   .sig .f { font-size: 7.4pt; color: #666; margin-top: 4px; }
   .sig .v { border-bottom: 1px solid #555; width: 66%; min-height: 16px; }
   .sig .seal { position: absolute; right: 12px; top: 34px; width: 60px; height: 60px; border: 1px solid #ccc; font-size: 7.4pt; color: #777; display: flex; align-items: center; justify-content: center; text-align: center; }
+  .special { white-space: pre-wrap; }
   .note { break-after: avoid; font-size: 7.6pt; color: #666; }
 </style>
 </head>
@@ -84,7 +86,6 @@ DECLARE
   <h1>著作物利用許諾基本契約書</h1>
   <div class="meta">締結日：{{formatDateCompact signDate}}<br>書類番号：<b>{{docNo}}</b></div>
 </div>
-<div class="sub">出版・ボードゲーム共通 ／ 個別条件書により著作物ごとの許諾内容を定める</div>
 
 <div class="box">
   <div class="grid">
@@ -96,9 +97,9 @@ DECLARE
 
 <h2>1. 基本条件</h2>
 <div class="kv">
-  <div class="k">個別条件書</div><div>個別利用許諾条件書（第3条。出版・ボードゲーム共通の様式）。本契約と一体をなし、矛盾するときは個別条件書が優先する。</div>
+  <div class="k">個別条件書</div><div>個別利用許諾条件書は本契約と一体をなし、矛盾するときは個別条件書が優先する。</div>
   <div class="k">業務委託</div><div>乙が発行する発注書による（第12条）</div>
-  <div class="k">有効期間</div><div>締結日から5年間。満了3か月前までに書面で申入れがなければ5年ごとに自動更新。個別条件書の許諾期間は、締結時の残存期間が2年以上なら本契約の満了日まで、2年未満なら満了日からさらに5年（第23条）</div>
+  <div class="k">有効期間</div><div>締結日から{{termYears}}年間。満了3か月前までに書面で申入れがなければ{{termYears}}年ごとに自動更新。個別条件書の許諾期間は、締結時の残存期間が2年以上なら本契約の満了日まで、2年未満なら満了日からさらに{{termYears}}年（第23条）</div>
   <div class="k">支払先</div><div>{{#if hasBank}}{{BANK_INFO}} ／ {{/if}}振込手数料：乙負担</div>
   <div class="k">税務</div><div>消費税：外税 ／ 源泉徴収：{{#if withholding}}あり{{else}}なし{{/if}} ／ 適格請求書発行事業者：{{#if licensorInvoiceNo}}登録済（{{licensorInvoiceNo}}）{{else}}未登録{{/if}}</div>
   <div class="k">通知先</div><div>甲：{{licensorContact}}<br>乙：{{licenseeContact}}</div>
@@ -114,7 +115,7 @@ DECLARE
 <span class="p">2　条件が未確定でも開発等を先行させる必要があるときは、個別条件書に「暫定許諾」と明記し、確定の期限（定めがないときは暫定許諾の開始日から6か月）と暫定の対価（料率等）を定めて、許諾を開始できる。暫定許諾で乙が行えるのは、個別条件書に定めがない限り、試作、監修のための提出および発売前の告知に限る。量産、予約の受付、販売および再許諾は、個別条件書にその旨と範囲を定めたときに限り行える。期限までに確定した条件は、暫定許諾の開始日に遡って適用する。</span>
 <span class="p">3　前項の期限までに条件が確定しないときは、暫定許諾は期限の到来をもって終了する。この場合、乙は新たな製造、配信および再許諾を中止し、前項により量産が認められていたときに限り、終了までに製造した本製品を終了日から6か月間（個別条件書に別段の定めがあるときはその期間）販売できる。乙は、終了日現在の在庫数と終了までの製造数・販売数を甲に報告し、これらの対価は暫定の対価により精算する。</span>
 <span class="p">4　個別条件書に記載のない利用は許諾されない。新たな利用は、追加の個別条件書その他の書面による合意を要する。</span>
-<span class="p">5　個別条件書には、利用類型（出版、ボードゲーム等）に応じて乙所定の事業別条項を定める。事業別条項は個別条件書と一体をなし、これを変更するときは個別条件書の特記事項に定める。特記事項で本契約または事業別条項を変更するときは、変更する条項とその内容を特定して記載する。</span></p>
+<span class="p">5　個別条件書には、利用類型（出版、ボードゲーム等）に応じて乙所定の事業別条項を定める。事業別条項は個別条件書と一体をなし、これを変更するときは個別条件書の特約事項に定める。特約事項で本契約または事業別条項を変更するときは、変更する条項とその内容を特定して記載する。</span></p>
 
 <div class="chap">第2章　許諾</div>
 <p class="art"><b>第4条（利用許諾）</b>　甲は乙に対し、個別条件書に定める範囲で、本著作物を複製、翻案、公衆送信、頒布その他本製品の制作・販売に必要な方法で利用することを許諾する。独占・非独占の別が個別条件書にないときは非独占とする。
@@ -186,10 +187,10 @@ DECLARE
 <p class="art"><b>第21条（不可抗力）</b>　天災地変、戦争、感染症、通信障害、法令の改廃その他の不可抗力による履行遅滞・不能について、当事者は責任を負わない。ただし、金銭債務はこの限りでない。</p>
 <p class="art"><b>第22条（解除）</b>　各当事者は、相手方が本契約または個別条件書に違反し、15営業日以上の期間を定めた書面の是正要求に応じないときは、本契約または当該個別条件書を解除できる。
 <span class="p">2　相手方に、(1)破産・民事再生等の申立て、(2)差押え・不渡り等の信用悪化、(3)第25条違反のいずれかがあるときは、催告なく直ちに解除できる。</span></p>
-<p class="art"><b>第23条（有効期間）</b>　本契約の有効期間は、締結日から5年間とする。期間満了の3か月前までにいずれの当事者からも書面による終了の申入れがないときは、本契約は同一の条件でさらに5年間更新され、以後も同様とする。
+<p class="art"><b>第23条（有効期間）</b>　本契約の有効期間は、締結日から{{termYears}}年間とする。期間満了の3か月前までにいずれの当事者からも書面による終了の申入れがないときは、本契約は同一の条件でさらに{{termYears}}年間更新され、以後も同様とする。
 <span class="p">2　個別条件書の許諾期間は、個別条件書に別段の定めがない限り、個別条件書に定める許諾開始日（定めがないときは締結日）から、次の各号に定める日までとする。</span>
 <span class="p">(1)　個別条件書の締結日において本契約の残存期間が2年以上あるとき　本契約の期間満了日</span>
-<span class="p">(2)　個別条件書の締結日において本契約の残存期間が2年未満であるとき　本契約の期間満了日から5年を経過する日</span>
+<span class="p">(2)　個別条件書の締結日において本契約の残存期間が2年未満であるとき　本契約の期間満了日から{{termYears}}年を経過する日</span>
 <span class="p">3　本契約が前項の期間中に第1項により更新されたときは、その時点で有効な個別条件書の許諾期間は、更新後の本契約の期間満了日と前項により定まる日のいずれか遅い日まで延長される。ただし、個別条件書に許諾期間の更新の方法（自動更新の有無、更新の単位、終了の通知期限等）を定めたときは、本項および前項によらず、その定めによる。</span>
 <span class="p">4　本契約が期間満了（第1項の終了の申入れによるものを含む。）により終了したときでも、その時点で有効な個別条件書は、その許諾期間の満了まで存続し、その間は本契約の各条項が当該個別条件書に適用される。</span>
 <span class="p">5　本契約が第22条または第25条により解除されたときは、解除した当事者が別段の意思を表示しない限り、すべての個別条件書も同時に終了する。個別条件書だけが解除されたときは、本契約および他の個別条件書の効力に影響しない。</span></p>
@@ -219,7 +220,11 @@ DECLARE
 <p class="art"><b>第30条（存続）</b>　本契約の終了後も、第6条から第8条まで、第12条から第15条まで、第18条、第19条、第23条、第24条、第25条第5項、第26条、第28条および本条は、なお効力を有する。</p>
 <p class="end">（以下余白）</p>
 
-<h2>3. 署名</h2>
+<h2>3. 特約事項</h2>
+{{#if specialTerms}}<p class="art">本契約の条項に加え、次の特約事項を適用する。特約事項と本契約の条項が抵触するときは、特約事項が優先する。</p>
+<p class="art special">{{specialTerms}}</p>{{else}}<p class="art">なし</p>{{/if}}
+
+<h2>4. 署名</h2>
 <p class="note">甲および乙は、本契約の成立を証するため、本書の電磁的記録を作成し、各自電子署名を施して保管する。書面により締結する場合は本書2通を作成し、記名押印のうえ各1通を保有する。</p>
 <div class="sig">
   <div><div class="t">許諾者（甲）</div>
@@ -276,7 +281,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- license_master_v5 r2 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- license_master_v5 r3 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'license_master_v5';
@@ -305,7 +310,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- individual_license_terms_v5 r2 -->
+  html constant text := $tpl$<!-- individual_license_terms_v5 r3 -->
 <!--
   個別利用許諾条件書V5・ボードゲーム（individual_license_terms_v5）。著作物利用許諾基本契約書V5（license_master_v5）の
   個別条件書。本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -464,7 +469,7 @@ DECLARE
   {{#if (eq sublicenseMode "covered")}}<tr><td class="k">再許諾</td><td>被許諾者は、本条件書に定める範囲内で、第三者に対して対象著作物の利用を再許諾することができる。再許諾に関する条件及び再許諾先は、第3条及び別紙3「再許諾先一覧」に定める。</td></tr>{{/if}}
   {{#if (eq sublicenseMode "none")}}<tr><td class="k">再許諾</td><td>被許諾者は、第三者に対して対象著作物の利用を再許諾することができない。</td></tr>{{/if}}
   {{#if supervisor}}<tr><td class="k">監修</td><td>被許諾者は、対象製品の内容について、許諾者が指定する監修者（{{supervisor}}）による監修を受けるものとする。</td></tr>{{/if}}
-  <tr><td class="k">特記事項</td><td>{{#if specialExtras.length}}本条件書に関する個別の追加条件、例外その他の特記事項は、別紙1「特記事項」に定める。別紙1は本条件書の一部を構成し、本条件書の本文と一体として適用される。{{else}}なし{{/if}}</td></tr>
+  <tr><td class="k">特約事項</td><td>{{#if specialExtras.length}}本条件書に関する個別の追加条件、例外その他の特約事項は、別紙1「特約事項」に定める。別紙1は本条件書の一部を構成し、本条件書の本文と一体として適用される。{{else}}なし{{/if}}</td></tr>
 </table>
 
 <p style="margin-top:2mm">各取引モデルにおける独占性、許諾地域及び許諾言語は、次のとおりとする。</p>
@@ -500,7 +505,7 @@ DECLARE
 <p>第三者に再許諾したときは、再許諾先・取引モデル・地域・言語・料率・開始日を別紙3「再許諾先一覧」に記載する。追加時は別紙3に行を加え、その更新をもって本条件書の一部とする。</p>
 
 <h2><span class="no">04</span>ボードゲームに関する定め<span class="en">BOARD GAME TERMS</span></h2>
-<p>本条は、基本契約第3条第5項に定める事業別条項（ボードゲーム）とし、変更するときは別紙1「特記事項」に定める。</p>
+<p>本条は、基本契約第3条第5項に定める事業別条項（ボードゲーム）とし、変更するときは別紙1「特約事項」に定める。</p>
 <table class="kv">
   <tr><td class="k">ボードゲーム化の範囲</td><td>第2条の利用には、本条件書の範囲で、対象著作物をゲームのルール、カード、ボード、駒その他の構成要素に翻案し、被許諾者のゲームデザインと組み合わせることを含む。デジタル版（アプリ、PC、ブラウザ等）の提供は、別紙1に定めがある場合に限る。</td></tr>
   <tr><td class="k">素材・表示</td><td>許諾者は、許諾者及び被許諾者が別に定める期日及び形式（ファイル名・版、解像度、レイヤー構成等）で、別紙2の構成要素ごとに素材データを被許諾者に引き渡す。被許諾者は、印刷・製造に必要な範囲で、トリミング、色調整、配置の変更を行うことができる。商標・ロゴは、許諾者が示す表示の指針に従って使用する。</td></tr>
@@ -539,9 +544,9 @@ DECLARE
 <!-- 別紙。本文（署名欄まで）の後ろに改ページして付ける。 -->
 <div class="annex">
 <div class="part">
-<h2><span class="no">別紙1</span>特記事項<span class="en">SPECIAL TERMS</span></h2>
+<h2><span class="no">別紙1</span>特約事項<span class="en">SPECIAL TERMS</span></h2>
 {{#if specialExtras.length}}
-<p class="lead">本条件書の本文に定める条件に加え、次の特記事項を適用する。</p>
+<p class="lead">本条件書の本文に定める条件に加え、次の特約事項を適用する。</p>
 {{#each specialExtras}}<p>{{#if seId}}({{seId}}) {{/if}}{{seText}}</p>{{/each}}
 {{else}}
 <p>なし</p>
@@ -649,7 +654,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- individual_license_terms_v5 r2 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- individual_license_terms_v5 r3 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'individual_license_terms_v5';
@@ -678,7 +683,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5 r7 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5 r8 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5）。少数作品用（一覧を01に載せる。別紙なし）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -904,19 +909,19 @@ DECLARE
 </table>
 
 <h2><span class="no">07</span>出版に関する定め<span class="en">PUBLISHING TERMS</span></h2>
-<p>本条は、基本契約第3条第5項に定める事業別条項（出版）とし、変更するときは第9条（特記事項）に定める。</p>
+<p>本条は、基本契約第3条第5項に定める事業別条項（出版）とし、変更するときは第9条（特約事項）に定める。</p>
 <table class="kv">
-  <tr><td class="k">紙媒体の権利の形</td><td>第1条の一覧の「紙」欄が非独占の作品は非独占の利用許諾、独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または第9条（特記事項）に「出版権設定」とある作品は、甲は乙に著作権法第80条第1項第1号の出版権を設定する。</td></tr>
+  <tr><td class="k">紙媒体の権利の形</td><td>第1条の一覧の「紙」欄が非独占の作品は非独占の利用許諾、独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または第9条（特約事項）に「出版権設定」とある作品は、甲は乙に著作権法第80条第1項第1号の出版権を設定する。</td></tr>
   <tr><td class="k">出版権の内容</td><td>出版権を設定した作品について、出版権の存続期間は当該作品の許諾期間とする。著作権法第81条の出版の時期および継続出版の義務は、同条ただし書の別段の定めとして、基本契約第10条（販売）および第11条（販売終了）による。乙は、改めて複製しようとするときは、その都度あらかじめ甲に通知する（同法第82条第2項）。甲は、乙が同法第80条第3項により第三者に複製または公衆送信を許諾することを承諾する。甲は出版権の設定の登録に協力し、出版権が消滅したときは乙が抹消の登録に協力する。</td></tr>
-  <tr><td class="k">電子書籍・貸与</td><td>電子書籍は、第1条の一覧の「電子」欄に独占と明示した作品を除き非独占の利用許諾とし、乙は適切な技術的保護手段を施す。乙は、紙媒体出版物の貸与および図書館等による電子書籍の貸出について、管理団体を通じて許諾し、使用料を受領することができる。甲への配分は第9条（特記事項）に定め、定めがないときは乙が受領した使用料に当該作品の紙・電子の料率を乗じた額とする。</td></tr>
+  <tr><td class="k">電子書籍・貸与</td><td>電子書籍は、第1条の一覧の「電子」欄に独占と明示した作品を除き非独占の利用許諾とし、乙は適切な技術的保護手段を施す。乙は、紙媒体出版物の貸与および図書館等による電子書籍の貸出について、管理団体を通じて許諾し、使用料を受領することができる。甲への配分は第9条（特約事項）に定め、定めがないときは乙が受領した使用料に当該作品の紙・電子の料率を乗じた額とする。</td></tr>
   <tr><td class="k">原稿の引渡し・校正</td><td>原稿を新たに引き渡す作品について、甲は、甲乙が別に定める期日までに完全な原稿（乙が出版に適すると合理的に認めたものをいう。）を乙に引き渡す。校正は甲乙が協力して行い、甲は乙に校正を委ねることができる。</td></tr>
   <tr><td class="k">改訂版・新版</td><td>誤植・誤記の訂正、組版・装丁・判型の変更その他の軽微な修正は本条件書による。本文の実質的な変更、書名の変更、増補、改訂版、新装版その他の新たな版は、甲の承諾を得て、新たな条件書による。甲が改訂版等を第三者から出版しようとするときは、乙に優先交渉の機会を与える。</td></tr>
 </table>
 
 <h2><span class="no">08</span>旧合意との関係<span class="en">PRIOR AGREEMENTS</span></h2>
-<p>対象著作物に関する甲乙間の従前の合意（覚書・電子メールその他形式を問わない）の扱いは、基本契約第27条により第9条（特記事項）に定める。定めのない従前の合意は存続し、本条件書と抵触する部分は本条件書が優先する。本条件書と基本契約が矛盾する場合は本条件書が優先する。</p>
+<p>対象著作物に関する甲乙間の従前の合意（覚書・電子メールその他形式を問わない）の扱いは、基本契約第27条により第9条（特約事項）に定める。定めのない従前の合意は存続し、本条件書と抵触する部分は本条件書が優先する。本条件書と基本契約が矛盾する場合は本条件書が優先する。</p>
 
-<h2><span class="no">09</span>特記事項<span class="en">SPECIAL TERMS</span></h2>
+<h2><span class="no">09</span>特約事項<span class="en">SPECIAL TERMS</span></h2>
 {{#if specialNotes}}<p>{{specialNotes}}</p>{{else}}<p>なし</p>{{/if}}
 
 <div class="tail">
@@ -989,7 +994,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5 r7 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5 r8 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5';
@@ -1018,7 +1023,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5_annex r7 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5_annex r8 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5_annex）。多数作品用（一覧を別紙2に載せる）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -1211,17 +1216,17 @@ DECLARE
 </table>
 
 <h2><span class="no">07</span>出版に関する定め<span class="en">PUBLISHING TERMS</span></h2>
-<p>本条は、基本契約第3条第5項に定める事業別条項（出版）とし、変更するときは別紙1「特記事項」に定める。</p>
+<p>本条は、基本契約第3条第5項に定める事業別条項（出版）とし、変更するときは別紙1「特約事項」に定める。</p>
 <table class="kv">
-  <tr><td class="k">紙媒体の権利の形</td><td>別紙2の一覧の「紙」欄が非独占の作品は非独占の利用許諾、独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または別紙1「特記事項」に「出版権設定」とある作品は、甲は乙に著作権法第80条第1項第1号の出版権を設定する。</td></tr>
+  <tr><td class="k">紙媒体の権利の形</td><td>別紙2の一覧の「紙」欄が非独占の作品は非独占の利用許諾、独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または別紙1「特約事項」に「出版権設定」とある作品は、甲は乙に著作権法第80条第1項第1号の出版権を設定する。</td></tr>
   <tr><td class="k">出版権の内容</td><td>出版権を設定した作品について、出版権の存続期間は当該作品の許諾期間とする。著作権法第81条の出版の時期および継続出版の義務は、同条ただし書の別段の定めとして、基本契約第10条（販売）および第11条（販売終了）による。乙は、改めて複製しようとするときは、その都度あらかじめ甲に通知する（同法第82条第2項）。甲は、乙が同法第80条第3項により第三者に複製または公衆送信を許諾することを承諾する。甲は出版権の設定の登録に協力し、出版権が消滅したときは乙が抹消の登録に協力する。</td></tr>
-  <tr><td class="k">電子書籍・貸与</td><td>電子書籍は、別紙2の一覧の「電子」欄に独占と明示した作品を除き非独占の利用許諾とし、乙は適切な技術的保護手段を施す。乙は、紙媒体出版物の貸与および図書館等による電子書籍の貸出について、管理団体を通じて許諾し、使用料を受領することができる。甲への配分は別紙1「特記事項」に定め、定めがないときは乙が受領した使用料に当該作品の紙・電子の料率を乗じた額とする。</td></tr>
+  <tr><td class="k">電子書籍・貸与</td><td>電子書籍は、別紙2の一覧の「電子」欄に独占と明示した作品を除き非独占の利用許諾とし、乙は適切な技術的保護手段を施す。乙は、紙媒体出版物の貸与および図書館等による電子書籍の貸出について、管理団体を通じて許諾し、使用料を受領することができる。甲への配分は別紙1「特約事項」に定め、定めがないときは乙が受領した使用料に当該作品の紙・電子の料率を乗じた額とする。</td></tr>
   <tr><td class="k">原稿の引渡し・校正</td><td>原稿を新たに引き渡す作品について、甲は、甲乙が別に定める期日までに完全な原稿（乙が出版に適すると合理的に認めたものをいう。）を乙に引き渡す。校正は甲乙が協力して行い、甲は乙に校正を委ねることができる。</td></tr>
   <tr><td class="k">改訂版・新版</td><td>誤植・誤記の訂正、組版・装丁・判型の変更その他の軽微な修正は本条件書による。本文の実質的な変更、書名の変更、増補、改訂版、新装版その他の新たな版は、甲の承諾を得て、新たな条件書による。甲が改訂版等を第三者から出版しようとするときは、乙に優先交渉の機会を与える。</td></tr>
 </table>
 
 <h2><span class="no">08</span>旧合意との関係<span class="en">PRIOR AGREEMENTS</span></h2>
-<p>対象著作物に関する甲乙間の従前の合意（覚書・電子メールその他形式を問わない）の扱いは、基本契約第27条により別紙1「特記事項」に定める。定めのない従前の合意は存続し、本条件書と抵触する部分は本条件書が優先する。本条件書と基本契約が矛盾する場合は本条件書が優先する。</p>
+<p>対象著作物に関する甲乙間の従前の合意（覚書・電子メールその他形式を問わない）の扱いは、基本契約第27条により別紙1「特約事項」に定める。定めのない従前の合意は存続し、本条件書と抵触する部分は本条件書が優先する。本条件書と基本契約が矛盾する場合は本条件書が優先する。</p>
 
 <div class="tail">
 <h2><span class="no">09</span>通知先<span class="en">NOTICES</span></h2>
@@ -1252,9 +1257,9 @@ DECLARE
 <!-- 別紙。本文（署名欄まで）の後ろに改ページして付ける。 -->
 <div class="annex">
 <div class="part">
-<h2><span class="no">別紙1</span>特記事項<span class="en">SPECIAL TERMS</span></h2>
+<h2><span class="no">別紙1</span>特約事項<span class="en">SPECIAL TERMS</span></h2>
 {{#if specialNotes}}
-<p class="lead">本条件書の本文に定める条件に加え、次の特記事項を適用する。</p>
+<p class="lead">本条件書の本文に定める条件に加え、次の特約事項を適用する。</p>
 <p>{{specialNotes}}</p>
 {{else}}
 <p>なし</p>
@@ -1341,7 +1346,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r7 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r8 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5_annex';

@@ -1,4 +1,4 @@
-<!-- license_master_v5 r2 -->
+<!-- license_master_v5 r3 -->
 <!--
   著作物利用許諾基本契約書V5（license_master_v5）。出版・ボードゲーム共通の基本契約。本番へは infra/v3/212 が運ぶ
   （infra/v3/tools/make-template-sql.mjs で本文から作る。直すときはここを直して SQL を作り直す）。
@@ -39,9 +39,10 @@
   h3 { font-size: 9pt; background: #eee; padding: 2px 6px; margin: 10px 0 4px; }
   .kv { display: grid; grid-template-columns: 25% 75%; row-gap: 3px; margin: 0 0 4px 6px; }
   .kv .k { color: #555; }
-  .art { break-inside: avoid; margin: 0 0 3px; text-align: justify; }
+  /* 条は項の境目でページを分けてよい（条ごと送ると長い条の前に大きな空白が出る）。項の途中・見出しの直後では分けない。 */
+  .art { margin: 0 0 3px; text-align: justify; orphans: 3; widows: 3; }
   .art b { font-weight: 700; }
-  .art .p { display: block; padding-left: 1.1em; text-indent: -1.1em; }
+  .art .p { display: block; padding-left: 1.1em; text-indent: -1.1em; break-inside: avoid; }
   .chap { break-after: avoid; font-weight: 700; color: #555; font-size: 8.2pt; margin: 8px 0 2px; }
   .end { text-align: right; color: #555; margin-top: 4px; }
   .sig { break-inside: avoid; display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #ccc; margin-top: 6px; }
@@ -51,6 +52,7 @@
   .sig .f { font-size: 7.4pt; color: #666; margin-top: 4px; }
   .sig .v { border-bottom: 1px solid #555; width: 66%; min-height: 16px; }
   .sig .seal { position: absolute; right: 12px; top: 34px; width: 60px; height: 60px; border: 1px solid #ccc; font-size: 7.4pt; color: #777; display: flex; align-items: center; justify-content: center; text-align: center; }
+  .special { white-space: pre-wrap; }
   .note { break-after: avoid; font-size: 7.6pt; color: #666; }
 </style>
 </head>
@@ -60,7 +62,6 @@
   <h1>著作物利用許諾基本契約書</h1>
   <div class="meta">締結日：{{formatDateCompact signDate}}<br>書類番号：<b>{{docNo}}</b></div>
 </div>
-<div class="sub">出版・ボードゲーム共通 ／ 個別条件書により著作物ごとの許諾内容を定める</div>
 
 <div class="box">
   <div class="grid">
@@ -72,9 +73,9 @@
 
 <h2>1. 基本条件</h2>
 <div class="kv">
-  <div class="k">個別条件書</div><div>個別利用許諾条件書（第3条。出版・ボードゲーム共通の様式）。本契約と一体をなし、矛盾するときは個別条件書が優先する。</div>
+  <div class="k">個別条件書</div><div>個別利用許諾条件書は本契約と一体をなし、矛盾するときは個別条件書が優先する。</div>
   <div class="k">業務委託</div><div>乙が発行する発注書による（第12条）</div>
-  <div class="k">有効期間</div><div>締結日から5年間。満了3か月前までに書面で申入れがなければ5年ごとに自動更新。個別条件書の許諾期間は、締結時の残存期間が2年以上なら本契約の満了日まで、2年未満なら満了日からさらに5年（第23条）</div>
+  <div class="k">有効期間</div><div>締結日から{{termYears}}年間。満了3か月前までに書面で申入れがなければ{{termYears}}年ごとに自動更新。個別条件書の許諾期間は、締結時の残存期間が2年以上なら本契約の満了日まで、2年未満なら満了日からさらに{{termYears}}年（第23条）</div>
   <div class="k">支払先</div><div>{{#if hasBank}}{{BANK_INFO}} ／ {{/if}}振込手数料：乙負担</div>
   <div class="k">税務</div><div>消費税：外税 ／ 源泉徴収：{{#if withholding}}あり{{else}}なし{{/if}} ／ 適格請求書発行事業者：{{#if licensorInvoiceNo}}登録済（{{licensorInvoiceNo}}）{{else}}未登録{{/if}}</div>
   <div class="k">通知先</div><div>甲：{{licensorContact}}<br>乙：{{licenseeContact}}</div>
@@ -90,7 +91,7 @@
 <span class="p">2　条件が未確定でも開発等を先行させる必要があるときは、個別条件書に「暫定許諾」と明記し、確定の期限（定めがないときは暫定許諾の開始日から6か月）と暫定の対価（料率等）を定めて、許諾を開始できる。暫定許諾で乙が行えるのは、個別条件書に定めがない限り、試作、監修のための提出および発売前の告知に限る。量産、予約の受付、販売および再許諾は、個別条件書にその旨と範囲を定めたときに限り行える。期限までに確定した条件は、暫定許諾の開始日に遡って適用する。</span>
 <span class="p">3　前項の期限までに条件が確定しないときは、暫定許諾は期限の到来をもって終了する。この場合、乙は新たな製造、配信および再許諾を中止し、前項により量産が認められていたときに限り、終了までに製造した本製品を終了日から6か月間（個別条件書に別段の定めがあるときはその期間）販売できる。乙は、終了日現在の在庫数と終了までの製造数・販売数を甲に報告し、これらの対価は暫定の対価により精算する。</span>
 <span class="p">4　個別条件書に記載のない利用は許諾されない。新たな利用は、追加の個別条件書その他の書面による合意を要する。</span>
-<span class="p">5　個別条件書には、利用類型（出版、ボードゲーム等）に応じて乙所定の事業別条項を定める。事業別条項は個別条件書と一体をなし、これを変更するときは個別条件書の特記事項に定める。特記事項で本契約または事業別条項を変更するときは、変更する条項とその内容を特定して記載する。</span></p>
+<span class="p">5　個別条件書には、利用類型（出版、ボードゲーム等）に応じて乙所定の事業別条項を定める。事業別条項は個別条件書と一体をなし、これを変更するときは個別条件書の特約事項に定める。特約事項で本契約または事業別条項を変更するときは、変更する条項とその内容を特定して記載する。</span></p>
 
 <div class="chap">第2章　許諾</div>
 <p class="art"><b>第4条（利用許諾）</b>　甲は乙に対し、個別条件書に定める範囲で、本著作物を複製、翻案、公衆送信、頒布その他本製品の制作・販売に必要な方法で利用することを許諾する。独占・非独占の別が個別条件書にないときは非独占とする。
@@ -162,10 +163,10 @@
 <p class="art"><b>第21条（不可抗力）</b>　天災地変、戦争、感染症、通信障害、法令の改廃その他の不可抗力による履行遅滞・不能について、当事者は責任を負わない。ただし、金銭債務はこの限りでない。</p>
 <p class="art"><b>第22条（解除）</b>　各当事者は、相手方が本契約または個別条件書に違反し、15営業日以上の期間を定めた書面の是正要求に応じないときは、本契約または当該個別条件書を解除できる。
 <span class="p">2　相手方に、(1)破産・民事再生等の申立て、(2)差押え・不渡り等の信用悪化、(3)第25条違反のいずれかがあるときは、催告なく直ちに解除できる。</span></p>
-<p class="art"><b>第23条（有効期間）</b>　本契約の有効期間は、締結日から5年間とする。期間満了の3か月前までにいずれの当事者からも書面による終了の申入れがないときは、本契約は同一の条件でさらに5年間更新され、以後も同様とする。
+<p class="art"><b>第23条（有効期間）</b>　本契約の有効期間は、締結日から{{termYears}}年間とする。期間満了の3か月前までにいずれの当事者からも書面による終了の申入れがないときは、本契約は同一の条件でさらに{{termYears}}年間更新され、以後も同様とする。
 <span class="p">2　個別条件書の許諾期間は、個別条件書に別段の定めがない限り、個別条件書に定める許諾開始日（定めがないときは締結日）から、次の各号に定める日までとする。</span>
 <span class="p">(1)　個別条件書の締結日において本契約の残存期間が2年以上あるとき　本契約の期間満了日</span>
-<span class="p">(2)　個別条件書の締結日において本契約の残存期間が2年未満であるとき　本契約の期間満了日から5年を経過する日</span>
+<span class="p">(2)　個別条件書の締結日において本契約の残存期間が2年未満であるとき　本契約の期間満了日から{{termYears}}年を経過する日</span>
 <span class="p">3　本契約が前項の期間中に第1項により更新されたときは、その時点で有効な個別条件書の許諾期間は、更新後の本契約の期間満了日と前項により定まる日のいずれか遅い日まで延長される。ただし、個別条件書に許諾期間の更新の方法（自動更新の有無、更新の単位、終了の通知期限等）を定めたときは、本項および前項によらず、その定めによる。</span>
 <span class="p">4　本契約が期間満了（第1項の終了の申入れによるものを含む。）により終了したときでも、その時点で有効な個別条件書は、その許諾期間の満了まで存続し、その間は本契約の各条項が当該個別条件書に適用される。</span>
 <span class="p">5　本契約が第22条または第25条により解除されたときは、解除した当事者が別段の意思を表示しない限り、すべての個別条件書も同時に終了する。個別条件書だけが解除されたときは、本契約および他の個別条件書の効力に影響しない。</span></p>
@@ -195,7 +196,11 @@
 <p class="art"><b>第30条（存続）</b>　本契約の終了後も、第6条から第8条まで、第12条から第15条まで、第18条、第19条、第23条、第24条、第25条第5項、第26条、第28条および本条は、なお効力を有する。</p>
 <p class="end">（以下余白）</p>
 
-<h2>3. 署名</h2>
+<h2>3. 特約事項</h2>
+{{#if specialTerms}}<p class="art">本契約の条項に加え、次の特約事項を適用する。特約事項と本契約の条項が抵触するときは、特約事項が優先する。</p>
+<p class="art special">{{specialTerms}}</p>{{else}}<p class="art">なし</p>{{/if}}
+
+<h2>4. 署名</h2>
 <p class="note">甲および乙は、本契約の成立を証するため、本書の電磁的記録を作成し、各自電子署名を施して保管する。書面により締結する場合は本書2通を作成し、記名押印のうえ各1通を保有する。</p>
 <div class="sig">
   <div><div class="t">許諾者（甲）</div>

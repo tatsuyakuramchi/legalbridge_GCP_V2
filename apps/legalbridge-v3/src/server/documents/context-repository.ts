@@ -5,6 +5,7 @@ import { DomainError, translate } from "../core/errors.js";
 import { taxRatePercentFor } from "./legacy-totals.js";
 import { DEFAULT_TAX_ROUNDING, taxWithRounding, type TaxRounding } from "../core/rounding.js";
 import { agreementDatedTitle, masterAgreementOf } from "./legacy-variables.js";
+import { licenseMasterTermYears } from "./license-master-v5.js";
 import { CHILD_TITLES_SQL, SOURCE_TITLES_SQL, originalWorkTitle, statementProductName, eventScopeLabel } from "../royalty/product-name.js";
 import { rootAgreementJoin } from "../conditions/contracts.js";
 
@@ -852,7 +853,13 @@ export class DocumentContextRepository {
                         JOIN document_template_versions mv ON mv.id = md.template_version_id
                         JOIN document_templates mt ON mt.id = mv.template_id
                        WHERE md.agreement_id = a.id AND md.status <> 'void'
-                         AND mt.template_key = 'license_master_v5') AS is_v5_master
+                         AND mt.template_key = 'license_master_v5') AS is_v5_master,
+              -- 基本契約V5 の有効期間（契約期間「5年」「3年」）。条件書（出版）の更新の単位の既定に使う。
+              (SELECT md.manual_inputs->>'契約期間' FROM documents md
+                 JOIN document_template_versions mv ON mv.id = md.template_version_id
+                 JOIN document_templates mt ON mt.id = mv.template_id
+                WHERE md.agreement_id = a.id AND md.status <> 'void' AND mt.template_key = 'license_master_v5'
+                ORDER BY md.id DESC LIMIT 1) AS v5_term
          FROM agreements a LEFT JOIN parties p ON p.id = a.counterparty_id
         WHERE a.id = $1`, [id]);
     const row = r.rows[0] as Record<string, any> | undefined;
@@ -879,6 +886,8 @@ export class DocumentContextRepository {
       counterpartyId: int(row.counterparty_id),
       /** 基本契約の文書が著作物利用許諾基本契約書V5（license_master_v5）か。 */
       isV5Master: row.is_v5_master === true,
+      /** 基本契約V5 の有効期間（年）。V5 でなければ null。 */
+      v5TermYears: row.is_v5_master === true ? licenseMasterTermYears(row.v5_term) : null,
       counterparty: {
         name: str(row.party_name) ?? "",
         kana: str(row.party_kana),
