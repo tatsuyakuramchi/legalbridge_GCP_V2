@@ -28,6 +28,7 @@ interface ConditionForEntry {
   matters: Array<{ id: number }>;
   /** 算定の基礎（再許諾・他社販売の実績の初期の形）。 */
   priceBasis?: string | null;
+  usageType?: string | null;
 }
 
 export function EventEntryForm(
@@ -75,7 +76,7 @@ export function EventEntryForm(
                            pricingModel={cond.pricingModel} deliverableOwnership={cond.deliverableOwnership}
                            ratePpm={cond.ratePpm} direction={cond.direction}
                            conditionUnitAmount={cond.unitAmount} conditionQuantity={cond.quantity}
-                           conditionPriceBasis={cond.priceBasis ?? null}
+                           conditionPriceBasis={cond.priceBasis ?? null} conditionUsageType={cond.usageType ?? null}
                            workTitle={cond.work?.title ?? null} workId={cond.work?.id ?? null}
                            matterId={matterId ?? cond.matters[0]?.id ?? null}
                            editable={cond.status === "active" || cond.status === "draft"}

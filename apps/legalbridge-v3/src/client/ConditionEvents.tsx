@@ -98,7 +98,7 @@ interface PreviewResponse {
 
 export function ConditionEvents(
   { conditionId, currency, editable, matterId, pricingModel, deliverableOwnership, reloadKey,
-    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId, kind, conditionPriceBasis,
+    ratePpm, conditionUnitAmount, conditionQuantity, direction, workTitle, workId, kind, conditionPriceBasis, conditionUsageType,
     openForSchedule, onOpened, openOnMount, onCompose, onOpenDocument, onChanged, preset }:
   { conditionId: number; currency: string; editable: boolean;
     /**
@@ -106,6 +106,8 @@ export function ConditionEvents(
      * list＝単価 × 数量、receipts＝受領額。空ならこれまでどおり受領額。実績ごとに変えられる。
      */
     conditionPriceBasis?: string | null;
+    /** 条件の利用形態。電子（pub_digital）は算定の基礎で金額の欄の名前を変える（配信売上／受領額）。 */
+    conditionUsageType?: string | null;
     /** 条件の種類。委託料・実費・手数料は業務委託の記録の流れ（EventEntryForm の ServiceEntry）を出す。 */
     kind?: string | null;
     matterId?: number | null; reloadKey?: number;
@@ -1003,7 +1005,9 @@ export function ConditionEvents(
             {royalty && !rewardLabel && !usage && (
               <>
                 <label className="field">
-                  <span>報告売上・受領額（円）</span>
+                  <span>{conditionUsageType === "pub_digital" && conditionPriceBasis === "receipts" ? "受領額（再許諾先・配信事業者から受け取った額・円）"
+                    : conditionUsageType === "pub_digital" && conditionPriceBasis === "list" ? "配信売上（配信価格 × ダウンロード数・円）"
+                    : "報告売上・受領額（円）"}</span>
                   <input inputMode="numeric" value={f("grossAmount")}
                          onChange={(e) => set("grossAmount", e.target.value)} />
                   <small className="faint">

@@ -160,7 +160,7 @@ const PRICE_BASIS: Record<string, "list" | "receipts"> = { "定価": "list", "�
 function priceBasisColumn(row: Record<string, string>): "list" | "receipts" | null {
   const v = text(row, "電子価格基準");
   if (!v) return null;
-  if (!PRICE_BASIS[v]) throw new DomainError("VALIDATION", `電子価格基準は「定価」か「入金額」です（"${v}"）`);
+  if (!PRICE_BASIS[v]) throw new DomainError("VALIDATION", `電子価格基準は「配信価格」（定価）か「受領額」（入金額）です（"${v}"）`);
   return PRICE_BASIS[v];
 }
 /** 作品の文字の列。「なし」と書けば空にする（空欄は触らない）。 */
@@ -794,7 +794,7 @@ export class PubWorksImportService {
         "原作名": main.source_title ?? "",
         "相手先": main.party_name ?? "", "相手先コード": main.party_code ?? "",
         "紙料率": printC ? pct(printC.rate_ppm) : "", "電子料率": digitalC ? pct(digitalC.rate_ppm) : "",
-        "電子価格基準": digitalC && digitalC.price_basis === "receipts" ? "入金額" : "",
+        "電子価格基準": digitalC && digitalC.price_basis === "receipts" ? "受領額" : digitalC && digitalC.price_basis === "list" ? "配信価格" : "",
         "独占": main.exclusivity === "exclusive" ? "独占" : main.exclusivity === "non_exclusive" ? "非独占" : "",
         // 紙・電子の 2 列で出す（同じ按分でも両方に）。
         "紙取り分": ratioText(printShares),

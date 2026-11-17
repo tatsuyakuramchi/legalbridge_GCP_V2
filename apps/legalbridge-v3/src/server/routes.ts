@@ -2468,7 +2468,9 @@ export function createRoutes(database: Transactable) {
     cycle: z.enum(["year", "half_year", "quarter"]).nullable().optional(),
     startMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
     payMonth: z.coerce.number().int().min(1).max(12).nullable().optional(),
-    payDay: z.union([z.literal("end"), z.coerce.number().int().min(1).max(28)]).nullable().optional()
+    payDay: z.union([z.literal("end"), z.coerce.number().int().min(1).max(28)]).nullable().optional(),
+    // 電子の算定の基礎（配信価格 × ダウンロード数／受領額）。
+    priceBasis: z.enum(["list", "receipts"]).nullable().optional()
   }).nullable().optional();
   const publishingTranslationSchema = z.object({
     ratePct: z.coerce.number().min(0).max(100),
