@@ -706,11 +706,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     // A4 縦に収まらない。片方だけの作品はその媒体だけ出す。
     const transPrintRate = transPrint ? percentText(transPrint.ratePct) : text(row.trans_print_rate);
     const transDigitalRate = transDigital ? percentText(transDigital.ratePct) : text(row.trans_digital_rate);
-    // 紙と電子が同じ率なら「紙・電子 50%」と1つにまとめる（再許諾は媒体で率が同じことが多い）。
-    const transText = transPrintRate && transPrintRate === transDigitalRate
-      ? `紙・電子 ${transPrintRate}`
-      : [transPrintRate ? `紙 ${transPrintRate}` : "",
-         transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean).join("／");
+    const transText = [transPrintRate ? `紙 ${transPrintRate}` : "",
+                       transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean).join("／");
     // 許諾期間は自社出版の条件から引く（紙→電子→翻訳版の順）。行を直して
     // いても条件があればそちらが正。条件が無い行は書いてある文字をそのまま出す。
     const termHead = print ?? digital ?? transPrint ?? transDigital;
