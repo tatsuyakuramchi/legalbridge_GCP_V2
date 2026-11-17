@@ -24,6 +24,8 @@ export interface FormField {
   source: "computed" | "auto" | "suggested" | "manual"; value: unknown;
   helpText: string | null; placeholder: string | null; options: string[] | null;
   readonly: boolean;
+  /** 自動の値を上書きできるか。false は記録から引く欄（上書きしても紙には記録の値が出る）。 */
+  canOverride?: boolean;
 }
 export interface Candidate { label: string; value: string; source: string; kind: "date" | "amount" | "text";
   /** 決まった欄にだけ出す候補（支払条件の定型文など）。 */
@@ -182,8 +184,9 @@ export function DocumentFields(
               const isBlanked = Boolean(blanked?.has(f.name));
               const editing = !isBlanked && (f.source === "manual" || f.source === "suggested"
                 || overriding.has(f.name)
-                || (f.source === "auto" && f.name in manual));
-              const value = f.name in manual ? manual[f.name] : show(f.value);
+                || (f.source === "auto" && f.canOverride !== false && f.name in manual));
+              // 上書きできない欄は、前に入れた値が残っていても記録の値を見せる（紙に出るのは記録の値）。
+              const value = f.name in manual && !(f.source === "auto" && f.canOverride === false) ? manual[f.name] : show(f.value);
               const blank = !String(value ?? "").trim();
               const want = kindFor(f.name, f.label, f.type);
               // 相手先の欄（先方担当・発注先・受注者…）に当社の担当者の候補を出さない。
@@ -215,11 +218,15 @@ export function DocumentFields(
                     ) : !editing ? (
                       <div className="fro">
                         <span className={blank ? "faint" : ""}>{blank ? "（空）" : show(f.value)}</span>
-                        {f.source === "auto" && !f.readonly && (
+                        {f.source === "auto" && !f.readonly && f.canOverride !== false && (
                           <button type="button" className="linky"
                                   onClick={() => setOverriding((s) => toggle(s, f.name))}>
                             {blank ? "手で入れる" : "上書きする"}
                           </button>
+                        )}
+                        {/* 記録から引く欄。上書きしても紙には記録の値が出るので、ボタンを出さない。 */}
+                        {f.source === "auto" && !f.readonly && f.canOverride === false && (
+                          <span className="faint" title="契約・条件明細・取引先の記録から入る欄です。変えるときは元の記録を直します">記録の値</span>
                         )}
                         {f.source === "auto" && !f.readonly && !blank && onBlank && (
                           <button type="button" className="linky" title="自動の値を使わず、この欄を空のまま紙に出す"

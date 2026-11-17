@@ -40,6 +40,14 @@ export interface TemplateVariable extends LegacyFieldMeta {
    * 入る）。供給元をこちらで決めている項目は、推測を切って空のままにする。
    */
   noGuess?: boolean;
+  /**
+   * 供給元（from）のある欄で、人の上書きを認める。
+   *
+   * 供給元のある欄は、手入力があっても記録の値が先（古い手入力で記録を隠さない）。ただ、紙の言い方を
+   * その文書だけ変えたい欄がある（基本契約名の「◯年◯月◯日付」を、締結版の契約書の日付に合わせる）。
+   * そういう欄だけ、画面で上書きした値を紙に出す。画面は、認めていない欄には「上書きする」を出さない。
+   */
+  overridable?: boolean;
 }
 
 /**
@@ -62,6 +70,11 @@ export interface FormField {
   placeholder: string | null;
   options: string[] | null;
   readonly: boolean;
+  /**
+   * 自動の値を画面で上書きできるか。false は、記録（契約・条件明細・取引先）から引く欄で、
+   * 上書きしても紙には記録の値が出る欄。画面は「上書きする」を出さない（「空にする」は使える）。
+   */
+  canOverride?: boolean;
 }
 
 export interface BindingResult {
@@ -70,6 +83,8 @@ export interface BindingResult {
   missing: Array<{ name: string; label: string }>;
   /** 供給元から解決した変数（手入力と区別して画面に出す）。 */
   derived: string[];
+  /** 記録から引く欄（from）のうち、人が上書きしたもの。紙には上書きした値が出る。 */
+  overridden?: string[];
   /** 画面に出す項目の一覧。区分と出どころ付き。人に見せない項目は入らない。 */
   fields: FormField[];
 }
@@ -94,6 +109,7 @@ export function parseVariables(raw: unknown): TemplateVariable[] {
       options: Array.isArray(record.options) ? record.options.map((o) => String(o)) : undefined,
       hidden: record.hidden === true,
       readonly: record.readonly === true,
+      overridable: record.overridable === true,
       showWhen: record.showWhen as ShowWhenCondition | ShowWhenCondition[] | undefined,
       required: record.required === true,
       default: record.default
@@ -188,6 +204,8 @@ export function bindVariables(
   const values: Record<string, unknown> = {};
   const missing: BindingResult["missing"] = [];
   const derived: string[] = [];
+  /** 記録から引く欄のうち、人が上書きしたもの（紙には上書きした値が出る）。 */
+  const overridden: string[] = [];
   const fields: FormField[] = [];
   const blanked = blankedNames(manualInputs);
   const computed = options.computed ?? {};
@@ -226,7 +244,10 @@ export function bindVariables(
     helpText: variable.helpText ?? null,
     placeholder: variable.placeholder ?? null,
     options: variable.options ?? null,
-    readonly: variable.readonly === true
+    readonly: variable.readonly === true,
+    // 記録から引いた値を、画面で上書きできるか。供給元（from）のある欄は、認めた欄だけ。
+    // 供給元の無い欄（名前の対応表・dbField で引いた欄）は、これまでどおり手入力が先なので上書きできる。
+    canOverride: !(source === "auto" && Boolean(variable.from) && variable.from !== "manual" && variable.overridable !== true)
   });
 
   for (const variable of variables) {
@@ -280,9 +301,18 @@ export function bindVariables(
         }
       }
     } else {
-      // 供給元から解決する。手入力があってもデータ側を優先しない代わりに、
-      // データ側が空のときだけ手入力で補える（移行期の欠測を埋めるため）。
+      // 供給元（契約・条件明細・取引先の記録）から解決する。手入力があっても記録の値を先にする
+      // （前の文書・前回の入力から運ばれた古い値で、記録を隠さないため）。記録が空のときだけ手入力で補える
+      // （移行期の欠測を埋めるため）。
+      // 例外：上書きを認めた欄（overridable。基本契約名など）は、人が画面で「上書きする」と入れた値を紙に出す。
+      // 画面の欄は「自動」のまま返す（自動の値と「自動に戻す」を出し続けるため）。
       const resolved = pick(context, variable.from);
+      if (variable.overridable && !isEmpty(resolved) && !isEmpty(manual) && String(manual).trim() !== String(resolved).trim()) {
+        if (shown(variable)) fields.push(field(variable, "auto", resolved));
+        values[variable.name] = variable.type === "boolean" ? coerceBoolean(manual) : manual;
+        overridden.push(variable.name);
+        continue;
+      }
       if (!isEmpty(resolved)) {
         value = resolved;
         source = "auto";
@@ -311,7 +341,7 @@ export function bindVariables(
     values[variable.name] = variable.type === "boolean" ? coerceBoolean(value) : value;
   }
 
-  return { values, missing, derived, fields };
+  return { values, missing, derived, fields, overridden };
 }
 
 /**
