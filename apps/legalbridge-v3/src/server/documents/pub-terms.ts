@@ -996,6 +996,8 @@ export const MULTI_DEFAULTS = {
   grantTranslation: "独占的に許諾する。被許諾者は、本著作物の翻訳（二次的著作物の作成）ならびに翻訳版の出版および配信を、自ら行い、または第三者に再許諾することができる。再許諾の条件は、本条件書に定める許諾地域および許諾期間の範囲内とする。",
   grantPromo: "本出版物の販売促進、広告宣伝、営業資料、プレスリリース、SNS告知その他これらに準ずる目的に必要な範囲で許諾する。",
   grantSecondary: "通常の条件書では対象外（二次的著作物）。本条件書により当然に許諾されるものではなく、当事者間で追加条件書、覚書その他の書面により別途合意した場合に限り許諾される。",
+  // 翻訳版の条件明細を載せていないときの料率（再許諾先から受領した許諾料に対する率）。
+  translationRate: "50%",
   translationBasis: "算定の基礎は、源泉徴収税額および海外送金手数料を控除した後の被許諾者の実受領額とする。",
   payTiming: "紙書籍：都度払い（刊行日を含む月の翌月末日払い）。電子書籍：年1回・10月末日払い（算定期間：毎年7月1日から翌年6月末日まで、同日締め）。翻訳版：被許諾者が再許諾先から許諾料を受領した日を含む月の翌々月末日払い。報告明細：利用形態別の数量・単価・金額を記載した報告書を提出。",
   coAuthorPay: [
@@ -1025,9 +1027,16 @@ export const PUB_TERMS_MULTI_EXTRA_VARIABLES: TemplateVariable[] = [
     default: MULTI_DEFAULTS.preambleExtra },
   { name: "許諾内容_紙", label: "許諾内容：紙媒体出版", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantPrint },
   { name: "許諾内容_電子", label: "許諾内容：電子書籍配信", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantDigital },
-  { name: "許諾内容_翻訳", label: "許諾内容：翻訳版", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantTranslation },
+  { name: "許諾内容_翻訳", label: "許諾内容：翻訳版", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantTranslation,
+    helpText: "翻訳版の条件明細を載せていなくても、この文と対価の行（再許諾先から受領した許諾料の◯%）が出ます" },
+  { name: "翻訳版の行", label: "翻訳版の行（許諾内容・対価）", type: "select", options: ["出す", "出さない"],
+    group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: "出す",
+    helpText: "翻訳版を書かない紙にするときだけ「出さない」。翻訳版の条件明細を載せているときは、いつも出ます" },
   { name: "許諾内容_販促", label: "許諾内容：販促・広告利用", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantPromo },
   { name: "許諾内容_二次利用", label: "許諾内容：二次利用", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.grantSecondary },
+  { name: "翻訳版の料率", label: "翻訳版：許諾料の率（翻訳版の条件明細を載せていないとき）", group: "VIII. 条文（作品ごとに番号）", noGuess: true,
+    default: MULTI_DEFAULTS.translationRate,
+    helpText: "「被許諾者が再許諾先から受領した許諾料の◯◯」の◯◯。翻訳版の条件明細を載せているときは、その料率が出ます（この欄は使いません）" },
   { name: "翻訳版の算定の基礎", label: "翻訳版：算定の基礎", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.translationBasis },
   { name: "支払時期・方法", label: "支払時期・方法", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.payTiming },
   { name: "共著者分の支払", label: "共著者分の支払（1 行 1 項。空にすると欄ごと出さない）", type: "textarea", group: "VIII. 条文（作品ごとに番号）",
@@ -1102,7 +1111,14 @@ function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]
     // 料率は紙 1 枚で 1 つ（作品で違えば「一覧のとおり」にせず警告で分けてもらう）。
     printRateAll: uniform(titles.map((t) => text(t.printRate))) ?? "",
     digitalRateAll: uniform(titles.map((t) => text(t.digitalRate))) ?? "",
-    translationRateAll: uniform(transRates) ?? (translationShare != null ? percentText(translationShare) : ""),
+    // 翻訳版の料率。翻訳版の条件明細を載せていればその料率（そろっていなければ空）。載せていなければ、
+    // 欄「翻訳版取り分」→ 欄「翻訳版の料率」（初期値 50%）の順。
+    translationRateAll: transRates.length ? (uniform(transRates) ?? "")
+      : translationShare != null ? percentText(translationShare) : pick("翻訳版の料率"),
+    // 翻訳版の行（許諾内容・対価）を出すか（5 版目から）。翻訳版の条件明細を載せていなくても出す。
+    // 翻訳版を書かない紙にするときだけ、欄「翻訳版の行」を「出さない」にする
+    // （文の欄は空にしても初期値に戻るので、出す・出さないは別の欄で決める）。
+    multiHasTranslation: transRates.length > 0 || translationShare != null || pick("翻訳版の行") !== "出さない",
     exemptFirstCopies: exemptFirst && Number(exemptFirst) > 0 ? Number(exemptFirst).toLocaleString("ja-JP") : "",
     translationBasis: pick("翻訳版の算定の基礎"),
     payTiming: pick("支払時期・方法"),
