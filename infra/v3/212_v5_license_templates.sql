@@ -687,7 +687,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5 r8 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5 r9 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5）。少数作品用（一覧を01に載せる。別紙なし）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -998,7 +998,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5 r8 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5 r9 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5';
@@ -1027,9 +1027,9 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5_annex r8 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5_annex r9 -->
 <!--
-  個別利用許諾条件書V5・出版（pub_license_terms_v5_annex）。多数作品用（一覧を別紙2に載せる）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
+  個別利用許諾条件書V5・出版（pub_license_terms_v5_annex）。多数作品用（一覧を別紙1に載せる。特約事項は本文の09）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
   体裁は individual_license_terms_v5 と同じ（head・CSS を共有）。差し込みは pubTermsPatch の値（pub_license_terms_v3 と同じ名前）。
   07 が事業別条項（出版。基本契約V5 第3条第5項）。
@@ -1174,15 +1174,15 @@ DECLARE
 </table>
 
 <p>甲と乙は、両者間の{{agreementTitle}}{{#if agreementNo}}（{{agreementNo}}）{{/if}}（以下「基本契約」という。）に基づき、以下のとおり個別の利用許諾条件を定める。本条件書に定めのない事項は基本契約による。</p>
-{{#if payeeTerms}}<p>本条件書は、甲が対象著作物の共同著作者（権利者の一人）として有する取り分に係る許諾条件を定める。別紙2の一覧の「料率」は甲に帰属する料率（対象著作物全体の料率に甲の取り分を乗じたもの）であり、括弧内は対象著作物全体の料率、甲の取り分は同一覧の「共同著作」欄に記載のとおりとする。甲に支払う許諾料は、甲に帰属する料率により算定する。</p>{{/if}}
+{{#if payeeTerms}}<p>本条件書は、甲が対象著作物の共同著作者（権利者の一人）として有する取り分に係る許諾条件を定める。別紙1の一覧の「料率」は甲に帰属する料率（対象著作物全体の料率に甲の取り分を乗じたもの）であり、括弧内は対象著作物全体の料率、甲の取り分は同一覧の「共同著作」欄に記載のとおりとする。甲に支払う許諾料は、甲に帰属する料率により算定する。</p>{{/if}}
 
 <h2><span class="no">01</span>対象著作物<span class="en">LICENSED WORKS</span></h2>
-<p>本条件書の対象著作物および対象出版物は、末尾の<b>別紙2「対象著作物一覧」</b>（全 {{titleCount}} 点）のとおりとする。紙媒体出版・電子書籍配信の料率および独占・非独占の別は、作品ごとに別紙2の各欄による。</p>
+<p>本条件書の対象著作物および対象出版物は、末尾の<b>別紙1「対象著作物一覧」</b>（全 {{titleCount}} 点）のとおりとする。紙媒体出版・電子書籍配信の料率および独占・非独占の別は、作品ごとに別紙1の各欄による。</p>
 
 <h2><span class="no">02</span>許諾内容<span class="en">LICENSE SCOPE</span></h2>
 <table class="kv">
-  <tr><td class="k">紙媒体出版</td><td>対象出版物の複製・頒布（乙の子会社その他の出版社に再許諾して行わせることを含む）。独占・非独占の別は別紙2の一覧の「紙」欄による。</td></tr>
-  <tr><td class="k">電子書籍配信</td><td>主要電子書店における配信（DRM付き。電子書籍の配信事業者に再許諾して行わせることを含む）。独占・非独占の別は別紙2の一覧の「電子」欄による。「電子」欄が「—」の作品は対象外とする。</td></tr>
+  <tr><td class="k">紙媒体出版</td><td>対象出版物の複製・頒布（乙の子会社その他の出版社に再許諾して行わせることを含む）。独占・非独占の別は別紙1の一覧の「紙」欄による。</td></tr>
+  <tr><td class="k">電子書籍配信</td><td>主要電子書店における配信（DRM付き。電子書籍の配信事業者に再許諾して行わせることを含む）。独占・非独占の別は別紙1の一覧の「電子」欄による。「電子」欄が「—」の作品は対象外とする。</td></tr>
   <tr><td class="k">再許諾</td><td>紙媒体出版・電子書籍配信の再許諾は、本条件書の許諾の範囲（地域・言語・媒体）内で行い、甲の個別の事前承諾を要しない。乙は、再許諾先を甲に通知し、再許諾先の行為について甲に対し責任を負う。</td></tr>
   <tr><td class="k">販促・広告利用</td><td>対象出版物の販売促進に必要な範囲での書影・抜粋の利用。</td></tr>
   <tr><td class="k">二次利用</td><td>{{#if translationDerivative}}翻訳（二次的著作物の作成）及び翻訳物の出版・配信、映像化・商品化その他の二次利用は、いずれも本条件書の対象外とし、甲乙の別途合意による。翻訳権その他著作権法第27条・第28条に定める権利は甲に留保され、本条件書による許諾には含まれない。{{else}}翻訳版の出版・配信、映像化・商品化その他の二次利用は本条件書の対象外とし、別途合意による。{{/if}}</td></tr>
@@ -1190,7 +1190,7 @@ DECLARE
 
 <h2><span class="no">03</span>許諾期間・地域・言語<span class="en">TERM / TERRITORY / LANGUAGE</span></h2>
 <table class="kv">
-  <tr><td class="k">許諾期間</td><td>{{#if hasWorkTerms}}対象著作物ごとに別紙2の一覧の「許諾期間」の行による（自動更新した回数は同行のとおり）。{{else}}{{formatDate termStart}}{{#if termEnd}} 〜 {{formatDate termEnd}}{{else}} から（期間の定めなし）{{/if}}{{/if}}</td></tr>
+  <tr><td class="k">許諾期間</td><td>{{#if hasWorkTerms}}対象著作物ごとに別紙1の一覧の「許諾期間」の行による（自動更新した回数は同行のとおり）。{{else}}{{formatDate termStart}}{{#if termEnd}} 〜 {{formatDate termEnd}}{{else}} から（期間の定めなし）{{/if}}{{/if}}</td></tr>
   {{#if termEnd}}
   <tr><td class="k">更新</td><td>{{#if autoRenew}}期間満了の{{noticeBefore}}前までにいずれの当事者からも書面による終了の通知がない場合、同一条件で{{renewPeriod}}ごとに自動更新する。{{else}}自動更新しない。延長は甲乙協議のうえ書面で定める。{{/if}}</td></tr>
   {{/if}}
@@ -1200,8 +1200,8 @@ DECLARE
 
 <h2><span class="no">04</span>許諾料<span class="en">ROYALTY</span></h2>
 <table class="kv">
-  <tr><td class="k">紙媒体出版</td><td>乙又は再許諾先が発行する対象出版物の税抜定価 × 印税対象部数 × 料率（別紙2の一覧の「紙」欄）。印税対象部数は刷部数とし、見本・献本・破損分を除く。増刷時に刷部数の一部を印税対象部数から除く定め（非加算）のある作品は、一覧の備考欄の率による。初版部数その他の個別の取り決めは一覧の備考欄による。</td></tr>
-  <tr><td class="k">電子書籍配信</td><td>乙又は再許諾先による配信の配信価格（税抜）× ダウンロード数 × 料率（別紙2の一覧の「電子」欄）。「電子」欄が「—」の作品には電子書籍配信の許諾料は発生しない。</td></tr>
+  <tr><td class="k">紙媒体出版</td><td>乙又は再許諾先が発行する対象出版物の税抜定価 × 印税対象部数 × 料率（別紙1の一覧の「紙」欄）。印税対象部数は刷部数とし、見本・献本・破損分を除く。増刷時に刷部数の一部を印税対象部数から除く定め（非加算）のある作品は、一覧の備考欄の率による。初版部数その他の個別の取り決めは一覧の備考欄による。</td></tr>
+  <tr><td class="k">電子書籍配信</td><td>乙又は再許諾先による配信の配信価格（税抜）× ダウンロード数 × 料率（別紙1の一覧の「電子」欄）。「電子」欄が「—」の作品には電子書籍配信の許諾料は発生しない。</td></tr>
 </table>
 
 <h2><span class="no">05</span>支払時期・方法<span class="en">PAYMENT</span></h2>
@@ -1220,20 +1220,23 @@ DECLARE
 </table>
 
 <h2><span class="no">07</span>出版に関する定め<span class="en">PUBLISHING TERMS</span></h2>
-<p>本条は、基本契約第3条第5項に定める事業別条項（出版）とし、変更するときは別紙1「特約事項」に定める。</p>
+<p>本条は、基本契約第3条第5項に定める事業別条項（出版）とし、変更するときは第9条（特約事項）に定める。</p>
 <table class="kv">
-  <tr><td class="k">紙媒体の権利の形</td><td>別紙2の一覧の「紙」欄が非独占の作品は非独占の利用許諾、独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または別紙1「特約事項」に「出版権設定」とある作品は、甲は乙に著作権法第80条第1項第1号の出版権を設定する。</td></tr>
+  <tr><td class="k">紙媒体の権利の形</td><td>別紙1の一覧の「紙」欄が非独占の作品は非独占の利用許諾、独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または第9条（特約事項）に「出版権設定」とある作品は、甲は乙に著作権法第80条第1項第1号の出版権を設定する。</td></tr>
   <tr><td class="k">出版権の内容</td><td>出版権を設定した作品について、出版権の存続期間は当該作品の許諾期間とする。著作権法第81条の出版の時期および継続出版の義務は、同条ただし書の別段の定めとして、基本契約第10条（販売）および第11条（販売終了）による。乙は、改めて複製しようとするときは、その都度あらかじめ甲に通知する（同法第82条第2項）。甲は、乙が同法第80条第3項により第三者に複製または公衆送信を許諾することを承諾する。甲は出版権の設定の登録に協力し、出版権が消滅したときは乙が抹消の登録に協力する。</td></tr>
-  <tr><td class="k">電子書籍・貸与</td><td>電子書籍は、別紙2の一覧の「電子」欄に独占と明示した作品を除き非独占の利用許諾とし、乙は適切な技術的保護手段を施す。乙は、紙媒体出版物の貸与および図書館等による電子書籍の貸出について、管理団体を通じて許諾し、使用料を受領することができる。甲への配分は別紙1「特約事項」に定め、定めがないときは乙が受領した使用料に当該作品の紙・電子の料率を乗じた額とする。</td></tr>
+  <tr><td class="k">電子書籍・貸与</td><td>電子書籍は、別紙1の一覧の「電子」欄に独占と明示した作品を除き非独占の利用許諾とし、乙は適切な技術的保護手段を施す。乙は、紙媒体出版物の貸与および図書館等による電子書籍の貸出について、管理団体を通じて許諾し、使用料を受領することができる。甲への配分は第9条（特約事項）に定め、定めがないときは乙が受領した使用料に当該作品の紙・電子の料率を乗じた額とする。</td></tr>
   <tr><td class="k">原稿の引渡し・校正</td><td>原稿を新たに引き渡す作品について、甲は、甲乙が別に定める期日までに完全な原稿（乙が出版に適すると合理的に認めたものをいう。）を乙に引き渡す。校正は甲乙が協力して行い、甲は乙に校正を委ねることができる。</td></tr>
   <tr><td class="k">改訂版・新版</td><td>誤植・誤記の訂正、組版・装丁・判型の変更その他の軽微な修正は本条件書による。本文の実質的な変更、書名の変更、増補、改訂版、新装版その他の新たな版は、甲の承諾を得て、新たな条件書による。甲が改訂版等を第三者から出版しようとするときは、乙に優先交渉の機会を与える。</td></tr>
 </table>
 
 <h2><span class="no">08</span>旧合意との関係<span class="en">PRIOR AGREEMENTS</span></h2>
-<p>対象著作物に関する甲乙間の従前の合意（覚書・電子メールその他形式を問わない）の扱いは、基本契約第27条により別紙1「特約事項」に定める。定めのない従前の合意は存続し、本条件書と抵触する部分は本条件書が優先する。本条件書と基本契約が矛盾する場合は本条件書が優先する。</p>
+<p>対象著作物に関する甲乙間の従前の合意（覚書・電子メールその他形式を問わない）の扱いは、基本契約第27条により第9条（特約事項）に定める。定めのない従前の合意は存続し、本条件書と抵触する部分は本条件書が優先する。本条件書と基本契約が矛盾する場合は本条件書が優先する。</p>
+
+<h2><span class="no">09</span>特約事項<span class="en">SPECIAL TERMS</span></h2>
+{{#if specialNotes}}<p>{{specialNotes}}</p>{{else}}<p>なし</p>{{/if}}
 
 <div class="tail">
-<h2><span class="no">09</span>通知先<span class="en">NOTICES</span></h2>
+<h2><span class="no">10</span>通知先<span class="en">NOTICES</span></h2>
 <table class="kv notice">
   <tr><td class="k"><div class="fix">甲</div></td><td><div class="fix">{{licensorContact}}</div></td></tr>
   <tr><td class="k"><div class="fix">乙</div></td><td><div class="fix">{{licenseeContact}}</div></td></tr>
@@ -1258,19 +1261,10 @@ DECLARE
 {{/if}}
 </div>
 
-<!-- 別紙。本文（署名欄まで）の後ろに改ページして付ける。 -->
+<!-- 別紙（対象著作物一覧だけ）。本文（署名欄まで）の後ろに改ページして付ける。 -->
 <div class="annex">
 <div class="part">
-<h2><span class="no">別紙1</span>特約事項<span class="en">SPECIAL TERMS</span></h2>
-{{#if specialNotes}}
-<p class="lead">本条件書の本文に定める条件に加え、次の特約事項を適用する。</p>
-<p>{{specialNotes}}</p>
-{{else}}
-<p>なし</p>
-{{/if}}
-</div>
-<div class="part">
-<h2><span class="no">別紙2</span>対象著作物一覧<span class="en">LICENSED WORKS REGISTER</span></h2>
+<h2><span class="no">別紙1</span>対象著作物一覧<span class="en">LICENSED WORKS REGISTER</span></h2>
 <p class="lead">一覧の1行が作品1点（備考がある作品は同じNo.の下に続ける）。紙・電子の料率と独占区分は、それぞれの媒体について甲乙間で合意した条件を示す。「—」はその媒体の許諾が無いことを示す。許諾期間は作品ごとに同じNo.の下の行に示し、「更新 n 回」は許諾開始日（刊行日）から本条件書の締結日までに自動更新した回数を示す（第3条）。自動更新しない作品は「更新なし」、更新を止めた作品は「以後更新しない」と付す。</p>
 <table class="grid">
   <thead>
@@ -1350,7 +1344,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r8 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r9 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5_annex';

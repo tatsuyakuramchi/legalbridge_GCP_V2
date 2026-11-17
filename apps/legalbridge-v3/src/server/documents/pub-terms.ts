@@ -78,7 +78,7 @@ export const PUB_TERMS_TEMPLATE_HINT: Record<string, string> = {
   [PUB_TERMS_ANNEX_KEY]: "作品が多いとき向け。条文を先に読み切れるよう、一覧は末尾の別紙1に出る",
   [PUB_TERMS_MULTI_KEY]: "作品ごとに個別利用許諾番号を振る形（A4 横）。料率・期間が同じ作品を 1 枚にまとめる",
   [PUB_TERMS_V5_KEY]: `基本契約V5の相手先向け。作品が少ないとき（一覧が01に出る。${PUB_TITLES_ANNEX_HINT} 点あたりまで）`,
-  [PUB_TERMS_V5_ANNEX_KEY]: "基本契約V5の相手先向け。作品が多いとき（一覧は末尾の別紙2に出る）"
+  [PUB_TERMS_V5_ANNEX_KEY]: "基本契約V5の相手先向け。作品が多いとき（一覧は末尾の別紙1に出る）"
 };
 
 /** 一覧の行の欄。画面の行編集（LineItems の pub_titles）と本文が同じ名前を読む。 */

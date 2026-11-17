@@ -150,7 +150,7 @@ test("条件書V5（出版）：一覧形式・別紙形式とも V3 と同じ�
   }
 });
 
-test("条件書V5（出版）：一覧形式は 01 に表・09 特約事項・別紙なし。別紙形式は別紙1 特約事項・別紙2 一覧", () => {
+test("条件書V5（出版）：一覧形式は 01 に表・別紙なし。別紙形式は別紙1 に一覧だけ。特約事項はどちらも本文の09（旧合意と署名の間）", () => {
   const list = renderPub(PUB).out;
   assert.ok(list.indexOf('<table class="grid">') < list.indexOf('class="sign"'), "表は署名欄より前");
   assert.match(list, /09<\/span>特約事項/);
@@ -159,14 +159,17 @@ test("条件書V5（出版）：一覧形式は 01 に表・09 特約事項・�
   assert.match(list, /第1条の一覧の「紙」欄/);
   assert.match(list, /変更するときは第9条（特約事項）に定める/);
 
+  // 別紙形式も特約事項は本文（08 旧合意 → 09 特約事項 → 10 通知先 → 署名）。別紙は対象著作物一覧だけ（別紙1）。
   const annex = renderPub(PUB_ANNEX, { 特記事項: "書影の利用を無償で認める。" }).out;
-  assert.match(annex, /別紙2「対象著作物一覧」<\/b>（全 1 点）/);
-  assert.match(annex, /09<\/span>通知先/);
-  assert.ok(annex.indexOf('class="sign"') < annex.indexOf("別紙1</span>特約事項"));
-  assert.ok(annex.indexOf("別紙1</span>特約事項") < annex.indexOf("別紙2</span>対象著作物一覧"));
-  assert.match(annex, /書影の利用を無償で認める。/);
-  assert.match(annex, /別紙2の一覧の「紙」欄/);
-  assert.ok(!annex.includes("第1条の一覧"), "参照先は別紙2");
+  assert.match(annex, /別紙1「対象著作物一覧」<\/b>（全 1 点）/);
+  const order = ["08</span>旧合意との関係", "09</span>特約事項", "書影の利用を無償で認める。", "10</span>通知先", 'class="sign"', "別紙1</span>対象著作物一覧"]
+    .map((k) => annex.indexOf(k));
+  assert.ok(order.every((n) => n >= 0) && order.every((n, k) => k === 0 || order[k - 1] < n), `並び: ${order.join(",")}`);
+  assert.equal(annex.split('<div class="part">').length - 1, 1, "別紙は1つ（対象著作物一覧）");
+  assert.ok(!annex.includes("別紙2") && !annex.includes("別紙1</span>特約事項"));
+  assert.match(annex, /別紙1の一覧の「紙」欄/);
+  assert.match(annex, /変更するときは第9条（特約事項）に定める/);
+  assert.ok(!annex.includes("第1条の一覧"), "参照先は別紙1");
 });
 
 test("条件書V5（出版・ボードゲーム）：署名欄は記名（自動）＋署名／押印の枠。出さないときだけ「表示しない」", () => {
@@ -242,7 +245,7 @@ test("レビュー反映：基本契約V5 の適用範囲・暫定許諾・終�
 });
 
 test("レビュー反映：出版は出版権設定を独占的利用許諾と分け、旧合意は基本契約第27条による", () => {
-  for (const [html, ref] of [[PUB, "第9条（特約事項）"], [PUB_ANNEX, "別紙1「特約事項」"]] as const) {
+  for (const [html, ref] of [[PUB, "第9条（特約事項）"], [PUB_ANNEX, "第9条（特約事項）"]] as const) {
     const out = renderPub(html).out;
     assert.match(out, /独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または.*?に「出版権設定」とある作品は/);
     assert.match(out, /同条ただし書の別段の定めとして、基本契約第10条（販売）および第11条（販売終了）による/);
