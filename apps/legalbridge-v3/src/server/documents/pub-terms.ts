@@ -24,7 +24,7 @@ import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
 import { isSublicensingUsage, pubMediaOfUsage } from "../core/condition-usage.js";
 import { renewalLabel, renewalOf } from "../conditions/renewal.js";
-import { contextMasterAgreement } from "./legacy-variables.js";
+import { agreementDatedTitle, contextMasterAgreement } from "./legacy-variables.js";
 
 export const PUB_TERMS_KEY = "pub_license_terms_v3";
 /**
@@ -893,7 +893,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
     docNo: pick("条件書番号") || text(context.document?.number),
     signDate: pick("締結日") || text(context.document?.issuedOn),
     agreementNo: pick("基本契約番号") || text(contextMasterAgreement(context)?.no),
-    agreementTitle: pick("基本契約名")
+    // 前文の「◯年◯月◯日付 基本契約書」。日付は基本契約の記録の締結日。欄「基本契約の日付」に入れたら、
+    // この紙だけその日付で書く（締結版の契約書の日付と、記録の締結日が違うとき。記録は変えない）。
+    agreementTitle: (pick("基本契約の日付")
+        ? agreementDatedTitle(contextMasterAgreement(context)?.title, pick("基本契約の日付")) : undefined)
+      || pick("基本契約名")
       || text(contextMasterAgreement(context)?.datedTitle ?? contextMasterAgreement(context)?.title)
       || "出版等利用許諾基本契約書",
     showSignature: pick("署名欄") !== "表示しない",
@@ -1022,6 +1026,8 @@ export const PUB_TERMS_MULTI_EXTRA_VARIABLES: TemplateVariable[] = [
   { name: "締結日", label: "締結日（空なら「年　月　日」の空欄で出る）", type: "date", group: "I. 基本情報", noGuess: true },
   { name: "個別利用許諾番号", label: "個別利用許諾番号（頭書き）", group: "I. 基本情報", noGuess: true,
     helpText: "空なら、載せた作品の番号を「最小〜最大」でまとめます（例：ARC-PUBT-2026-0012〜0029）。途中の番号を分けて書くときはここに入れます（例：ARC-PUBT-2026-0012〜0014・0017〜0027・0029）" },
+  { name: "基本契約の日付", label: "基本契約の日付（前文の「◯年◯月◯日付 基本契約書」）", type: "date", group: "I. 基本情報", noGuess: true,
+    helpText: "空なら、基本契約の記録の締結日で出ます。締結版の契約書の日付が記録と違うときだけ、ここに入れます（この紙だけに効き、基本契約の記録は変わりません）" },
   { name: "副題", label: "副題（タイトルの右。例：1通目／神我狩シリーズ）", group: "I. 基本情報", noGuess: true },
   { name: "前文の追記", label: "前文の追記（点数のあとに続ける文）", type: "textarea", group: "I. 基本情報", noGuess: true,
     default: MULTI_DEFAULTS.preambleExtra },

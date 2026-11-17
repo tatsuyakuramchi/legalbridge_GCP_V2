@@ -562,3 +562,18 @@ test("作品ごとに番号を持つ条件書：翻訳版の条件明細を載�
   // 翻訳版を書かない紙。
   assert.equal(pubTermsPatch(context, { ...base, "翻訳版の行": "出さない" }).multiHasTranslation, false);
 });
+
+test("作品ごとに番号を持つ条件書：前文の基本契約の日付は、欄に入れたらその日付（記録の締結日は変えない）", async () => {
+  const { pubTermsPatch } = await import("./pub-terms.js");
+  const context = {
+    counterparty: { id: 1, name: "合同会社テスト", kind: "corporate" }, company: { name: "株式会社アークライト" },
+    masterAgreement: { no: "ATT-2026-00069", title: "出版及び著作物利用許諾に関する基本契約書",
+                       datedTitle: "2026年10月2日付出版及び著作物利用許諾に関する基本契約書" },
+    conditions: [{ id: 1, name: "作品A｜紙出版", usageType: "pub_print", ratePct: 11, counterpartyId: 1, work: { title: "作品A" }, shares: [] }]
+  };
+  // 欄が空なら、記録の締結日。
+  assert.equal(pubTermsPatch(context, {}).agreementTitle, "2026年10月2日付出版及び著作物利用許諾に関する基本契約書");
+  // 欄に入れたら、その日付で書く。
+  assert.equal(pubTermsPatch(context, { "基本契約の日付": "2026-09-24" }).agreementTitle,
+    "2026年9月24日付出版及び著作物利用許諾に関する基本契約書");
+});
