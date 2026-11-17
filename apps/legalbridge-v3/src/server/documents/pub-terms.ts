@@ -535,6 +535,15 @@ export function pubTermsWarnings(context: Data, templateKey: string = PUB_TERMS_
     out.push({ kind: "other", message: `条件明細の支払条件から支払の表の語を読めません：${u}。紙面は画面の欄（空なら既定）で出ます。条件明細の支払条件を「毎年7月1日〜翌年6月30日を集計期間とし、10月末日までに支払う。」の形にすると連動します` });
   }
   for (const c of payment.conflicts) out.push({ kind: "other", message: c });
+  // V5 の電子書籍配信は「配信価格 × ダウンロード数 × 料率」に統一（乙の入金額を基準にしない）。
+  if (isPubTermsV5(templateKey)) {
+    const receipts = conditions.filter((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c)
+      && String(c.priceBasis) === "receipts");
+    if (receipts.length) {
+      out.push({ kind: "other", message: `電子の条件明細 ${receipts.map((c) => text(c.conditionNo) || `#${c.id}`).join("・")} は価格の基準が「入金額」です。`
+        + "V5 の条件書の電子書籍配信は「配信価格（税抜）× ダウンロード数 × 料率」で書くので、条件明細の価格の基準を配信価格に直してください（一覧の備考に入金額基準の注記が出たままになります）" });
+    }
+  }
   for (const condition of conditions) {
     const blocker = rowBlockerOf(condition);
     if (blocker) out.push({ kind: "other", message: `一覧に載せられない条件明細 ${blocker}` });

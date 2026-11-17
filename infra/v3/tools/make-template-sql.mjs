@@ -117,7 +117,7 @@ const TARGETS = [
   },
   {
     no: "212", key: "pub_license_terms_v5", label: "個別利用許諾条件書V5（出版・一覧形式）",
-    body: "templates/pub_license_terms_v5.html", mark: "<!-- pub_license_terms_v5 r5 -->",
+    body: "templates/pub_license_terms_v5.html", mark: "<!-- pub_license_terms_v5 r6 -->",
     prefix: "PUBT",
     categoryFrom: "pub_license_terms_v3",
     out: "212_v5_license_templates.sql",
@@ -134,7 +134,7 @@ const TARGETS = [
   },
   {
     no: "212", key: "pub_license_terms_v5_annex", label: "個別利用許諾条件書V5（出版・別紙形式）",
-    body: "templates/pub_license_terms_v5_annex.html", mark: "<!-- pub_license_terms_v5_annex r5 -->",
+    body: "templates/pub_license_terms_v5_annex.html", mark: "<!-- pub_license_terms_v5_annex r6 -->",
     prefix: "PUBT",
     categoryFrom: "pub_license_terms_v3_annex",
     out: "212_v5_license_templates.sql",
