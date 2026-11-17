@@ -268,7 +268,7 @@ test("登録：翻訳版再許諾（紙・電子）を取り込み、別途合�
   const r = await new ImportService(db).run({ kind: "license_conditions", csv, dryRun: false, actor: "k" });
   assert.equal(r.ok, 2, JSON.stringify(r.rows));
   // 再許諾先が決まっていなくても作れる（相手は後から決まる）。
-  assert.match(r.rows[0].message ?? "", /ito｜翻訳版再許諾（紙）/);
+  assert.match(r.rows[0].message ?? "", /ito｜再許諾（紙）/, "以前の表記（翻訳版再許諾（紙））でも取り込め、条件名は「再許諾（紙）」");
   const inserts = db.all("INSERT INTO conditions");
   assert.equal(inserts.length, 2);
   const usage = inserts.map((q) => q.params.find((p) => String(p).startsWith("pub_sub")));

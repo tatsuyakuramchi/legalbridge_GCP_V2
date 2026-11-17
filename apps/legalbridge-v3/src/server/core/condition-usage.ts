@@ -42,14 +42,15 @@ export const CONDITION_USAGE_TYPES: ConditionUsageSpec[] = [
     hint: "税抜定価 × 印税対象部数 × 料率" },
   { value: "pub_digital", label: "出版（電子）", family: "publishing", dealId: null, media: "digital",
     hint: "配信価格 × ダウンロード数 × 料率" },
-  // 翻訳版の再許諾（A-033）。乙が第三者に出させ、受け取った対価から甲へ払う。
-  // 紙と電子で率が違うので別々に持つ。相手が決まる前でも条件を作れる。
-  { value: "pub_sub_print", label: "翻訳版再許諾（紙）", family: "publishing", dealId: null,
+  // 出版の再許諾（A-033）。乙が第三者に出版・配信させ、受け取った対価から甲へ払う。
+  // 翻訳版に限らない（自社の出版を子会社の版元で出す、電子書籍を配信事業者から配信する、など）。
+  // 紙と電子で率が違うので別々に持つ。相手が決まる前でも条件を作れる。値（pub_sub_*）は変えない。
+  { value: "pub_sub_print", label: "再許諾（紙）", family: "publishing", dealId: null,
     media: "print", sublicensing: true,
-    hint: "再許諾先から受領する対価（税抜）× 料率。紙の翻訳版" },
-  { value: "pub_sub_digital", label: "翻訳版再許諾（電子）", family: "publishing", dealId: null,
+    hint: "再許諾先（翻訳版の出版社、子会社の版元など）から受領する対価（税抜）× 料率" },
+  { value: "pub_sub_digital", label: "再許諾（電子）", family: "publishing", dealId: null,
     media: "digital", sublicensing: true,
-    hint: "再許諾先から受領する対価（税抜）× 料率。電子の翻訳版" }
+    hint: "再許諾先（電子書籍の配信事業者、翻訳版の配信など）から受領する対価（税抜）× 料率" }
 ];
 
 /** 第三者への再許諾の形態か（翻訳版）。自社出版と区別する。 */

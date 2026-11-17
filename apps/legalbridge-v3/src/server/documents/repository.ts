@@ -3,7 +3,7 @@ import type { Queryable, Transactable } from "../core/db.js";
 import { dateStr, int, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { parseVariables, type TemplateVariable } from "./binding.js";
-import { LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
+import { LICENSE_TERMS_V5_KEY, LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
 import { PUB_TERMS_MULTI_EXTRA_VARIABLES, PUB_TERMS_VARIABLES, isPubTermsMulti, isPubTermsTemplate, isPubTermsV5 } from "./pub-terms.js";
 import { LICENSE_MASTER_V5_VARIABLES, isLicenseMasterV5Template } from "./license-master-v5.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
@@ -206,9 +206,18 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
  * 項目が1つも無く、ひな形を選んでも入力欄が出なかった。V2 と同じ規則にする
  * （データベースに宣言があればそちらが勝つ。あとから版で足せる）。
  */
+/** V5 の条件書の署名欄：記名＋署名／押印の枠を出すか出さないか。 */
+function v5SignatureField(v: TemplateVariable): TemplateVariable {
+  return v.name === "署名欄"
+    ? { ...v, label: "署名欄（記名＋署名／押印）", options: ["表示する", "表示しない"], default: "表示する",
+        helpText: "記名（名称・代表者）は自動で入り、署名でも押印でもよい枠が出ます。基本契約と一括で署名する場合は「表示しない」" }
+    : v;
+}
+
 function variablesFor(templateKey: string, declared: TemplateVariable[]): TemplateVariable[] {
   if (TAX_ROUNDING_TEMPLATES.has(templateKey)) return withTaxRounding(declared);
   if (declared.length) return declared;
+  if (templateKey === LICENSE_TERMS_V5_KEY) return LICENSE_TERMS_VARIABLES.map(v5SignatureField);
   if (isLicenseTermsTemplate(templateKey)) return LICENSE_TERMS_VARIABLES;
   // 出版の条件書（V3）も項目はコードが持つ。ひな形の SQL は本文だけを運ぶ。
   if (isPubTermsMulti(templateKey)) {
@@ -216,13 +225,9 @@ function variablesFor(templateKey: string, declared: TemplateVariable[]): Templa
     return [...PUB_TERMS_VARIABLES.filter((v) => !["署名欄", "翻訳物の在庫販売期間", "特記事項", "締結日"].includes(v.name)),
             ...PUB_TERMS_MULTI_EXTRA_VARIABLES];
   }
-  // V5 の出版は署名欄を V5 のボードゲームと同じ選択肢にする（署名／押印／表示しない）。本文は showSignature と 署名欄 を見る。
-  if (isPubTermsV5(templateKey)) {
-    return PUB_TERMS_VARIABLES.map((v) => v.name === "署名欄"
-      ? { ...v, options: ["署名", "押印", "表示しない"], default: "署名",
-          helpText: "署名＝署名日と署名の枠、押印＝署名日と印の枠。基本契約と一括で電子署名する場合は「表示しない」" }
-      : v);
-  }
+  // V5 の条件書（出版・ボードゲーム）の署名欄は、記名を自動で刷り、署名でも押印でもよい枠（ハイブリッド）。
+  // 選ぶのは出すか出さないかだけ（基本契約と一括で署名するときは「表示しない」）。
+  if (isPubTermsV5(templateKey)) return PUB_TERMS_VARIABLES.map(v5SignatureField);
   if (isPubTermsTemplate(templateKey)) return PUB_TERMS_VARIABLES;
   if (isLicenseMasterV5Template(templateKey)) return LICENSE_MASTER_V5_VARIABLES;
   return declared;

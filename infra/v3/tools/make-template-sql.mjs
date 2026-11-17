@@ -83,7 +83,7 @@ const TARGETS = [
   },
   {
     no: "212", key: "license_master_v5", label: "著作物利用許諾基本契約書V5",
-    body: "templates/license_master_v5.html", mark: "<!-- license_master_v5 r1 -->",
+    body: "templates/license_master_v5.html", mark: "<!-- license_master_v5 r2 -->",
     prefix: "LIC",
     categoryFrom: "license_master",
     out: "212_v5_license_templates.sql",
@@ -100,7 +100,7 @@ const TARGETS = [
   },
   {
     no: "212", key: "individual_license_terms_v5", label: "個別利用許諾条件書V5（ボードゲーム）",
-    body: "templates/individual_license_terms_v5.html", mark: "<!-- individual_license_terms_v5 r1 -->",
+    body: "templates/individual_license_terms_v5.html", mark: "<!-- individual_license_terms_v5 r2 -->",
     prefix: "ILT",
     categoryFrom: "individual_license_terms_v4",
     out: "212_v5_license_templates.sql",
@@ -117,7 +117,7 @@ const TARGETS = [
   },
   {
     no: "212", key: "pub_license_terms_v5", label: "個別利用許諾条件書V5（出版・一覧形式）",
-    body: "templates/pub_license_terms_v5.html", mark: "<!-- pub_license_terms_v5 r1 -->",
+    body: "templates/pub_license_terms_v5.html", mark: "<!-- pub_license_terms_v5 r6 -->",
     prefix: "PUBT",
     categoryFrom: "pub_license_terms_v3",
     out: "212_v5_license_templates.sql",
@@ -134,7 +134,7 @@ const TARGETS = [
   },
   {
     no: "212", key: "pub_license_terms_v5_annex", label: "個別利用許諾条件書V5（出版・別紙形式）",
-    body: "templates/pub_license_terms_v5_annex.html", mark: "<!-- pub_license_terms_v5_annex r1 -->",
+    body: "templates/pub_license_terms_v5_annex.html", mark: "<!-- pub_license_terms_v5_annex r6 -->",
     prefix: "PUBT",
     categoryFrom: "pub_license_terms_v3_annex",
     out: "212_v5_license_templates.sql",

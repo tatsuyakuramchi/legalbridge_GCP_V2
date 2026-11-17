@@ -81,11 +81,12 @@ test("基本契約V5：個人は源泉あり・代表者は省略、法人は登
   assert.match(corp, /<b>第30条（存続）<\/b>/);
 });
 
-test("基本契約V5：署名欄は 署名（電子署名の枠）／押印（印の枠）", () => {
-  assert.match(renderMaster(masterContext("corporate")).out, /電子<br>署名/);
-  const stamped = renderMaster(masterContext("corporate"), { 署名欄: "押印" }).out;
-  assert.ok(!stamped.includes("電子<br>署名"));
-  assert.match(stamped, /<div class="seal">印<\/div>/);
+test("基本契約V5：署名欄は署名・押印のどちらでもよい枠（選ぶ欄は無い）。記名は自動", () => {
+  const out = renderMaster(masterContext("corporate")).out;
+  assert.equal(out.split('<div class="seal">署名<br>／押印</div>').length - 1, 2, "甲・乙の両方");
+  assert.match(out, /<div class="f">会社名<\/div><div class="v">株式会社甲<\/div>/);
+  assert.match(out, /<div class="f">会社名<\/div><div class="v">株式会社サンプル<\/div>/);
+  assert.ok(!LICENSE_MASTER_V5_VARIABLES.some((v) => v.name === "署名欄"), "署名／押印を選ぶ欄は無い");
 });
 
 // ---------------------------------------------------------------- 個別条件書V5（ボードゲーム）
@@ -168,11 +169,20 @@ test("条件書V5（出版）：一覧形式は 01 に表・09 特記事項・�
   assert.ok(!annex.includes("第1条の一覧"), "参照先は別紙2");
 });
 
-test("条件書V5（出版）：署名欄は 署名／押印／表示しない", () => {
-  assert.match(renderPub(PUB, { 署名欄: "署名" }).out, /<span class="lbl">署名<\/span>/);
-  const stamped = renderPub(PUB, { 署名欄: "押印" }).out;
-  assert.match(stamped, /<div class="stamp">印<\/div>/);
-  assert.ok(!renderPub(PUB, { 署名欄: "表示しない" }).out.includes('class="sign"'));
+test("条件書V5（出版・ボードゲーム）：署名欄は記名（自動）＋署名／押印の枠。出さないときだけ「表示しない」", () => {
+  for (const html of [PUB, PUB_ANNEX]) {
+    const out = renderPub(html, { 署名欄: "表示する" }).out;
+    assert.match(out, /記名<br>署名／押印<\/span><span class="box sign-box"><span class="pname"><b>甲野 甲太<\/b><\/span><span class="stamp">印<\/span>/);
+    assert.match(out, /<span class="pname"><b>株式会社サンプル<\/b><br>代表取締役 乙山 乙子<\/span><span class="stamp">印<\/span>/);
+    assert.equal(out.split('<span class="lbl">署名日</span>').length - 1, 2);
+    // 以前の値（署名・押印）で保存した下書きも同じ枠で出る。
+    assert.match(renderPub(html, { 署名欄: "押印" }).out, /class="box sign-box"/);
+    assert.ok(!renderPub(html, { 署名欄: "表示しない" }).out.includes('class="sign"'));
+  }
+  const game = renderDocumentHtml(GAME, { ...gameManual, ...licenseTermsPatch(gameContext, gameManual) });
+  assert.match(game, /<span class="pname"><b>株式会社オリジナル<\/b><br>代表取締役 甲野 甲太<\/span><span class="stamp">印<\/span>/);
+  assert.match(game, /<span class="pname"><b>株式会社アークライト<\/b>/);
+  assert.ok(!renderDocumentHtml(GAME, { ...gameManual, 署名欄: "表示しない", ...licenseTermsPatch(gameContext, gameManual) }).includes('class="sign"'));
 });
 
 test("条件書V5（出版）：作品数の警告は V5 のひな形の名前を出す", () => {
@@ -242,4 +252,41 @@ test("レビュー反映：ボードゲームは明示承認の対象・製品�
   assert.match(out, /基本契約第9条第3項の承認のみなしを適用しない/);
   assert.match(out, /製品の安全・表示・事故の通知・回収の判断者と費用の負担は、別紙1に定める/);
   assert.match(out, /第3条及び別紙3により再許諾を認めた他言語版、対象製品の再版/);
+});
+
+test("条件書V5（出版）：紙・電子が再許諾を含む（再許諾の独立した行は第2条の決まりだけ）。電子は配信価格 × DL数・四半期の報告受領で支払", () => {
+  const sub = (id: number, usageType: string, ratePct: number, media: string) => cond({ id, conditionNo: `CL-${id}`, name: "星の本",
+    workId: 10, work: { title: "星の本" }, ratePct, usageType, scopes: { region: ["日本"], language: ["日本語"], media: [media] } });
+  const render = (extra: any[], html: string) => {
+    const ctx = { ...pubContext, conditions: [...pubContext.conditions, ...extra] };
+    const rows = pubTitleSeeds(ctx).map((r: Record<string, unknown>) => ({ ...r, copyright: "© 甲", third_party: "なし" }));
+    const m = { pub_titles: rows };
+    const values = { taxRate: 10, BANK_INFO: "", ...m, ...pubTermsPatch(ctx, m) };
+    assert.deepEqual(blankPlaceholders(html, values, PUB_TERMS_VARIABLES.map((v) => v.name)).filter((n) => !PUB_ROW_NAMES.has(n)), []);
+    return renderDocumentHtml(html, values);
+  };
+  for (const html of [PUB, PUB_ANNEX]) {
+    for (const out of [render([], html), render([sub(3, "pub_sub_print", 50, "紙"), sub(4, "pub_sub_digital", 40, "電子")], html)]) {
+      const art2 = out.slice(out.indexOf("02</span>許諾内容"), out.indexOf("03</span>"));
+      const art4 = out.slice(out.indexOf("04</span>許諾料"), out.indexOf("05</span>支払時期・方法"));
+      const art5 = out.slice(out.indexOf("05</span>支払時期・方法"), out.indexOf("06</span>"));
+      assert.match(art2, /対象出版物の複製・頒布（乙の子会社その他の出版社に再許諾して行わせることを含む）/);
+      assert.match(art2, /主要電子書店における配信（DRM付き。電子書籍の配信事業者に再許諾して行わせることを含む）/);
+      assert.match(art2, /<td class="k">再許諾<\/td><td>紙媒体出版・電子書籍配信の再許諾は、本条件書の許諾の範囲（地域・言語・媒体）内で行い、甲の個別の事前承諾を要しない/);
+      assert.ok(!art4.includes('<td class="k">再許諾</td>') && !art5.includes('<td class="k">再許諾</td>'), "第4条・第5条に再許諾の行は無い");
+      assert.match(art4, /乙又は再許諾先が発行する対象出版物の税抜定価 × 印税対象部数 × 料率/);
+      assert.match(art4, /乙又は再許諾先による配信の配信価格（税抜）× ダウンロード数 × 料率/);
+      assert.ok(!art4.includes("受領する金額"), "電子は配信価格 × DL数に統一");
+      assert.ok(art5.includes("毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。"
+        + "乙は、各集計期間に再許諾先（配信事業者）から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。"));
+      assert.match(art5, /刷部数確定の都度、.*?までに支払う/);
+      assert.match(art5, /再許諾先が行うものは、再許諾先ごとに、受領した報告の対象期間を併記する/);
+      const body = out.slice(out.indexOf("<body>"));
+      for (const pct of ["50%", "40%"]) assert.ok(!body.includes(pct), `再許諾の料率は記載しない（${pct}）`);
+    }
+  }
+  // 電子の条件が入金額基準なら、V5 では直すよう警告する（V3 では警告しない）。
+  const receipts = { ...pubContext, conditions: pubContext.conditions.map((c: any) => c.id === 2 ? { ...c, priceBasis: "receipts" } : c) };
+  assert.ok(pubTermsWarnings(receipts, "pub_license_terms_v5").some((w) => /価格の基準が「入金額」/.test(w.message)));
+  assert.ok(!pubTermsWarnings(receipts, "pub_license_terms_v3").some((w) => /価格の基準が「入金額」/.test(w.message)));
 });

@@ -25,9 +25,9 @@ export const USAGE_NAME_LABEL: Record<ConditionUsageType, string> = {
   oem: "自社製造・他社販売",
   pub_print: "紙出版",
   pub_digital: "電子出版",
-  // 翻訳版の再許諾（A-033）。相手が決まる前に作るので、再許諾先は名前に要らない。
-  pub_sub_print: "翻訳版再許諾（紙）",
-  pub_sub_digital: "翻訳版再許諾（電子）"
+  // 出版の再許諾（A-033。翻訳版に限らない）。相手が決まる前に作るので、再許諾先は名前に要らない。
+  pub_sub_print: "再許諾（紙）",
+  pub_sub_digital: "再許諾（電子）"
 };
 
 /** 再許諾先を名前に入れる取引モデル。出版の翻訳版は相手が後から決まるので入れない。 */
@@ -87,6 +87,7 @@ export function parseUsageType(text: unknown): ConditionUsageType | null {
     翻訳版: "pub_sub_print", 翻訳版紙: "pub_sub_print", 翻訳版再許諾紙: "pub_sub_print",
     翻訳版電子: "pub_sub_digital", 翻訳版再許諾電子: "pub_sub_digital",
     翻訳版再許諾: "pub_sub_print",
+    // 以前の表記（翻訳版再許諾（紙）など）は上の行で受ける。出版の「再許諾紙」「再許諾電子」は表記の照合で当たる。
     紙: "pub_print", 出版紙: "pub_print", 紙出版: "pub_print", print: "pub_print",
     電子: "pub_digital", 出版電子: "pub_digital", 電子出版: "pub_digital", digital: "pub_digital",
     自社製造自社販売: "in_house", 自社販売: "in_house",

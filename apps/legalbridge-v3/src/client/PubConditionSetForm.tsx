@@ -16,7 +16,7 @@ import { conditionNameFor } from "../server/conditions/naming.js";
  *
  * 電子の料率を空にすれば紙だけ（条件書の電子欄は「—」）。
  *
- * 翻訳版の再許諾（A-033）もここで一緒に作る。紙・電子で率が違うので
+ * 再許諾（A-033。翻訳版・子会社の版元・電子書籍の配信事業者など）もここで一緒に作る。紙・電子で率が違うので
  * 別々の欄。相手先が決まる前に決めるので、再許諾先は空でよい。
  */
 
@@ -160,25 +160,25 @@ export function PubConditionSetForm(
           options: PAY_DAY_OPTIONS,
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
           hint: "空なら末日" },
-        { name: "transPrintRate", label: "翻訳版再許諾 紙 料率（%）", type: "number", placeholder: "50",
-          hint: "乙が第三者に翻訳版を出させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
-        { name: "transDigitalRate", label: "翻訳版再許諾 電子 料率（%）", type: "number", placeholder: "40",
-          hint: "紙と率が違ってよい。空なら電子の翻訳版の条件は作らない" },
-        { name: "transConsent", label: "翻訳版 別途合意の要否", type: "select",
+        { name: "transPrintRate", label: "再許諾 紙 料率（%）", type: "number", placeholder: "50",
+          hint: "乙が第三者（翻訳版の出版社・子会社の版元など）に出版させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
+        { name: "transDigitalRate", label: "再許諾 電子 料率（%）", type: "number", placeholder: "40",
+          hint: "紙と率が違ってよい（電子書籍の配信事業者への再許諾など）。空なら電子の再許諾の条件は作らない" },
+        { name: "transConsent", label: "再許諾 別途合意の要否", type: "select",
           options: CONSENT_OPTIONS,
           visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
             || String(v.transDigitalRate ?? "").trim() !== "",
-          hint: "条件書の翻訳版の欄と第4条に出る。相手先が決まる前でも決めておける" },
-        { name: "transSublicensee", label: "翻訳版 再許諾先の名称（決まっていれば）",
+          hint: "条件書の再許諾の欄と第4条に出る。相手先が決まる前でも決めておける" },
+        { name: "transSublicensee", label: "再許諾先の名称（決まっていれば）",
           placeholder: "未定なら空",
           visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
             || String(v.transDigitalRate ?? "").trim() !== "",
-          hint: "空なら「翻訳版再許諾（紙）」のような条件名で作る" },
+          hint: "空なら「再許諾（紙）」のような条件名で作る" },
         { name: "sublicenseRate", label: "再許諾 料率（%）", type: "number", placeholder: "50",
           hint: (v) => {
             const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
             const made = conditionNameFor({ workTitle: t, usageType: "sublicense", sublicensee: null, purpose: v.purpose });
-            return `翻訳出版など、相手に許諾して受け取った額 × 料率。空なら再許諾の条件は作らない${made ? `。条件名：${made}` : ""}`;
+            return `翻訳出版・子会社の版元・電子書籍の配信など、相手に許諾して受け取った額 × 料率。空なら再許諾の条件は作らない${made ? `。条件名：${made}` : ""}`;
           } },
         { name: "targetPartyId", label: "再許諾 対象の許諾先（特定の許諾先だけの料率のとき）", type: "search",
           search: searchParties, placeholder: "空なら一律（その作品の許諾先すべてに効く）",
