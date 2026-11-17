@@ -678,7 +678,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5 r6 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5 r7 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5）。少数作品用（一覧を01に載せる。別紙なし）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -890,8 +890,8 @@ DECLARE
 
 <h2><span class="no">05</span>支払時期・方法<span class="en">PAYMENT</span></h2>
 <table class="kv">
-  <tr><td class="k">紙媒体出版</td><td>{{#if hasPrintMedia}}刷部数確定の都度、{{payPrint}}までに支払う。{{else}}—{{/if}}</td></tr>
-  <tr><td class="k">電子書籍配信</td><td>{{#if hasDigitalMedia}}毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。乙は、各集計期間に再許諾先（配信事業者）から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。{{else}}—{{/if}}</td></tr>
+  <tr><td class="k">紙媒体出版</td><td>{{#if hasPrintMedia}}刷ごとに、当該刷の刊行日（増刷は発行日）を含む月の翌月末日までに支払う。{{else}}—{{/if}}</td></tr>
+  <tr><td class="k">電子書籍配信</td><td>{{#if hasDigitalMedia}}毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とし、乙は、各集計期間について再許諾先（配信事業者）から受領した報告に基づき、当該集計期間の翌四半期の末日までに支払う。{{else}}—{{/if}}</td></tr>
   <tr><td class="k">消費税・源泉</td><td>上記金額は税抜とし、消費税（{{taxRate}}%）を別途加算する。{{#if withholding}}乙は法令に基づき所得税及び復興特別所得税を源泉徴収し、その残額を支払う。{{else}}甲が法人であるため源泉徴収は行わない。{{/if}}</td></tr>
   <tr><td class="k">報告</td><td>乙は支払の際、作品ごとの刷部数・定価・ダウンロード数・配信価格を記載した明細を甲に提出する。再許諾先が行うものは、再許諾先ごとに、受領した報告の対象期間を併記する。</td></tr>
   <tr><td class="k">振込先</td><td>{{#if hasBank}}{{BANK_INFO}}　{{/if}}振込手数料は乙の負担とする。</td></tr>
@@ -989,7 +989,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5 r6 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5 r7 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5';
@@ -1018,7 +1018,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- pub_license_terms_v5_annex r6 -->
+  html constant text := $tpl$<!-- pub_license_terms_v5_annex r7 -->
 <!--
   個別利用許諾条件書V5・出版（pub_license_terms_v5_annex）。多数作品用（一覧を別紙2に載せる）。著作物利用許諾基本契約書V5（license_master_v5）の個別条件書。
   本番へは infra/v3/212 が運ぶ（infra/v3/tools/make-template-sql.mjs で本文から作る）。
@@ -1197,8 +1197,8 @@ DECLARE
 
 <h2><span class="no">05</span>支払時期・方法<span class="en">PAYMENT</span></h2>
 <table class="kv">
-  <tr><td class="k">紙媒体出版</td><td>{{#if hasPrintMedia}}刷部数確定の都度、{{payPrint}}までに支払う。{{else}}—{{/if}}</td></tr>
-  <tr><td class="k">電子書籍配信</td><td>{{#if hasDigitalMedia}}毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。乙は、各集計期間に再許諾先（配信事業者）から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。{{else}}—{{/if}}</td></tr>
+  <tr><td class="k">紙媒体出版</td><td>{{#if hasPrintMedia}}刷ごとに、当該刷の刊行日（増刷は発行日）を含む月の翌月末日までに支払う。{{else}}—{{/if}}</td></tr>
+  <tr><td class="k">電子書籍配信</td><td>{{#if hasDigitalMedia}}毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とし、乙は、各集計期間について再許諾先（配信事業者）から受領した報告に基づき、当該集計期間の翌四半期の末日までに支払う。{{else}}—{{/if}}</td></tr>
   <tr><td class="k">消費税・源泉</td><td>上記金額は税抜とし、消費税（{{taxRate}}%）を別途加算する。{{#if withholding}}乙は法令に基づき所得税及び復興特別所得税を源泉徴収し、その残額を支払う。{{else}}甲が法人であるため源泉徴収は行わない。{{/if}}</td></tr>
   <tr><td class="k">報告</td><td>乙は支払の際、作品ごとの刷部数・定価・ダウンロード数・配信価格を記載した明細を甲に提出する。再許諾先が行うものは、再許諾先ごとに、受領した報告の対象期間を併記する。</td></tr>
   <tr><td class="k">振込先</td><td>{{#if hasBank}}{{BANK_INFO}}　{{/if}}振込手数料は乙の負担とする。</td></tr>
@@ -1341,7 +1341,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r6 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- pub_license_terms_v5_annex r7 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'pub_license_terms_v5_annex';
