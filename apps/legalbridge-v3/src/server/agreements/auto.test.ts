@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FakeDatabase } from "../core/fake-db.js";
-import { ensureAgreementForTerms } from "./auto.js";
+import { alignMasterNumber, ensureAgreementForTerms } from "./auto.js";
 
 const base = {
   documentId: 10, documentNo: "ARC-ILT-D-2026-0001", templateLabel: "個別利用許諾条件書",
@@ -208,4 +208,33 @@ test("作品ごとに番号を持つ条件書：1 本の個別契約に作品が
   });
   await assert.rejects(ensureWorkAgreements(db, { documentId: 9, conditionIds: [1, 2], agreementId: 3, issuedOn: null,
     nextNumber: async () => "X" }, "who"), /ARC-PUBT-2026-0012 に、作品が 2 点以上/);
+});
+
+test("基本契約書の決定：基本契約の番号を紙の番号（本体）にそろえ、下の個別契約の頭も付け替える", async () => {
+  const db = new FakeDatabase((t) => {
+    if (t.includes("COALESCE(kind, 'master') AS kind FROM agreements")) return [{ id: 3, agreement_no: "ARC-HYB-2026-9000", kind: "master" }];
+    if (t.includes("WHERE agreement_no = $1 AND id <> $2")) return [];
+    if (t.includes("WHERE parent_id = $1 AND left(")) return [{ id: 31 }];
+    return [];
+  });
+  const r = await alignMasterNumber(db, { documentNo: "ARC-LIC-2026-9003-R4", templateKey: "license_master_v5", agreementId: 3 }, "who");
+  assert.deepEqual(r, { agreementId: 3, from: "ARC-HYB-2026-9000", to: "ARC-LIC-2026-9003", children: 1 });
+  assert.deepEqual(db.find("UPDATE agreements SET agreement_no = $2")!.params, [3, "ARC-LIC-2026-9003"]);
+});
+
+test("基本契約書の決定：外部の番号・同じ番号・使用中の番号・基本契約書でないときはそろえない", async () => {
+  const run = async (row: Record<string, unknown>, opts: { used?: boolean; key?: string } = {}) => {
+    const db = new FakeDatabase((t) => {
+      if (t.includes("COALESCE(kind, 'master') AS kind FROM agreements")) return [row];
+      if (t.includes("WHERE agreement_no = $1 AND id <> $2")) return opts.used ? [{ id: 9 }] : [];
+      return [];
+    });
+    const r = await alignMasterNumber(db, { documentNo: "ARC-LIC-2026-9003", templateKey: opts.key ?? "license_master_v5", agreementId: 3 }, "who");
+    return { r, updated: Boolean(db.find("UPDATE agreements SET agreement_no")) };
+  };
+  assert.deepEqual(await run({ id: 3, agreement_no: "ATT-2026-00069", kind: "master" }), { r: null, updated: false });
+  assert.deepEqual(await run({ id: 3, agreement_no: "ARC-LIC-2026-9003", kind: "master" }), { r: null, updated: false });
+  assert.deepEqual(await run({ id: 3, agreement_no: "ARC-HYB-2026-9000", kind: "master" }, { used: true }), { r: null, updated: false });
+  assert.deepEqual(await run({ id: 3, agreement_no: "ARC-HYB-2026-9000", kind: "supplement" }), { r: null, updated: false });
+  assert.deepEqual(await run({ id: 3, agreement_no: "ARC-HYB-2026-9000", kind: "master" }, { key: "pub_license_terms_v5" }), { r: null, updated: false });
 });
