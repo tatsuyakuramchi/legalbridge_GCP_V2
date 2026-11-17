@@ -22,7 +22,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- license_master_v5 r5 -->
+  html constant text := $tpl$<!-- license_master_v5 r6 -->
 <!--
   著作物利用許諾基本契約書V5（license_master_v5）。出版・ボードゲーム共通の基本契約。本番へは infra/v3/212 が運ぶ
   （infra/v3/tools/make-template-sql.mjs で本文から作る。直すときはここを直して SQL を作り直す）。
@@ -50,9 +50,10 @@ DECLARE
   }
   * { box-sizing: border-box; }
   body { font-family: "Noto Sans CJK JP", "Noto Sans JP", "Hiragino Sans", sans-serif; font-size: 8.6pt; line-height: 1.52; color: #222; margin: 0; }
-  .head { display: flex; justify-content: space-between; align-items: flex-start; }
-  h1 { font-size: 17pt; margin: 4px 0 6px; letter-spacing: .02em; }
-  .meta { font-size: 8pt; color: #555; text-align: left; line-height: 1.5; }
+  /* 題名は中央、締結日・書類番号は右上。 */
+  .head { margin-bottom: 4px; }
+  h1 { font-size: 17pt; margin: 2px 0 8px; letter-spacing: .08em; text-align: center; }
+  .meta { font-size: 8pt; color: #555; text-align: right; line-height: 1.5; }
   .meta b { font-family: monospace; font-weight: 600; color: #333; }
   .sub { font-size: 10.5pt; font-weight: 700; margin: 6px 0 8px; }
   .box { background: #f3f3f3; padding: 8px 10px; margin-bottom: 12px; }
@@ -83,8 +84,8 @@ DECLARE
 <body>
 
 <div class="head">
-  <h1>著作物利用許諾基本契約書</h1>
   <div class="meta">締結日：{{formatDateCompact signDate}}<br>書類番号：<b>{{docNo}}</b></div>
+  <h1>著作物利用許諾基本契約書</h1>
 </div>
 
 <div class="box">
@@ -285,7 +286,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- license_master_v5 r5 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- license_master_v5 r6 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'license_master_v5';
