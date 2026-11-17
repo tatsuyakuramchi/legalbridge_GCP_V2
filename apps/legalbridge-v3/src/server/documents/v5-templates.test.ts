@@ -302,7 +302,7 @@ test("基本契約V5：有効期間は 5年（既定）／3年を選べ、基本
   assert.match(three, /本契約の有効期間は、締結日から3年間とする。.*?本契約は同一の条件でさらに3年間更新され/);
   assert.match(three, /本契約の期間満了日から3年を経過する日/);
   assert.equal(LICENSE_MASTER_V5_VARIABLES.find((v) => v.name === "契約期間")?.default, "5年");
-  assert.match(five, /<div>個別利用許諾条件書は本契約と一体をなし、矛盾するときは個別条件書が優先する。<\/div>/);
+  assert.match(five, /<div>個別利用許諾条件書は本契約と一体をなし、矛盾するときは個別条件書が優先する（第3条）。<\/div>/);
   assert.ok(!five.includes("出版・ボードゲーム共通 ／"), "副題は無い");
   assert.match(five, /<h2>3. 特約事項<\/h2>\s*<p class="art">なし<\/p>/);
   assert.match(five, /<h2>4. 署名<\/h2>/);

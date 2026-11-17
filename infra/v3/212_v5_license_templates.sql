@@ -22,7 +22,7 @@ BEGIN;
 
 DO $do$
 DECLARE
-  html constant text := $tpl$<!-- license_master_v5 r3 -->
+  html constant text := $tpl$<!-- license_master_v5 r4 -->
 <!--
   著作物利用許諾基本契約書V5（license_master_v5）。出版・ボードゲーム共通の基本契約。本番へは infra/v3/212 が運ぶ
   （infra/v3/tools/make-template-sql.mjs で本文から作る。直すときはここを直して SQL を作り直す）。
@@ -97,7 +97,7 @@ DECLARE
 
 <h2>1. 基本条件</h2>
 <div class="kv">
-  <div class="k">個別条件書</div><div>個別利用許諾条件書は本契約と一体をなし、矛盾するときは個別条件書が優先する。</div>
+  <div class="k">個別条件書</div><div>個別利用許諾条件書は本契約と一体をなし、矛盾するときは個別条件書が優先する（第3条）。</div>
   <div class="k">業務委託</div><div>乙が発行する発注書による（第12条）</div>
   <div class="k">有効期間</div><div>締結日から{{termYears}}年間。満了3か月前までに書面で申入れがなければ{{termYears}}年ごとに自動更新。個別条件書の許諾期間は、締結時の残存期間が2年以上なら本契約の満了日まで、2年未満なら満了日からさらに{{termYears}}年（第23条）</div>
   <div class="k">支払先</div><div>{{#if hasBank}}{{BANK_INFO}} ／ {{/if}}振込手数料：乙負担</div>
@@ -281,7 +281,7 @@ COMMIT;
 -- 確認
 SELECT t.template_key AS キー, t.label AS 名前, t.number_prefix AS 採番, t.is_active AS 有効,
        v.version_no AS 版, length(v.html_source) AS 本文の長さ,
-       (strpos(v.html_source, '<!-- license_master_v5 r3 -->') > 0) AS 目印
+       (strpos(v.html_source, '<!-- license_master_v5 r4 -->') > 0) AS 目印
   FROM v3.document_templates t
   LEFT JOIN v3.document_template_versions v ON v.id = t.current_version_id
  WHERE t.template_key = 'license_master_v5';
