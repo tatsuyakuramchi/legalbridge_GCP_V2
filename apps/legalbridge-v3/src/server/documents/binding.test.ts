@@ -368,3 +368,24 @@ test("秘密保持契約書（nda）は甲＝取引先・乙＝自社で引く�
   const po = bindVariables(vars, ctx, {}, { templateKey: "purchase_order" }).values;
   assert.equal(po.PARTY_A_NAME, "株式会社アークライト");
 });
+
+test("供給元のある欄：上書きを認めた欄だけ、手入力を紙に出す（画面は自動の値を持ち続ける）", () => {
+  const vars = parseVariables([
+    { name: "WORK", from: "condition.work.title", overridable: true },
+    { name: "WORK2", from: "condition.work.title" }
+  ]);
+  const result = bindVariables(vars, context, { WORK: "上書きした題名", WORK2: "手入力は使われない" });
+  // 認めた欄は上書きした値。
+  assert.equal(result.values.WORK, "上書きした題名");
+  assert.deepEqual(result.overridden, ["WORK"]);
+  // 画面には自動の値を返す（「自動の値：… 自動に戻す」を出すため）。上書きできる欄。
+  const f = result.fields.find((x) => x.name === "WORK")!;
+  assert.equal(f.source, "auto");
+  assert.equal(f.value, "星降る夜のミュゼ");
+  assert.equal(f.canOverride, true);
+  // 認めていない欄は、これまでどおり記録の値。画面は上書きのボタンを出さない。
+  assert.equal(result.values.WORK2, "星降る夜のミュゼ");
+  assert.equal(result.fields.find((x) => x.name === "WORK2")!.canOverride, false);
+  // 記録と同じ値を入れただけなら、上書きではない。
+  assert.deepEqual(bindVariables(vars, context, { WORK: "星降る夜のミュゼ" }).overridden, []);
+});

@@ -116,7 +116,10 @@ export const PUB_TERMS_VARIABLES: TemplateVariable[] = [
   { name: "締結日", label: "締結日", type: "date", group: "I. 基本情報", required: true,
     dbField: "auto.today", noGuess: true },
   { name: "基本契約番号", label: "基本契約番号", group: "I. 基本情報", from: "masterAgreement.no" },
-  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "masterAgreement.datedTitle" },
+  { name: "基本契約名", label: "基本契約名", group: "I. 基本情報", from: "masterAgreement.datedTitle",
+    // 「◯年◯月◯日付 …基本契約書」。日付は記録の締結日。締結版の契約書の日付と違うときは、この文書だけ上書きできる。
+    overridable: true,
+    helpText: "基本契約の記録の締結日と名前から入ります。締結版の契約書の日付が違うときは「上書きする」で、この文書だけ直せます" },
   { name: "署名欄", label: "署名欄（末尾の記名押印欄）", type: "select", options: ["表示する", "表示しない"],
     group: "I. 基本情報", noGuess: true, default: "表示する",
     helpText: "基本契約と一括で電子署名する場合は「表示しない」にすると、基本契約側の署名欄だけになります。" },
