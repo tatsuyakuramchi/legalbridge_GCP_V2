@@ -21,6 +21,11 @@ export const LICENSE_MASTER_V5_VARIABLES: TemplateVariable[] = [
   { name: "書類番号", label: "書類番号", group: "I. 基本情報", dbField: "auto.docNumber", noGuess: true },
   { name: "締結日", label: "締結日", type: "date", group: "I. 基本情報", required: true,
     dbField: "auto.today", noGuess: true },
+  { name: "契約期間", label: "有効期間（更新の単位）", type: "select", options: ["5年", "3年"], group: "I. 基本情報",
+    noGuess: true, default: "5年",
+    helpText: "基本条件と第23条に出る期間。個別条件書（出版）の更新の単位も、条件明細に定めが無ければこれに合わせる" },
+  { name: "特約事項", label: "特約事項", type: "textarea", group: "I. 基本情報", noGuess: true,
+    helpText: "本契約の条項に加えて適用する定め（条項と抵触するときは特約事項が優先）。空なら「なし」" },
 
   { name: "許諾者名称", label: "許諾者（甲）名称", group: "II. 許諾者（甲）", required: true,
     from: "condition.counterparty.name", helpText: "個人で筆名があれば「氏名（筆名：◯◯）」の形にする" },
@@ -44,6 +49,12 @@ export const LICENSE_MASTER_V5_VARIABLES: TemplateVariable[] = [
 ];
 
 const text = (v: unknown): string => (v == null ? "" : String(v).trim());
+
+/** 「3年」「5年」→ 年数。読めなければ既定の 5。 */
+export function licenseMasterTermYears(value: unknown): number {
+  const n = Number(String(value ?? "").replace(/[^0-9]/g, ""));
+  return n === 3 || n === 5 ? n : 5;
+}
 const joinContact = (parts: unknown[]) => parts.map((v) => text(v)).filter(Boolean).join(" ／ ");
 
 /**
@@ -68,6 +79,9 @@ export function licenseMasterV5Patch(context: Data, manual: Data = {}): Data {
   return {
     docNo: pick("書類番号") || text(context.document?.number),
     signDate: pick("締結日") || text(context.document?.issuedOn),
+    /** 有効期間・更新の単位（年）。既定 5。 */
+    termYears: licenseMasterTermYears(pick("契約期間")),
+    specialTerms: pick("特約事項"),
 
     licensorName: pick("許諾者名称") || text(counterparty.name),
     licensorAddress: pick("許諾者住所") || text(counterparty.address),

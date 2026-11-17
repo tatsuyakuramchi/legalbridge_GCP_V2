@@ -150,20 +150,20 @@ test("条件書V5（出版）：一覧形式・別紙形式とも V3 と同じ�
   }
 });
 
-test("条件書V5（出版）：一覧形式は 01 に表・09 特記事項・別紙なし。別紙形式は別紙1 特記事項・別紙2 一覧", () => {
+test("条件書V5（出版）：一覧形式は 01 に表・09 特約事項・別紙なし。別紙形式は別紙1 特約事項・別紙2 一覧", () => {
   const list = renderPub(PUB).out;
   assert.ok(list.indexOf('<table class="grid">') < list.indexOf('class="sign"'), "表は署名欄より前");
-  assert.match(list, /09<\/span>特記事項/);
+  assert.match(list, /09<\/span>特約事項/);
   assert.match(list, /10<\/span>通知先/);
   assert.ok(!list.includes('class="annex"'));
   assert.match(list, /第1条の一覧の「紙」欄/);
-  assert.match(list, /変更するときは第9条（特記事項）に定める/);
+  assert.match(list, /変更するときは第9条（特約事項）に定める/);
 
   const annex = renderPub(PUB_ANNEX, { 特記事項: "書影の利用を無償で認める。" }).out;
   assert.match(annex, /別紙2「対象著作物一覧」<\/b>（全 1 点）/);
   assert.match(annex, /09<\/span>通知先/);
-  assert.ok(annex.indexOf('class="sign"') < annex.indexOf("別紙1</span>特記事項"));
-  assert.ok(annex.indexOf("別紙1</span>特記事項") < annex.indexOf("別紙2</span>対象著作物一覧"));
+  assert.ok(annex.indexOf('class="sign"') < annex.indexOf("別紙1</span>特約事項"));
+  assert.ok(annex.indexOf("別紙1</span>特約事項") < annex.indexOf("別紙2</span>対象著作物一覧"));
   assert.match(annex, /書影の利用を無償で認める。/);
   assert.match(annex, /別紙2の一覧の「紙」欄/);
   assert.ok(!annex.includes("第1条の一覧"), "参照先は別紙2");
@@ -236,7 +236,7 @@ test("レビュー反映：基本契約V5 の適用範囲・暫定許諾・終�
 });
 
 test("レビュー反映：出版は出版権設定を独占的利用許諾と分け、旧合意は基本契約第27条による", () => {
-  for (const [html, ref] of [[PUB, "第9条（特記事項）"], [PUB_ANNEX, "別紙1「特記事項」"]] as const) {
+  for (const [html, ref] of [[PUB, "第9条（特約事項）"], [PUB_ANNEX, "別紙1「特約事項」"]] as const) {
     const out = renderPub(html).out;
     assert.match(out, /独占の作品は独占的利用許諾とする。ただし、同一覧の備考欄または.*?に「出版権設定」とある作品は/);
     assert.match(out, /同条ただし書の別段の定めとして、基本契約第10条（販売）および第11条（販売終了）による/);
@@ -291,4 +291,41 @@ test("条件書V5（出版）：紙・電子が再許諾を含む（再許諾の
   const receipts = { ...pubContext, conditions: pubContext.conditions.map((c: any) => c.id === 2 ? { ...c, priceBasis: "receipts" } : c) };
   assert.ok(pubTermsWarnings(receipts, "pub_license_terms_v5").some((w) => /価格の基準が「入金額」/.test(w.message)));
   assert.ok(!pubTermsWarnings(receipts, "pub_license_terms_v3").some((w) => /価格の基準が「入金額」/.test(w.message)));
+});
+
+test("基本契約V5：有効期間は 5年（既定）／3年を選べ、基本条件と第23条に出る。特約事項の節。タイトル下の副題は無い", () => {
+  const five = renderMaster(masterContext("corporate")).out;
+  assert.match(five, /締結日から5年間。満了3か月前までに書面で申入れがなければ5年ごとに自動更新。.*?2年未満なら満了日からさらに5年（第23条）/);
+  assert.match(five, /本契約の有効期間は、締結日から5年間とする。/);
+  const three = renderMaster(masterContext("corporate"), { 契約期間: "3年" }).out;
+  assert.match(three, /締結日から3年間。満了3か月前までに書面で申入れがなければ3年ごとに自動更新。.*?2年未満なら満了日からさらに3年（第23条）/);
+  assert.match(three, /本契約の有効期間は、締結日から3年間とする。.*?本契約は同一の条件でさらに3年間更新され/);
+  assert.match(three, /本契約の期間満了日から3年を経過する日/);
+  assert.equal(LICENSE_MASTER_V5_VARIABLES.find((v) => v.name === "契約期間")?.default, "5年");
+  assert.match(five, /<div>個別利用許諾条件書は本契約と一体をなし、矛盾するときは個別条件書が優先する。<\/div>/);
+  assert.ok(!five.includes("出版・ボードゲーム共通 ／"), "副題は無い");
+  assert.match(five, /<h2>3. 特約事項<\/h2>\s*<p class="art">なし<\/p>/);
+  assert.match(five, /<h2>4. 署名<\/h2>/);
+  const special = renderMaster(masterContext("corporate"), { 特約事項: "甲の作品のうちTRPGは出版・ボードゲームの両方の事業別条項による。" }).out;
+  assert.match(special, /特約事項と本契約の条項が抵触するときは、特約事項が優先する。<\/p>\s*<p class="art special">甲の作品のうちTRPGは/);
+  assert.ok(!five.includes("特記事項"), "基本契約も「特約事項」");
+  // 条は項の境目でページを分けてよい（条ごと次のページへ送らない）。
+  assert.ok(!/\.art \{ break-inside: avoid/.test(MASTER));
+});
+
+test("条件書V5（出版）：基本契約V5 の有効期間が更新の単位の既定になる（条件明細に定めが無いとき）。特約事項", () => {
+  const ctx = (years: number | null) => ({ ...pubContext,
+    conditions: pubContext.conditions.map((c: any) => ({ ...c, autoRenew: true, renewMonths: null })),
+    agreement: { ...pubContext.agreement, isV5Master: years != null, v5TermYears: years } });
+  const out = (years: number | null) => {
+    const c = ctx(years);
+    const rows = pubTitleSeeds(c).map((r: Record<string, unknown>) => ({ ...r, copyright: "© 甲", third_party: "なし" }));
+    const m = { pub_titles: rows };
+    return renderDocumentHtml(PUB, { taxRate: 10, BANK_INFO: "", ...m, ...pubTermsPatch(c, m) });
+  };
+  assert.match(out(3), /期間満了の3か月前までに.*?同一条件で3年ごとに自動更新する/);
+  assert.match(out(5), /期間満了の3か月前までに.*?同一条件で5年ごとに自動更新する/);
+  assert.match(renderPub(PUB).out, /09<\/span>特約事項/);
+  assert.ok(!renderPub(PUB_ANNEX).out.includes("特記事項"));
+  assert.ok(!renderDocumentHtml(GAME, { ...gameManual, ...licenseTermsPatch(gameContext, gameManual) }).includes("特記事項"), "ボードゲームも「特約事項」");
 });

@@ -710,6 +710,17 @@ const noticeOf = (context: Data): string => {
  * 許諾期間を入れ直した条件（3 年・3 年ごとに更新）の条件書で、第３条の更新の行が
  * 既定の「1年」のままにならないように。単位が揃っていなければ空（欄の値か既定）。
  */
+/** 基本契約が V5 なら、その有効期間「5年」「3年」。V5 でなければ空。 */
+function v5TermLabel(context: Data): string {
+  const master = contextMasterAgreement(context) as Data | null;
+  return master?.isV5Master === true ? `${number(master.v5TermYears) ?? 5}年` : "";
+}
+
+/** 条件明細に書いてある更新の単位（renewMonths を入れた条件だけ）。揃わなければ空。 */
+function explicitRenewUnitOf(conditions: Data[]): string {
+  return renewUnitOf(conditions.filter((c) => number(c.renewMonths) != null));
+}
+
 export function renewUnitOf(conditions: Data[]): string {
   const units = [...new Set(conditions
     .filter((c) => c.autoRenew === true && text(c.termEnd))
@@ -905,8 +916,12 @@ export function pubTermsPatch(context: Data, manual: Data = {}): Data {
     termStart: pick("許諾開始日") || minDate(conditions.map((c) => text(c.termStart))),
     termEnd: pick("許諾終了日") || latestRenewedEnd(conditions, asOf) || maxDate(conditions.map((c) => text(c.termEnd))),
     autoRenew,
-    renewPeriod: pick("更新期間") || renewUnitOf(conditions) || "1年",
-    noticeBefore: pick("終了通知期限") || noticeOf(context) || "1か月",
+    // 条件明細に更新の単位が無ければ、基本契約V5 の有効期間（3年・5年）・通知期限（3か月）に合わせる（基本契約第23条）。
+    // V5 の基本契約の下では、条件明細に更新の単位をはっきり書いたときだけそれを使う（書いていなければ基本契約の期間）。
+    renewPeriod: pick("更新期間")
+      || (v5TermLabel(context) ? explicitRenewUnitOf(conditions) || v5TermLabel(context) : renewUnitOf(conditions))
+      || "1年",
+    noticeBefore: pick("終了通知期限") || noticeOf(context) || (v5TermLabel(context) ? "3か月" : "") || "1か月",
     region: pick("許諾地域") || "全世界",
     language: pick("許諾言語") || "日本語",
 

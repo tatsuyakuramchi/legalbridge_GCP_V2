@@ -206,12 +206,17 @@ function mapSummary(row: Record<string, any>): DocumentSummary {
  * 項目が1つも無く、ひな形を選んでも入力欄が出なかった。V2 と同じ規則にする
  * （データベースに宣言があればそちらが勝つ。あとから版で足せる）。
  */
-/** V5 の条件書の署名欄：記名＋署名／押印の枠を出すか出さないか。 */
+/**
+ * V5 の条件書の欄。署名欄は記名＋署名／押印の枠を出すか出さないか。
+ * 「特記事項」は V5 では「特約事項」と呼ぶ（基本契約V5 と同じ語。欄の名前・保存先は変えない）。
+ */
 function v5SignatureField(v: TemplateVariable): TemplateVariable {
-  return v.name === "署名欄"
-    ? { ...v, label: "署名欄（記名＋署名／押印）", options: ["表示する", "表示しない"], default: "表示する",
-        helpText: "記名（名称・代表者）は自動で入り、署名でも押印でもよい枠が出ます。基本契約と一括で署名する場合は「表示しない」" }
-    : v;
+  if (v.name === "署名欄") {
+    return { ...v, label: "署名欄（記名＋署名／押印）", options: ["表示する", "表示しない"], default: "表示する",
+             helpText: "記名（名称・代表者）は自動で入り、署名でも押印でもよい枠が出ます。基本契約と一括で署名する場合は「表示しない」" };
+  }
+  if (v.name === "特記事項" || v.name === "v3_special_extras") return { ...v, label: "特約事項" };
+  return v;
 }
 
 function variablesFor(templateKey: string, declared: TemplateVariable[]): TemplateVariable[] {
