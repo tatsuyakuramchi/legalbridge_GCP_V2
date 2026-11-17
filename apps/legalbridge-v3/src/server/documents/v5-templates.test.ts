@@ -254,32 +254,32 @@ test("レビュー反映：ボードゲームは明示承認の対象・製品�
   assert.match(out, /第3条及び別紙3により再許諾を認めた他言語版、対象製品の再版/);
 });
 
-test("条件書V5（出版）：再許諾（pub_sub_*）の条件があれば、第4条・第5条に再許諾（紙）・再許諾（電子）の行。支払は四半期の報告受領ベース", () => {
-  const withSub = { ...pubContext, conditions: [
-    ...pubContext.conditions,
-    cond({ id: 3, conditionNo: "CL-3", name: "星の本（中文）", workId: 10, work: { title: "星の本" }, ratePct: 50, usageType: "pub_sub_print",
-      scopes: { region: ["中国"], language: ["中国語"], media: ["紙"] } }),
-    cond({ id: 4, conditionNo: "CL-4", name: "星の本（中文）", workId: 10, work: { title: "星の本" }, ratePct: 40, usageType: "pub_sub_digital",
-      scopes: { region: ["中国"], language: ["中国語"], media: ["電子"] } })
-  ] };
-  for (const html of [PUB, PUB_ANNEX]) {
-    const rows = pubTitleSeeds(withSub).map((r: Record<string, unknown>) => ({ ...r, copyright: "© 甲", third_party: "なし" }));
+test("条件書V5（出版）：再許諾（pub_sub_*）の条件があれば、第4条・第5条に「再許諾」の行が1つ。一覧は紙・電子が同率なら「紙・電子」", () => {
+  const sub = (id: number, usageType: string, ratePct: number, media: string) => cond({ id, conditionNo: `CL-${id}`, name: "星の本",
+    workId: 10, work: { title: "星の本" }, ratePct, usageType, scopes: { region: ["日本"], language: ["日本語"], media: [media] } });
+  const render = (extra: any[], html: string) => {
+    const ctx = { ...pubContext, conditions: [...pubContext.conditions, ...extra] };
+    const rows = pubTitleSeeds(ctx).map((r: Record<string, unknown>) => ({ ...r, copyright: "© 甲", third_party: "なし" }));
     const m = { pub_titles: rows };
-    const values = { taxRate: 10, BANK_INFO: "", ...m, ...pubTermsPatch(withSub, m) };
+    const values = { taxRate: 10, BANK_INFO: "", ...m, ...pubTermsPatch(ctx, m) };
     assert.deepEqual(blankPlaceholders(html, values, PUB_TERMS_VARIABLES.map((v) => v.name)).filter((n) => !PUB_ROW_NAMES.has(n)), []);
-    const out = renderDocumentHtml(html, values);
+    return renderDocumentHtml(html, values);
+  };
+  for (const html of [PUB, PUB_ANNEX]) {
+    const out = render([sub(3, "pub_sub_print", 50, "紙"), sub(4, "pub_sub_digital", 50, "電子")], html);
     const art4 = out.slice(out.indexOf("04</span>許諾料"), out.indexOf("05</span>支払時期・方法"));
     const art5 = out.slice(out.indexOf("05</span>支払時期・方法"), out.indexOf("06</span>"));
-    assert.match(art4, /再許諾（紙）<\/td><td>乙が紙媒体出版の再許諾先から受領した対価（税抜）× 料率（.*?「再許諾」の行の「紙」の率）/);
-    assert.match(art4, /再許諾（電子）<\/td><td>乙が電子書籍配信の再許諾先から受領した対価（税抜）× 料率（.*?「再許諾」の行の「電子」の率）/);
-    for (const k of ["再許諾（紙）", "再許諾（電子）"]) {
-      assert.ok(art5.includes(`${k}</td><td>毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。`
-        + "乙は、各集計期間に再許諾先から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。"), k);
-    }
+    assert.equal(art4.split('<td class="k">再許諾</td>').length - 1, 1, "第4条の再許諾は1行");
+    assert.match(art4, /乙が再許諾先から受領した対価（税抜）× 料率（.*?「再許諾」の行）。紙媒体出版の再許諾には「紙」の率、電子書籍配信の再許諾には「電子」の率を用いる/);
+    assert.equal(art5.split('<td class="k">再許諾</td>').length - 1, 1, "第5条の再許諾は1行");
+    assert.ok(art5.includes("紙媒体出版・電子書籍配信とも、毎年1月1日〜3月31日、4月1日〜6月30日、7月1日〜9月30日及び10月1日〜12月31日を集計期間とする。"
+      + "乙は、各集計期間に再許諾先から受領した報告に基づき、当該集計期間の最終月の翌月末日までに甲に報告し、その翌月末日までに支払う。"));
     assert.match(art5, /再許諾については、再許諾先ごとに、受領した報告の対象期間・数量・受領額を記載する/);
+    assert.ok(!out.includes("再許諾（紙）") && !out.includes("再許諾（電子）"));
+    // 一覧：同率は「紙・電子 50%」、率が違えば「紙 50%／電子 40%」。
+    assert.match(out, /再許諾　紙・電子 50%（別途合意 /);
+    assert.match(render([sub(3, "pub_sub_print", 50, "紙"), sub(4, "pub_sub_digital", 40, "電子")], html), /再許諾　紙 50%／電子 40%（別途合意 /);
   }
-  // 再許諾の条件が無い紙には行が出ない。
   const plain = renderPub(PUB).out;
-  assert.ok(!plain.includes("再許諾（紙）") && !plain.includes("再許諾（電子）"));
-  assert.ok(!plain.includes("再許諾については"));
+  assert.ok(!plain.includes('<td class="k">再許諾</td>') && !plain.includes("再許諾については"), "再許諾の条件が無ければ出ない");
 });
