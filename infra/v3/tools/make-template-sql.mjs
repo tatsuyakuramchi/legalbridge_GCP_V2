@@ -83,7 +83,7 @@ const TARGETS = [
   },
   {
     no: "212", key: "license_master_v5", label: "著作物利用許諾基本契約書V5",
-    body: "templates/license_master_v5.html", mark: "<!-- license_master_v5 r4 -->",
+    body: "templates/license_master_v5.html", mark: "<!-- license_master_v5 r5 -->",
     prefix: "LIC",
     categoryFrom: "license_master",
     out: "212_v5_license_templates.sql",
