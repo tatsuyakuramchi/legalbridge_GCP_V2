@@ -764,9 +764,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
   };
   const conditions = list(context.conditions);
   const payment = pubPaymentFromConditions(conditions);
-  // 載っている媒体。無い媒体の支払の行は「—」にする（A-107）。
-  const hasPrintMedia = conditions.some((c) => mediaOfCondition(c) === "print");
-  const hasDigitalMedia = conditions.some((c) => mediaOfCondition(c) === "digital");
+  // 載っている媒体（自社の出版・配信）。無い媒体の支払の行は「—」にする（A-107）。
+  // 再許諾（翻訳版）の条件は「翻訳版」の行で扱うので、ここでは数えない。数えると、再許諾だけを載せた紙
+  // （許諾地域が海外だけ・対価は受領した再許諾料の折半、など）に、紙媒体出版・電子書籍配信の行が料率の空欄つきで出る。
+  const hasPrintMedia = conditions.some((c) => mediaOfCondition(c) === "print" && !isTranslationCondition(c));
+  const hasDigitalMedia = conditions.some((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c));
   const digitalConds = conditions.filter((c) => mediaOfCondition(c) === "digital" && !isTranslationCondition(c));
   const byId = new Map(conditions.map((c) => [Number(c.id), c]));
   const seeds = pubTitleSeeds(context);
@@ -987,7 +989,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
     hasAnyDigital: titles.some((t) => t.hasDigital),
     /** 作品ごとの許諾期間が一覧に出ているか。第３条がそちらを指す（A-039）。 */
     hasWorkTerms: titles.some((t) => t.hasTerm),
-    ...multiPatch(titles, conditions, pick, translationShare)
+    ...multiPatch(titles, conditions, pick, translationShare, { print: hasPrintMedia, digital: hasDigitalMedia })
   };
 }
 
@@ -1007,6 +1009,13 @@ export const MULTI_DEFAULTS = {
   translationRate: "50%",
   translationBasis: "算定の基礎は、源泉徴収税額および海外送金手数料を控除した後の被許諾者の実受領額とする。",
   payTiming: "紙書籍：都度払い（刊行日を含む月の翌月末日払い）。電子書籍：年1回・10月末日払い（算定期間：毎年7月1日から翌年6月末日まで、同日締め）。翻訳版：被許諾者が再許諾先から許諾料を受領した日を含む月の翌々月末日払い。報告明細：利用形態別の数量・単価・金額を記載した報告書を提出。",
+  // 上の文を利用形態ごとに分けたもの。欄を直していないとき、この紙に行のある利用形態の文だけを出す。
+  payTimingParts: {
+    print: "紙書籍：都度払い（刊行日を含む月の翌月末日払い）。",
+    digital: "電子書籍：年1回・10月末日払い（算定期間：毎年7月1日から翌年6月末日まで、同日締め）。",
+    translation: "翻訳版：被許諾者が再許諾先から許諾料を受領した日を含む月の翌々月末日払い。",
+    report: "報告明細：利用形態別の数量・単価・金額を記載した報告書を提出。"
+  },
   coAuthorPay: [
     "基本契約第12条第3項に基づき、被許諾者は、許諾者が書目ごとに定めて被許諾者に通知した対価の配分割合（以下「配分割合」という）に従い、「力造」名義以外の者（以下「共著者」という）に配分されるべき対価（以下「共著者分」という）を、各共著者に直接支払い、その額を許諾者への支払額から控除する。「力造」名義に配分される対価は、許諾者に支払う。これに伴う源泉徴収、支払調書の作成その他の事務は、被許諾者が行う。",
     "前項にかかわらず、被許諾者が許諾者に対し、特定の支払について共著者への分配を書面（電子メールを含む）により委託した場合は、被許諾者は当該支払について共著者分を含む全額を許諾者に支払い、許諾者がこれを各共著者に分配する（源泉徴収、支払調書の作成その他の事務を含む）。この場合、被許諾者は許諾者に対し、分配業務の委託料として、委託1回につき金50,000円（消費税別）を支払う。委託を行うか否かは、被許諾者が決定する。",
@@ -1047,7 +1056,8 @@ export const PUB_TERMS_MULTI_EXTRA_VARIABLES: TemplateVariable[] = [
     default: MULTI_DEFAULTS.translationRate,
     helpText: "「被許諾者が再許諾先から受領した許諾料の◯◯」の◯◯。翻訳版の条件明細を載せているときは、その料率が出ます（この欄は使いません）" },
   { name: "翻訳版の算定の基礎", label: "翻訳版：算定の基礎", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.translationBasis },
-  { name: "支払時期・方法", label: "支払時期・方法", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.payTiming },
+  { name: "支払時期・方法", label: "支払時期・方法", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.payTiming,
+    helpText: "初期値のままなら、この紙に行のある利用形態（紙・電子・翻訳版）の文だけが出ます。直せば、書いたとおりに出ます" },
   { name: "共著者分の支払", label: "共著者分の支払（1 行 1 項。空にすると欄ごと出さない）", type: "textarea", group: "VIII. 条文（作品ごとに番号）",
     noGuess: true, default: MULTI_DEFAULTS.coAuthorPay },
   { name: "旧合意", label: "旧合意・過去利用（1 行 1 項）", type: "textarea", group: "VIII. 条文（作品ごとに番号）", noGuess: true, default: MULTI_DEFAULTS.priorAgreements },
@@ -1097,11 +1107,40 @@ const uniform = (values: string[]): string | null => {
   return set.length === 1 ? set[0]! : null;
 };
 
-function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]) => string, translationShare: number | null): Data {
+/**
+ * 翻訳版（再許諾）の条件明細の料率を 1 文に。全部同じなら「50%」、紙と電子で違えば「紙 50%／電子 40%」。
+ * 同じ媒体のなかで作品によって違うときは空（1 枚に書けないので、警告で紙を分けてもらう）。
+ */
+export function translationRateText(conditions: Data[]): string {
+  const trans = conditions.filter((c) => isTranslationCondition(c));
+  const rates = (media: PubMedia | null) => trans.filter((c) => media === null || mediaOfCondition(c) === media)
+    .map((c) => percentText(c.ratePct));
+  const all = uniform(rates(null));
+  if (all) return all;
+  const parts: string[] = [];
+  for (const [media, label] of [["print", "紙"], ["digital", "電子"]] as const) {
+    if (!rates(media).length) continue;
+    const one = uniform(rates(media));
+    if (!one) return "";
+    parts.push(`${label} ${one}`);
+  }
+  return parts.join("／");
+}
+
+function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]) => string, translationShare: number | null,
+                    media: { print: boolean; digital: boolean } = { print: true, digital: true }): Data {
   const own = conditions.filter((c) => !isTranslationCondition(c));
   const prints = own.filter((c) => mediaOfCondition(c) === "print");
   const exemptFirst = uniform(prints.map((c) => text(c.royaltyExemptFirstCopies)));
   const transRates = conditions.filter((c) => isTranslationCondition(c)).map((c) => percentText(c.ratePct));
+  const hasTranslation = transRates.length > 0 || translationShare != null || pick("翻訳版の行") !== "出さない";
+  // 支払時期・方法。欄を直していれば書いたとおり。初期値のままなら、この紙に行のある利用形態の文だけにする
+  // （再許諾だけの紙に「紙書籍：…。電子書籍：…。」が出ないように）。
+  const typedTiming = pick("支払時期・方法");
+  const timingParts = MULTI_DEFAULTS.payTimingParts;
+  const payTiming = typedTiming && typedTiming !== MULTI_DEFAULTS.payTiming ? typedTiming
+    : [media.print ? timingParts.print : "", media.digital ? timingParts.digital : "",
+       hasTranslation ? timingParts.translation : "", timingParts.report].join("");
   const nos = titles.map((t) => text(t.termsNo)).filter(Boolean);
   const special = lines(pick("特記事項（作品ごと）"));
   const coAuthor = lines(pick("共著者分の支払"));
@@ -1122,15 +1161,15 @@ function multiPatch(titles: Data[], conditions: Data[], pick: (...keys: string[]
     digitalRateAll: uniform(titles.map((t) => text(t.digitalRate))) ?? "",
     // 翻訳版の料率。翻訳版の条件明細を載せていればその料率（そろっていなければ空）。載せていなければ、
     // 欄「翻訳版取り分」→ 欄「翻訳版の料率」（初期値 50%）の順。
-    translationRateAll: transRates.length ? (uniform(transRates) ?? "")
+    translationRateAll: transRates.length ? translationRateText(conditions)
       : translationShare != null ? percentText(translationShare) : pick("翻訳版の料率"),
     // 翻訳版の行（許諾内容・対価）を出すか（5 版目から）。翻訳版の条件明細を載せていなくても出す。
     // 翻訳版を書かない紙にするときだけ、欄「翻訳版の行」を「出さない」にする
     // （文の欄は空にしても初期値に戻るので、出す・出さないは別の欄で決める）。
-    multiHasTranslation: transRates.length > 0 || translationShare != null || pick("翻訳版の行") !== "出さない",
+    multiHasTranslation: hasTranslation,
     exemptFirstCopies: exemptFirst && Number(exemptFirst) > 0 ? Number(exemptFirst).toLocaleString("ja-JP") : "",
     translationBasis: pick("翻訳版の算定の基礎"),
-    payTiming: pick("支払時期・方法"),
+    payTiming,
     coAuthorPay: coAuthor, hasCoAuthorPay: coAuthor.length > 0,
     priorAgreements: prior, hasPriorAgreements: prior.length > 0,
     thirdPartyIp: MULTI_DEFAULTS.thirdPartyIp,
@@ -1149,6 +1188,10 @@ export function pubTermsMultiWarnings(context: Data, manual: Data = {}): Warning
   for (const [key, label] of [["printRate", "紙"], ["digitalRate", "電子"]] as const) {
     const set = rateSets(key);
     if (set.length > 1) out.push({ kind: "other", message: `${label}の料率が作品で違います（${set.join("・")}）。この条件書は料率を 1 つで書くので、料率ごとに紙を分けてください` });
+  }
+  const trans = list(context.conditions).filter((c) => isTranslationCondition(c));
+  if (trans.length && !translationRateText(trans)) {
+    out.push({ kind: "other", message: `翻訳版（再許諾）の料率が作品で違います（${[...new Set(trans.map((c) => percentText(c.ratePct)))].join("・")}）。この条件書は料率を 1 つで書くので、料率ごとに紙を分けてください` });
   }
   const terms = [...new Set(titles.map((t) => text(t.term)).filter(Boolean))];
   if (terms.length > 1) out.push({ kind: "other", message: `許諾期間が作品で違います（${terms.length} 通り）。期間ごとに紙を分けてください` });
