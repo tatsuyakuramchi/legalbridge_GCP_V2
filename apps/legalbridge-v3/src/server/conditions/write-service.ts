@@ -11,6 +11,7 @@ import { readContractForm } from "./contract-form.js";
 import type { ConditionScope, LicenseFeeBasis } from "../core/model.js";
 import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js";
 import { conditionNameFor } from "./naming.js";
+import { autoRenewBlocksTermRewrite } from "./renewal.js";
 import { conditionUsageLabel, isSublicensingUsage, pubMediaOfUsage, usageOfPubMedia,
          type ConditionUsageType } from "../core/condition-usage.js";
 import { validateShareInput } from "../royalty/shares.js";
@@ -1505,10 +1506,19 @@ export class ConditionWriteService {
     Promise<{ id: number; conditionNo: string | null; mode: "in_place" | "revised"; from: string | null; to: string }> {
     try {
       const before = await this.database.query(
-        "SELECT id, condition_no, status, term_end FROM conditions WHERE id = $1", [id]);
-      const row = before.rows[0] as { condition_no: string | null; status: string; term_end: unknown } | undefined;
+        `SELECT id, condition_no, status, term_start, term_end, auto_renew, renew_months, renew_stopped_on
+           FROM conditions WHERE id = $1`, [id]);
+      const row = before.rows[0] as { condition_no: string | null; status: string; term_start: unknown; term_end: unknown;
+                                      auto_renew: unknown; renew_months: unknown; renew_stopped_on: unknown } | undefined;
       if (!row) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
       const from = dateStr(row.term_end);
+      // 自動更新の条件は、終了日（当初の満了日）を書き換えない。更新した回数といまの期間は、当初の満了日と
+      // 更新の単位から数えて出す（conditions/renewal.ts）ので、書き換えると「更新 0回」に戻る。
+      const blocked = autoRenewBlocksTermRewrite({
+        termStart: dateStr(row.term_start), termEnd: from, autoRenew: row.auto_renew === true,
+        renewMonths: row.renew_months == null ? null : Number(row.renew_months), renewStoppedOn: dateStr(row.renew_stopped_on)
+      });
+      if (blocked) throw new DomainError("VALIDATION", blocked);
       if (from && newEnd <= from) {
         throw new DomainError("VALIDATION", `新しい終了日 ${newEnd} は、いまの終了日 ${from} より後にしてください`);
       }

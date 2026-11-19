@@ -516,8 +516,11 @@ export function WorksWorkspace(
                                  failed: Array<{ id: number; error: string }> }>("/conditions-renew-term",
         { ids: renewing.ids, newEnd: renewing.newEnd });
       const revised = r.done.filter((d) => d.mode === "revised").length;
+      const failedText = r.failed.map((f) => `${conditions.find((c) => c.id === f.id)?.conditionNo ?? `#${f.id}`}：${f.error}`).join(" ／ ");
+      // 1 本も更新できなかったときは「更新しました」と言わない。
+      if (!r.done.length) { setError(`契約期間は更新していません。${failedText}`); setRenewing(null); return; }
       setNotice(`契約期間を ${renewing.newEnd} まで更新しました（${r.done.length} 本${revised ? `。うち ${revised} 本は支払があるので改訂（新版）` : ""}）`
-        + (r.failed.length ? `。できなかったもの：${r.failed.map((f) => `#${f.id} ${f.error}`).join(" / ")}` : ""));
+        + (r.failed.length ? `。できなかったもの：${failedText}` : ""));
       setRenewing(null);
       await reloadWork();
     } catch (e) { setError((e as ApiError).message); }
@@ -1282,6 +1285,7 @@ export function WorksWorkspace(
                       <button className="btn btn-sm" disabled={busy} onClick={() => setRenewing(null)}>やめる</button>
                     </div>
                     <span className="faint">料率・締めはそのまま。実績・支払が無ければその場で書き換え、支払が立っていれば改訂（新版）になります。</span>
+                    <span className="faint">自動更新の条件は対象外です（終了日は当初の満了日のままで、更新した回数といまの期間は自動で数えます）。</span>
                   </div>
                 );
               })()}
