@@ -870,6 +870,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
   /** 料率の欄（幅が狭い）での再許諾の呼び名。翻訳版＝「翻訳版」、それ以外＝「再許諾」（翻訳以外かどうかは備考に出る）。 */
   const subColumnLabel = (...sub: Array<Data | undefined>): string =>
     (rowSublicenseLabel(sub.filter((c): c is Data => Boolean(c))) === "翻訳版" ? "翻訳版" : "再許諾");
+  /** V5：翻訳版の再許諾がある作品（行の番号 → 再許諾先ごとの甲の承諾の要否）。本文の「翻訳版」の行の出し分けに使う。 */
+  const transRows = new Map<number, "要" | "不要">();
   /** V5 で、その媒体が「自社の条件なし・再許諾の条件あり」か。 */
   const subOnly = (own: Data | undefined, sub: Data | undefined): boolean => options.v5 === true && !own && Boolean(sub);
   const titles = rows.map((row, index) => {
@@ -924,7 +926,18 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
           return transConsent === "要" ? `${head}／再許諾先ごとに甲乙の別途合意を要する` : head;
         })()
       : "";
-    const note = (() => {
+    // V5 の本文に「翻訳版」の行があるひな形（r11 から）向けの短い書き方。算定のしかた・支払時期・承諾の要否は本文が
+    // 定めるので、翻訳版の再許諾の作品は、備考には「翻訳版の再許諾のみ」（自社で出す分もあれば率）だけを書く。
+    // 翻訳版でない再許諾（その他・未設定）は本文に行が無いので、上の長い文のまま。
+    const transRow = options.v5 === true && fromLedger && Boolean(transPrint || transDigital)
+      && rowSublicenseLabel([transPrint, transDigital].filter((c): c is Data => Boolean(c))) === "翻訳版";
+    const subBrief = transRow
+      ? (print || digital
+          ? `翻訳版の再許諾：${[transPrintRate ? `紙 ${transPrintRate}` : "", transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean).join("・")}`
+          : "翻訳版の再許諾のみ")
+      : subNote;
+    if (transRow) transRows.set(index, transConsent === "要" ? "要" : "不要");
+    const { note, noteBrief } = (() => {
       const typed = text(row.note).split("／").map((s) => s.trim()).filter(Boolean)
         .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は") && !s.startsWith(EXEMPT_NOTE_HEAD) && s !== RECEIPTS_NOTE)
         .filter((s) => !(showRowScope && (s.startsWith("許諾地域：") || s.startsWith("許諾言語："))))
@@ -936,7 +949,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       // 増刷時の非加算と電子の料率の基準も台帳から引き直す（行を直していてもそちらが正）。
       const exempt = fromLedger ? exemptLaterNote(number(print?.royaltyExemptLaterPct)) : "";
       const receipts = !options.v5 && fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
-      return [scopeNote, subNote, fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
+      const join = (sub: string) => [scopeNote, sub, fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
+      return { note: join(subNote), noteBrief: join(subBrief) };
     })();
     // 作品の個別契約の番号。条件から出た行は条件の個別契約が正（決定のときに作品ごとに立てる）。
     const termsNo = (fromLedger ? text(print?.termsAgreementNo) || text(digital?.termsAgreementNo)
@@ -949,6 +963,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       copyright: text(row.copyright),
       thirdParty: text(row.third_party) || "なし",
       note,
+      /** 本文に「翻訳版」の行があるひな形（V5 r11 から）が備考に出す文。それ以外のひな形は note。 */
+      noteBrief,
       coAuthors, payeeShare, hasShares: Boolean(coAuthors),
       // 許諾者の取り分を料率で（作品ごとに番号を持つ条件書の備考の頭。受取人宛ての紙は料率の欄が取り分なので出さない）。
       shareNote: fromLedger && number(context.payee?.partyId) == null ? licensorShareNote(print, digital) : "",
@@ -1000,6 +1016,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
 
   // 翻訳版の条件がある作品。別途合意の要否は、この中だけで数える。
   const transTitles = titles.filter((t) => t.hasTranslation);
+  const transConsentMixed = new Set(transRows.values()).size > 1;
   const counterparty = context.condition?.counterparty ?? {};
   const primaryContact = list(context.contacts).find((c) => c.role === "primary") ?? {};
   const translationShare = number(pick("翻訳版取り分"));
@@ -1092,10 +1109,17 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
 
     hasBank: Boolean(bank),
     // V5：電子の算定の基礎が作品で混ざるときだけ、一覧の電子の欄に「（受領額）」「（配信価格）」を添える。
-    titles: options.v5 && digitalConds.some((c) => String(c.priceBasis) === "receipts")
+    titles: (options.v5 && digitalConds.some((c) => String(c.priceBasis) === "receipts")
       && !digitalConds.every((c) => String(c.priceBasis) === "receipts")
       ? titles.map((t) => ({ ...t, digitalBasisTag: t.hasDigital && t.digitalBasis ? `（${t.digitalBasis}）` : "" }))
-      : titles,
+      : titles)
+      // 翻訳版の再許諾先ごとの甲の承諾の要否が作品で違うときは、本文が備考を指すので、作品の備考に要否を書く。
+      .map((t, i) => (transConsentMixed && transRows.has(i)
+        ? { ...t, noteBrief: [t.noteBrief, `再許諾先ごとの甲の承諾：${transRows.get(i)}`].filter(Boolean).join("／") } : t)),
+    // V5 の本文の「翻訳版」の行（許諾内容・許諾料・支払時期。r11 から）。翻訳版の再許諾の条件が載っているときだけ出す。
+    v5Translation: transRows.size > 0,
+    v5TransConsentRequired: transRows.size > 0 && !transConsentMixed && [...transRows.values()][0] === "要",
+    v5TransConsentMixed: transConsentMixed,
     /** 一覧に載る作品の点数。第１条の要約と別紙1の見出しに出る（r5）。 */
     titleCount: titles.length,
     hasAnyDigital: titles.some((t) => t.hasOwnDigital),
