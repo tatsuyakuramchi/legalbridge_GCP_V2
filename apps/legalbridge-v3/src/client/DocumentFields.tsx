@@ -300,7 +300,9 @@ export function DocumentFields(
                         {f.type === "textarea" && (
                           <SnippetPicker value={value}
                                          hint={/許諾|範囲|scope/i.test(`${f.name} ${f.label}`)
-                                           ? "scope" : undefined}
+                                           ? "scope"
+                                           : /特約|特記|special/i.test(`${f.name} ${f.label}`)
+                                             ? "special_terms" : undefined}
                                          onInsert={(v) => onChange(f.name, v)} />
                         )}
                         {quoteFor === f.name && (
