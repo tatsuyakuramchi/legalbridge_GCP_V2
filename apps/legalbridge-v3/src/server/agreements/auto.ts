@@ -34,7 +34,9 @@ export const TERMS_TEMPLATE_KEYS = new Set([
   "pub_license_terms_multi",
   "pub_license_terms", "individual_license_terms",
   // V5（著作物利用許諾基本契約書V5 の個別条件書）
-  "individual_license_terms_v5", "pub_license_terms_v5", "pub_license_terms_v5_annex"
+  "individual_license_terms_v5", "pub_license_terms_v5", "pub_license_terms_v5_annex",
+  // 二次利用追加条件書。決定のときに利用の行から作った条件を、この紙の個別契約（基本契約の下）に寄せる。
+  "secondary_use_terms"
 ]);
 
 export interface AutoAgreementInput {

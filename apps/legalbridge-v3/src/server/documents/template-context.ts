@@ -18,6 +18,7 @@ import {
 import { foldPeriodicLines } from "./periodic-fold.js";
 import { editionPatch, royaltyStatementPatch } from "./royalty-patch.js";
 import { isLicenseMasterV5Template, licenseMasterV5Patch } from "./license-master-v5.js";
+import { SUT_USES_FIELD, isSecondaryUseTemplate, secondaryUsePatch, secondaryUseWarnings } from "./secondary-use.js";
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
 import { PUB_TITLES_FIELD, isPubTermsMulti, isPubTermsTemplate, isPubTermsV5, pubTermsMultiWarnings, pubTermsPatch, pubTermsSuggestions,
@@ -89,6 +90,8 @@ export function lineFieldsFor(templateKey: string): string[] {
   }
   // 出版の条件書は「対象著作物の一覧」1つ。作品1点が1行で、紙・電子の条件が畳まれる。
   if (isPubTermsTemplate(templateKey)) return [PUB_TITLES_FIELD];
+  // 二次利用追加条件書は「許諾する二次利用」の表 1 つ。1 行が 1 つの利用で、決定のときに条件明細になる。
+  if (isSecondaryUseTemplate(templateKey)) return [SUT_USES_FIELD];
   // 計算書は金額を計算から出すので明細を人が打つことはない。ただし紙に出る
   // 文字（製品名・対象契約）は直せないと困る。作品名やアウト条件の名前が
   // そのまま出るので、相手に見せる呼び方と食い違うことがある。
@@ -753,6 +756,9 @@ export function buildTemplateContext(
   }
   if (isLicenseMasterV5Template(templateKey)) {
     return { ...common, ...licenseMasterV5Patch(context, { ...manual, ...bound }) };
+  }
+  if (isSecondaryUseTemplate(templateKey)) {
+    return { ...common, ...secondaryUsePatch(context, { ...manual, ...bound }) };
   }
   if (isStatementTemplate(templateKey)) {
     const patch = royaltyStatementPatch(context, manual, Number(common.taxRate));
@@ -1498,6 +1504,7 @@ export function suggestionsFor(
  */
 export function templateWarnings(templateKey: string, context: Ctx, manual: Record<string, unknown> = {}): Warning[] {
   const version = termsVersionWarnings(templateKey, context);
+  if (isSecondaryUseTemplate(templateKey)) return secondaryUseWarnings(context, manual);
   if (isPubTermsTemplate(templateKey)) {
     return isPubTermsMulti(templateKey)
       ? [...version, ...pubTermsWarnings(context, templateKey), ...pubTermsMultiWarnings(context, manual)]

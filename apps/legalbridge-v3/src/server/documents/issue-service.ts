@@ -28,6 +28,7 @@ import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix,
          nextRevisionNumber, printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { materializeSettlementRows } from "./settlement-conditions.js";
+import { materializeSecondaryUseRows } from "./secondary-use-conditions.js";
 import { applyRefNoMode, loadCounterpartyNos, refNoModeOf, type RefNoMode } from "./cite-no.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
 import { TAX_ROUNDING_INPUT, taxRoundingOf, type TaxRounding } from "../core/rounding.js";
@@ -443,6 +444,18 @@ export class DocumentIssueService {
           await client.query("UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
             [documentId, JSON.stringify(settled.manual)]);
           conditionIds.push(...settled.created.map((c) => c.id));
+        }
+        // 二次利用追加条件書の利用の行で、条件の無いものは条件にする（自社＝自社製造・自社販売、再許諾＝再許諾）。
+        // 相手先と契約は、文書に付いた基本契約から。作った条件は下でこの紙の個別契約に寄る。
+        const secondary = await materializeSecondaryUseRows(client, this.conditionWrites, {
+          documentId, templateKey: template.templateKey, matterId: int(row.matter_id),
+          agreementId: int(row.agreement_id), manual: settled.manual
+        }, actor);
+        if (secondary.created.length) {
+          settled.manual = secondary.manual;
+          await client.query("UPDATE documents SET manual_inputs = $2::jsonb WHERE id = $1",
+            [documentId, JSON.stringify(secondary.manual)]);
+          conditionIds.push(...secondary.created.map((c) => c.id));
         }
 
         // 海外の書類（海外発注書・海外用の検収書）を決めたら、その条件は税込（海外・内税）に

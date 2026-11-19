@@ -148,6 +148,28 @@ const TARGETS = [
 --   ・項目（入力欄）はコードが持つ（LICENSE_MASTER_V5_VARIABLES・LICENSE_TERMS_VARIABLES・PUB_TERMS_VARIABLES）。variables は空。
 --   ・採番は従来の帯を続ける（基本契約 LIC／ボードゲームの条件書 ILT／出版の条件書 PUBT）。
 --   ・アプリ側は V5 のキーを扱う版（documents/license-master-v5.ts ほか）が先に出ていること。`
+  },
+  {
+    no: "219", key: "secondary_use_terms", label: "二次利用追加条件書",
+    body: "templates/secondary_use_terms.html", mark: "<!-- secondary_use_terms r1 -->",
+    prefix: "SUT",
+    // 分類は出版の条件書と同じ（許諾の条件を定める紙）。
+    categoryFrom: "pub_license_terms_v3",
+    out: "219_secondary_use_terms.sql",
+    variables: [],
+    title: "二次利用追加条件書（secondary_use_terms）の登録",
+    intro: `--   商品化・映像化・デジタルゲーム化その他の二次利用と、その再許諾の条件を定める追加条件書。
+--   出版の基本契約は、これらの利用を「別途合意したときに限り許諾する」と定める。その別途合意を 1 枚にする。
+--     ・出版等許諾基本契約書（pub_master_*）… 第4条第1項の「追加条件書」
+--     ・著作物利用許諾基本契約書V5（license_master_v5）… 第3条の個別条件書（個別条件書の「二次利用」の行の別途合意）
+--   当事者の呼び方（許諾者・被許諾者／甲・乙）と参照する条は、基本契約が V5 かどうかで出し分ける。
+--
+--   ・契約の画面で基本契約を開き、「二次利用追加条件書を作る」から作る（条件明細は先に要らない）。
+--   ・利用（商品化・映像化 …）を 1 行ずつ並べる。決定のとき、行から条件明細（取得 IN の利用許諾）を作り、
+--     この紙の個別契約（基本契約の下。番号は紙の番号）に載せる。
+--   ・項目（入力欄）はコードが持つ（documents/secondary-use.ts の SECONDARY_USE_VARIABLES）。variables は空。
+--   ・採番は SUT（ARC-SUT-年-連番）。分類は出版の条件書と同じ。
+--   ・アプリ側は secondary_use_terms を扱う版が先に出ていること。`
   }
 ];
 

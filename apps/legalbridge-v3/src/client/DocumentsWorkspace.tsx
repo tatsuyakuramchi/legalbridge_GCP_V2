@@ -262,7 +262,8 @@ export function DocumentsWorkspace(
   /** spec がどのひな形のものか。ひな形を変えた直後は前のひな形の項目が残る。 */
   const [specKey, setSpecKey] = useState("");
   /** プレビューの本文。入力欄とは別に持つ。打つたびに作り直しても打鍵を邪魔しない。 */
-  const [rendered, setRendered] = useState<{ html: string; templateLabel: string } | null>(null);
+  // warnings：打った値で取り直した注意。行を足した・欄を直したあとの状態で出す（spec の注意は、ひな形と条件を選んだ時点のもの）。
+  const [rendered, setRendered] = useState<{ html: string; templateLabel: string; warnings?: PreviewResponse["warnings"] } | null>(null);
   /** 直している下書き。作り直した文書はここに載せて、直してから発行する。 */
   const [draft, setDraft] = useState<{ id: number; no: string | null } | null>(null);
   /** 開いている下書きの案件。条件の候補をこの案件のぶんに絞る。 */
@@ -846,7 +847,7 @@ export function DocumentsWorkspace(
     api.post<PreviewResponse>("/documents/preview",
       { templateKey, conditionIds: picked, eventIds: pickedEvents,
         manualInputs: JSON.parse(manualJson), agreementId, matterId, requestId, documentId: draft?.id ?? null })
-      .then((r) => { if (live) setRendered({ html: r.html, templateLabel: r.templateLabel }); })
+      .then((r) => { if (live) setRendered({ html: r.html, templateLabel: r.templateLabel, warnings: r.warnings }); })
       .catch(() => undefined);
     return () => { live = false; };
   }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson, matterId, requestId]);
@@ -856,7 +857,7 @@ export function DocumentsWorkspace(
     setWorking({ action: "preview", what: "プレビューを作り直しています" });
     try {
       const r = await api.post<PreviewResponse>("/documents/preview", body);
-      setRendered({ html: r.html, templateLabel: r.templateLabel });
+      setRendered({ html: r.html, templateLabel: r.templateLabel, warnings: r.warnings });
       setPreviewedAt(new Date().toLocaleTimeString("ja-JP"));
     } catch (e) { setError(e instanceof ApiError ? e.message : String(e)); }
     finally { setBusy(false); setWorking(null); }
@@ -1883,8 +1884,8 @@ export function DocumentsWorkspace(
                 )}
               {/* 宣言されていない差し込みの空欄。振込先の欠けはここにしか出ない
                   （必須項目の未入力は上の一覧に出る）。発行は止めない。 */}
-              {(spec?.warnings ?? []).map((w) => (
-                <div key={w.kind} className="note warn">{w.message}</div>
+              {(rendered?.warnings ?? spec?.warnings ?? []).map((w, i) => (
+                <div key={`${w.kind}:${i}`} className="note warn">{w.message}</div>
               ))}
 
                 <div className="compose-actions">
