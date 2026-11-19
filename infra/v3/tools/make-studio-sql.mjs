@@ -451,6 +451,12 @@ SELECT * FROM (
         + (SELECT count(*) FROM pg_constraint
             WHERE conrelid='v3.conditions'::regclass AND conname='conditions_usage_type_chk'
               AND pg_get_constraintdef(oid) LIKE '%pub_sub_print%'))::text
+  UNION ALL
+  SELECT 92, '再許諾の種類（列 1・CHECK 1 で 2 であること）',
+         ((SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='v3' AND table_name='conditions' AND column_name = 'sublicense_kind')
+        + (SELECT count(*) FROM pg_constraint
+            WHERE conrelid='v3.conditions'::regclass AND conname='conditions_sublicense_kind_chk'))::text
 ) AS 確認 ORDER BY n;
 `;
 

@@ -53,6 +53,8 @@ export interface PublishingTranslationTerms extends PublishingTerms {
   consent?: "covered" | "required" | null;
   sublicensee?: string | null;
   purpose?: string | null;
+  /** 再許諾の種類（翻訳版／その他）。 */
+  kind?: "translation" | "other" | null;
 }
 export interface PublishingSetInput {
   matterId?: number | null;
@@ -108,6 +110,8 @@ export interface LicenseSetRow {
   purpose?: string | null;
   /** 再許諾の別途合意（A-033）。翻訳版の条文と一覧の印が出し分かれる。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 再許諾の種類（翻訳版／その他）。出版の再許諾の行だけ。 */
+  sublicenseKind?: "translation" | "other" | null;
   /** 許諾料の扱い（A-048）。included / free のときは率が無くてもよい。 */
   licenseFeeBasis?: LicenseFeeBasis | null;
   /**
@@ -366,6 +370,8 @@ export interface ConditionInput {
   sublicensable?: boolean | null;
   /** 再許諾の別途合意（A-033）。covered=不要 / required=要。空は「要」扱い。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 再許諾の種類（翻訳版／その他）。出版の再許諾の条件だけ。 */
+  sublicenseKind?: "translation" | "other" | null;
   /** 許諾料の扱い（A-048）。空は separate（別途）。 */
   licenseFeeBasis?: LicenseFeeBasis | null;
   /** 自動更新（A-039）。許諾期間の更新を条件ごとに持つ。更新した回数は導く。 */
@@ -468,6 +474,8 @@ export interface EconomicsPatch {
   exclusivity?: "exclusive" | "non_exclusive" | null;
   /** 再許諾の別途合意（A-033）。 */
   sublicenseConsent?: "covered" | "required" | null;
+  /** 再許諾の種類（翻訳版／その他）。 */
+  sublicenseKind?: "translation" | "other" | null;
   /** 許諾料の扱い（A-048）。 */
   licenseFeeBasis?: LicenseFeeBasis | null;
   /** 自動更新（A-039）。期間そのものは termStart / termEnd。 */
@@ -513,7 +521,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   deliveryDue: "delivery_due",
   paymentTerms: "payment_terms", taxCategory: "tax_category", notes: "notes",
   quantity: "quantity", unitLabel: "unit_label", contractForm: "contract_form",
-  workId: "work_id", exclusivity: "exclusivity", sublicenseConsent: "sublicense_consent",
+  workId: "work_id", exclusivity: "exclusivity", sublicenseConsent: "sublicense_consent", sublicenseKind: "sublicense_kind",
   licenseFeeBasis: "license_fee_basis",
   autoRenew: "auto_renew", renewMonths: "renew_months", renewStoppedOn: "renew_stopped_on",
   spec: "spec", deliverableOwnership: "deliverable_ownership", orderNo: "order_no",
@@ -535,7 +543,7 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
 const COPY_COLUMNS = [
   "condition_no", "agreement_id", "parent_id", "direction", "kind", "name", "counterparty_id",
-  "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "license_fee_basis", "term_start", "term_end", "delivery_due",
+  "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "sublicense_kind", "license_fee_basis", "term_start", "term_end", "delivery_due",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
   "royalty_base", "deductible_costs", "tax_category", "withholding_note", "payment_terms",
   "cycle", "notes", "series_id", "effective_from", "spec", "deliverable_ownership", "order_no",
@@ -614,7 +622,7 @@ export class ConditionWriteService {
           }
           const made = conditionNameFor({ workTitle: (w.rows[0] as { title?: string } | undefined)?.title ?? "",
                                           usageType: input.usageType,
-                                          sublicensee, purpose: input.purpose });
+                                          sublicensee, purpose: input.purpose, sublicenseKind: input.sublicenseKind });
           if (!made) throw new DomainError("VALIDATION", `作品 ${input.workId} が見つかりません`);
           input = { ...input, name: made };
         }
@@ -678,7 +686,7 @@ export class ConditionWriteService {
     const nameOf = (row: LicenseSetRow, workTitle: string | null): string => {
       if (title) return title;
       const made = conditionNameFor({ workTitle: workTitle ?? "", usageType: row.usageType,
-                                      sublicensee: row.sublicensee, purpose: row.purpose });
+                                      sublicensee: row.sublicensee, purpose: row.purpose, sublicenseKind: row.sublicenseKind });
       if (!made) throw new DomainError("VALIDATION", `条件名を付けられません（作品名が空）`);
       return made;
     };
@@ -728,6 +736,7 @@ export class ConditionWriteService {
       usageType: row.usageType,
       targetPartyId: row.targetPartyId ?? null,
       sublicenseConsent: row.sublicenseConsent ?? input.sublicenseConsentDefault ?? null,
+      sublicenseKind: isSublicensingUsage(row.usageType) ? row.sublicenseKind ?? null : null,
       licenseFeeBasis: row.licenseFeeBasis ?? null,
       priceBasis: row.priceBasis ?? null
     }));
@@ -826,7 +835,7 @@ export class ConditionWriteService {
       if (!terms) continue;
       rows.push({ usageType: usage, ratePct: terms.ratePct, exclusivity: terms.exclusivity ?? null,
                   sublicensee: terms.sublicensee ?? null, purpose: terms.purpose ?? null,
-                  sublicenseConsent: terms.consent ?? null });
+                  sublicenseConsent: terms.consent ?? null, sublicenseKind: terms.kind ?? null });
     }
     const { print: _p, digital: _d, sublicense: _s,
             translationPrint: _tp, translationDigital: _td, ...rest } = input;
@@ -1406,6 +1415,10 @@ export class ConditionWriteService {
            input.firstEditionRatePpm ?? null, input.confirmWithinDays ?? null, input.priceBasis ?? null]);
         const row = inserted.rows[0] as { id: number; condition_no: string | null };
         const id = Number(row.id);
+        // 再許諾の種類（翻訳版／その他）。選んだときだけ書く。
+        if (input.sublicenseKind) {
+          await client.query("UPDATE conditions SET sublicense_kind = $2 WHERE id = $1", [id, input.sublicenseKind]);
+        }
 
         // 許諾範囲。1件も入れなければ、その次元は無制限として扱われる。
         // 出版の利用形態は媒体の範囲も一緒に入れる（古い読み手は範囲を見る）。

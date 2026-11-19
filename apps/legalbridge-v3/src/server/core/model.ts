@@ -100,6 +100,8 @@ export interface ConditionDetail extends ConditionSummary {
    * covered=不要（この条件書で許諾済み）／required=要（相手ごとに別途合意）。
    */
   sublicenseConsent: "covered" | "required" | null;
+  /** 再許諾の種類（翻訳版／その他）。出版の再許諾の条件だけが持つ。空は未設定。 */
+  sublicenseKind: "translation" | "other" | null;
   /**
    * 許諾料の扱い（A-048）。受注者帰属の成果物を使う許諾の対価。
    * separate=別途（率・額）／included=業務委託報酬に含む／free=無償。許諾条件だけが意味を持つ。

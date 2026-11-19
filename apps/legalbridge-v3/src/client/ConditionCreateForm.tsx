@@ -9,7 +9,7 @@ import { createCompanionDocument, inLieuCheck, licensePayload, licensePeriodMiss
 import { CONDITION_KIND_LABEL } from "./labels.js";
 import { searchParties } from "./SearchSelect.js";
 import { minorPerMajor } from "../server/royalty/economics.js";
-import { CONDITION_USAGE_TYPES, conditionUsageSpec, isSublicensingUsage } from "../server/core/condition-usage.js";
+import { CONDITION_USAGE_TYPES, SUBLICENSE_KINDS, conditionUsageSpec, isSublicensingUsage } from "../server/core/condition-usage.js";
 import { CONTRACT_FORMS, CONTRACT_FORMS_EN, workShapeOf } from "../server/conditions/contract-form.js";
 import { isQuasiMandate } from "../server/conditions/time-settlement.js";
 import { firstEditionFee } from "../server/conditions/royalty-in-lieu.js";
@@ -491,6 +491,11 @@ export function ConditionCreateForm(
         { name: "purpose", label: "再許諾の目的（任意）", placeholder: "英語版の製造販売",
           visibleWhen: (v) => v.kind === "license" && v.direction === "in" && v.usageType === "sublicense",
           hint: "条件名に添える（作品名｜再許諾（許諾先／目的））" },
+        // 再許諾の種類（翻訳版／その他）。条件名と条件書の一覧に出る。
+        { name: "sublicenseKind", label: "再許諾の種類", type: "select",
+          visibleWhen: (v) => isSublicensingUsage(v.usageType),
+          options: SUBLICENSE_KINDS.map((k) => ({ value: k.value, label: k.label })),
+          hint: "翻訳版＝翻訳して出版・配信させる。その他＝翻訳を伴わない（子会社の版元・配信事業者など）" },
         // 翻訳版の再許諾（A-033）。再許諾先ごとに別途合意が要るかを条件に持たせる。
         { name: "sublicenseConsent", label: "再許諾ごとの別途合意", type: "select",
           visibleWhen: (v) => isSublicensingUsage(v.usageType),
@@ -584,6 +589,7 @@ export function ConditionCreateForm(
           ...(v.kind === "license" && v.direction === "in" && v.usageType === "oem" && text(v.priceBasisOem)
             ? { priceBasis: text(v.priceBasisOem) } : {}),
           sublicenseConsent: isSublicensingUsage(v.usageType) ? text(v.sublicenseConsent) : undefined,
+          sublicenseKind: isSublicensingUsage(v.usageType) ? text(v.sublicenseKind) : undefined,
           licenseFeeBasis: v.kind === "license" ? (text(v.licenseFeeBasis) ?? undefined) : undefined,
           paymentTerms: text(v.paymentTerms), notes: text(v.notes),
           settlementMode: text(v.settlementMode), settlementCount: int(v.settlementCount),

@@ -53,6 +53,21 @@ export const CONDITION_USAGE_TYPES: ConditionUsageSpec[] = [
     hint: "再許諾先（電子書籍の配信事業者、翻訳版の配信など）から受領する対価（税抜）× 料率" }
 ];
 
+/**
+ * 再許諾の種類。出版の再許諾（pub_sub_*）は翻訳版に限らないので、条件ごとに選ぶ。
+ * 空（未設定）の条件は、紙に「再許諾」とだけ出る。
+ */
+export type SublicenseKind = "translation" | "other";
+export const SUBLICENSE_KINDS: Array<{ value: SublicenseKind; label: string; hint: string }> = [
+  { value: "translation", label: "翻訳版", hint: "翻訳して出版・配信させる（海外の出版社への翻訳出版の許諾など）" },
+  { value: "other", label: "その他（翻訳以外）", hint: "翻訳を伴わない再許諾（子会社の版元・電子書籍の配信事業者など）" }
+];
+export const readSublicenseKind = (value: unknown): SublicenseKind | null =>
+  value === "translation" || value === "other" ? value : null;
+/** 紙・画面での呼び名。翻訳版＝「翻訳版」、その他＝「再許諾（翻訳以外）」、未設定＝「再許諾」。 */
+export const sublicenseKindLabel = (value: unknown): string =>
+  value === "translation" ? "翻訳版" : value === "other" ? "再許諾（翻訳以外）" : "再許諾";
+
 /** 第三者への再許諾の形態か（翻訳版）。自社出版と区別する。 */
 export const isSublicensingUsage = (value: unknown): boolean =>
   conditionUsageSpec(value)?.sublicensing === true;

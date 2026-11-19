@@ -662,6 +662,24 @@ test("V5：作品ごとの許諾地域・言語を備考に出し、再許諾だ
   // 自社の媒体だけを数える（再許諾だけの紙に、紙・電子の支払の行を出さない）。
   assert.equal(v5.hasPrintMedia, true); assert.equal(v5.hasAnyDigital, true);
 
+  // 再許諾の種類を選んだ条件は、その呼び名で出る（翻訳版／翻訳以外）。未設定は「再許諾」のまま（上）。
+  const kinded = (kind: string) => ({ ...context, conditions: context.conditions.map((c: any) =>
+    (String(c.usageType).startsWith("pub_sub_") ? { ...c, sublicenseKind: kind } : c)) });
+  const tr = (pubTermsPatch(kinded("translation"), {}, { v5: true }).titles as any[]);
+  assert.equal(tr.find((t) => t.title === "海外だけの本").printRate, "翻訳版 50%");
+  assert.equal(tr.find((t) => t.title === "海外だけの本").note, "許諾地域：日本を除く全世界／許諾言語：英語"
+    + "／翻訳版の再許諾のみ（料率は乙が再許諾先から受領する対価（税抜）に対する率。対価を受領した日の翌々月末日までに支払う）");
+  assert.equal(tr.find((t) => t.title === "両方の本").note, "許諾地域：全世界（翻訳版：日本を除く全世界）／許諾言語：日本語（翻訳版：英語）"
+    + "／翻訳版の再許諾：紙 50%・電子 40%（乙が再許諾先から受領する対価（税抜）に対する率。対価を受領した日の翌々月末日までに支払う）"
+    + "／再許諾先ごとに甲乙の別途合意を要する");
+  // 紙・電子の片方にだけ種類が入っていても、その種類で出る（もう片方を直し忘れても「再許諾」に戻らない）。
+  const half = { ...context, conditions: context.conditions.map((c: any) => (c.id === 3 ? { ...c, sublicenseKind: "translation" } : c)) };
+  const halfRow = (pubTermsPatch(half, {}, { v5: true }).titles as any[]).find((t) => t.title === "海外だけの本");
+  assert.equal(halfRow.printRate, "翻訳版 50%"); assert.equal(halfRow.digitalRate, "翻訳版 50%");
+  const ot = (pubTermsPatch(kinded("other"), {}, { v5: true }).titles as any[]).find((t) => t.title === "海外だけの本");
+  assert.equal(ot.printRate, "再許諾 50%");
+  assert.ok(ot.note.includes("／再許諾（翻訳以外）のみ（料率は乙が再許諾先から受領する対価"));
+
   // V5 でないひな形は、これまでどおり（備考に足さない・料率の欄は「—」・文案は並べ書き）。
   const v3 = pubTermsPatch(context, {});
   const only3 = (v3.titles as any[]).find((t) => t.title === "海外だけの本");

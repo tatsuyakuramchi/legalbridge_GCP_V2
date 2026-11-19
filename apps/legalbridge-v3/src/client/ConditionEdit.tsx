@@ -16,7 +16,7 @@ import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, PAY_DAYS, digitalPaymentTerms, 
 import { PAYMENT_TERMS_PRESETS_EN, PAYMENT_TERMS_PRESETS_JA } from "../server/conditions/payment-terms.js";
 import { minorUnitHint, SETTLEMENT_CYCLE_OPTIONS, SETTLEMENT_MODE_OPTIONS } from "./ConditionCreateForm.js";
 import { SETTLEMENT_GRACE_DAYS_DEFAULT } from "../server/conditions/settlement-mode.js";
-import { CONDITION_USAGE_TYPES, isSublicensingUsage } from "../server/core/condition-usage.js";
+import { CONDITION_USAGE_TYPES, SUBLICENSE_KINDS, isSublicensingUsage } from "../server/core/condition-usage.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
 
 /**
@@ -104,6 +104,7 @@ export function ConditionEdit(
     currency: detail.currency,
     targetPartyId: detail.targetParty ? String(detail.targetParty.id) : "",
     sublicenseConsent: detail.sublicenseConsent ?? "",
+    sublicenseKind: detail.sublicenseKind ?? "",
     licenseFeeBasis: detail.licenseFeeBasis ?? "separate",
     creditNotice: detail.creditNotice ?? "",
     creditFromWork: detail.creditFromWork ? "1" : "",
@@ -250,6 +251,7 @@ export function ConditionEdit(
       ["currency", patchText(v.currency, detail.currency)],
       ["targetPartyId", patchInt(v.targetPartyId, detail.targetParty?.id ?? null)],
       ["sublicenseConsent", patchText(v.sublicenseConsent, detail.sublicenseConsent)],
+      ["sublicenseKind", patchText(v.sublicenseKind, detail.sublicenseKind)],
       ["licenseFeeBasis", patchText(v.licenseFeeBasis, detail.licenseFeeBasis ?? "separate")],
       ["creditNotice", patchText(v.creditNotice, detail.creditNotice)],
       ["rewardLabel", patchText(v.rewardLabel, detail.rewardLabel)],
@@ -364,7 +366,7 @@ export function ConditionEdit(
     renewMonths: "更新の単位（月）", settlementMode: "決済の型", settlementCount: "回数", settlementCycle: "周期",
     settlementGraceDays: "猶予日数", timeSettlement: "時間精算", hoursIncluded: "時間枠", overageUnitAmount: "超過単価",
     shortfallUnitAmount: "控除単価", creditFromWork: "クレジット表記を作品から", workId: "作品", targetPartyId: "対象の許諾先",
-    usageType: "利用形態", exclusivity: "独占性", licenseFeeBasis: "許諾料の扱い", sublicenseConsent: "再許諾の別途合意",
+    usageType: "利用形態", exclusivity: "独占性", licenseFeeBasis: "許諾料の扱い", sublicenseConsent: "再許諾の別途合意", sublicenseKind: "再許諾の種類",
     deliverableOwnership: "成果物の帰属先", contractForm: "契約形式", currency: "通貨", firstEditionRatePpm: "初版料率（%）"
   };
   const shownValue = (key: string, raw: string) => {
@@ -643,7 +645,8 @@ export function ConditionEdit(
           {/* 取得（IN）の許諾は 作品名｜利用形態 が規則。手で付けた名前・利用形態を変えたあとの名前を 1 回で揃える。 */}
           {kindNow === "license" && detail.direction === "in" && (() => {
             const made = detail.work?.title && v.usageType
-              ? conditionNameFor({ workTitle: detail.work.title, usageType: v.usageType as never, sublicensee: null, purpose: null }) : null;
+              ? conditionNameFor({ workTitle: detail.work.title, usageType: v.usageType as never, sublicensee: null, purpose: null,
+                                   sublicenseKind: v.sublicenseKind }) : null;
             if (!made || v.name === made || v.name.startsWith(`${made}（`)) return null;
             return (
               <div className="field">
@@ -897,6 +900,19 @@ export function ConditionEdit(
                 {v.targetPartyId
                   ? "許諾先専用：この許諾先の報告だけがこの料率。一律の条件からはこの許諾先が外れる"
                   : "一律：この作品の許諾先すべてに効く。特定の許諾先だけ料率が違う契約のときだけ選ぶ"}
+              </small>
+            </label>
+          )}
+          {isSublicensingUsage(v.usageType) && (
+            <label className={`field${(v.sublicenseKind ?? "") !== (detail.sublicenseKind ?? "") ? " edited" : ""}`}>
+              <span>再許諾の種類</span>
+              <select value={v.sublicenseKind} onChange={(e) => set("sublicenseKind", e.target.value)}>
+                <option value="">—（未設定。紙には「再許諾」と出る）</option>
+                {SUBLICENSE_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+              </select>
+              <small className="faint">
+                {SUBLICENSE_KINDS.find((k) => k.value === v.sublicenseKind)?.hint
+                  ?? "翻訳版＝翻訳して出版・配信させる。その他＝翻訳を伴わない（子会社の版元・配信事業者など）。条件書の一覧に出る"}
               </small>
             </label>
           )}

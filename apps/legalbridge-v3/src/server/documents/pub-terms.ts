@@ -22,6 +22,7 @@ import { inLieuPaidNote } from "../conditions/royalty-in-lieu.js";
 import type { TemplateVariable } from "./binding.js";
 import type { Warning } from "./preflight.js";
 import { type PubMedia, pubMediaOfScopes } from "../core/pub-media.js";
+import { sublicenseKindLabel } from "../core/condition-usage.js";
 import { isSublicensingUsage, pubMediaOfUsage } from "../core/condition-usage.js";
 import { renewalLabel, renewalOf } from "../conditions/renewal.js";
 import { agreementDatedTitle, contextMasterAgreement } from "./legacy-variables.js";
@@ -703,7 +704,16 @@ export function rowScopeText(own: Data[], sub: Data[], type: "region" | "languag
   const of = (list: Data[]) => scopeOfConditions(list, type) || SCOPE_DEFAULTS[type];
   if (!own.length) return of(sub);
   if (!sub.length || of(own) === of(sub)) return of(own);
-  return `${of(own)}（再許諾：${of(sub)}）`;
+  return `${of(own)}（${rowSublicenseLabel(sub)}：${of(sub)}）`;
+}
+
+/**
+ * 作品の再許諾の条件の呼び名。条件の「再許諾の種類」から：翻訳版＝「翻訳版」、その他＝「再許諾（翻訳以外）」。
+ * 紙・電子の片方だけに入っていれば、その種類。どれも未設定・紙と電子で食い違うときは「再許諾」。
+ */
+export function rowSublicenseLabel(sub: Data[]): string {
+  const kinds = [...new Set(sub.map((c) => text(c?.sublicenseKind)).filter(Boolean))];
+  return kinds.length === 1 ? sublicenseKindLabel(kinds[0]) : sublicenseKindLabel(null);
 }
 
 /** 紙に載る条件のどれかに、地域か言語の指定があるか。 */
@@ -857,6 +867,9 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
     const seed = seedByTitle.get(text(row.title) || text(row.item_name));
     return seed && seed[key] != null ? byId.get(Number(seed[key])) : undefined;
   };
+  /** 料率の欄（幅が狭い）での再許諾の呼び名。翻訳版＝「翻訳版」、それ以外＝「再許諾」（翻訳以外かどうかは備考に出る）。 */
+  const subColumnLabel = (...sub: Array<Data | undefined>): string =>
+    (rowSublicenseLabel(sub.filter((c): c is Data => Boolean(c))) === "翻訳版" ? "翻訳版" : "再許諾");
   /** V5 で、その媒体が「自社の条件なし・再許諾の条件あり」か。 */
   const subOnly = (own: Data | undefined, sub: Data | undefined): boolean => options.v5 === true && !own && Boolean(sub);
   const titles = rows.map((row, index) => {
@@ -904,7 +917,10 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       ? (() => {
           const basis = `乙が再許諾先から受領する対価（税抜）に対する率。対価を受領した日の${subPayText}までに支払う`;
           const rates = [transPrintRate ? `紙 ${transPrintRate}` : "", transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean).join("・");
-          const head = print || digital ? `再許諾：${rates}（${basis}）` : `再許諾のみ（料率は${basis}）`;
+          const what = rowSublicenseLabel([transPrint, transDigital].filter((c): c is Data => Boolean(c)));
+          // 翻訳版は「翻訳版の再許諾」と書く（「翻訳版のみ」だと、当社が翻訳版を出すようにも読める）。
+          const name = what === "翻訳版" ? "翻訳版の再許諾" : what;
+          const head = print || digital ? `${name}：${rates}（${basis}）` : `${name}のみ（料率は${basis}）`;
           return transConsent === "要" ? `${head}／再許諾先ごとに甲乙の別途合意を要する` : head;
         })()
       : "";
@@ -912,7 +928,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       const typed = text(row.note).split("／").map((s) => s.trim()).filter(Boolean)
         .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は") && !s.startsWith(EXEMPT_NOTE_HEAD) && s !== RECEIPTS_NOTE)
         .filter((s) => !(showRowScope && (s.startsWith("許諾地域：") || s.startsWith("許諾言語："))))
-        .filter((s) => !(options.v5 && (s.startsWith("再許諾：") || s.startsWith("再許諾のみ（") || s === "再許諾先ごとに甲乙の別途合意を要する")));
+        .filter((s) => !(options.v5 && (/^(再許諾|翻訳版の再許諾|再許諾（翻訳以外）)(：|のみ（)/.test(s) || s === "再許諾先ごとに甲乙の別途合意を要する")));
       const paidCond = fromLedger ? [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu") : null;
       const fresh = paidCond ? inLieuPaidNote({ price: paidCond.firstEditionPrice, copies: paidCond.firstEditionCopies,
                                                ratePct: paidCond.firstEditionRatePct, exemptCopies: paidCond.royaltyExemptFirstCopies,
@@ -948,11 +964,11 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
         text(row.third_party), text(row.copyright), text((context.counterparty as Data | undefined)?.name)),
       // V5：その媒体に自社で出す条件が無く、再許諾の条件だけがあるときは、欄に「再許諾 50%／独占」と出す
       // （「—」のままだと、再許諾だけの作品の料率が紙のどこにも出ない）。
-      printRate: fromLedger ? (subOnly(print, transPrint) ? `再許諾 ${payeeRateText(context.payee, transPrint)}` : payeeRateText(context.payee, print))
+      printRate: fromLedger ? (subOnly(print, transPrint) ? `${subColumnLabel(transPrint, transDigital)} ${payeeRateText(context.payee, transPrint)}` : payeeRateText(context.payee, print))
         : (text(row.print_rate) || "—"),
       printExclusivity: fromLedger ? (exclusivityText(print ?? (subOnly(print, transPrint) ? transPrint : undefined)) || "—")
         : (text(row.print_exclusivity) || "—"),
-      digitalRate: fromLedger ? (subOnly(digital, transDigital) ? `再許諾 ${payeeRateText(context.payee, transDigital)}` : payeeRateText(context.payee, digital))
+      digitalRate: fromLedger ? (subOnly(digital, transDigital) ? `${subColumnLabel(transPrint, transDigital)} ${payeeRateText(context.payee, transDigital)}` : payeeRateText(context.payee, digital))
         : (text(row.digital_rate) || "—"),
       digitalExclusivity: fromLedger ? (exclusivityText(digital ?? (subOnly(digital, transDigital) ? transDigital : undefined)) || "—")
         : (text(row.digital_exclusivity) || "—"),
