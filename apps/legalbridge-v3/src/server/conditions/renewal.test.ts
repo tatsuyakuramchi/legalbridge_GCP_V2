@@ -67,3 +67,17 @@ test("一覧の行に出す1文", () => {
   assert.equal(renewalLabel(terms({ termEnd: null }), "2033-05-01"), "2026.10.1〜（期間の定めなし）");
   assert.equal(renewalLabel(terms({ termStart: null, termEnd: null }), "2033-05-01"), "");
 });
+
+test("契約期間の更新（終了日の書き換え）：自動更新の条件は止める。自動更新しない・止めた条件は通す", async () => {
+  const { autoRenewBlocksTermRewrite } = await import("./renewal.js");
+  const base = { termStart: "2020-10-26", termEnd: "2025-10-25", renewMonths: 60, renewStoppedOn: null };
+  // 自動更新：当初の満了日のまま数える（2026-11-19 の時点で 1 回、2030-10-25 まで）。書き換えは止める。
+  const msg = autoRenewBlocksTermRewrite({ ...base, autoRenew: true }, "2026-11-19");
+  assert.match(String(msg), /自動更新の条件なので、終了日は書き換えません/);
+  assert.match(String(msg), /2030-10-25 まで（更新 1回）/);
+  // 自動更新しない条件・終了日の無い条件は、これまでどおり延ばせる。
+  assert.equal(autoRenewBlocksTermRewrite({ ...base, autoRenew: false }, "2026-11-19"), null);
+  assert.equal(autoRenewBlocksTermRewrite({ ...base, autoRenew: true, termEnd: null }, "2026-11-19"), null);
+  // 更新を止めた条件（止めた日が来ている）は、合意で延ばせる。
+  assert.equal(autoRenewBlocksTermRewrite({ ...base, autoRenew: true, renewStoppedOn: "2026-01-31" }, "2026-11-19"), null);
+});

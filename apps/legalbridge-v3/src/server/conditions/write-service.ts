@@ -11,6 +11,7 @@ import { readContractForm } from "./contract-form.js";
 import type { ConditionScope, LicenseFeeBasis } from "../core/model.js";
 import { PUB_MEDIA_LABEL, pubMediaOf, type PubMedia } from "../core/pub-media.js";
 import { conditionNameFor } from "./naming.js";
+import { autoRenewBlocksTermRewrite } from "./renewal.js";
 import { conditionUsageLabel, isSublicensingUsage, pubMediaOfUsage, usageOfPubMedia,
          type ConditionUsageType } from "../core/condition-usage.js";
 import { validateShareInput } from "../royalty/shares.js";
@@ -514,7 +515,7 @@ export interface EconomicsPatch {
   reportDueDays?: number | null;
 }
 
-const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
+export const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
   kind: "kind", pricingModel: "pricing_model",
   name: "name", currency: "currency", ratePpm: "rate_ppm", flatAmount: "flat_amount", unitAmount: "unit_amount",
   mgAmount: "mg_amount", agAmount: "ag_amount", termStart: "term_start", termEnd: "term_end",
@@ -541,7 +542,9 @@ const ECONOMICS_COLUMNS: Record<keyof EconomicsPatch, string> = {
 };
 
 // 改訂で引き継ぐ列（id・状態・監査列を除く条件の中身すべて）。
-const COPY_COLUMNS = [
+// ここに無い列は、改訂（-R2 …）で空に戻る。編集できる列（ECONOMICS_COLUMNS）がここに無いと、改訂になった編集では
+// 直した値まで黙って落ちる（新しい版はこの一覧の列だけで作るため）。列を足したら、ここにも足すこと。
+export const COPY_COLUMNS = [
   "condition_no", "agreement_id", "parent_id", "direction", "kind", "name", "counterparty_id",
   "work_id", "work_part_id", "exclusivity", "sublicensable", "sublicense_consent", "sublicense_kind", "license_fee_basis", "term_start", "term_end", "delivery_due",
   "currency", "pricing_model", "rate_ppm", "unit_amount", "flat_amount", "mg_amount", "ag_amount",
@@ -564,7 +567,12 @@ const COPY_COLUMNS = [
   // 準委任の時間精算（A-073）。
   "time_settlement", "hours_included", "overage_unit_amount", "shortfall_unit_amount",
   // 報告期限（A-074）。
-  "report_due_days"
+  "report_due_days",
+  // 算定の基礎（電子の 配信価格／受領額、再許諾・他社販売の基礎）。写していなかったので、改訂すると「未設定」に戻り、
+  // 改訂になった編集で選んだ基礎も保存されなかった。
+  "price_basis",
+  // 共著の分配を誰がするか（A-070）。取り分は系列のいちばん新しい版から読むが、この列は版ごとに読むので写す。
+  "distribution"
 ];
 
 /**
@@ -1505,10 +1513,19 @@ export class ConditionWriteService {
     Promise<{ id: number; conditionNo: string | null; mode: "in_place" | "revised"; from: string | null; to: string }> {
     try {
       const before = await this.database.query(
-        "SELECT id, condition_no, status, term_end FROM conditions WHERE id = $1", [id]);
-      const row = before.rows[0] as { condition_no: string | null; status: string; term_end: unknown } | undefined;
+        `SELECT id, condition_no, status, term_start, term_end, auto_renew, renew_months, renew_stopped_on
+           FROM conditions WHERE id = $1`, [id]);
+      const row = before.rows[0] as { condition_no: string | null; status: string; term_start: unknown; term_end: unknown;
+                                      auto_renew: unknown; renew_months: unknown; renew_stopped_on: unknown } | undefined;
       if (!row) throw new DomainError("NOT_FOUND", `条件 ${id} が見つかりません`);
       const from = dateStr(row.term_end);
+      // 自動更新の条件は、終了日（当初の満了日）を書き換えない。更新した回数といまの期間は、当初の満了日と
+      // 更新の単位から数えて出す（conditions/renewal.ts）ので、書き換えると「更新 0回」に戻る。
+      const blocked = autoRenewBlocksTermRewrite({
+        termStart: dateStr(row.term_start), termEnd: from, autoRenew: row.auto_renew === true,
+        renewMonths: row.renew_months == null ? null : Number(row.renew_months), renewStoppedOn: dateStr(row.renew_stopped_on)
+      });
+      if (blocked) throw new DomainError("VALIDATION", blocked);
       if (from && newEnd <= from) {
         throw new DomainError("VALIDATION", `新しい終了日 ${newEnd} は、いまの終了日 ${from} より後にしてください`);
       }

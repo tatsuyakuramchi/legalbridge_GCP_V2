@@ -106,3 +106,19 @@ export function renewalLabel(terms: RenewalTerms, asOf: string | Date = new Date
   if (!r.renewing) return `${period}（更新なし）`;
   return `${period}（更新 ${r.count}回${r.stopped ? "・以後更新しない" : ""}）`;
 }
+
+/**
+ * 「契約期間を更新」（終了日を新しい日に書き換える操作）を止める理由。止めないなら null。
+ *
+ * 自動更新の条件は、終了日が当初の満了日。更新した回数といまの期間はそこから数えて出すので、終了日を
+ * 更新後の日に書き換えると「更新 0回」に戻り、紙の回数と更新履歴が合わなくなる。
+ * 更新を止めた条件（止めた日が来ている）は、合意で延ばすことがあるので止めない。
+ */
+export function autoRenewBlocksTermRewrite(terms: RenewalTerms, asOf: string | Date = new Date()): string | null {
+  if (terms.autoRenew !== true || !terms.termEnd) return null;
+  const r = renewalOf(terms, asOf);
+  if (r.stopped) return null;
+  return `自動更新の条件なので、終了日は書き換えません。終了日（${terms.termEnd}）は当初の満了日で、`
+    + `いまの期間は自動で ${r.currentEnd} まで（更新 ${r.count}回）と数えています。`
+    + "期間を決め直すときは、条件の編集で自動更新を「しない」にしてから更新してください";
+}
