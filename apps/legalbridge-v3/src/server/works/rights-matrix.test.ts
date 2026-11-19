@@ -98,3 +98,28 @@ test("コードの無い移行データは名前で揃え、許諾も取った�
   const empty = buildRightsMatrix({ work: { id: 1, title: "作品" }, today: "2026-11-07", includeEnded: false, envelope: null, grants: [] });
   assert.deepEqual([empty.regions.map((r) => r.label), empty.languages.map((l) => l.label)], [["全世界"], ["全言語"]]);
 });
+
+test("日本を除く全世界：日本の行を出し、日本のほかは全部のマス（その他の地域も）を覆う", () => {
+  const EX_JP = { code: "WORLD_EX_JP", label: "日本を除く全世界" };
+  const m = buildRightsMatrix({
+    work: { id: 1, title: "作品" }, today: "2026-11-07", includeEnded: false,
+    // 作者から取った範囲が「日本を除く全世界 × 英語」。
+    envelope: envelope([EX_JP], [EN]),
+    grants: [grant({ id: 1, regions: [US], languages: [EN], exclusivity: "exclusive" })]
+  });
+  // 日本を除く全世界そのものは行にしない。日本の行は、どの条件にも出てこなくても出す。
+  assert.deepEqual(m.regions.map((r) => r.label), ["日本", "アメリカ合衆国", "その他の地域"]);
+  assert.equal(at(m, "US", "en").state, "exclusive");
+  assert.equal(at(m, "__other_region", "en").state, "open", "日本以外は取ってあるので空き");
+  assert.equal(at(m, "JP", "en").state, "none", "日本は取っていない");
+
+  // 許諾の側が「日本を除く全世界」。コードの無い行（名前だけ）でも同じ。
+  const g = buildRightsMatrix({
+    work: { id: 1, title: "作品" }, today: "2026-11-07", includeEnded: false, envelope: envelope([JP, US], [EN]),
+    grants: [grant({ id: 2, regions: [{ code: null as unknown as string, label: "全世界（日本を除く）" }], languages: [EN] })]
+  });
+  assert.deepEqual(at(g, "US", "en").grantIds, [2]);
+  assert.deepEqual(at(g, "JP", "en").grantIds, []);
+  assert.equal(at(g, "JP", "en").state, "open");
+  assert.equal(at(g, "__other_region", "en").state, "outside", "取った範囲（日本・アメリカ）の外まで許諾している");
+});

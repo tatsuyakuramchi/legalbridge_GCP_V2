@@ -8,6 +8,7 @@ import { ppmToPct } from "./economics.js";
 import { roundRoyalty } from "./rounding.js";
 import { rootAgreementJoin } from "../conditions/contracts.js";
 import { missingPayees, payeeCoverage } from "./payee-coverage.js";
+import { isBroadRegionLabel } from "../core/rights-scope.js";
 
 /**
  * 許諾料の台帳（作品 › 利用許諾計算）。docs/royalty-ledger.md
@@ -301,9 +302,9 @@ export function buildRounds(input: {
             && (c.targetPartyId ? x.partyId === c.targetPartyId : !(x.partyId && claimed.has(x.partyId)))
             && (!x.termStart || !p.closeOn || x.termStart <= p.closeOn))) {
           // 報告は 言語×地域 ごとに来る（英語×北米、英語×欧州、フランス語×欧州）。
-          // 1組1行で待つ。「全言語」「全世界」は分けない（1行）。
+          // 1組1行で待つ。「全言語」「全世界」「日本を除く全世界」は分けない（1行）。
           const langs = (o.languages ?? []).filter((l) => l !== "全言語");
-          const regs = (o.regions ?? []).filter((r) => r !== "全世界");
+          const regs = (o.regions ?? []).filter((r) => !isBroadRegionLabel(r));
           // 1つでも行に持たせる（報告の言語・地域が実績に入り、計算書の製品名・許諾範囲に出る）。
           const ls = langs.length ? langs : [null];
           const rs = regs.length ? regs : [null];

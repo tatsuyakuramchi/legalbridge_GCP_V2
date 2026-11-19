@@ -6,6 +6,7 @@ import type { ConditionEventService } from "../conditions/event-service.js";
 import { WORK_LINEAGE_UP_SQL } from "./ledger-service.js";
 import { missingPayees, payeeCoverage } from "./payee-coverage.js";
 import { ppmToPct } from "./economics.js";
+import { isBroadRegionLabel } from "../core/rights-scope.js";
 
 /**
  * 入金と作者への支払（docs/royalty-ledger.md §10）。
@@ -194,7 +195,7 @@ export class RoyaltyReceiptService {
         reported: mine.reduce((n, e) => n + Number(e.grossAmount ?? 0), 0)
       };
     });
-    const strip = (xs: unknown, all: string) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== all);
+    const strip = (xs: unknown, all: string) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== all && !isBroadRegionLabel(x));
     return {
       key: `${r.payment_id}:${r.out_id}`,
       paymentId: Number(r.payment_id), paymentNo: str(r.payment_no), paidOn: dateStr(r.paid_on), status: String(r.status),

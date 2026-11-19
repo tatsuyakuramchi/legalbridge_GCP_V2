@@ -139,6 +139,11 @@ COMMENT ON VIEW v3.v_work_rights_envelope IS
 -- 作品の権利包絡：範囲次元
 --   condition_scopes は「行が無ければ無制限」。したがって
 --   その次元を制約している取得条件すべてに現れるラベルだけが上限に残る（＝積）。
+--
+--   国を挙げない行の扱い：
+--     ・全世界／全言語 … その取得条件は、その次元を制約しない（行が無いのと同じ）。
+--     ・日本を除く全世界 … 日本以外のどの国も含む。国を挙げた取得条件との積は、その国（日本を除く）。
+--       制約している取得条件がみな「日本を除く全世界」なら、上限は「日本を除く全世界」。
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE VIEW v3.v_work_scope_envelope AS
 WITH acquired AS (
@@ -146,25 +151,57 @@ WITH acquired AS (
     FROM v3.conditions c
    WHERE c.direction = 'in' AND c.status = 'active' AND c.work_id IS NOT NULL
 ),
-restricting AS (
-  SELECT a.work_id, s.scope_type, COUNT(DISTINCT a.id) AS n_restricting
+scope_rows AS (
+  SELECT a.id, a.work_id, s.scope_type, s.label, s.code,
+         (s.scope_type = 'region' AND (upper(btrim(COALESCE(s.code, ''))) = 'WORLD' OR s.label = '全世界'))
+           OR (s.scope_type = 'language' AND (upper(btrim(COALESCE(s.code, ''))) = 'ALL' OR s.label = '全言語')) AS is_all,
+         s.scope_type = 'region'
+           AND (upper(btrim(COALESCE(s.code, ''))) = 'WORLD_EX_JP'
+                OR (btrim(COALESCE(s.code, '')) = '' AND s.label IN ('日本を除く全世界', '全世界（日本を除く）', '全世界(日本を除く)', '日本以外の全世界'))) AS is_ex_jp,
+         s.scope_type = 'region'
+           AND (upper(btrim(COALESCE(s.code, ''))) = 'JP' OR (btrim(COALESCE(s.code, '')) = '' AND s.label = '日本')) AS is_jp
     FROM acquired a
     JOIN v3.condition_scopes s ON s.condition_id = a.id
-   GROUP BY a.work_id, s.scope_type
+),
+-- 取得条件 × 次元。全世界／全言語の行を持つ取得条件は、その次元を制約しない。
+scoped AS (
+  SELECT id, work_id, scope_type, bool_or(is_ex_jp) AS ex_jp
+    FROM scope_rows
+   GROUP BY id, work_id, scope_type
+  HAVING NOT bool_or(is_all)
+),
+restricting AS (
+  SELECT work_id, scope_type, COUNT(*) AS n_restricting, bool_and(ex_jp) AS all_ex_jp
+    FROM scoped
+   GROUP BY work_id, scope_type
+),
+-- 上限の候補：制約している取得条件に出てくる個別のラベル（国・言語・媒体・チャネル）。
+labels AS (
+  SELECT r.work_id, r.scope_type, r.label, MIN(r.code) AS code, bool_or(r.is_jp) AS is_jp
+    FROM scope_rows r
+    JOIN scoped sc ON sc.id = r.id AND sc.scope_type = r.scope_type
+   WHERE NOT r.is_ex_jp
+   GROUP BY r.work_id, r.scope_type, r.label
 ),
 label_counts AS (
-  SELECT a.work_id, s.scope_type, s.label,
-         MIN(s.code) AS code,
-         COUNT(DISTINCT a.id) AS n_present
-    FROM acquired a
-    JOIN v3.condition_scopes s ON s.condition_id = a.id
-   GROUP BY a.work_id, s.scope_type, s.label
+  SELECT l.work_id, l.scope_type, l.label, l.code,
+         (SELECT COUNT(*)
+            FROM scoped sc
+           WHERE sc.work_id = l.work_id AND sc.scope_type = l.scope_type
+             AND (EXISTS (SELECT 1 FROM scope_rows r
+                           WHERE r.id = sc.id AND r.scope_type = l.scope_type AND r.label = l.label)
+                  OR (sc.ex_jp AND NOT l.is_jp))) AS n_present
+    FROM labels l
 )
 SELECT lc.work_id, lc.scope_type, lc.label, lc.code
   FROM label_counts lc
   JOIN restricting r
     ON r.work_id = lc.work_id AND r.scope_type = lc.scope_type
- WHERE lc.n_present = r.n_restricting;
+ WHERE lc.n_present = r.n_restricting
+UNION ALL
+SELECT r.work_id, r.scope_type, '日本を除く全世界', 'WORLD_EX_JP'
+  FROM restricting r
+ WHERE r.scope_type = 'region' AND r.all_ex_jp;
 
 COMMENT ON VIEW v3.v_work_scope_envelope IS
   '作品ごとに許諾できる範囲（地域・言語・媒体）。ある次元にこの作品の行が1件も無ければ無制限。';

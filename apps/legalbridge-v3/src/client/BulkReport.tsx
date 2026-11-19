@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api.js";
 import type { LedgerCondition } from "../server/royalty/ledger-service.js";
 import { parseReportPaste, pickOut, readYen } from "../server/royalty/report-paste.js";
+import { isBroadRegionLabel } from "../server/core/rights-scope.js";
 import { loadStageNote, saveStageNote, STAGE_NOTE_PLACEHOLDER } from "./stage-notes.js";
 
 /**
@@ -118,7 +119,7 @@ export function BulkReport({ targets, defaultDate, eventStyle, lockDate = false,
             usageType: o.usageType, outConditionId: o.id, paymentStage: stage,
             languages: r.lang ? [r.lang] : [],
             // 依頼文は言語ごと。地域までは分かれていないので許諾地域すべて（その言語の行をまとめて覆う）。
-            regions: o.regions.filter((x) => x !== "全世界"),
+            regions: o.regions.filter((x) => !isBroadRegionLabel(x)),
             note: (stage === "advance" ? advanceNote : balanceNote).trim() || null
           });
           saved.push(stage); made++;

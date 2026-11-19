@@ -4,6 +4,7 @@ import { conditionUsageLabel } from "../core/condition-usage.js";
 import { publicationOuts, usageCovers, type PublicationMedia } from "./editions.js";
 import { timingOf, type Timing } from "../royalty/ledger-service.js";
 import { ppmToPct } from "../royalty/economics.js";
+import { isBroadRegionLabel } from "../core/rights-scope.js";
 import type { RoyaltyReceiptService } from "../royalty/receipts.js";
 
 /**
@@ -187,7 +188,7 @@ export class WorkRightsFlowService {
         }
         return [...seen];
       };
-      const strip = (xs: unknown, all: string) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== all);
+      const strip = (xs: unknown, all: string) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== all && !isBroadRegionLabel(x));
       const pubOuts = await publicationOuts(q, downIds);
       const outs: FlowOut[] = outRows.map((o) => {
         const base = {
