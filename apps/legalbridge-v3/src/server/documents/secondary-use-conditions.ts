@@ -151,10 +151,11 @@ export async function withSecondaryUseWorks(
     `SELECT w.id, w.title, w.kind, to_jsonb(w) ->> 'source_title' AS source_title, w.copyright_notice
        FROM works w WHERE w.id = ANY($1::bigint[])`, [ids])).rows as Array<Record<string, any>>;
   const sources = (await client.query(
-    `SELECT DISTINCT l.child_work_id AS child_id, p.id, p.title, p.copyright_notice
+    // 並びは作品の登録順（作品コード → id）。題名順だと「忍術バトルRPG …」のような基本の本が後ろに回る。
+    `SELECT DISTINCT l.child_work_id AS child_id, p.id, p.title, p.copyright_notice, p.work_code
        FROM work_lineage l JOIN works p ON p.id = l.parent_work_id
       WHERE l.child_work_id = ANY($1::bigint[]) AND p.status <> 'archived'
-      ORDER BY p.title`, [ids])).rows as Array<Record<string, any>>;
+      ORDER BY p.work_code NULLS LAST, p.id`, [ids])).rows as Array<Record<string, any>>;
   const allIds = [...ids, ...sources.map((r) => Number(r.id))];
   // 作品ごとの出版の個別条件書の番号（この相手先の、紙・電子の条件が載っている個別契約）。
   const terms = partyId ? (await client.query(
