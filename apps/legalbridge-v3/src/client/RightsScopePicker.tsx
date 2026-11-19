@@ -14,11 +14,16 @@ import {
  * 開くときは名前からコードへ引き当てる。当たらない語は自由記載として残す。
  */
 export function RightsScopePicker(
-  { kind, value, onChange, disabled }: {
+  { kind, value, onChange, disabled, emptyNote }: {
     kind: "region" | "language";
     value: string;
     onChange: (value: string) => void;
     disabled?: boolean;
+    /**
+     * 何も選んでいないときの添え書き。既定は書類の欄向け（空のまま出すと本文が空欄になる）。
+     * 条件明細の登録・編集では、選ばなければ制限なし（全世界・全言語）で、欄の下の補足がそれを説明するので「未選択」だけにする。
+     */
+    emptyNote?: string;
   }
 ) {
   const [query, setQuery] = useState("");
@@ -98,7 +103,7 @@ export function RightsScopePicker(
           ))}
         </div>
       ) : (
-        <span className="faint">未選択（空のまま出すと、本文のその欄は空欄になります）</span>
+        <span className="faint">{emptyNote ?? "未選択（空のまま出すと、本文のその欄は空欄になります）"}</span>
       )}
 
       {open && !picked && (

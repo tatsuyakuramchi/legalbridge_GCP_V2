@@ -128,6 +128,7 @@ export function CreateForm(props: CreateFormProps) {
               ) : f.type === "regions" || f.type === "languages" ? (
                 /* 許諾の範囲。ISO のコードから選ぶ（自由記載だと表記が割れる）。 */
                 <RightsScopePicker kind={f.type === "regions" ? "region" : "language"}
+                  emptyNote="未選択"
                   value={values[f.name] ?? ""} onChange={(v) => set(f.name, v)} />
               ) : f.type === "textarea" ? (
                 <textarea rows={3} value={values[f.name] ?? ""} placeholder={f.placeholder}

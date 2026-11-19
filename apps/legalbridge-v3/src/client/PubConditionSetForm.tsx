@@ -77,6 +77,36 @@ function digitalCycleOf(v: Record<string, string>) {
 const digitalTermsOf = (v: Record<string, string>) => digitalPaymentTerms(digitalCycleOf(v));
 const digitalScheduleOf = (v: Record<string, string>) => payScheduleText(digitalCycleOf(v));
 
+const filled = (v: unknown) => String(v ?? "").trim() !== "";
+const pct = (v: unknown) => `${String(v ?? "").trim().replace(/[%％]/g, "")}%`;
+
+/**
+ * いまの入力で作られる条件（フォームの最後に出す）。自社で出す分（紙・電子）を空にすると再許諾だけの条件になる、
+ * 地域を選ばなければ全世界、が登録の前に目で分かるようにする。
+ */
+export function pubSetSummary(v: Record<string, string>): { head: string; detail: string } {
+  const made = [
+    filled(v.printRate) ? `紙出版 ${pct(v.printRate)}` : "",
+    filled(v.digitalRate) ? `電子出版 ${pct(v.digitalRate)}` : "",
+    filled(v.transPrintRate) ? `再許諾（紙）${pct(v.transPrintRate)}` : "",
+    filled(v.transDigitalRate) ? `再許諾（電子）${pct(v.transDigitalRate)}` : "",
+    filled(v.sublicenseRate) ? `再許諾（紙・電子を分けない）${pct(v.sublicenseRate)}` : ""
+  ].filter(Boolean);
+  if (!made.length) {
+    return { head: "登録される条件：まだありません", detail: "③ 自社で出す分か、④ 再許諾する分の料率を入れてください" };
+  }
+  const own = filled(v.printRate) || filled(v.digitalRate);
+  const sub = filled(v.transPrintRate) || filled(v.transDigitalRate) || filled(v.sublicenseRate);
+  const kind = !own && sub ? "自社で出す分（紙・電子）は空なので作りません。再許諾だけの条件になります。"
+    : own && !sub ? "再許諾する分は空なので作りません。" : "";
+  const region = filled(v.regions) ? v.regions!.trim() : "指定なし（全世界）";
+  const language = filled(v.languages) ? v.languages!.trim() : "指定なし（条件書には日本語と出ます）";
+  return {
+    head: `登録される条件：${made.join("・")}（${made.length} 本）`,
+    detail: `${kind}地域：${region}／言語：${language}`
+  };
+}
+
 export function PubConditionSetForm(
   { preset, onDone, onCancel }: {
     preset?: Partial<Record<"counterpartyId" | "workId" | "agreementId" | "matterId", string>>;
@@ -96,8 +126,8 @@ export function PubConditionSetForm(
 
   return (
     <CreateForm
-      title="出版の条件を登録（紙・電子）"
-      submitLabel="紙・電子の条件を登録する"
+      title="出版の条件を登録（紙・電子・再許諾）"
+      submitLabel="出版の条件を登録する"
       path="/conditions/publishing-set"
       submitOverride={(v) => {
         // 電子の料率が算定の基礎に対して珍しい（配信価格に 30% 超・受領額に 15% 未満）なら確かめてから保存する。
@@ -113,6 +143,7 @@ export function PubConditionSetForm(
                  sublicenseExclusivity: "non_exclusive", transConsent: "covered",
                  taxCategory: "taxable", ...preset }}
       fields={[
+        { name: "_s1", type: "section", label: "① だれと・何を" },
         { name: "counterpartyId", label: "許諾者（著作権者）", type: "search", required: true,
           search: searchParties, placeholder: "取引先名・コードで探す",
           hint: "条件書の甲。振込先はこの取引先の口座" },
@@ -130,6 +161,7 @@ export function PubConditionSetForm(
             .map((a) => ({ value: String(a.id), label: a.title,
                            hint: [a.agreementNo, a.counterparty?.name].filter(Boolean).join("／") })),
           hint: "この束は、選んだ基本契約の下の個別契約（条件書）になる。条件書の基本契約番号・自動更新の通知期限はここから出る" },
+        { name: "_s2", type: "section", label: "② 許諾期間" },
         { name: "termStart", label: "許諾開始", type: "date" },
         { name: "termEnd", label: "許諾終了", type: "date", hint: "空なら期間の定めなし" },
         // 自動更新（A-039）。更新した回数は持たず、終了日・単位・今日から数える。
@@ -144,13 +176,15 @@ export function PubConditionSetForm(
           visibleWhen: (v) => Boolean(v.autoRenew) && String(v.termEnd ?? "").trim() !== "",
           hint: "入れるとその日で回数が止まる（いまの期間は満了まで有効）" },
 
-        { name: "printRate", label: "紙 料率（%）", type: "number", placeholder: "11",
-          hint: "税抜定価 × 印税対象部数 × 料率。空なら紙の条件は作らない" },
+        { name: "_s3", type: "section", label: "③ 自社で出す分（紙・電子）",
+          hint: "当社が自分で出版・配信するときの料率。再許諾だけの条件（海外の翻訳出版だけを許諾してもらう、など）にするなら、紙・電子とも空のままにします" },
+        { name: "printRate", label: "紙 料率（%）", type: "number", placeholder: "空なら作らない",
+          hint: "例：11。税抜定価 × 印税対象部数 × 料率。空なら紙の条件は作らない" },
         { name: "printExclusivity", label: "紙 独占区分", type: "select",
           options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
           visibleWhen: (v) => String(v.printRate ?? "").trim() !== "" },
-        { name: "digitalRate", label: "電子 料率（%）", type: "number", placeholder: "15",
-          hint: "空なら電子の条件は作らない（条件書は「—」）。何に掛ける率かは次の「電子 算定の基礎」で選ぶ" },
+        { name: "digitalRate", label: "電子 料率（%）", type: "number", placeholder: "空なら作らない",
+          hint: "例：15。空なら電子の条件は作らない（条件書は「—」）。何に掛ける率かは次の「電子 算定の基礎」で選ぶ" },
         // 電子の算定の基礎。同じ料率でも配信価格と受領額では払う額が大きく違うので、必ず選ばせる（初期値なし）。
         { name: "digitalPriceBasis", label: "電子 算定の基礎", type: "select", required: true,
           options: DIGITAL_BASIS_OPTIONS,
@@ -176,10 +210,12 @@ export function PubConditionSetForm(
           options: PAY_DAY_OPTIONS,
           visibleWhen: (v) => String(v.digitalRate ?? "").trim() !== "",
           hint: "空なら末日" },
-        { name: "transPrintRate", label: "再許諾 紙 料率（%）", type: "number", placeholder: "50",
-          hint: "乙が第三者（翻訳版の出版社・子会社の版元など）に出版させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
-        { name: "transDigitalRate", label: "再許諾 電子 料率（%）", type: "number", placeholder: "40",
-          hint: "紙と率が違ってよい（電子書籍の配信事業者への再許諾など）。空なら電子の再許諾の条件は作らない" },
+        { name: "_s4", type: "section", label: "④ 再許諾する分（翻訳版・他社の版元・配信事業者）",
+          hint: "当社が第三者に出版・配信させ、受け取った対価から許諾者へ払う分。「当社が受領した再許諾料の半分」なら、紙・電子に 50 を入れます" },
+        { name: "transPrintRate", label: "再許諾 紙 料率（%）", type: "number", placeholder: "空なら作らない",
+          hint: "例：50。乙が第三者（翻訳版の出版社・子会社の版元など）に出版させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
+        { name: "transDigitalRate", label: "再許諾 電子 料率（%）", type: "number", placeholder: "空なら作らない",
+          hint: "例：50。紙と率が違ってよい（電子書籍の配信事業者への再許諾など）。空なら電子の再許諾の条件は作らない" },
         { name: "transConsent", label: "再許諾 別途合意の要否", type: "select",
           options: CONSENT_OPTIONS,
           visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
@@ -190,11 +226,11 @@ export function PubConditionSetForm(
           visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
             || String(v.transDigitalRate ?? "").trim() !== "",
           hint: "空なら「再許諾（紙）」のような条件名で作る" },
-        { name: "sublicenseRate", label: "再許諾 料率（%）", type: "number", placeholder: "50",
+        { name: "sublicenseRate", label: "再許諾 料率（%）— 紙・電子を分けないとき", type: "number", placeholder: "ふつうは空",
           hint: (v) => {
             const t = works.find((w) => String(w.id) === String(v.workId ?? ""))?.title ?? "";
             const made = conditionNameFor({ workTitle: t, usageType: "sublicense", sublicensee: null, purpose: v.purpose });
-            return `翻訳出版・子会社の版元・電子書籍の配信など、相手に許諾して受け取った額 × 料率。空なら再許諾の条件は作らない${made ? `。条件名：${made}` : ""}`;
+            return `紙・電子を分けない再許諾の条件を別に 1 本作る（出版条件書の一覧には載らない）。紙・電子の再許諾は上の 2 つの欄で足りるので、ふつうは空${made ? `。条件名：${made}` : ""}`;
           } },
         { name: "targetPartyId", label: "再許諾 対象の許諾先（特定の許諾先だけの料率のとき）", type: "search",
           search: searchParties, placeholder: "空なら一律（その作品の許諾先すべてに効く）",
@@ -206,16 +242,20 @@ export function PubConditionSetForm(
           options: [{ value: "non_exclusive", label: "非独占" }, { value: "exclusive", label: "独占" }],
           visibleWhen: (v) => String(v.sublicenseRate ?? "").trim() !== "" },
 
+        { name: "_s5", type: "section", label: "⑤ 範囲（地域・言語）・税・備考",
+          hint: "海外だけの許諾なら、地域で「日本を除く全世界」を押します" },
         { name: "taxCategory", label: "税区分", type: "select",
           options: [{ value: "taxable", label: "課税" }, { value: "reduced", label: "軽減" },
                     { value: "exempt", label: "非課税" },
                     { value: "included", label: "税込（海外・内税）" }] },
         { name: "regions", label: "地域（許諾範囲）", type: "regions",
-          hint: "何も選ばなければ全世界" },
+          hint: "海外だけなら「日本を除く全世界」。何も選ばなければ全世界" },
         { name: "languages", label: "言語（許諾範囲）", type: "languages",
           hint: "何も選ばなければ日本語として条件書に出る" },
         { name: "notes", label: "備考（条件書の備考欄に出る）", type: "textarea",
-          placeholder: "初版100部（見本・献本除く）／著作権表示位置：奥付" }
+          placeholder: "初版100部（見本・献本除く）／著作権表示位置：奥付" },
+        // いまの入力で作られる条件。再許諾だけになっているか・地域がどうなるかを、登録の前に見せる。
+        { name: "_sum", type: "section", label: (v) => pubSetSummary(v).head, hint: (v) => pubSetSummary(v).detail }
       ]}
       toPayload={(v) => {
         const scopes = [
