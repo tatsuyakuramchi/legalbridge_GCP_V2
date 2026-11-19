@@ -671,6 +671,60 @@ const scopeLabels = (context: Data, type: "region" | "language"): string => {
   return labels.join("、");
 };
 
+// ---------------------------------------------------------------------------
+// 作品ごとの許諾地域・許諾言語（V5 の一覧の備考）
+//
+// 条件明細の地域・言語は作品ごとに違ってよい（国内の出版と、海外だけの翻訳の再許諾が 1 枚に並ぶ）。
+// 紙 1 枚に 1 つの「地域」「言語」（第３条）だけでは書けないので、作品の行の備考に出す。
+// どの条件にも地域・言語が無い紙は、これまでどおり第３条だけ（全世界・日本語）。
+// ---------------------------------------------------------------------------
+
+/** 条件に地域・言語の指定が無いときの紙の表記（第３条の既定と同じ）。 */
+export const SCOPE_DEFAULTS = { region: "全世界", language: "日本語" } as const;
+/** 作品によって地域・言語が違う紙の、第３条の表記。作品ごとの値は一覧の備考に出す。 */
+export const SCOPE_PER_WORK = "対象著作物ごとに一覧の備考欄のとおり";
+
+const scopeOfConditions = (conditions: Data[], type: "region" | "language"): string => {
+  const labels: string[] = [];
+  for (const condition of conditions) {
+    for (const label of (condition?.scopes?.[type] ?? []) as string[]) {
+      const value = text(label);
+      if (value && !labels.includes(value)) labels.push(value);
+    }
+  }
+  return labels.join("、");
+};
+
+/**
+ * 作品 1 点の地域（言語）。自社で出す分（紙・電子）と再許諾する分で違えば「日本（再許諾：日本を除く全世界）」。
+ * 指定の無い側は既定（全世界・日本語）。
+ */
+export function rowScopeText(own: Data[], sub: Data[], type: "region" | "language"): string {
+  const of = (list: Data[]) => scopeOfConditions(list, type) || SCOPE_DEFAULTS[type];
+  if (!own.length) return of(sub);
+  if (!sub.length || of(own) === of(sub)) return of(own);
+  return `${of(own)}（再許諾：${of(sub)}）`;
+}
+
+/** 紙に載る条件のどれかに、地域か言語の指定があるか。 */
+const anyScopeSet = (conditions: Data[]): boolean =>
+  conditions.some((c) => ((c?.scopes?.region ?? []) as unknown[]).length > 0 || ((c?.scopes?.language ?? []) as unknown[]).length > 0);
+
+/** 作品（一覧の行）ごとの地域・言語。行の分け方は一覧の種と同じ。 */
+function workScopes(context: Data): Array<{ region: string; language: string }> {
+  const groups = new Map<string, Data[]>();
+  for (const condition of list(context.conditions)) {
+    if (rowBlockerOf(condition)) continue;
+    const key = titleKeyOf(condition);
+    groups.set(key, [...(groups.get(key) ?? []), condition]);
+  }
+  return [...groups.values()].map((group) => {
+    const own = group.filter((c) => !isTranslationCondition(c));
+    const sub = group.filter((c) => isTranslationCondition(c));
+    return { region: rowScopeText(own, sub, "region"), language: rowScopeText(own, sub, "language") };
+  });
+}
+
 const minDate = (values: string[]) => values.filter(Boolean).sort()[0] ?? "";
 const maxDate = (values: string[]) => values.filter(Boolean).sort().at(-1) ?? "";
 
@@ -678,7 +732,7 @@ const maxDate = (values: string[]) => values.filter(Boolean).sort().at(-1) ?? ""
  * 期間・更新・地域・言語の文案。人が直せる（手入力が勝つ）。
  * 期間は条件明細の期間の外包み。更新の通知期限は契約（合意）から。
  */
-export function pubTermsSuggestions(context: Data, _bound: Data = {}): Data {
+export function pubTermsSuggestions(context: Data, _bound: Data = {}, options: PubTermsOptions = {}): Data {
   const out: Data = {};
   const conditions = list(context.conditions);
   const start = minDate(conditions.map((c) => text(c.termStart)));
@@ -690,6 +744,13 @@ export function pubTermsSuggestions(context: Data, _bound: Data = {}): Data {
   const language = scopeLabels(context, "language");
   if (region) out["許諾地域"] = region;
   if (language) out["許諾言語"] = language;
+  // V5：作品によって地域・言語が違うときは、まとめた並び（日本、日本を除く全世界）にせず、一覧の備考を指す。
+  // 並べて書くと、どの作品がどの地域か分からず、国内だけの作品まで海外に許諾したように読める。
+  if (options.v5 && anyScopeSet(conditions)) {
+    const works = workScopes(context);
+    if (new Set(works.map((w) => w.region)).size > 1) out["許諾地域"] = SCOPE_PER_WORK;
+    if (new Set(works.map((w) => w.language)).size > 1) out["許諾言語"] = SCOPE_PER_WORK;
+  }
   // 自動更新・通知期限は基本契約の定め（無ければ条件の契約そのもの）。個別契約の行には無い。
   const governing = contextMasterAgreement(context) ?? context.agreement;
   if (governing && typeof governing.autoRenewal === "boolean") {
@@ -773,6 +834,10 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
   const byId = new Map(conditions.map((c) => [Number(c.id), c]));
   const seeds = pubTitleSeeds(context);
   const rows = list(manual[PUB_TITLES_FIELD]).length ? list(manual[PUB_TITLES_FIELD]) : seeds;
+  // V5：どれかの条件に地域・言語の指定があれば、作品の行の備考に地域・言語を出す。
+  const showRowScope = options.v5 === true && anyScopeSet(conditions);
+  // V5 の一覧には再許諾（翻訳版）の欄が無いので、料率の欄と備考で示す。支払時期は条件明細の支払条件 → 欄 → 既定。
+  const subPayText = payment.payTranslation ?? (pick("翻訳版の支払時期") || "翌々月末日");
 
   // 翻訳の立て付け（A-034）。一覧の行の見出しにも条文にも同じ語を使うので、
   // 行を組む前に決めておく（each の中からは外側の値が見えない）。
@@ -792,6 +857,8 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
     const seed = seedByTitle.get(text(row.title) || text(row.item_name));
     return seed && seed[key] != null ? byId.get(Number(seed[key])) : undefined;
   };
+  /** V5 で、その媒体が「自社の条件なし・再許諾の条件あり」か。 */
+  const subOnly = (own: Data | undefined, sub: Data | undefined): boolean => options.v5 === true && !own && Boolean(sub);
   const titles = rows.map((row, index) => {
     const print = resolve(row, "print_condition_id");
     const digital = resolve(row, "digital_condition_id");
@@ -823,9 +890,29 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
     const payeeShare = fromLedger ? payeeShareText(context.payee, print, digital) : "";
     // 備考のうち「初版分は支払済み（算定：…）」の自動の 1 文は、行を直していても条件から引き直す（A-109）。
     // 人が備考に書いた残りはそのまま。料率・独占区分と同じく、台帳の写しは台帳が正。
+    // 作品ごとの許諾地域・許諾言語（V5 の備考の頭）。条件から引く（行を直していても条件が正）。
+    const scopeNote = showRowScope && fromLedger
+      ? (() => {
+          const own = [print, digital].filter((c): c is Data => Boolean(c));
+          const sub = [transPrint, transDigital].filter((c): c is Data => Boolean(c));
+          return `許諾地域：${rowScopeText(own, sub, "region")}／許諾言語：${rowScopeText(own, sub, "language")}`;
+        })()
+      : "";
+    // V5：再許諾（翻訳版）の料率と算定のしかた。再許諾だけの作品は、料率そのものは紙・電子の欄に出す（下）。
+    // 自社で出す分もある作品は、欄が自社の料率なので、再許諾の料率をここに書く。
+    const subNote = options.v5 && fromLedger && (transPrint || transDigital)
+      ? (() => {
+          const basis = `乙が再許諾先から受領する対価（税抜）に対する率。対価を受領した日の${subPayText}までに支払う`;
+          const rates = [transPrintRate ? `紙 ${transPrintRate}` : "", transDigitalRate ? `電子 ${transDigitalRate}` : ""].filter(Boolean).join("・");
+          const head = print || digital ? `再許諾：${rates}（${basis}）` : `再許諾のみ（料率は${basis}）`;
+          return transConsent === "要" ? `${head}／再許諾先ごとに甲乙の別途合意を要する` : head;
+        })()
+      : "";
     const note = (() => {
       const typed = text(row.note).split("／").map((s) => s.trim()).filter(Boolean)
-        .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は") && !s.startsWith(EXEMPT_NOTE_HEAD) && s !== RECEIPTS_NOTE);
+        .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は") && !s.startsWith(EXEMPT_NOTE_HEAD) && s !== RECEIPTS_NOTE)
+        .filter((s) => !(showRowScope && (s.startsWith("許諾地域：") || s.startsWith("許諾言語："))))
+        .filter((s) => !(options.v5 && (s.startsWith("再許諾：") || s.startsWith("再許諾のみ（") || s === "再許諾先ごとに甲乙の別途合意を要する")));
       const paidCond = fromLedger ? [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu") : null;
       const fresh = paidCond ? inLieuPaidNote({ price: paidCond.firstEditionPrice, copies: paidCond.firstEditionCopies,
                                                ratePct: paidCond.firstEditionRatePct, exemptCopies: paidCond.royaltyExemptFirstCopies,
@@ -833,7 +920,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       // 増刷時の非加算と電子の料率の基準も台帳から引き直す（行を直していてもそちらが正）。
       const exempt = fromLedger ? exemptLaterNote(number(print?.royaltyExemptLaterPct)) : "";
       const receipts = !options.v5 && fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
-      return [fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
+      return [scopeNote, subNote, fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
     })();
     // 作品の個別契約の番号。条件から出た行は条件の個別契約が正（決定のときに作品ごとに立てる）。
     const termsNo = (fromLedger ? text(print?.termsAgreementNo) || text(digital?.termsAgreementNo)
@@ -859,14 +946,23 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
         fromLedger ? coAuthorNames(print, digital, transPrint, transDigital)
           : namesOfSharesText(text(row.co_authors), text((context.counterparty as Data | undefined)?.name)),
         text(row.third_party), text(row.copyright), text((context.counterparty as Data | undefined)?.name)),
-      printRate: fromLedger ? payeeRateText(context.payee, print) : (text(row.print_rate) || "—"),
-      printExclusivity: fromLedger ? (print ? exclusivityText(print) || "—" : "—")
+      // V5：その媒体に自社で出す条件が無く、再許諾の条件だけがあるときは、欄に「再許諾 50%／独占」と出す
+      // （「—」のままだと、再許諾だけの作品の料率が紙のどこにも出ない）。
+      printRate: fromLedger ? (subOnly(print, transPrint) ? `再許諾 ${payeeRateText(context.payee, transPrint)}` : payeeRateText(context.payee, print))
+        : (text(row.print_rate) || "—"),
+      printExclusivity: fromLedger ? (exclusivityText(print ?? (subOnly(print, transPrint) ? transPrint : undefined)) || "—")
         : (text(row.print_exclusivity) || "—"),
-      digitalRate: fromLedger ? payeeRateText(context.payee, digital) : (text(row.digital_rate) || "—"),
-      digitalExclusivity: fromLedger ? (digital ? exclusivityText(digital) || "—" : "—")
+      digitalRate: fromLedger ? (subOnly(digital, transDigital) ? `再許諾 ${payeeRateText(context.payee, transDigital)}` : payeeRateText(context.payee, digital))
+        : (text(row.digital_rate) || "—"),
+      digitalExclusivity: fromLedger ? (exclusivityText(digital ?? (subOnly(digital, transDigital) ? transDigital : undefined)) || "—")
         : (text(row.digital_exclusivity) || "—"),
-      hasPrint: fromLedger ? Boolean(print) : text(row.print_rate) !== "" && text(row.print_rate) !== "—",
-      hasDigital: fromLedger ? Boolean(digital) : text(row.digital_rate) !== "" && text(row.digital_rate) !== "—",
+      // 独占区分を添えるか。再許諾だけの欄は、条件に独占区分があるときだけ。
+      hasPrint: fromLedger ? Boolean(print) || (subOnly(print, transPrint) && exclusivityText(transPrint) !== "")
+        : text(row.print_rate) !== "" && text(row.print_rate) !== "—",
+      hasDigital: fromLedger ? Boolean(digital) || (subOnly(digital, transDigital) && exclusivityText(transDigital) !== "")
+        : text(row.digital_rate) !== "" && text(row.digital_rate) !== "—",
+      /** 自社で配信する電子の条件があるか（再許諾だけの欄は数えない）。 */
+      hasOwnDigital: fromLedger ? Boolean(digital) : text(row.digital_rate) !== "" && text(row.digital_rate) !== "—",
       /** 電子の算定の基礎（V5 で基礎が混ざるとき、一覧の電子の欄に添える）。receipts＝受領額、それ以外＝配信価格。 */
       digitalBasis: digital ? (String(digital.priceBasis) === "receipts" ? "受領額" : "配信価格") : "",
       // 翻訳版の再許諾（A-033）。紙・電子の率を1つにまとめ、別途合意の要否を添える。
@@ -881,7 +977,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       term: termLabel,
       hasTerm: Boolean(termLabel),
       // 作品の下に続ける行（許諾期間・翻訳版・共同著作・備考）を出すか。
-      hasNoteRow: Boolean(termLabel) || Boolean(transText) || Boolean(coAuthors) || text(row.note) !== "",
+      hasNoteRow: Boolean(termLabel) || Boolean(transText) || Boolean(coAuthors) || text(row.note) !== "" || Boolean(scopeNote) || Boolean(subNote),
       translationLabel, translationDerivative
     };
   });
@@ -986,7 +1082,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       : titles,
     /** 一覧に載る作品の点数。第１条の要約と別紙1の見出しに出る（r5）。 */
     titleCount: titles.length,
-    hasAnyDigital: titles.some((t) => t.hasDigital),
+    hasAnyDigital: titles.some((t) => t.hasOwnDigital),
     /** 作品ごとの許諾期間が一覧に出ているか。第３条がそちらを指す（A-039）。 */
     hasWorkTerms: titles.some((t) => t.hasTerm),
     ...multiPatch(titles, conditions, pick, translationShare, { print: hasPrintMedia, digital: hasDigitalMedia })

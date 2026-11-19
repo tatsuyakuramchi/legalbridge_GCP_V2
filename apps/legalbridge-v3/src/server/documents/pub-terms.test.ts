@@ -150,7 +150,7 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
   assert.deepEqual(patch.titles[1], {
     no: 2, termsNo: "", jointLabel: "なし", jointNames: "なし", title: "ねこの図書館", edition: "ねこの図書館 ①", copyright: "", thirdParty: "なし", note: "",
     printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—", digitalBasis: "",
-    hasPrint: true, hasDigital: false,
+    hasPrint: true, hasDigital: false, hasOwnDigital: false,
     // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
     translation: "—", hasTranslation: false, translationConsent: "",
     translationConsentRequired: false,
@@ -610,4 +610,66 @@ test("作品ごとに番号を持つ条件書：前文の基本契約の日付�
   // 欄に入れたら、その日付で書く。
   assert.equal(pubTermsPatch(context, { "基本契約の日付": "2026-09-24" }).agreementTitle,
     "2026年9月24日付出版及び著作物利用許諾に関する基本契約書");
+});
+
+test("V5：作品ごとの許諾地域・言語を備考に出し、再許諾だけの作品は料率の欄と備考で示す", async () => {
+  const { pubTermsPatch, pubTermsSuggestions, SCOPE_PER_WORK } = await import("./pub-terms.js");
+  const cond = (id: number, workId: number, title: string, usageType: string, ratePct: number, over: Record<string, unknown> = {}) =>
+    ({ id, conditionNo: `CL-${id}`, name: `${title}｜${usageType}`, workId, work: { title }, usageType, pricingModel: "revenue_rate",
+       ratePct, counterpartyId: 1, shares: [], scopes: { region: [], language: [] }, ...over });
+  const overseas = { scopes: { region: ["日本を除く全世界"], language: ["英語"] }, exclusivity: "exclusive", sublicenseConsent: "covered" };
+  const context = {
+    counterparty: { id: 1, name: "合同会社テスト", kind: "corporate" }, company: { name: "株式会社アークライト" },
+    conditions: [
+      // 国内の出版（地域・言語の指定なし）
+      cond(1, 10, "国内の本", "pub_print", 10, { exclusivity: "exclusive" }), cond(2, 10, "国内の本", "pub_digital", 15, { exclusivity: "exclusive" }),
+      // 海外だけの翻訳の再許諾
+      cond(3, 20, "海外だけの本", "pub_sub_print", 50, overseas), cond(4, 20, "海外だけの本", "pub_sub_digital", 50, overseas),
+      // 国内の出版と、海外の再許諾の両方がある作品（紙と電子で率が違う。別途合意が要る）
+      cond(5, 30, "両方の本", "pub_print", 10, { exclusivity: "non_exclusive" }),
+      cond(6, 30, "両方の本", "pub_sub_print", 50, { ...overseas, sublicenseConsent: "required" }),
+      cond(7, 30, "両方の本", "pub_sub_digital", 40, { ...overseas, sublicenseConsent: "required" })
+    ]
+  };
+  const v5 = pubTermsPatch(context, {}, { v5: true });
+  const row = (title: string) => (v5.titles as any[]).find((t) => t.title === title);
+
+  // 指定の無い作品は既定（全世界・日本語）。
+  assert.equal(row("国内の本").note, "許諾地域：全世界／許諾言語：日本語");
+  assert.equal(row("国内の本").printRate, "10%");
+
+  // 再許諾だけの作品：料率の欄に「再許諾 50%」と独占区分、備考に地域・言語と算定のしかた。
+  const only = row("海外だけの本");
+  assert.equal(only.printRate, "再許諾 50%"); assert.equal(only.digitalRate, "再許諾 50%");
+  assert.equal(only.hasPrint, true); assert.equal(only.printExclusivity, "独占");
+  assert.equal(only.hasOwnDigital, false);
+  assert.equal(only.note, "許諾地域：日本を除く全世界／許諾言語：英語"
+    + "／再許諾のみ（料率は乙が再許諾先から受領する対価（税抜）に対する率。対価を受領した日の翌々月末日までに支払う）");
+  assert.equal(only.hasNoteRow, true);
+
+  // 自社で出す分もある作品：紙の欄は自社の料率。電子は再許諾だけなので欄に出す。再許諾の料率は備考にも書く。
+  const both = row("両方の本");
+  assert.equal(both.printRate, "10%"); assert.equal(both.printExclusivity, "非独占");
+  assert.equal(both.digitalRate, "再許諾 40%");
+  assert.equal(both.note, "許諾地域：全世界（再許諾：日本を除く全世界）／許諾言語：日本語（再許諾：英語）"
+    + "／再許諾：紙 50%・電子 40%（乙が再許諾先から受領する対価（税抜）に対する率。対価を受領した日の翌々月末日までに支払う）"
+    + "／再許諾先ごとに甲乙の別途合意を要する");
+
+  // 第３条：作品によって違うので、並べて書かず一覧の備考を指す（欄の文案）。欄に書けばそれが勝つ。
+  const suggested = pubTermsSuggestions(context, {}, { v5: true });
+  assert.equal(suggested["許諾地域"], SCOPE_PER_WORK); assert.equal(suggested["許諾言語"], SCOPE_PER_WORK);
+  assert.equal(pubTermsPatch(context, suggested, { v5: true }).region, SCOPE_PER_WORK);
+  // 自社の媒体だけを数える（再許諾だけの紙に、紙・電子の支払の行を出さない）。
+  assert.equal(v5.hasPrintMedia, true); assert.equal(v5.hasAnyDigital, true);
+
+  // V5 でないひな形は、これまでどおり（備考に足さない・料率の欄は「—」・文案は並べ書き）。
+  const v3 = pubTermsPatch(context, {});
+  const only3 = (v3.titles as any[]).find((t) => t.title === "海外だけの本");
+  assert.equal(only3.printRate, "—"); assert.equal(only3.note, "");
+  assert.equal(pubTermsSuggestions(context)["許諾地域"], "日本を除く全世界");
+
+  // どの条件にも地域・言語が無い紙は、V5 でも備考に足さない（第３条の「全世界・日本語」だけ）。
+  const plain = { ...context, conditions: context.conditions.slice(0, 2) };
+  assert.equal((pubTermsPatch(plain, {}, { v5: true }).titles as any[])[0].note, "");
+  assert.equal(pubTermsSuggestions(plain, {}, { v5: true })["許諾地域"], undefined);
 });
