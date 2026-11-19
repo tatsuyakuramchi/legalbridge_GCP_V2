@@ -2,6 +2,7 @@ import { dateStr, int, str, type Queryable } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
 import { conditionUsageLabel } from "../core/condition-usage.js";
 import type { RightsEnvelope } from "../core/model.js";
+import { isWorldExJp } from "../core/rights-scope.js";
 
 /**
  * 作品 › 許諾地域×許諾言語の表（ライセンスマトリクス。docs/v1-v2-remaining-migration-plan.md R4）。
@@ -11,6 +12,7 @@ import type { RightsEnvelope } from "../core/model.js";
  * 地域・言語の行が無い条件はその次元が無制限（全世界・全言語）。条件に出てくる個別の国・言語を
  * 行・列にし、どれにも当たらないところは「その他の地域」「その他の言語」にまとめる
  * （全世界・全言語の許諾と、作者から取った範囲だけがそこを覆う）。
+ * 「日本を除く全世界」は、日本の行を除く全部の行（その他の地域も）を覆う。日本の行は必ず出す。
  *
  * マスの状態
  *   conflict … 独占の許諾が、期間の重なるほかの許諾とぶつかっている
@@ -81,11 +83,17 @@ const keyOf = (v: ScopeValue, dim: "region" | "language") => {
   return `name:${v.label.trim()}`;
 };
 
+/** 日本を除く全世界の行か（地域だけ）。 */
+const isExJp = (v: ScopeValue, dim: "region" | "language") => dim === "region" && isWorldExJp(v);
+const JAPAN_KEYS = ["JP", "name:日本"];
+
 /** その次元で、この範囲が鍵を覆うか。範囲が空・全世界（全言語）なら全部を覆う。 */
 const covers = (scope: ScopeValue[], key: string, dim: "region" | "language") => {
   if (!scope.length || scope.some((v) => isUniversal(v, dim))) return true;
+  // 日本を除く全世界：日本の行のほかは全部（その他の地域も）。
+  if (scope.some((v) => isExJp(v, dim)) && !JAPAN_KEYS.includes(key)) return true;
   if (key === OTHER_REGION || key === OTHER_LANGUAGE) return false;
-  return scope.some((v) => keyOf(v, dim) === key);
+  return scope.some((v) => !isExJp(v, dim) && keyOf(v, dim) === key);
 };
 
 const overlaps = (a: { termStart: string | null; termEnd: string | null }, b: { termStart: string | null; termEnd: string | null }) =>
@@ -95,14 +103,18 @@ const overlaps = (a: { termStart: string | null; termEnd: string | null }, b: { 
 /** 地域・言語の並び：許諾の多い順、同じなら名前順。日本・日本語は先頭。 */
 export function axisOf(values: ScopeValue[][], dim: "region" | "language", head: string): MatrixAxis[] {
   const seen = new Map<string, { label: string; n: number }>();
+  let exJp = false;
   for (const list of values) {
     for (const v of list) {
       if (isUniversal(v, dim)) continue;
+      // 日本を除く全世界は行にしない（国ではない）。代わりに日本の行を出して、そこだけ空くのが見えるようにする。
+      if (isExJp(v, dim)) { exJp = true; continue; }
       const key = keyOf(v, dim);
       const hit = seen.get(key);
       if (hit) hit.n += 1; else seen.set(key, { label: v.label, n: 1 });
     }
   }
+  if (exJp && !JAPAN_KEYS.some((k) => seen.has(k))) seen.set("JP", { label: "日本", n: 0 });
   const axis = [...seen.entries()]
     .sort(([ka, a], [kb, b]) => Number(kb === head) - Number(ka === head) || b.n - a.n || a.label.localeCompare(b.label, "ja"))
     .map(([key, v]) => ({ key, label: v.label, other: false }));

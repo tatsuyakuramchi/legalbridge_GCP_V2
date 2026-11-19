@@ -17,6 +17,33 @@ export type ScopeOption = { code: string; name: string };
 
 export const WORLD_REGION: ScopeOption = { code: "WORLD", name: "全世界" };
 export const ALL_LANGUAGE: ScopeOption = { code: "ALL", name: "全言語" };
+/**
+ * 日本を除く全世界（海外だけの許諾）。国を 1 つずつ挙げる代わりに 1 行で持つ。
+ * 日本以外のどの国もこの範囲に入り、日本と「全世界」は入らない。
+ */
+export const WORLD_EX_JP_REGION: ScopeOption = { code: "WORLD_EX_JP", name: "日本を除く全世界" };
+/** 同じ意味の書き方（CSV・移行した行・書類の欄に出てくる）。読むときに上の名前へそろえる。 */
+const WORLD_EX_JP_NAMES = [WORLD_EX_JP_REGION.name, "全世界（日本を除く）", "全世界(日本を除く)", "日本以外の全世界"];
+
+/** 「日本を除く全世界」の行か（コードが無い行は名前で見る）。 */
+export function isWorldExJp(scope: { code?: string | null; name?: string | null; label?: string | null }): boolean {
+  const code = String(scope.code ?? "").trim().toUpperCase();
+  if (code) return code === WORLD_EX_JP_REGION.code;
+  return WORLD_EX_JP_NAMES.includes(String(scope.name ?? scope.label ?? "").trim());
+}
+/** 日本の行か。 */
+const isJapanScope = (scope: { code?: string | null; name?: string | null }): boolean => {
+  const code = String(scope.code ?? "").trim().toUpperCase();
+  return code ? code === "JP" : String(scope.name ?? "").trim() === "日本";
+};
+/**
+ * 国を特定しない地域の名前（全世界・日本を除く全世界）か。
+ * 報告（実績）の地域の候補や、報告を待つ行の分け方では、国として扱わない。
+ */
+export const isBroadRegionLabel = (label: unknown): boolean => {
+  const name = String(label ?? "").trim();
+  return name === WORLD_REGION.name || WORLD_EX_JP_NAMES.includes(name);
+};
 
 export const COUNTRY_CODES = [
   "AD","AE","AF","AG","AI","AL","AM","AO","AQ","AR","AS","AT","AU","AW","AX","AZ",
@@ -59,6 +86,7 @@ export const REGION_PRESETS: Record<string, string[]> = {
 
 export function regionName(code: string) {
   if (code === "WORLD") return WORLD_REGION.name;
+  if (code.toUpperCase() === WORLD_EX_JP_REGION.code) return WORLD_EX_JP_REGION.name;
   try {
     return new Intl.DisplayNames(["ja"], { type: "region" }).of(code.toUpperCase()) || code.toUpperCase();
   } catch {
@@ -99,7 +127,9 @@ export function scopeContains(source: ScopeOption[], target: ScopeOption[], univ
   const sourceCodes = new Set(source.map((value) => normalize(value.code)));
   if (sourceCodes.has(universalCode)) return true;
   if (target.some((value) => normalize(value.code) === universalCode)) return false;
-  return target.every((value) => sourceCodes.has(normalize(value.code)));
+  // 日本を除く全世界：日本以外の国はどれも入る。
+  const exJp = universalCode === "WORLD" && source.some(isWorldExJp);
+  return target.every((value) => sourceCodes.has(normalize(value.code)) || (exJp && !isJapanScope(value)));
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +148,7 @@ export function parseRegions(text: string): ScopeOption[] {
   const byName = new Map(COUNTRY_CODES.map((code) => [regionName(code), code] as const));
   return splitScope(text).map((word) => {
     if (word === WORLD_REGION.name || word.toUpperCase() === "WORLD") return WORLD_REGION;
+    if (isWorldExJp({ name: word }) || word.toUpperCase() === WORLD_EX_JP_REGION.code) return WORLD_EX_JP_REGION;
     const code = byName.get(word)
       ?? (COUNTRY_CODES as readonly string[])
            .find((c) => c.toUpperCase() === word.toUpperCase());
@@ -146,6 +177,9 @@ export function parseLanguages(text: string): ScopeOption[] {
  *
  * 上限の側に 全世界／全言語 があれば、その次元は無制限。逆に上限が国ごとの
  * 指定なら、全世界での許諾は出せない。
+ *
+ * 上限が「日本を除く全世界」なら、日本以外の国と「日本を除く全世界」は範囲内。
+ * 日本と「全世界」は範囲外（上限に日本も挙げてあれば日本は範囲内）。
  */
 export function scopeAllows(
   allowed: ScopeOption[],
@@ -168,10 +202,13 @@ export function scopeAllows(
 
   const codes = new Set(allowed.map(canonical).filter(Boolean));
   const names = new Set(allowed.map((a) => a.name).filter(Boolean));
+  const exJp = universalCode === "WORLD" && allowed.some(isWorldExJp);
   const outside = requested.filter((r) => {
     if (isUniversal(r)) return true;          // 上限が国ごとなら全世界では出せない
     const code = canonical(r);
-    return !(code && codes.has(code)) && !names.has(r.name);
+    if ((code && codes.has(code)) || names.has(r.name)) return false;
+    if (exJp) return isJapanScope(r);         // 日本を除く全世界：日本だけが外
+    return true;
   });
   return { ok: outside.length === 0, outside };
 }

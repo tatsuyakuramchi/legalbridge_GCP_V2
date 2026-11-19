@@ -2,6 +2,7 @@ import { inTransaction, type Queryable, type Transactable } from "../core/db.js"
 import { blockingPayments } from "../payments/blocking.js";
 import { dateStr, int, num, str } from "../core/db.js";
 import { DomainError, translate } from "../core/errors.js";
+import { isWorldExJp } from "../core/rights-scope.js";
 import { recordAudit } from "../core/audit.js";
 import { claimSchedule } from "./schedule-service.js";
 import { readContractForm } from "./contract-form.js";
@@ -228,7 +229,9 @@ async function assertEventScope(client: Queryable, outConditionId: number | null
   const of = (type: string) => (r.rows as any[]).filter((x) => x.scope_type === type).map((x) => String(x.label));
   const check = (given: string[], allowed: string[], universal: string, what: string) => {
     if (!allowed.length || allowed.includes(universal)) return;
-    const outside = given.filter((g) => !allowed.includes(g));
+    // 日本を除く全世界で許諾した相手：日本のほかはどの国の報告も範囲内。
+    const exJp = what === "地域" && allowed.some((a) => isWorldExJp({ name: a }));
+    const outside = given.filter((g) => !allowed.includes(g) && !(exJp && g !== "日本"));
     if (outside.length) {
       throw new DomainError("VALIDATION",
         `${outside.join("・")} は許諾先の許諾${what}（${allowed.join("・")}）に入っていません`);

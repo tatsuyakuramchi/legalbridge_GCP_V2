@@ -11,6 +11,7 @@ import { WORK_LINEAGE_UP_SQL } from "./ledger-service.js";
 import { ppmToPct } from "./economics.js";
 import { coveringIns } from "./receipts.js";
 import { inContractRef } from "./in-contract.js";
+import { isBroadRegionLabel } from "../core/rights-scope.js";
 import { payDateFromDelivery, payDateFromTerms } from "../conditions/payment-terms.js";
 
 /**
@@ -169,7 +170,7 @@ export class ReceiptSettleService {
          LEFT JOIN works w ON w.id = oc.work_id
         WHERE oc.id = $1`, [outConditionId])).rows[0] as any;
     if (!r) throw new DomainError("NOT_FOUND", `許諾先の条件 ${outConditionId} が見つかりません`);
-    const strip = (xs: unknown, all: string) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== all);
+    const strip = (xs: unknown, all: string) => (Array.isArray(xs) ? xs.map(String) : []).filter((x) => x !== all && !isBroadRegionLabel(x));
     return {
       id: Number(r.id), conditionNo: str(r.condition_no), name: String(r.name ?? ""), usageType: str(r.usage_type),
       currency: String(r.currency ?? "JPY"), status: String(r.status), direction: String(r.direction),

@@ -173,6 +173,7 @@ export function WorkRightsMatrix({ workId, onOpenCondition, onOpenWork }: {
           <small className="faint">
             地域・言語を挙げていない条件は、その次元が無制限（全世界・全言語）として全部のマスを覆います。
             「その他の地域」「その他の言語」は、表に出ていない国・言語のまとめで、全世界・全言語の許諾だけが覆います。
+            「日本を除く全世界」の許諾は、日本の行を除く全部の行（その他の地域も）を覆います。
           </small>
         </div>
       </div>

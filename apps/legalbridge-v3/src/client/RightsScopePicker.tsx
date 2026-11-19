@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  ALL_LANGUAGE, COUNTRY_CODES, LANGUAGE_CODES, REGION_PRESETS, WORLD_REGION,
+  ALL_LANGUAGE, COUNTRY_CODES, LANGUAGE_CODES, REGION_PRESETS, WORLD_EX_JP_REGION, WORLD_REGION,
   displayScope, languageName, parseLanguages, parseRegions, regionName, type ScopeOption
 } from "../server/core/rights-scope.js";
 
@@ -29,6 +29,10 @@ export function RightsScopePicker(
   const selected = useMemo(
     () => (region ? parseRegions(value) : parseLanguages(value)), [kind, value]);
   const hasUniversal = selected.some((s) => s.code === universal.code);
+  // 国を挙げない選び方（全世界・全言語、地域なら「日本を除く全世界」も）。どれも個別の指定とは同居しない。
+  const broad: ScopeOption[] = region ? [universal, WORLD_EX_JP_REGION] : [universal];
+  const isBroad = (o: ScopeOption) => broad.some((b) => b.code === o.code);
+  const picked = selected.find(isBroad) ?? null;
 
   const options = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -43,12 +47,12 @@ export function RightsScopePicker(
   const put = (next: ScopeOption[]) => onChange(displayScope(next));
 
   function toggle(option: ScopeOption) {
-    if (option.code === universal.code) {
-      put(hasUniversal ? [] : [universal]);
+    if (isBroad(option)) {
+      put(picked?.code === option.code ? [] : [option]);
       return;
     }
-    // 全世界・全言語と個別の指定は同居しない。個別を選んだら全体は外れる。
-    const base = selected.filter((s) => s.code !== universal.code);
+    // 全世界・全言語（日本を除く全世界）と個別の指定は同居しない。個別を選んだら全体は外れる。
+    const base = selected.filter((s) => !isBroad(s));
     const found = base.some((s) => s.code === option.code && s.code !== "");
     put(found ? base.filter((s) => s.code !== option.code) : [...base, option]);
   }
@@ -60,6 +64,13 @@ export function RightsScopePicker(
                 disabled={disabled} onClick={() => toggle(universal)}>
           {universal.name}
         </button>
+        {region && (
+          <button type="button" className={`btn btn-sm${picked?.code === WORLD_EX_JP_REGION.code ? " primary" : ""}`}
+                  disabled={disabled} title="海外だけの許諾。日本以外の国をすべて含みます"
+                  onClick={() => toggle(WORLD_EX_JP_REGION)}>
+            {WORLD_EX_JP_REGION.name}
+          </button>
+        )}
         {region && Object.entries(REGION_PRESETS).map(([label, codes]) => (
           <button type="button" key={label} className="btn btn-sm" disabled={disabled}
                   onClick={() => put(codes.map((code) => ({ code, name: regionName(code) })))}>
@@ -82,7 +93,7 @@ export function RightsScopePicker(
             <button type="button" key={`${s.code}:${i}`} className="tag" disabled={disabled}
                     title="外す"
                     onClick={() => put(selected.filter((_, n) => n !== i))}>
-              {s.name}{s.code && s.code !== universal.code ? ` ${s.code}` : ""} ×
+              {s.name}{s.code && !isBroad(s) ? ` ${s.code}` : ""} ×
             </button>
           ))}
         </div>
@@ -90,7 +101,7 @@ export function RightsScopePicker(
         <span className="faint">未選択（空のまま出すと、本文のその欄は空欄になります）</span>
       )}
 
-      {open && !hasUniversal && (
+      {open && !picked && (
         <div className="stack" style={{ gap: 4 }}>
           <input value={query} autoFocus disabled={disabled}
                  placeholder={region ? "国名・ISO コードで探す" : "言語名・コードで探す"}
@@ -109,9 +120,9 @@ export function RightsScopePicker(
           </div>
         </div>
       )}
-      {open && hasUniversal && (
+      {open && picked && (
         <span className="faint">
-          {universal.name}を選んでいるあいだは、個別の指定は要りません
+          {picked.name}を選んでいるあいだは、個別の指定は要りません
         </span>
       )}
     </div>
