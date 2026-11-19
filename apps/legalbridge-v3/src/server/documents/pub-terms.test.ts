@@ -150,7 +150,7 @@ test("本文の文脈：甲＝取引先、乙＝当社、通知先・源泉・�
   assert.deepEqual(patch.titles[1], {
     no: 2, termsNo: "", jointLabel: "なし", jointNames: "なし", title: "ねこの図書館", edition: "ねこの図書館 ①", copyright: "", thirdParty: "なし", note: "",
     printRate: "10%", printExclusivity: "独占", digitalRate: "—", digitalExclusivity: "—", digitalBasis: "",
-    hasPrint: true, hasDigital: false, hasOwnDigital: false,
+    hasPrint: true, hasDigital: false, hasOwnDigital: false, noteBrief: "",
     // 翻訳版の再許諾（A-033）。この作品は翻訳版の条件を持たないので空。
     translation: "—", hasTranslation: false, translationConsent: "",
     translationConsentRequired: false,
@@ -672,6 +672,29 @@ test("V5：作品ごとの許諾地域・言語を備考に出し、再許諾だ
   assert.equal(tr.find((t) => t.title === "両方の本").note, "許諾地域：全世界（翻訳版：日本を除く全世界）／許諾言語：日本語（翻訳版：英語）"
     + "／翻訳版の再許諾：紙 50%・電子 40%（乙が再許諾先から受領する対価（税抜）に対する率。対価を受領した日の翌々月末日までに支払う）"
     + "／再許諾先ごとに甲乙の別途合意を要する");
+  // 本文に「翻訳版」の行があるひな形（r11 から）向け：行を出す印と、短い備考（算定・支払時期は本文が定める）。
+  const trPatch = pubTermsPatch(kinded("translation"), {}, { v5: true });
+  assert.equal(trPatch.v5Translation, true);
+  // 「海外だけの本」は承諾不要、「両方の本」は要 → 作品で違うので、本文は備考を指し、備考に要否を書く。
+  assert.equal(trPatch.v5TransConsentMixed, true); assert.equal(trPatch.v5TransConsentRequired, false);
+  assert.equal(tr.find((t) => t.title === "海外だけの本").noteBrief,
+    "許諾地域：日本を除く全世界／許諾言語：英語／翻訳版の再許諾のみ／再許諾先ごとの甲の承諾：不要");
+  assert.equal(tr.find((t) => t.title === "両方の本").noteBrief,
+    "許諾地域：全世界（翻訳版：日本を除く全世界）／許諾言語：日本語（翻訳版：英語）／翻訳版の再許諾：紙 50%・電子 40%／再許諾先ごとの甲の承諾：要");
+  assert.equal(tr.find((t) => t.title === "国内の本").noteBrief, "許諾地域：全世界／許諾言語：日本語");
+  // 承諾がそろっていれば、要否は本文が書く（備考には書かない）。
+  const allCovered = { ...context, conditions: context.conditions.map((c: any) =>
+    (String(c.usageType).startsWith("pub_sub_") ? { ...c, sublicenseKind: "translation", sublicenseConsent: "covered" } : c)) };
+  const cov = pubTermsPatch(allCovered, {}, { v5: true });
+  assert.equal(cov.v5TransConsentMixed, false); assert.equal(cov.v5TransConsentRequired, false);
+  assert.equal((cov.titles as any[]).find((t) => t.title === "海外だけの本").noteBrief, "許諾地域：日本を除く全世界／許諾言語：英語／翻訳版の再許諾のみ");
+  const allRequired = { ...context, conditions: allCovered.conditions.map((c: any) => (c.sublicenseKind ? { ...c, sublicenseConsent: "required" } : c)) };
+  assert.equal(pubTermsPatch(allRequired, {}, { v5: true }).v5TransConsentRequired, true);
+  // 翻訳版でない再許諾（未設定・その他）は本文に行が無いので、印は立てず、短い備考も長い文のまま。
+  assert.equal(v5.v5Translation, false);
+  assert.equal(row("海外だけの本").noteBrief, row("海外だけの本").note);
+  assert.equal(pubTermsPatch(kinded("other"), {}, { v5: true }).v5Translation, false);
+
   // 紙・電子の片方にだけ種類が入っていても、その種類で出る（もう片方を直し忘れても「再許諾」に戻らない）。
   const half = { ...context, conditions: context.conditions.map((c: any) => (c.id === 3 ? { ...c, sublicenseKind: "translation" } : c)) };
   const halfRow = (pubTermsPatch(half, {}, { v5: true }).titles as any[]).find((t) => t.title === "海外だけの本");
