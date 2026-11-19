@@ -499,6 +499,7 @@ export function ConditionEdit(
       <span>{label}</span>
       {extra?.type === "regions" || extra?.type === "languages"
         ? <RightsScopePicker kind={extra.type === "regions" ? "region" : "language"}
+                             emptyNote="未選択"
                              value={v[name] ?? ""} onChange={(next) => set(name, next)} />
         : extra?.type === "textarea"
         ? <textarea rows={3} value={v[name] ?? ""} placeholder={extra.placeholder} onChange={(e) => set(name, e.target.value)} />
