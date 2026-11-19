@@ -7,6 +7,7 @@ import { AttachDocDialog, type AttachTarget } from "./DocAttach.js";
 import { RepaperDialog, type RepaperTarget } from "./AgreementRepaper.js";
 import { useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
+import { useMapLinks } from "./mapLinks.js";
 import type { EntityKind } from "./Relations.js";
 import type { MapCondition, MapPayment, MapSearchItem, MapSearchType, MapSettlement, PartyMap } from "../server/agreements/party-map.js";
 import { CAT_OF_COND, MASTER_SECTIONS, PAY_STATUS, buildContractModel, condTerms, setContractOpener, type Cat } from "./ContractFlow.js";
@@ -113,6 +114,7 @@ export function ContractTable(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, catFilter, show, open]);
 
+  const links = useMapLinks();
   const act = (label: string, onClick: () => void, title?: string) => readOnly ? null : (
     <button className="ct-act" title={title} onClick={(e) => { e.stopPropagation(); onClick(); }}>{label}</button>
   );
@@ -299,6 +301,12 @@ export function ContractTable(
                   ) : <div className="faint">{g.noneLabel}</div>}
                   {(g.master || g.key.startsWith("none-")) && act("＋ 個別契約を追加", () => setDialog({ kind: "contract-add", to: g.master?.id ?? "none", toNo: g.master?.no ?? "基本契約なし" }),
                     g.master ? "個別契約（条件書・発注書・単体契約）を探してこの基本契約の下に入れる" : "個別契約を基本契約から外して、ここ（基本契約なし）に置く")}
+                  {/* 二次利用追加条件書：商品化・映像化などの別途合意を、この基本契約の下に作る（取得 IN の基本契約）。 */}
+                  {g.master && links.composeContract && !agreementOf(g.master.id)?.terminatedOn
+                    && agreementOf(g.master.id)?.direction !== "out" && act("＋ 二次利用追加条件書", () => {
+                    const a = agreementOf(g.master!.id);
+                    if (a) links.composeContract!({ id: a.id, label: a.agreementNo ?? a.title }, map.party.id, "secondary_use_terms");
+                  }, "商品化・映像化・ゲーム化などの二次利用と、その再許諾の条件を定める追加条件書を、この基本契約の下に作る")}
                   {/* 巻き直す：新しい契約で置き換える（条件明細と個別契約を引き継げる）。終了した契約には出さない。 */}
                   {g.master && !agreementOf(g.master.id)?.terminatedOn && act("巻き直す", () => {
                     const a = agreementOf(g.master!.id);

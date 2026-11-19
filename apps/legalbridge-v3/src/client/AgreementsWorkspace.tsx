@@ -333,7 +333,7 @@ export function AgreementsWorkspace(
                     {addingCondition ? "条件の登録をやめる" : "条件明細を登録する"}
                   </button>
                   {/* 基本契約（取得 IN）：商品化・映像化などの二次利用は別途合意が要る。その追加条件書をこの契約から作る。 */}
-                  {a.kind === "master" && a.direction !== "out" && !a.terminatedOn && onComposeContract && a.counterparty && (
+                  {(a.kind === "master" || a.kind === "standalone" || !a.kind) && a.direction !== "out" && !a.terminatedOn && onComposeContract && a.counterparty && (
                     <button className="btn btn-sm" disabled={readOnly}
                             title="商品化・映像化・ゲーム化などの二次利用と、その再許諾の条件を定める追加条件書を作る。決定すると、利用の行から条件明細ができる"
                             onClick={() => onComposeContract({ id: a.id, label: a.agreementNo ?? a.title }, a.counterparty!.id, "secondary_use_terms")}>
