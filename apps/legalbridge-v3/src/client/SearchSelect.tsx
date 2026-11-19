@@ -133,6 +133,19 @@ export const searchParties = async (q: string): Promise<SearchOption[]> => {
     .map((p) => ({ value: String(p.id), label: p.name, hint: p.partyCode }));
 };
 
+/**
+ * 作品をサーバに聞く。題名・作品コードに当たる。作品は数百点あり、一覧を一度に読むと先頭の 200 点しか
+ * 来ないので、選ぶ欄は打った語で探す。二次利用の作品（派生作品）は「二次利用」と添える。
+ */
+export const searchWorks = async (q: string): Promise<SearchOption[]> => {
+  const r = await api.get<{ works: Array<{ id: number; title: string; workCode: string | null; kind: string; status: string }> }>(
+    `/works?q=${encodeURIComponent(q)}`);
+  return r.works
+    .filter((w) => w.status !== "archived")
+    .map((w) => ({ value: String(w.id), label: w.title,
+                   hint: [w.kind === "derivative" ? "二次利用・派生" : "", w.workCode ?? ""].filter(Boolean).join("　") || null }));
+};
+
 /** 担当者の選択肢。退職者は書類に出す担当にできないので、既定では出さない。 */
 export const staffOptions = (
   staff: Array<{ id: number; name: string; department?: string | null; status?: string }>,

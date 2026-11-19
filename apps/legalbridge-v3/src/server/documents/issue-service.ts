@@ -28,7 +28,7 @@ import { buildCandidates, type Candidate } from "./candidates.js";
 import { currentYearInTokyo, formatDocumentNumber, nextSequence, normalizePrefix,
          nextRevisionNumber, printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { materializeSettlementRows } from "./settlement-conditions.js";
-import { materializeSecondaryUseRows } from "./secondary-use-conditions.js";
+import { materializeSecondaryUseRows, withSecondaryUseWorks } from "./secondary-use-conditions.js";
 import { applyRefNoMode, loadCounterpartyNos, refNoModeOf, type RefNoMode } from "./cite-no.js";
 import { ConditionWriteService } from "../conditions/write-service.js";
 import { TAX_ROUNDING_INPUT, taxRoundingOf, type TaxRounding } from "../core/rounding.js";
@@ -178,9 +178,9 @@ export class DocumentIssueService {
             WHERE target_type = 'document' AND target_id = $1 ORDER BY created_at DESC LIMIT 1`,
           [input.documentId])).rows[0] as any)?.request_id);
       }
-      const context = withInspectionLines(template.templateKey,
+      const context = await withSecondaryUseWorks(this.database, template.templateKey, withInspectionLines(template.templateKey,
         await this.buildContext(this.database, input, await this.previewNumber(input, manual), null, ownerStaffId,
-                                chosenRefs(manual)), manual);
+                                chosenRefs(manual)), manual), manual);
       // 明細・合計・消費税。本文はこれを差すだけなので、作らないと空欄で出る。
       // 先に一度束縛して、項目に入った値も計算ブロックに渡す（条件書は本文の
       // 見出しが項目の値そのものなので、手入力だけでは空欄になる）。
@@ -539,7 +539,7 @@ export class DocumentIssueService {
               nextNumber: async () => formatDocumentNumber("PUBT", year, await nextSequence(client, "PUBT", year))
             }, actor)
           : null;
-        const context = withInspectionLines(template.templateKey, await this.buildContext(client, {
+        const context = await withSecondaryUseWorks(client, template.templateKey, withInspectionLines(template.templateKey, await this.buildContext(client, {
           templateKey: template.templateKey,
           conditionIds,
           matterId: row.matter_id,
@@ -548,7 +548,7 @@ export class DocumentIssueService {
           eventIds,
           royalty: extra.royalty ?? null
         }, printedNo, issuedOn, int((settled.manual as Record<string, unknown>)?._ownerStaffId),
-           chosenRefs(settled.manual)), settled.manual as Record<string, unknown>);
+           chosenRefs(settled.manual)), settled.manual as Record<string, unknown>), settled.manual as Record<string, unknown>);
         const manual = settled.manual;
         // プレビューと同じ順で組む。先に一度束縛して、項目に入った値も
         // 計算ブロックへ渡す（条件書の見出しは項目の値そのもの）。

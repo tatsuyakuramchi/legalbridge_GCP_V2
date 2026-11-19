@@ -25,6 +25,18 @@ export const SUT_USES_FIELD = "sut_uses";
 type Data = Record<string, any>;
 type Row = Record<string, unknown>;
 
+/** 行の作品を台帳から引いたもの（secondary-use-conditions.ts の withSecondaryUseWorks が文脈に足す）。 */
+export interface SecondaryWork {
+  id: number; title: string; kind: string;
+  /** 原作名（計算書の件名）。二次利用の作品では「シノビガミシリーズ」のような総称。 */
+  sourceTitle: string | null;
+  copyright: string | null;
+  /** この相手先との出版の個別条件書（個別契約）の番号。 */
+  termsNo: string | null;
+  /** 原作（系譜の親）。二次利用の作品なら配下の書籍。 */
+  sources: Array<{ id: number; title: string; copyright: string | null; termsNo: string | null }>;
+}
+
 /** 利用区分。基本契約（旧）第4条第1項の並びに合わせる。 */
 export const SUT_CATEGORIES = ["商品化", "映像化", "デジタルゲーム化", "翻訳・翻案", "その他"] as const;
 /** 実施する者。own＝当社が自ら行う／sublicense＝第三者に再許諾して行わせる。 */
@@ -222,15 +234,37 @@ export function secondaryUsePatch(context: Data, manual: Data = {}): Data {
   const partyB = isV5 ? "乙" : "被許諾者";
 
   const uses = secondaryUses(manual);
-  // 01 対象著作物：行に出てくる作品を、出てきた順に 1 回ずつ。
+  const ledger = (context.secondaryWorks ?? {}) as Record<number, SecondaryWork>;
+  // 01 対象著作物：行に出てくる作品を、出てきた順に 1 回ずつ。二次利用の作品（原作を持つ作品）は、作品そのもの
+  // ではなく配下の原作を並べる（グッズの作品ではなく、シノビガミの各書籍が許諾の対象）。
   const works: Array<{ no: number; id: number | null; title: string; copyright: string; termsNo: string }> = [];
+  const pushWork = (id: number | null, title: string, copyright: string, termsNo: string) => {
+    if (works.some((w) => (id != null ? w.id === id : w.title === title))) return;
+    works.push({ no: works.length + 1, id, title, copyright, termsNo });
+  };
+  /** 行が二次利用の作品を指していれば、その作品（原作つき）。 */
+  const derived = (u: SecondaryUse): SecondaryWork | null => {
+    const w = u.workId != null ? ledger[u.workId] : undefined;
+    return w && w.sources.length ? w : null;
+  };
   for (const u of uses) {
     if (!u.workTitle && !u.workId) continue;
-    if (works.some((w) => (u.workId != null ? w.id === u.workId : w.title === u.workTitle))) continue;
-    works.push({ no: works.length + 1, id: u.workId, title: u.workTitle,
-                 copyright: text(u.row.copyright), termsNo: text(u.row.terms_no) });
+    const d = derived(u);
+    if (d) {
+      // 行の著作権表示は、原作に表示が無いときの代わり。
+      for (const s of d.sources) pushWork(s.id, s.title, s.copyright ?? text(u.row.copyright), s.termsNo ?? "");
+      continue;
+    }
+    const w = u.workId != null ? ledger[u.workId] : undefined;
+    pushWork(u.workId, u.workTitle || w?.title || "", text(u.row.copyright) || (w?.copyright ?? ""), text(u.row.terms_no) || (w?.termsNo ?? ""));
   }
   const multiWorks = works.length > 1;
+  /** 02 の行に添える対象。二次利用の作品は「シノビガミ グッズ（原作 17 点。01 のとおり）」。 */
+  const workRefOf = (u: SecondaryUse): string => {
+    const d = derived(u);
+    if (d) return `${d.title}（${d.sourceTitle ? `${d.sourceTitle}・` : ""}原作 ${d.sources.length} 点。01 のとおり）`;
+    return multiWorks ? u.workTitle : "";
+  };
   const codesOf = (list: SecondaryUse[]) => list.map((u) => u.code).join("・");
   const subs = uses.filter((u) => u.actor === "sublicense");
   const owns = uses.filter((u) => u.actor === "own" && u.feeType !== "flat");
@@ -270,8 +304,8 @@ export function secondaryUsePatch(context: Data, manual: Data = {}): Data {
       category: u.category,
       sublicensed: u.actor === "sublicense",
       content: u.content,
-      // 作品が 2 点以上あるときだけ、どの作品の利用かを行に書く。
-      workRef: multiWorks ? u.workTitle : "",
+      // 作品が 2 点以上あるとき、または二次利用の作品（原作つき）のとき、どの作品の利用かを行に書く。
+      workRef: workRefOf(u),
       actor: u.actor === "sublicense" ? "再許諾先（03）" : `${partyB}（自社）`,
       exclusivity: u.exclusivity === "exclusive" ? "独占" : u.exclusivity === "non_exclusive" ? "非独占" : "—",
       scope: `${u.regions || "全世界"}／${u.languages || "全言語"}`,
@@ -323,6 +357,15 @@ export function secondaryUseWarnings(context: Data, manual: Data = {}): Warning[
     if (u.feeType === "flat" ? u.flatAmount == null : u.ratePct == null) lacks.push(u.feeType === "flat" ? "金額" : "料率");
     if (u.actor === "sublicense" && u.feeType === "rate" && u.ratePct != null && (u.ratePct <= 0 || u.ratePct > 100)) lacks.push("料率（0〜100%）");
     if (lacks.length) out.push({ kind: "other", message: `${u.code}（${u.category}）：${lacks.join("・")}が入っていません。決定のときに条件明細を作れません` });
+  }
+  // 二次利用の作品（原作つき）で、計算書の件名（原作名）が空のもの。空だと計算書の件名に原作の題名が全部並ぶ。
+  const ledger = (context.secondaryWorks ?? {}) as Record<number, SecondaryWork>;
+  for (const u of uses) {
+    const w = u.workId != null ? ledger[u.workId] : undefined;
+    if (w && w.sources.length && !w.sourceTitle) {
+      out.push({ kind: "other", message: `${u.code}（${u.category}）：作品「${w.title}」に原作名（計算書の件名）がありません。`
+        + `利用許諾料計算書の件名に原作 ${w.sources.length} 点の題名が並ぶので、作品の画面で原作名（例：シリーズ名）を入れてください` });
+    }
   }
   const pending = uses.filter((u) => !u.conditionId).length;
   if (pending) {

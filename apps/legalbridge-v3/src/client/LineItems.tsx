@@ -11,7 +11,8 @@
  */
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { SearchSelect } from "./SearchSelect.js";
+import { SearchSelect, searchWorks } from "./SearchSelect.js";
+import { DerivativeWorkForm } from "./DerivativeWorkForm.js";
 import { SnippetPicker } from "./SnippetPicker.js";
 import { roundAmount } from "../server/core/rounding.js";
 import { CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
@@ -295,7 +296,8 @@ const foldedSubtitle = (row: Row): string =>
 export const SUT_USE_COLUMNS: Column[] = [
   { name: "category", label: "利用区分", type: "select",
     options: ["商品化", "映像化", "デジタルゲーム化", "翻訳・翻案", "その他"].map((v) => ({ value: v, label: v })) },
-  { name: "work_id", label: "対象著作物", type: "work", helpText: "台帳の作品から選ぶ。条件明細はこの作品に付く" },
+  { name: "work_id", label: "対象著作物", type: "work",
+    helpText: "台帳の作品から選ぶ。条件明細はこの作品に付く。シリーズ全体なら「二次利用の作品」を選ぶ（01 に配下の原作が並ぶ）" },
   { name: "actor", label: "実施する者", type: "select",
     options: [{ value: "own", label: "自社（当社が製造・販売する）" }, { value: "sublicense", label: "再許諾（第三者に行わせる）" }],
     helpText: "自社＝単価 × 数量 × 料率。再許諾＝再許諾先から受領した額 × 料率" },
@@ -374,17 +376,12 @@ export function LineItemsEditor(
   const columns = intl && section.intl ? section.intl : section.columns;
   const edited = rows !== null;
   const current = rows ?? seed;
-  // 作品を選ぶ列があるときだけ、作品の一覧を読む。
-  const needsWorks = columns.some((c) => c.type === "work");
-  const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
-  useEffect(() => {
-    if (!needsWorks) return;
-    api.get<{ works: Array<{ id: number; title: string }> }>("/works").then((w) => setWorks(w.works)).catch(() => undefined);
-  }, [needsWorks]);
+  /** 二次利用の作品をその場で作っている行（作ったらその行の作品にする）。 */
+  const [derivingRow, setDerivingRow] = useState<number | null>(null);
   /** 作品を選んだ：id と作品名を行に入れ、著作権表示が空なら作品の登録から写す。 */
-  const pickWork = (i: number, col: Column, value: string) => {
+  const pickWork = (i: number, col: Column, value: string, picked?: string | null) => {
     const id = Number(value) || null;
-    const title = works.find((w) => w.id === id)?.title ?? "";
+    const title = picked ?? "";
     onChange(current.map((r, j) => (j === i ? { ...r, [col.name]: id, work_title: id ? title : null } : r)));
     if (!id || show(current[i]?.copyright)) return;
     api.get<{ copyrightNotice?: string | null }>(`/works/${id}`).then((w) => {
@@ -462,10 +459,17 @@ export function LineItemsEditor(
                 <label key={c.name} className={`field${c.type === "textarea" ? " wide" : ""}`}>
                   <span>{c.label}</span>
                   {c.type === "work" ? (
-                    <SearchSelect value={show(row[c.name])} emptyLabel="—"
-                                  options={works.map((w) => ({ value: String(w.id), label: w.title }))}
-                                  valueLabel={show(row.work_title) || null} placeholder="作品名の一部で探す"
-                                  onChange={(v) => pickWork(i, c, v)} />
+                    <>
+                      <SearchSelect value={show(row[c.name])} emptyLabel="—" search={searchWorks}
+                                    valueLabel={show(row.work_title) || null} placeholder="作品名の一部で探す"
+                                    onChange={(v, o) => pickWork(i, c, v, o?.label ?? null)} />
+                      {name === "sut_uses" && (
+                        <button type="button" className="linky" style={{ alignSelf: "flex-start" }}
+                                onClick={(e) => { e.preventDefault(); setDerivingRow(derivingRow === i ? null : i); }}>
+                          {derivingRow === i ? "作るのをやめる" : "＋ シリーズ全体なら、二次利用の作品を作って選ぶ"}
+                        </button>
+                      )}
+                    </>
                   ) : c.type === "select" ? (
                     <select value={show(row[c.name])} onChange={(e) => update(i, c, e.target.value)}>
                       <option value="">—</option>
@@ -496,6 +500,17 @@ export function LineItemsEditor(
                 </label>
               ))}
             </div>
+            {derivingRow === i && (
+              <div style={{ marginTop: 8 }}>
+                <DerivativeWorkForm initialCategory={show(row.category) || null}
+                  onCancel={() => setDerivingRow(null)}
+                  onDone={(made) => {
+                    setDerivingRow(null);
+                    const col = columns.find((x) => x.type === "work");
+                    if (col) pickWork(i, col, String(made.id), made.title);
+                  }} />
+              </div>
+            )}
           </div>
         ))}
       </div>
