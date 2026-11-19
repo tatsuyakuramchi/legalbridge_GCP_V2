@@ -65,6 +65,11 @@ export interface WorkInput {
   thirdPartyRights?: string | null;
   /** 原作名（原著作物名。196）。空なら作品名と同じ。 */
   sourceTitle?: string | null;
+  /**
+   * 原作（複数）。二次利用の作品（シリーズのグッズ・アニメ化など）を作るとき、配下の書籍をまとめて原作として付ける。
+   * 系譜に 1 本ずつ登録し、kind を derivative にする。parentWorkId と併せて渡してもよい（重ねて登録しない）。
+   */
+  sourceWorkIds?: number[] | null;
 }
 
 export interface WorkPartInput {
@@ -132,8 +137,17 @@ export class WorkWriteService {
             throw new DomainError("NOT_FOUND", `親作品 ${input.parentWorkId} が見つかりません`);
           }
         }
+        // 原作（複数）。見つからない id があれば止める（一部だけ付いた二次利用の作品を作らない）。
+        const sourceIds = [...new Set([...(input.sourceWorkIds ?? []), ...(input.parentWorkId ? [input.parentWorkId] : [])]
+          .map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+        if (sourceIds.length) {
+          const found = await client.query("SELECT id FROM works WHERE id = ANY($1::bigint[])", [sourceIds]);
+          const have = new Set((found.rows as Array<{ id: number }>).map((r) => Number(r.id)));
+          const missing = sourceIds.filter((n) => !have.has(n));
+          if (missing.length) throw new DomainError("NOT_FOUND", `原作 ${missing.join("・")} が見つかりません`);
+        }
         const code = String(input.workCode ?? "").trim() || await allocateNumber(client, NUMBER);
-        const kind: WorkKind = input.kind ?? (input.parentWorkId ? "derivative" : "own");
+        const kind: WorkKind = input.kind ?? (sourceIds.length ? "derivative" : "own");
 
         const inserted = await client.query(
           `INSERT INTO works (work_code, title, title_kana, kind, business_line, status, remarks,
@@ -148,15 +162,16 @@ export class WorkWriteService {
         const sourceTitle = String(input.sourceTitle ?? "").trim();
         if (sourceTitle) await client.query("UPDATE works SET source_title = $2 WHERE id = $1", [id, sourceTitle]);
 
-        if (input.parentWorkId) {
+        for (const sourceId of sourceIds) {
           await client.query(
             `INSERT INTO work_lineage (parent_work_id, child_work_id, relation_type)
-             VALUES ($1, $2, 'derivative') ON CONFLICT DO NOTHING`, [input.parentWorkId, id]);
+             VALUES ($1, $2, 'derivative') ON CONFLICT DO NOTHING`, [sourceId, id]);
         }
 
         await recordAudit(client, {
           actor, action: "work.create", targetType: "work", targetId: id,
-          detail: { title, kind, workCode: row.work_code, parentWorkId: input.parentWorkId ?? null }
+          detail: { title, kind, workCode: row.work_code, parentWorkId: input.parentWorkId ?? null,
+                    ...(sourceIds.length > 1 || (sourceIds.length === 1 && !input.parentWorkId) ? { sourceWorkIds: sourceIds } : {}) }
         });
         // 著作権表示は履歴（A-031）で持つ。登録時の表記は初版の行。
         if (String(input.copyrightNotice ?? "").trim()) {

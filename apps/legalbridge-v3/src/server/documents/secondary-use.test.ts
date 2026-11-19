@@ -100,3 +100,30 @@ test("二次利用追加条件書：本文に渡す値と注意が、ひな形�
   assert.equal((values as any).partyA, "甲"); assert.equal(((values as any).uses as any[]).length, 4);
   assert.ok(templateWarnings("secondary_use_terms", context(true) as any, { [SUT_USES_FIELD]: rows }).some((w) => w.message.includes("条件明細を 4 本作り")));
 });
+
+test("二次利用の作品（原作つき）を選んだ行：01 に原作が並び、02 の行に作品名と原作の点数。原作名が無ければ注意", () => {
+  const ledger = {
+    10: { id: 10, title: "シノビガミ グッズ", kind: "derivative", sourceTitle: "シノビガミシリーズ", copyright: null, termsNo: null,
+          sources: [{ id: 101, title: "シノビガミ 基本ルールブック", copyright: "© 河嶋陶一朗", termsNo: "ARC-PUBT-2026-0101" },
+                    { id: 102, title: "シノビガミ 流派ブック", copyright: null, termsNo: null }] },
+    11: { id: 11, title: "名前の無いグッズ", kind: "derivative", sourceTitle: null, copyright: null, termsNo: null,
+          sources: [{ id: 103, title: "別の本", copyright: null, termsNo: null }] }
+  };
+  const ctx = { ...context(false), secondaryWorks: ledger };
+  const row = { category: "商品化", work_id: 10, work_title: "シノビガミ グッズ", actor: "own", content: "グッズの製造・販売", rate: "5",
+                copyright: "© 冒険企画局" };
+  const p = secondaryUsePatch(ctx, { [SUT_USES_FIELD]: [row] });
+  // 01：グッズの作品ではなく原作を並べる。原作に表示が無ければ行の表示で埋める。番号は台帳の個別契約。
+  assert.deepEqual((p.works as any[]).map((w) => [w.no, w.title, w.copyright, w.termsNo]), [
+    [1, "シノビガミ 基本ルールブック", "© 河嶋陶一朗", "ARC-PUBT-2026-0101"],
+    [2, "シノビガミ 流派ブック", "© 冒険企画局", ""]]);
+  assert.equal((p.uses as any[])[0].workRef, "シノビガミ グッズ（シノビガミシリーズ・原作 2 点。01 のとおり）");
+  // 原作名の無い二次利用の作品は、決定の前に注意。
+  const warn = secondaryUseWarnings({ ...ctx }, { [SUT_USES_FIELD]: [{ ...row, work_id: 11, work_title: "名前の無いグッズ" }] });
+  assert.ok(warn.some((w) => w.message.includes("原作名（計算書の件名）がありません")));
+  assert.ok(!secondaryUseWarnings(ctx, { [SUT_USES_FIELD]: [row] }).some((w) => w.message.includes("原作名")));
+  // 台帳に無い（引いていない）作品は、これまでどおり行の作品をそのまま並べる。
+  const plain = secondaryUsePatch(context(false), { [SUT_USES_FIELD]: [row] });
+  assert.deepEqual((plain.works as any[]).map((w) => w.title), ["シノビガミ グッズ"]);
+  assert.equal((plain.uses as any[])[0].workRef, "");
+});

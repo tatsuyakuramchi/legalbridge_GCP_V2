@@ -2193,7 +2193,9 @@ export function createRoutes(database: Transactable) {
     parentWorkId: z.coerce.number().int().positive().nullable().optional(),
     copyrightNotice: z.string().trim().max(300).nullable().optional(),
     thirdPartyRights: z.string().trim().max(600).nullable().optional(),
-    sourceTitle: z.string().trim().max(300).nullable().optional()
+    sourceTitle: z.string().trim().max(300).nullable().optional(),
+    // 原作（複数）。二次利用の作品（シリーズのグッズなど）を作るとき、配下の書籍をまとめて付ける。
+    sourceWorkIds: z.array(z.coerce.number().int().positive()).max(500).nullable().optional()
   });
   router.post("/works", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
@@ -3477,7 +3479,9 @@ export function createRoutes(database: Transactable) {
 
   // ---- 作品 ----
   router.get("/works", asyncRoute(async (req, res) => {
-    res.json({ works: await works.list(String(req.query.q ?? "")) });
+    // limit は既定 200（上限 500）。シリーズの書籍をまとめて選ぶ画面は、絞った語で多めに引く。
+    const limit = Number(req.query.limit);
+    res.json({ works: await works.list(String(req.query.q ?? ""), Number.isFinite(limit) && limit > 0 ? limit : undefined) });
   }));
 
   // 移行データの棚卸し。消してよいものを人が選ぶための材料。

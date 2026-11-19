@@ -5,6 +5,7 @@ import { api, ApiError, money, rate } from "./api.js";
 import { Relations, type EntityKind } from "./Relations.js";
 import { CreateForm, text } from "./CreateForm.js";
 import { WorkCreateForm } from "./WorkCreateForm.js";
+import { DerivativeWorkForm } from "./DerivativeWorkForm.js";
 import { SearchSelect } from "./SearchSelect.js";
 import { ConditionEdit, type EditResult } from "./ConditionEdit.js";
 import { ConditionEntryForm } from "./ConditionEntryForm.js";
@@ -205,7 +206,7 @@ export function WorksWorkspace(
   const [activity, setActivity] = useState<Activity | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ConditionDetail | null>(null);
-  const [creating, setCreating] = useState<"work" | "part" | "condition" | null>(null);
+  const [creating, setCreating] = useState<"work" | "derivative" | "part" | "condition" | null>(null);
   /** クレジット表記の履歴（A-031）。重版で変わる著作権表示を適用開始日つきで持つ。 */
   const [credits, setCredits] = useState<Credit[]>([]);
   const [creditForm, setCreditForm] = useState<{ effectiveFrom: string; edition: string; copyrightNotice: string; thirdPartyRights: string; note: string } | null>(null);
@@ -654,6 +655,9 @@ export function WorksWorkspace(
       <div className="row">
         {editable && creating === null && (<>
           <button className="btn primary btn-sm" onClick={() => setCreating("work")}>作品を登録</button>
+          <button className="btn btn-sm" onClick={() => setCreating("derivative")}
+                  title="シリーズのグッズ・アニメ化など。配下の書籍を原作としてまとめて付けた作品を作る（二次利用追加条件書・計算書の単位）">
+            二次利用の作品を作る</button>
           {/* CSV の一括登録は 一括処理 › まとめて登録・更新する へ（取込の入口は 1 つ。docs/navigation.md）。 */}
           {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "works" })}
                   title="作品を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 作品を一括登録</button>}
@@ -672,6 +676,10 @@ export function WorksWorkspace(
       {creating === "work" && (
         <WorkCreateForm onDone={(r) => { setCreating(null); void reloadTree(r.id); }}
                         onCancel={() => setCreating(null)} />
+      )}
+      {creating === "derivative" && (
+        <DerivativeWorkForm onDone={(r) => { setCreating(null); setNotice(`二次利用の作品「${r.title}」を作りました`); void reloadTree(r.id); }}
+                            onCancel={() => setCreating(null)} />
       )}
       {overviewOpen && (
         <RightsMatrixOverview onClose={() => setOverviewOpen(false)}

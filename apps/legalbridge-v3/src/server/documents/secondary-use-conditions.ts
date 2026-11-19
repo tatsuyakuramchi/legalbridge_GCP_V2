@@ -20,7 +20,7 @@ import { int, str } from "../core/db.js";
 import { DomainError } from "../core/errors.js";
 import { parseLanguages, parseRegions } from "../core/rights-scope.js";
 import type { ConditionWriteService } from "../conditions/write-service.js";
-import { SUT_USES_FIELD, isSecondaryUseTemplate, secondaryUses, type SecondaryUse } from "./secondary-use.js";
+import { SUT_USES_FIELD, isSecondaryUseTemplate, secondaryUses, type SecondaryUse, type SecondaryWork } from "./secondary-use.js";
 
 export interface SecondaryUseSource {
   documentId: number;
@@ -128,4 +128,54 @@ export async function materializeSecondaryUseRows(
     created.push({ id: made.id, conditionNo: made.conditionNo, code: use.code, name });
   }
   return { manual: { ...source.manual, [SUT_USES_FIELD]: source.manual[SUT_USES_FIELD] }, created };
+}
+
+/**
+ * 行の作品を台帳から引いて、文脈に足す（context.secondaryWorks。作品 id → 作品と原作）。
+ *
+ * 二次利用の作品（シリーズのグッズ・アニメ化など）は、配下の書籍を原作として系譜に持つ。紙の「01 対象著作物」には
+ * 原作を並べ、条件明細はその作品に 1 本付ける。原作の一覧は行に写さず、ここで毎回台帳から引く
+ * （作品を選んだあとに原作を足したら、そのまま紙に出る）。決定した紙は値を焼き付けるので、後から変わらない。
+ *
+ * 出版の個別条件書の番号は、この相手先との出版（紙・電子）の条件が載っている個別契約から引く。
+ */
+export async function withSecondaryUseWorks(
+  client: Queryable, templateKey: string, context: Record<string, any>, manual: Record<string, unknown>
+): Promise<Record<string, any>> {
+  if (!isSecondaryUseTemplate(templateKey)) return context;
+  const ids = [...new Set(secondaryUses(manual).map((u) => u.workId).filter((n): n is number => n !== null))];
+  if (!ids.length) return context;
+  const partyId = int(context.condition?.counterpartyId) ?? int(context.condition?.counterparty?.id)
+    ?? int((context.conditions as Array<Record<string, any>> | undefined)?.[0]?.counterpartyId) ?? int(manual._partyId);
+  const works = (await client.query(
+    `SELECT w.id, w.title, w.kind, to_jsonb(w) ->> 'source_title' AS source_title, w.copyright_notice
+       FROM works w WHERE w.id = ANY($1::bigint[])`, [ids])).rows as Array<Record<string, any>>;
+  const sources = (await client.query(
+    // 並びは作品の登録順（作品コード → id）。題名順だと「忍術バトルRPG …」のような基本の本が後ろに回る。
+    `SELECT DISTINCT l.child_work_id AS child_id, p.id, p.title, p.copyright_notice, p.work_code
+       FROM work_lineage l JOIN works p ON p.id = l.parent_work_id
+      WHERE l.child_work_id = ANY($1::bigint[]) AND p.status <> 'archived'
+      ORDER BY p.work_code NULLS LAST, p.id`, [ids])).rows as Array<Record<string, any>>;
+  const allIds = [...ids, ...sources.map((r) => Number(r.id))];
+  // 作品ごとの出版の個別条件書の番号（この相手先の、紙・電子の条件が載っている個別契約）。
+  const terms = partyId ? (await client.query(
+    `SELECT DISTINCT ON (c.work_id) c.work_id, a.agreement_no
+       FROM conditions c JOIN agreements a ON a.id = c.agreement_id
+      WHERE c.work_id = ANY($1::bigint[]) AND c.counterparty_id = $2 AND c.direction = 'in'
+        AND c.usage_type IN ('pub_print', 'pub_digital') AND c.status IN ('active', 'scheduled')
+        AND COALESCE(a.kind, 'master') = 'supplement' AND a.agreement_no IS NOT NULL
+      ORDER BY c.work_id, a.id DESC`, [allIds, partyId])).rows as Array<Record<string, any>> : [];
+  const termsOf = new Map(terms.map((r) => [Number(r.work_id), String(r.agreement_no)]));
+  const out: Record<number, SecondaryWork> = {};
+  for (const w of works) {
+    const id = Number(w.id);
+    out[id] = {
+      id, title: String(w.title ?? ""), kind: String(w.kind ?? ""),
+      sourceTitle: str(w.source_title), copyright: str(w.copyright_notice), termsNo: termsOf.get(id) ?? null,
+      sources: sources.filter((r) => Number(r.child_id) === id).map((r) => ({
+        id: Number(r.id), title: String(r.title ?? ""), copyright: str(r.copyright_notice), termsNo: termsOf.get(Number(r.id)) ?? null
+      }))
+    };
+  }
+  return { ...context, secondaryWorks: out };
 }
