@@ -1458,7 +1458,7 @@ export function suggestionsFor(
   templateKey: string, context: Ctx, bound: Record<string, unknown> = {}
 ): Record<string, unknown> {
   if (isLicenseTermsTemplate(templateKey)) return licenseTermsSuggestions(context, bound);
-  if (isPubTermsTemplate(templateKey)) return pubTermsSuggestions(context, bound);
+  if (isPubTermsTemplate(templateKey)) return pubTermsSuggestions(context, bound, { v5: isPubTermsV5(templateKey) });
   // 発注書・検収書の本文は、明細の外（見出しのあたり）でも料率と帰属先を差している。
   // 条件が1件に決まるときは台帳から引ける。ここを空のまま出すと「料率 ％」だけが
   // 残った紙になる。ひな形が from を持っていればそちらが勝つ。

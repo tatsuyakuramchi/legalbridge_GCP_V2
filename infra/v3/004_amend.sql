@@ -2785,6 +2785,27 @@ COMMENT ON FUNCTION v3.document_delivery(bigint) IS
   '文書の送付・受領（監査記録から導く。新しい記録が勝つ）。sent_via: gmail / cloudsign / post / hand / email_other / past / other。A-074';
 GRANT EXECUTE ON FUNCTION v3.document_delivery(bigint) TO legalbridge_v3_runtime;
 
+-- ---------------------------------------------------------------------
+-- 再許諾の種類（出版の再許諾の条件。pub_sub_print / pub_sub_digital）
+--
+--   出版の再許諾は「翻訳版（翻訳して出版・配信させる）」と「その他（子会社の版元・配信事業者など、
+--   翻訳を伴わない再許諾）」が同じ利用形態に入っている。紙に「再許諾」とだけ出ると、どちらか読めない。
+--     translation … 翻訳版の再許諾
+--     other       … 翻訳以外の再許諾
+--     空          … 決めていない（これまでの条件。紙には「再許諾」と出る）
+-- ---------------------------------------------------------------------
+ALTER TABLE v3.conditions ADD COLUMN IF NOT EXISTS sublicense_kind text;
+DO $sublicense_kind$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'v3.conditions'::regclass AND conname = 'conditions_sublicense_kind_chk') THEN
+    ALTER TABLE v3.conditions ADD CONSTRAINT conditions_sublicense_kind_chk
+      CHECK (sublicense_kind IS NULL OR sublicense_kind IN ('translation', 'other'));
+  END IF;
+END $sublicense_kind$;
+COMMENT ON COLUMN v3.conditions.sublicense_kind IS
+  '再許諾の種類（translation=翻訳版 / other=翻訳以外）。空は未設定。出版の再許諾の条件だけが持つ。条件書の一覧に出る。';
+
 COMMIT;
 
 -- 確認
@@ -3173,3 +3194,6 @@ SELECT (SELECT count(*) FROM information_schema.columns
            AND column_name IN ('request_id', 'purpose', 'done_at', 'done_by', 'created_at'))
      + (SELECT count(*) FROM pg_constraint
          WHERE conrelid='v3.tasks'::regclass AND conname IN ('tasks_purpose_chk', 'tasks_owner_chk')) AS 列とCHECK;
+\echo '--- 再許諾の種類（列 1・CHECK 1 で 2 であること） ---'
+SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='v3' AND table_name='conditions' AND column_name='sublicense_kind')
+     + (SELECT count(*) FROM pg_constraint WHERE conrelid='v3.conditions'::regclass AND conname='conditions_sublicense_kind_chk') AS 列とCHECK;

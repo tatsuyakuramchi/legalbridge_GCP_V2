@@ -6,6 +6,7 @@ import { DIGITAL_CYCLES, DIGITAL_CYCLE_DEFAULTS, PAY_DAYS, digitalPaymentTerms, 
 import { CreateForm } from "./CreateForm.js";
 import { searchParties } from "./SearchSelect.js";
 import { conditionNameFor } from "../server/conditions/naming.js";
+import { SUBLICENSE_KINDS, sublicenseKindLabel } from "../server/core/condition-usage.js";
 
 /**
  * 出版の条件を作品1点ぶん登録する（紙・電子）。
@@ -88,8 +89,8 @@ export function pubSetSummary(v: Record<string, string>): { head: string; detail
   const made = [
     filled(v.printRate) ? `紙出版 ${pct(v.printRate)}` : "",
     filled(v.digitalRate) ? `電子出版 ${pct(v.digitalRate)}` : "",
-    filled(v.transPrintRate) ? `再許諾（紙）${pct(v.transPrintRate)}` : "",
-    filled(v.transDigitalRate) ? `再許諾（電子）${pct(v.transDigitalRate)}` : "",
+    filled(v.transPrintRate) ? `${sublicenseKindLabel(v.transKind)}（紙）${pct(v.transPrintRate)}` : "",
+    filled(v.transDigitalRate) ? `${sublicenseKindLabel(v.transKind)}（電子）${pct(v.transDigitalRate)}` : "",
     filled(v.sublicenseRate) ? `再許諾（紙・電子を分けない）${pct(v.sublicenseRate)}` : ""
   ].filter(Boolean);
   if (!made.length) {
@@ -216,6 +217,13 @@ export function PubConditionSetForm(
           hint: "例：50。乙が第三者（翻訳版の出版社・子会社の版元など）に出版させたときの取り分。受領する対価（税抜）× 料率。空なら作らない" },
         { name: "transDigitalRate", label: "再許諾 電子 料率（%）", type: "number", placeholder: "空なら作らない",
           hint: "例：50。紙と率が違ってよい（電子書籍の配信事業者への再許諾など）。空なら電子の再許諾の条件は作らない" },
+        // 再許諾の種類。紙に「再許諾」とだけ出ると翻訳版なのか他社の版元なのか読めないので、ここで選ぶ。
+        { name: "transKind", label: "再許諾の種類", type: "select", required: true,
+          options: SUBLICENSE_KINDS.map((k) => ({ value: k.value, label: k.label })),
+          visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
+            || String(v.transDigitalRate ?? "").trim() !== "",
+          hint: (v) => SUBLICENSE_KINDS.find((k) => k.value === v.transKind)?.hint
+            ?? "翻訳版＝翻訳して出版・配信させる。その他＝翻訳を伴わない（子会社の版元・配信事業者など）。条件名と条件書の一覧に出る" },
         { name: "transConsent", label: "再許諾 別途合意の要否", type: "select",
           options: CONSENT_OPTIONS,
           visibleWhen: (v) => String(v.transPrintRate ?? "").trim() !== ""
@@ -271,6 +279,7 @@ export function PubConditionSetForm(
         const transDigital = rate(v.transDigitalRate);
         const translation = (r: number) => ({
           ratePct: r, exclusivity: null, consent: v.transConsent || null,
+          kind: v.transKind === "translation" || v.transKind === "other" ? v.transKind : null,
           sublicensee: text(v.transSublicensee) ?? null, purpose: null
         });
         return {

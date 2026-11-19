@@ -8,6 +8,7 @@ import { loadShares } from "../royalty/shares.js";
 import { SETTLEMENT_COLUMNS, SETTLEMENT_LATERAL_SQL, settlementOf } from "./settlement.js";
 import { isSettlementCycle, isSettlementMode } from "./settlement-mode.js";
 import { rootAgreementJoin } from "./contracts.js";
+import { readSublicenseKind } from "../core/condition-usage.js";
 
 const SUMMARY_COLUMNS = `
   c.id, c.condition_no, c.direction, c.kind, c.name, c.currency, c.pricing_model,
@@ -154,7 +155,8 @@ export class ConditionRepository {
     const detail = await this.database.query(
       `SELECT ${SUMMARY_COLUMNS},
               c.agreement_id, c.parent_id, c.work_part_id, c.exclusivity, c.sublicensable,
-              c.sublicense_consent, c.license_fee_basis, c.auto_renew, c.renew_months, c.renew_stopped_on,
+              c.sublicense_consent, to_jsonb(c) ->> 'sublicense_kind' AS sublicense_kind,
+              c.license_fee_basis, c.auto_renew, c.renew_months, c.renew_stopped_on,
               c.reward_label, c.royalty_exempt_first_copies, c.royalty_exempt_later_pct,
               c.credit_notice, c.credit_from_work, c.price_basis,
               c.first_edition_price, c.first_edition_copies, c.first_edition_rate_ppm, c.confirm_within_days,
@@ -196,6 +198,7 @@ export class ConditionRepository {
       sublicensable: row.sublicensable === null || row.sublicensable === undefined
         ? null : Boolean(row.sublicensable),
       sublicenseConsent: (str(row.sublicense_consent) as "covered" | "required" | null) ?? null,
+      sublicenseKind: readSublicenseKind(row.sublicense_kind),
       distribution: row.distribution === "representative" ? "representative" : row.distribution === "direct" ? "direct" : null,
       targetParty: row.target_party_id ? { id: Number(row.target_party_id), name: String(row.target_party_name ?? "") } : null,
       licenseFeeBasis: (str(row.license_fee_basis) as LicenseFeeBasis | null) ?? "separate",

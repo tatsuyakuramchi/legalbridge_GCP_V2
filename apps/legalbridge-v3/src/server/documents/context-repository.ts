@@ -649,6 +649,7 @@ export class DocumentContextRepository {
               c.time_settlement, c.hours_included, c.overage_unit_amount, c.shortfall_unit_amount,
               c.cycle,
               c.agreement_id, c.exclusivity, c.sublicensable, c.sublicense_consent,
+              to_jsonb(c) ->> 'sublicense_kind' AS sublicense_kind,
               c.auto_renew, c.renew_months, c.renew_stopped_on,
               c.notes, c.spec, c.deliverable_ownership, c.reward_label,
               c.order_no, c.usage_type,
@@ -753,6 +754,8 @@ export class DocumentContextRepository {
         royaltyBase: str(row.royalty_base),
         // 再許諾の別途合意（A-033）。条件書の条文と一覧の印が出し分かれる。
         sublicenseConsent: str(row.sublicense_consent),
+        // 再許諾の種類（翻訳版／その他）。条件書の一覧の呼び名になる。
+        sublicenseKind: str(row.sublicense_kind),
         // 自動更新（A-039）。更新した回数は条件書を組むときに数える。
         autoRenew: row.auto_renew === null || row.auto_renew === undefined ? null : Boolean(row.auto_renew),
         renewMonths: int(row.renew_months),

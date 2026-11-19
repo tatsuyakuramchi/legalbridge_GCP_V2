@@ -49,6 +49,8 @@ export interface NamingInput {
   purpose?: string | null;
   /** 構成要素（作品のパート）の名前。パート単位の条件なら 作品名｜パート｜取引モデル（A-078）。 */
   partName?: string | null;
+  /** 再許諾の種類。翻訳版なら、出版の再許諾の名前は 作品名｜翻訳版再許諾（紙）。 */
+  sublicenseKind?: string | null;
 }
 
 /** 規則どおりの条件名。再許諾で再許諾先が無ければ null（付けられない）。 */
@@ -57,8 +59,11 @@ export function conditionNameFor(input: NamingInput): string | null {
   if (!base) return null;
   const part = String(input.partName ?? "").trim();
   const title = part ? `${base}${NAME_SEPARATOR}${part}` : base;
-  const label = USAGE_NAME_LABEL[input.usageType];
-  if (!label) return null;
+  const base_label = USAGE_NAME_LABEL[input.usageType];
+  if (!base_label) return null;
+  // 出版の再許諾で翻訳版と分かっているものは、名前で読めるようにする（翻訳以外・未設定は「再許諾（紙）」のまま）。
+  const label = input.sublicenseKind === "translation" && (input.usageType === "pub_sub_print" || input.usageType === "pub_sub_digital")
+    ? `翻訳版${base_label}` : base_label;
   const to = String(input.sublicensee ?? "").trim();
   const why = String(input.purpose ?? "").trim();
   if (NEEDS_SUBLICENSEE.has(input.usageType)) {

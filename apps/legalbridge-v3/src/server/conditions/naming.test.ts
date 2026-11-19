@@ -38,3 +38,14 @@ test("OUT の条件名は 作品名｜許諾言語｜許諾地域｜相手先名
   assert.equal(outConditionNameFor({ workTitle: "ito", partyName: " " }), "ito");
   assert.equal(outConditionNameFor({ workTitle: "" }), "");
 });
+
+test("出版の再許諾：種類が翻訳版なら 作品名｜翻訳版再許諾（紙）。翻訳以外・未設定は 作品名｜再許諾（紙）", () => {
+  assert.equal(conditionNameFor({ workTitle: "本A", usageType: "pub_sub_print", sublicenseKind: "translation" }), "本A｜翻訳版再許諾（紙）");
+  assert.equal(conditionNameFor({ workTitle: "本A", usageType: "pub_sub_digital", sublicenseKind: "translation" }), "本A｜翻訳版再許諾（電子）");
+  assert.equal(conditionNameFor({ workTitle: "本A", usageType: "pub_sub_print", sublicenseKind: "other" }), "本A｜再許諾（紙）");
+  assert.equal(conditionNameFor({ workTitle: "本A", usageType: "pub_sub_print" }), "本A｜再許諾（紙）");
+  // 出版の再許諾でなければ、種類は名前に効かない。
+  assert.equal(conditionNameFor({ workTitle: "本A", usageType: "pub_print", sublicenseKind: "translation" }), "本A｜紙出版");
+  // 付けた名前は、利用形態として読み戻せる。
+  assert.equal(parseUsageType("翻訳版再許諾（紙）"), "pub_sub_print");
+});
