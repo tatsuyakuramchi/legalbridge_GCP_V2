@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SUT_USES_FIELD, isSecondaryUseTemplate, secondaryUsePatch, secondaryUseWarnings, secondaryUses, useCode } from "./secondary-use.js";
+import { SECONDARY_USE_VARIABLES, SUT_USES_FIELD, secondaryUseFieldShown, isSecondaryUseTemplate, secondaryUsePatch, secondaryUseWarnings, secondaryUses, useCode } from "./secondary-use.js";
 import { secondaryUseBlocker, secondaryUseConditionName } from "./secondary-use-conditions.js";
 import { buildTemplateContext, lineFieldsFor, templateWarnings } from "./template-context.js";
 
@@ -126,4 +126,20 @@ test("二次利用の作品（原作つき）を選んだ行：01 に原作が�
   const plain = secondaryUsePatch(context(false), { [SUT_USES_FIELD]: [row] });
   assert.deepEqual((plain.works as any[]).map((w) => w.title), ["シノビガミ グッズ"]);
   assert.equal((plain.uses as any[])[0].workRef, "");
+});
+
+test("入力欄は表の行に合わせて出す（再許諾・自社・定額の支払時期）", () => {
+  const own = [{ category: "商品化", actor: "own", rate: "5" }];
+  const sub = [{ category: "商品化", actor: "sublicense", rate: "50" }];
+  const flat = [{ category: "映像化", actor: "own", fee_type: "flat", flat_amount: "1000000" }];
+  assert.equal(secondaryUseFieldShown("主要条件", own), false);
+  assert.equal(secondaryUseFieldShown("再許諾の支払時期", own), false);
+  assert.equal(secondaryUseFieldShown("自社の支払時期", own), true);
+  assert.equal(secondaryUseFieldShown("定額の支払時期", own), false);
+  assert.equal(secondaryUseFieldShown("主要条件", sub), true);
+  assert.equal(secondaryUseFieldShown("自社の支払時期", sub), false);
+  assert.equal(secondaryUseFieldShown("定額の支払時期", flat), true);
+  assert.equal(secondaryUseFieldShown("自社の支払時期", flat), false);
+  assert.equal(secondaryUseFieldShown("原作表示", []), true);
+  assert.ok(!SECONDARY_USE_VARIABLES.some((v) => v.name === "再許諾先"), "再許諾先は表の行だけで入れる");
 });

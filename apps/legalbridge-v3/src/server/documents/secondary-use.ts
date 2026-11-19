@@ -88,8 +88,6 @@ export const SECONDARY_USE_VARIABLES: TemplateVariable[] = [
 
   { name: SUT_USES_FIELD, label: "許諾する二次利用", type: "array", group: "IV. 許諾する二次利用" },
 
-  { name: "再許諾先", label: "再許諾先（03）", type: "textarea", group: "V. 再許諾", noGuess: true,
-    helpText: "空なら、利用の表の「再許諾先」を並べます（B：◯◯社 ／ C：◯◯製作委員会）" },
   { name: "主要条件", label: "主要条件（03）", type: "textarea", group: "V. 再許諾", noGuess: true,
     helpText: "制作会社、配信先、対象プラットフォーム、制作スケジュール、主要な収益条件の概要。映像化・ゲーム化の再許諾は、ここに書いた内容で承諾を得る。空なら行を出さない" },
 
@@ -159,6 +157,22 @@ export interface SecondaryUse {
   feeNote: string;
   conditionId: number | null;
   row: Row;
+}
+
+/**
+ * 入力欄を表の行に合わせて絞る。表に再許諾の行が無ければ「V. 再許諾」と再許諾の支払時期は出さない、
+ * 自社（料率）の行が無ければ自社の支払時期は出さない、定額の行が無ければ定額の支払時期は出さない。
+ * 紙の方も同じ条件で行を出し分けている（出ない欄に打っても紙に出ないので、欄ごと隠す）。
+ */
+export function secondaryUseFieldShown(name: string, rows: unknown): boolean {
+  const uses = secondaryUses({ [SUT_USES_FIELD]: rows });
+  switch (name) {
+    case "主要条件":
+    case "再許諾の支払時期": return uses.some((u) => u.actor === "sublicense");
+    case "自社の支払時期": return uses.some((u) => u.actor === "own" && u.feeType !== "flat");
+    case "定額の支払時期": return uses.some((u) => u.feeType === "flat");
+    default: return true;
+  }
 }
 
 export function secondaryUses(manual: Data): SecondaryUse[] {
@@ -269,9 +283,8 @@ export function secondaryUsePatch(context: Data, manual: Data = {}): Data {
   const subs = uses.filter((u) => u.actor === "sublicense");
   const owns = uses.filter((u) => u.actor === "own" && u.feeType !== "flat");
   const flats = uses.filter((u) => u.feeType === "flat");
-  // 再許諾先：欄に書いてあればそのまま。空なら行の再許諾先を符号つきで並べる。
-  const sublicensees = pick("再許諾先")
-    || subs.filter((u) => u.sublicensee).map((u) => `${u.code}：${u.sublicensee}`).join("　／　")
+  // 再許諾先：表の行の再許諾先を符号つきで並べる（入力欄は置かない。表と二度聞かない）。
+  const sublicensees = subs.filter((u) => u.sublicensee).map((u) => `${u.code}：${u.sublicensee}`).join("　／　")
     || "未定（決まりしだい、被許諾側から書面で通知し、承諾を得る）";
   const approvalDeemed = pick("回答がないとき") !== "協議する";
 

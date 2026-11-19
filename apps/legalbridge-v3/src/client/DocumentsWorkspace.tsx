@@ -21,6 +21,7 @@ import { ConditionLabel } from "./ConditionLabel.js";
 import { Working } from "./Working.js";
 import { BLANK_INPUT_KEY, blankedNames } from "../server/documents/binding.js";
 import { PUB_TERMS_TEMPLATE_HINT } from "../server/documents/pub-terms.js";
+import { SUT_USES_FIELD, secondaryUseFieldShown } from "../server/documents/secondary-use.js";
 import type { DocumentRefs } from "../server/agreements/party-map.js";
 import { REF_NO_MODES, refNoModeOf } from "../server/documents/cite-no.js";
 
@@ -651,6 +652,8 @@ export function DocumentsWorkspace(
   const [payeePartyId, setPayeePartyId] = useState<number | null>(null);
   /** 出版条件書：選んだ条件の取り分（受取人を選ぶ材料）。 */
   const isPubTerms = /^pub_license_terms/.test(templateKey);
+  /** 表（明細の行）を入力欄より先に出すひな形。二次利用追加条件書は表が本体（作品・料率は表で入れる）。 */
+  const linesFirst = templateKey === "secondary_use_terms";
   const [termsShares, setTermsShares] = useState<TermsShares[]>([]);
   useEffect(() => {
     if (!isPubTerms || !picked.length) { setTermsShares([]); return; }
@@ -1236,6 +1239,22 @@ export function DocumentsWorkspace(
   const ready = Boolean(templateKey) && spec !== null && specFresh && remaining === 0
     && (!isStatement || stmt !== null);
 
+  /** 明細の行の編集欄（ひな形が持つ表の分だけ）。二次利用追加条件書は入力欄より先、それ以外は後に出す。 */
+  // 二次利用追加条件書は、表の行に無い利用の欄（再許諾・自社・定額の支払時期）を出さない。表と同じことを二度聞かない。
+  const sutRows = linesFirst
+    ? (lines[SUT_USES_FIELD] ?? spec?.lines?.find((l) => l.name === SUT_USES_FIELD)?.rows ?? [])
+    : null;
+  const formFields = (spec?.fields ?? []).filter((f) => sutRows === null || secondaryUseFieldShown(f.name, sutRows));
+  const lineEditors = !isLicenseTerms && (spec?.lines ?? []).map((l) => (
+    <LineItemsEditor key={l.name} name={l.name} seed={l.rows}
+      rows={lines[l.name] ?? null} intl={templateKey === "intl_purchase_order"}
+      covers={isPurchaseOrder && feeCovers.length > 0 ? { selected: effectiveCovers, toggle: toggleCover } : null}
+      onChange={(rows) => setLines((prev) => {
+        const next = { ...prev };
+        if (rows === null) delete next[l.name]; else next[l.name] = rows;
+        return next;
+      })} />
+  ));
   return (
     <section className={`workspace${selected === null ? "" : " picked"}${flow ? " fullwidth" : ""}`}>
       <header className="workspace-head">
@@ -1446,6 +1465,8 @@ export function DocumentsWorkspace(
                 <small className="faint">本文の担当者・連絡先・検収者に差されます。空なら案件（無ければデイリータスクの作業）の担当</small>
               </label>
 
+              {/* 二次利用追加条件書は条件明細を選ばない（利用の行から決定のときに作る）。選ぶ欄は出さない。 */}
+              {!linesFirst && (
               <div className="stack" style={{ gap: 6 }}>
                 <div className="row">
                   <span className="faint">
@@ -1654,6 +1675,7 @@ export function DocumentsWorkspace(
                   </label>
                 )}
               </div>
+              )}
 
               {(events.length > 0 || ((usesDeliveryLines || isStatement) && picked.length > 0)) && (
                 <div className="stack" style={{ gap: 6 }}>
@@ -1789,7 +1811,23 @@ export function DocumentsWorkspace(
             </div>
           </div>
 
-          <DocumentFields fields={spec?.fields ?? []} manual={manual}
+          {/* 二次利用追加条件書：何をどの順に入れるか。表（利用の行）が本体で、入力欄は表の補足。 */}
+          {linesFirst && (
+            <div className="guide">
+              <div className="guide-hd"><b>入れる順</b><span className="faint">二次利用追加条件書</span></div>
+              <ol>
+                <li><span className="mark">1</span><span>すぐ下の「許諾する二次利用」で「行を足す」を押し、利用ごとに 1 行入れる：
+                  利用区分・<b>対象著作物</b>（シリーズ全体なら、作品の画面で作った二次利用の作品を選ぶ）・実施する者・利用の内容・料率</span></li>
+                <li><span className="mark">2</span><span>再許諾先は表の行に入れる（下には欄が無い）。再許諾の行があると、下に「V. 再許諾」の主要条件
+                  （映像化・ゲーム化は制作会社・配信先など）が出る。グッズだけなら空でよい</span></li>
+                <li><span className="mark">3</span><span>支払時期は表にある利用の分だけ出る。監修・終了時と合わせて初期値のままでよい。グッズだけの紙なら「監修の対象」から映像化の文を消す</span></li>
+                <li><span className="mark">4</span><span>右の「決定前の点検」に足りない行が出なければ決定する。決定すると、行ごとに条件明細ができる</span></li>
+              </ol>
+            </div>
+          )}
+          {linesFirst && lineEditors}
+
+          <DocumentFields fields={formFields} manual={manual}
             candidates={spec?.candidates ?? []} partyId={partyId}
             blanked={blankedNames(manual)}
             onBlank={(name, on) => setManual((prev) => {
@@ -1831,17 +1869,8 @@ export function DocumentsWorkspace(
           )}
 
           {/* 明細の行。条件明細には無いが書類には要る項目（帰属先・支払方法・
-              納期・支払日）は、ここで行ごとに入れる。 */}
-          {!isLicenseTerms && (spec?.lines ?? []).map((l) => (
-            <LineItemsEditor key={l.name} name={l.name} seed={l.rows}
-              rows={lines[l.name] ?? null} intl={templateKey === "intl_purchase_order"}
-              covers={isPurchaseOrder && feeCovers.length > 0 ? { selected: effectiveCovers, toggle: toggleCover } : null}
-              onChange={(rows) => setLines((prev) => {
-                const next = { ...prev };
-                if (rows === null) delete next[l.name]; else next[l.name] = rows;
-                return next;
-              })} />
-          ))}
+              納期・支払日）は、ここで行ごとに入れる。二次利用追加条件書は表が本体なので、入力欄より先に出す（上）。 */}
+          {!linesFirst && lineEditors}
           </div>
 
           <aside className="compose-side stack">
