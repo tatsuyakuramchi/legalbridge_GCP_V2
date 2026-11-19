@@ -9,6 +9,9 @@
  * 直した行は manualInputs の同じ名前（items など）で保存され、以後はそれが
  * 本文になる。「自動に戻す」で種の行に戻る。
  */
+import { useEffect, useState } from "react";
+import { api } from "./api.js";
+import { SearchSelect } from "./SearchSelect.js";
 import { SnippetPicker } from "./SnippetPicker.js";
 import { roundAmount } from "../server/core/rounding.js";
 import { CONTRACT_FORMS_EN } from "../server/conditions/contract-form.js";
@@ -20,7 +23,11 @@ const show = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 interface ShowWhen { field: string; anyOf?: string[]; truthy?: boolean }
 export interface Column {
   name: string; label: string;
-  type?: "text" | "number" | "date" | "textarea" | "select";
+  /**
+   * work＝作品を台帳から選ぶ欄。行には 作品の id（この列）と 作品名（work_title）を持たせる。
+   * 著作権表示の列（copyright）が空なら、作品に登録した表示を写す。
+   */
+  type?: "text" | "number" | "date" | "textarea" | "select" | "work";
   options?: Array<{ value: string; label: string }>;
   showWhen?: ShowWhen | ShowWhen[];
   helpText?: string;
@@ -281,6 +288,44 @@ const pubTitleSubtitle = (row: Row): string => {
 const foldedSubtitle = (row: Row): string =>
   (row.folded ? show(row.period_summary) : "");
 
+/**
+ * 二次利用追加条件書の「許諾する二次利用」。1 行が 1 つの利用（商品化・映像化 …）で、決定のときに条件明細になる。
+ * 列の名前は documents/secondary-use.ts（secondaryUses）が読む名前と一対一。
+ */
+export const SUT_USE_COLUMNS: Column[] = [
+  { name: "category", label: "利用区分", type: "select",
+    options: ["商品化", "映像化", "デジタルゲーム化", "翻訳・翻案", "その他"].map((v) => ({ value: v, label: v })) },
+  { name: "work_id", label: "対象著作物", type: "work", helpText: "台帳の作品から選ぶ。条件明細はこの作品に付く" },
+  { name: "actor", label: "実施する者", type: "select",
+    options: [{ value: "own", label: "自社（当社が製造・販売する）" }, { value: "sublicense", label: "再許諾（第三者に行わせる）" }],
+    helpText: "自社＝単価 × 数量 × 料率。再許諾＝再許諾先から受領した額 × 料率" },
+  { name: "sublicensee", label: "再許諾先", showWhen: { field: "actor", anyOf: ["sublicense"] },
+    helpText: "未定なら空（決まったら通知して承諾を得る）" },
+  { name: "content", label: "利用の内容（企画・商品）", type: "textarea",
+    helpText: "例：キャラクターおよび図版を用いた商品（アクリルスタンド、クリアファイル）の製造・販売" },
+  { name: "exclusivity", label: "独占区分", type: "select",
+    options: [{ value: "exclusive", label: "独占" }, { value: "non_exclusive", label: "非独占" }] },
+  { name: "regions", label: "地域", suggestions: ["全世界", "日本", "日本を除く全世界"], helpText: "空なら全世界" },
+  { name: "languages", label: "言語", suggestions: ["全言語", "日本語", "英語"], helpText: "空なら全言語" },
+  { name: "term_start", label: "許諾開始", type: "date" },
+  { name: "term_end", label: "許諾終了", type: "date", helpText: "開始・終了とも空なら「基本契約の有効期間中」" },
+  { name: "fee_type", label: "対価の決め方", type: "select",
+    options: [{ value: "rate", label: "料率" }, { value: "flat", label: "定額（一括）" }], helpText: "空なら料率" },
+  { name: "rate", label: "料率（%）", showWhen: { field: "fee_type", anyOf: ["", "rate"] },
+    helpText: "既定値はありません。契約どおりに入れる" },
+  { name: "base", label: "算定の基礎（自社）", showWhen: [{ field: "actor", anyOf: ["", "own"] }, { field: "fee_type", anyOf: ["", "rate"] }],
+    helpText: "空なら「商品の税抜希望小売価格 × 製造数量」" },
+  { name: "flat_amount", label: "金額（税別・円）", type: "number", showWhen: { field: "fee_type", anyOf: ["flat"] } },
+  { name: "fee_note", label: "対価の補足", helpText: "例：見本・販促用の無償頒布分（製造数量の3%まで）は対象としない" },
+  { name: "copyright", label: "著作権表示（01）", helpText: "作品に登録した表示が入る。違えば直す" },
+  { name: "terms_no", label: "出版の個別条件書の番号（01）", helpText: "例：ARC-PUBT-2026-0041。無ければ空" }
+];
+
+const sutUseSubtitle = (row: Row): string =>
+  [show(row.work_title), row.actor === "sublicense" ? "再許諾" : "自社",
+   row.fee_type === "flat" ? (show(row.flat_amount) ? `定額 ${show(row.flat_amount)}円` : "定額") : (show(row.rate) ? `${show(row.rate)}%` : "料率 未入力"),
+   Number(row.condition_id) > 0 ? "条件明細あり" : "決定のときに条件明細を作る"].filter(Boolean).join("・");
+
 export const LINE_SECTIONS: Record<string, {
   title: string; columns: Column[]; intl?: Column[]; hint: string;
   /** 行の見出しに添える文字（条件から出た値の確認用）。 */
@@ -289,6 +334,9 @@ export const LINE_SECTIONS: Record<string, {
   pub_titles: { title: "対象著作物（出版条件書の一覧）", columns: PUB_TITLE_COLUMNS, subtitle: pubTitleSubtitle,
            hint: "選んだ条件明細から、作品1点が1行。紙・電子の料率と独占区分は条件明細の写しで、"
                + "ここでは直せない（直すなら条件を直す）。著作権表示・共同著作・備考はここで入れる" },
+  sut_uses: { title: "許諾する二次利用（決定のときに条件明細になる）", columns: SUT_USE_COLUMNS, subtitle: sutUseSubtitle,
+           hint: "「行を足す」で、利用（商品化・映像化など）を 1 行ずつ入れる。自社で行う分と再許諾する分は行を分ける。"
+               + "決定すると、行ごとに条件明細（自社＝自社製造・自社販売、再許諾＝再許諾）ができて、この紙に結び付く" },
   items: { title: "発注明細", columns: ITEM_COLUMNS, intl: INTL_ITEM_COLUMNS, subtitle: foldedSubtitle,
            hint: "予定明細（無ければ条件の総額）から組んだ行。帰属先・支払方法・納期・支払日はここで入れる。"
                + "定期支払は同じ内容の回を1行にまとめ、数量を回数として出す（額の違う回はそこで分かれる）" },
@@ -326,6 +374,24 @@ export function LineItemsEditor(
   const columns = intl && section.intl ? section.intl : section.columns;
   const edited = rows !== null;
   const current = rows ?? seed;
+  // 作品を選ぶ列があるときだけ、作品の一覧を読む。
+  const needsWorks = columns.some((c) => c.type === "work");
+  const [works, setWorks] = useState<Array<{ id: number; title: string }>>([]);
+  useEffect(() => {
+    if (!needsWorks) return;
+    api.get<{ works: Array<{ id: number; title: string }> }>("/works").then((w) => setWorks(w.works)).catch(() => undefined);
+  }, [needsWorks]);
+  /** 作品を選んだ：id と作品名を行に入れ、著作権表示が空なら作品の登録から写す。 */
+  const pickWork = (i: number, col: Column, value: string) => {
+    const id = Number(value) || null;
+    const title = works.find((w) => w.id === id)?.title ?? "";
+    onChange(current.map((r, j) => (j === i ? { ...r, [col.name]: id, work_title: id ? title : null } : r)));
+    if (!id || show(current[i]?.copyright)) return;
+    api.get<{ copyrightNotice?: string | null }>(`/works/${id}`).then((w) => {
+      const notice = String(w.copyrightNotice ?? "").trim();
+      if (notice) onChange(current.map((r, j) => (j === i ? { ...r, [col.name]: id, work_title: title, copyright: notice } : r)));
+    }).catch(() => undefined);
+  };
 
   const update = (i: number, col: Column, value: string) => {
     const next = current.map((r, j) => {
@@ -376,7 +442,7 @@ export function LineItemsEditor(
         {current.map((row, i) => (
           <div key={i} className="line-card">
             <div className="row" style={{ marginBottom: 6 }}>
-              <b>{i + 1}. {show(row.item_name ?? row.title ?? row.expense_name ?? row.fee_name) || "（名前なし）"}</b>
+              <b>{i + 1}. {show(row.item_name ?? row.title ?? row.expense_name ?? row.fee_name ?? row.category) || "（名前なし）"}</b>
               {section.subtitle && section.subtitle(row) && (
                 <span className="faint" style={{ marginLeft: 8 }}>{section.subtitle(row)}</span>
               )}
@@ -395,7 +461,12 @@ export function LineItemsEditor(
               {columns.filter((c) => visible(c, row)).map((c) => (
                 <label key={c.name} className={`field${c.type === "textarea" ? " wide" : ""}`}>
                   <span>{c.label}</span>
-                  {c.type === "select" ? (
+                  {c.type === "work" ? (
+                    <SearchSelect value={show(row[c.name])} emptyLabel="—"
+                                  options={works.map((w) => ({ value: String(w.id), label: w.title }))}
+                                  valueLabel={show(row.work_title) || null} placeholder="作品名の一部で探す"
+                                  onChange={(v) => pickWork(i, c, v)} />
+                  ) : c.type === "select" ? (
                     <select value={show(row[c.name])} onChange={(e) => update(i, c, e.target.value)}>
                       <option value="">—</option>
                       {c.options!.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}

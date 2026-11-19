@@ -198,7 +198,7 @@
 {{#if hasSublicense}}
 <h2><span class="no">03</span>再許諾<span class="en">SUBLICENSE</span></h2>
 <table class="kv">
-  <tr><td class="k">再許諾の可否</td><td>{{partyB}}は、02 の {{subCodes}} について、下記の再許諾先に再許諾することができる（{{#if isV5}}基本契約第5条第1項{{else}}基本契約第4条第3項{{/if}}）。{{#if ownCodes}}{{ownCodes}} については、製造・流通の委託を除き、再許諾しない。{{/if}}</td></tr>
+  <tr><td class="k">再許諾の可否</td><td>{{partyB}}は、02 の {{subCodes}} について、下記の再許諾先に再許諾することができる（{{#if isV5}}基本契約第5条第1項{{else}}基本契約第4条第3項{{/if}}）。{{#if ownAllCodes}}{{ownAllCodes}} については、製造・流通の委託を除き、再許諾しない。{{/if}}</td></tr>
   <tr><td class="k">再許諾先</td><td>{{sublicensees}}</td></tr>
   {{#if mainTerms}}<tr><td class="k">主要条件</td><td>{{mainTerms}}</td></tr>{{/if}}
   <tr><td class="k">承諾</td><td>{{#if isV5}}本書は、上記の再許諾先および主要条件による再許諾について、基本契約第5条第1項に定める個別条件書の定め（甲の事前の書面承諾）とする。再許諾先、または主要条件のうち対価・地域・期間・媒体を変更するときは、乙は、あらためて甲の書面による承諾を得る。{{else}}本書の締結をもって、上記の再許諾先および主要条件について、基本契約第4条第4項に定める許諾者の書面による承諾があったものとする。再許諾先、または主要条件のうち対価・地域・期間・媒体を変更するときは、被許諾者は、あらためて同項の承諾を得る。{{/if}}</td></tr>

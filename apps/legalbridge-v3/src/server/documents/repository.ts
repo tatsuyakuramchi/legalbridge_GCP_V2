@@ -6,6 +6,7 @@ import { parseVariables, type TemplateVariable } from "./binding.js";
 import { LICENSE_TERMS_V5_KEY, LICENSE_TERMS_VARIABLES, isLicenseTermsTemplate } from "./license-terms.js";
 import { PUB_TERMS_MULTI_EXTRA_VARIABLES, PUB_TERMS_VARIABLES, isPubTermsMulti, isPubTermsTemplate, isPubTermsV5 } from "./pub-terms.js";
 import { LICENSE_MASTER_V5_VARIABLES, isLicenseMasterV5Template } from "./license-master-v5.js";
+import { SECONDARY_USE_VARIABLES, isSecondaryUseTemplate } from "./secondary-use.js";
 import { printedDocumentNumber, showRevisionOf } from "./numbering.js";
 import { DEFAULT_TAX_ROUNDING, TAX_ROUNDING_INPUT, TAX_ROUNDING_LABEL } from "../core/rounding.js";
 
@@ -235,6 +236,7 @@ function variablesFor(templateKey: string, declared: TemplateVariable[]): Templa
   if (isPubTermsV5(templateKey)) return PUB_TERMS_VARIABLES.map(v5SignatureField);
   if (isPubTermsTemplate(templateKey)) return PUB_TERMS_VARIABLES;
   if (isLicenseMasterV5Template(templateKey)) return LICENSE_MASTER_V5_VARIABLES;
+  if (isSecondaryUseTemplate(templateKey)) return SECONDARY_USE_VARIABLES;
   return declared;
 }
 
