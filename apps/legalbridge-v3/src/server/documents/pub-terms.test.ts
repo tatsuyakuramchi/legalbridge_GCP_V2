@@ -563,6 +563,40 @@ test("作品ごとに番号を持つ条件書：翻訳版の条件明細を載�
   assert.equal(pubTermsPatch(context, { ...base, "翻訳版の行": "出さない" }).multiHasTranslation, false);
 });
 
+test("作品ごとに番号を持つ条件書：再許諾（翻訳版）だけを載せた紙に、紙媒体出版・電子書籍配信の行を出さない", async () => {
+  const { pubTermsPatch, pubTermsMultiWarnings, translationRateText, MULTI_DEFAULTS } = await import("./pub-terms.js");
+  const sub = (id: number, usageType: string, ratePct: number, title = "海外だけの本") =>
+    ({ id, name: `${title}｜再許諾`, usageType, pricingModel: "revenue_rate", ratePct, counterpartyId: 1, work: { title }, shares: [] });
+  const context = {
+    counterparty: { id: 1, name: "合同会社テスト", kind: "corporate" }, company: { name: "株式会社アークライト" },
+    conditions: [sub(1, "pub_sub_print", 50), sub(2, "pub_sub_digital", 50)]
+  };
+  // フォームは欄の初期値を入れて渡す。
+  const base = { "支払時期・方法": MULTI_DEFAULTS.payTiming, "翻訳版の算定の基礎": MULTI_DEFAULTS.translationBasis };
+  const p = pubTermsPatch(context, base);
+  // 自社の出版・配信の条件は無いので、その行は出さない。翻訳版の行は条件の料率で出す。
+  assert.equal(p.hasPrintMedia, false);
+  assert.equal(p.hasDigitalMedia, false);
+  assert.equal(p.multiHasTranslation, true);
+  assert.equal(p.translationRateAll, "50%");
+  // 支払時期・方法は、初期値のままなら行のある利用形態の文だけ。
+  assert.equal(p.payTiming, MULTI_DEFAULTS.payTimingParts.translation + MULTI_DEFAULTS.payTimingParts.report);
+  // 欄を直していれば、書いたとおり。
+  assert.equal(pubTermsPatch(context, { ...base, "支払時期・方法": "受領の翌月末日払い。" }).payTiming, "受領の翌月末日払い。");
+  // 紙・電子の出版もある紙は、これまでどおり全部の文。
+  const both = { ...context, conditions: [...context.conditions,
+    { ...sub(3, "pub_print", 11), name: "海外だけの本｜紙出版" }, { ...sub(4, "pub_digital", 16), name: "海外だけの本｜電子出版" }] };
+  const pb = pubTermsPatch(both, base);
+  assert.equal(pb.hasPrintMedia, true); assert.equal(pb.hasDigitalMedia, true);
+  assert.equal(pb.payTiming, MULTI_DEFAULTS.payTiming);
+  // 料率が紙と電子で違えば書き分ける。同じ媒体で作品によって違えば 1 枚に書けないので空にして、注意を出す。
+  assert.equal(translationRateText([sub(1, "pub_sub_print", 50), sub(2, "pub_sub_digital", 40)]), "紙 50%／電子 40%");
+  const mixed = { ...context, conditions: [sub(1, "pub_sub_print", 50), sub(5, "pub_sub_print", 30, "別の本")] };
+  assert.equal(pubTermsPatch(mixed, base).translationRateAll, "");
+  assert.ok(pubTermsMultiWarnings(mixed).some((w) => w.message.includes("翻訳版（再許諾）の料率が作品で違います")));
+  assert.ok(!pubTermsMultiWarnings(context).some((w) => w.message.includes("料率が作品で違います")));
+});
+
 test("作品ごとに番号を持つ条件書：前文の基本契約の日付は、欄に入れたらその日付（記録の締結日は変えない）", async () => {
   const { pubTermsPatch } = await import("./pub-terms.js");
   const context = {
