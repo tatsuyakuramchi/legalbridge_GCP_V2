@@ -77,10 +77,12 @@ interface AgreementDoc {
 }
 
 /** 契約に繋がっている文書ぜんぶ。見る・無効にする・無効を取り消す。 */
-export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, onOpenDocument, onAttach }: {
+export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, onOpenDocument, onAttach, onReplace }: {
   agreementId: number; title: string; onChanged: (msg: string) => void; onClose: () => void;
-  /** 文書を足す（作成済みを上げる・システムの文書を繋ぐ・作る）。replacesId を渡すと、その文書の差し替えで開く。無ければ出さない。 */
-  onAttach?: (replacesId?: number) => void;
+  /** 文書を足す（作成済みを上げる・システムの文書を繋ぐ・作る）。無ければ出さない。 */
+  onAttach?: () => void;
+  /** この文書を別の文書に差し替える（DocReplace）。無ければ出さない。 */
+  onReplace?: (oldId: number) => void;
   /** 文書番号を押したとき、文書の画面（送る・訂正など）を開く。 */
   onOpenDocument?: (documentId: number) => void;
 }) {
@@ -132,9 +134,9 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
                               ? <AttachFile documentId={d.id} onDone={() => { onChanged(`${d.documentNo ?? `文書 #${d.id}`} にファイルを付けました`); setVersion((v) => v + 1); }} />
                               : <span className="faint" title="ファイルなしで取り込んだ文書です">ファイルなし</span>)
                           : <DocViewButton id={d.id} documentNo={d.documentNo} imported={d.imported} storageUrl={d.storageUrl} />}
-                        {!readOnly && onAttach && d.status === "issued" && (
+                        {!readOnly && onReplace && d.status === "issued" && (
                           <button className="ct-act" title="登録済みの別の文書（署名済みの PDF など）をこの文書の代わりにする。この文書は差し替え済みになり、条件明細は新しい文書に引き継ぐ"
-                                  onClick={() => onAttach(d.id)}>差し替える</button>
+                                  onClick={() => onReplace(d.id)}>差し替える</button>
                         )}
                         {!readOnly && (d.status === "issued" || d.status === "draft") && (
                           <button className="ct-act ct-danger" onClick={() => setTarget(d)}>無効にする</button>
@@ -151,7 +153,7 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
           )}
           <div className="row" style={{ gap: 8, alignItems: "center" }}>
             <small className="faint">差し替え済み（古い版）は無効にできません。いちばん新しい版を無効にするか、訂正版を出し直してください。</small>
-            {onAttach && <button className="btn btn-sm" style={{ marginLeft: "auto", whiteSpace: "nowrap" }} onClick={() => onAttach()}>＋ 文書を足す（上げる・繋ぐ・作る）</button>}
+            {onAttach && <button className="btn btn-sm" style={{ marginLeft: "auto", whiteSpace: "nowrap" }} onClick={onAttach}>＋ 文書を足す（上げる・繋ぐ・作る）</button>}
           </div>
         </div>
       </Modal>

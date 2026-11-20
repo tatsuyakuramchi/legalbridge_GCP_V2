@@ -4,6 +4,7 @@ import { Modal } from "./Modal.js";
 import { DocViewButton } from "./DocPeek.js";
 import { AgreementDocsDialog, VoidDialog, type VoidTarget } from "./DocVoid.js";
 import { AttachDocDialog, type AttachTarget } from "./DocAttach.js";
+import { ReplaceDocDialog, type ReplaceTarget } from "./DocReplace.js";
 import { RepaperDialog, type RepaperTarget } from "./AgreementRepaper.js";
 import { useDebounced } from "./ListTools.js";
 import { useReadOnly } from "./read-only.js";
@@ -57,6 +58,12 @@ export function ContractTable(
   const [voiding, setVoiding] = useState<VoidTarget | null>(null);
   /** 文書の無い契約に文書を付ける（上げる・繋ぐ・作る）。 */
   const [attachTo, setAttachTo] = useState<AttachTarget | null>(null);
+  const [replaceOf, setReplaceOf] = useState<ReplaceTarget | null>(null);
+  /** 文書の差し替え（いまの文書を、登録済みの別の文書に置き換える）。 */
+  const openReplace = (agreementId: number, oldId?: number) => {
+    const a = agreementOf(`a${agreementId}`) ?? agreementOf(`m${agreementId}`);
+    setReplaceOf({ id: agreementId, agreementNo: a?.agreementNo ?? null, kind: a?.kind ?? null, partyId: map.party.id, oldId: oldId ?? null });
+  };
   /** 基本契約を巻き直す（新しい契約で置き換える）。 */
   const [repaper, setRepaper] = useState<RepaperTarget | null>(null);
 
@@ -134,11 +141,10 @@ export function ContractTable(
     if (!a || a.currentDocument || readOnly) { fallback?.(); return; }
     openAttach(nodeId);
   };
-  const openAttach = (nodeId: string, replacesId?: number) => {
+  const openAttach = (nodeId: string) => {
     const a = agreementOf(nodeId);
     if (!a) return;
     setAttachTo({
-      replacesId: replacesId ?? null,
       id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: map.party.id,
       conditions: model.conds.filter((c) => c.agreementId === a.id).map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name }))
     });
@@ -343,6 +349,9 @@ export function ContractTable(
                             {act("＋ 条件を追加", () => setDialog({ kind: "cond-add", to: k.id, toNo: node.no ?? "" }), "条件明細を探してこの個別契約に載せる")}
                             {act(underMaster ? "解除" : "基本契約に入れる", () => setDialog({ kind: "contract-move", from: k.id, fromNo: node.no ?? "", underMaster }),
                               underMaster ? "この基本契約から外す・ほかの基本契約へ付け替える" : "基本契約を探して、その下に入れる")}
+                            {/* 文書だけ差し替える（署名済みの PDF・作り直した版に置き換える）。文書のある契約に出す。 */}
+                            {/^a\d+$/.test(k.id) && agreementOf(k.id)?.currentDocument && act("文書を差し替え", () => openReplace(Number(k.id.slice(1))),
+                              "いまの文書を、登録済みの別の文書（署名済みの PDF・作り直した版）に差し替える。条件明細はそのまま")}
                             {/* 条件書だけを巻き直す（基本契約はそのまま）。ライセンスの条件が載っている個別契約に出す。 */}
                             {underMaster && g.master && !agreementOf(g.master.id)?.terminatedOn && /^a\d+$/.test(k.id)
                               && k.conds.some((c) => c.kind === "license") && act("巻き直す", () => {
@@ -476,13 +485,15 @@ export function ContractTable(
         }
       })()}
       {docsOf && <AgreementDocsDialog agreementId={docsOf.agreementId} title={docsOf.title} onChanged={onChanged} onClose={() => setDocsOf(null)}
-                                       onAttach={readOnly ? undefined : (replacesId) => { const id = docsOf.agreementId; setDocsOf(null); openAttach(`a${id}`, replacesId); }}
+                                       onAttach={readOnly ? undefined : () => { const id = docsOf.agreementId; setDocsOf(null); openAttach(`a${id}`); }}
+                                       onReplace={readOnly ? undefined : (oldId) => { const id = docsOf.agreementId; setDocsOf(null); openReplace(id, oldId); }}
                                        onOpenDocument={(id) => { setDocsOf(null); onOpen?.("document", id); }} />}
       {voiding && <VoidDialog doc={voiding} onDone={onChanged} onClose={() => setVoiding(null)} />}
       {repaper && (
         <RepaperDialog target={repaper} onClose={() => setRepaper(null)} onDone={(msg) => onChanged(msg)}
           onOpenAgreement={onOpen ? (id) => onOpen("agreement", id) : undefined} />
       )}
+      {replaceOf && <ReplaceDocDialog target={replaceOf} onDone={onChanged} onClose={() => setReplaceOf(null)} />}
       {attachTo && (
         <AttachDocDialog target={attachTo} onDone={onChanged} onClose={() => setAttachTo(null)}
           onCompose={onCompose} onOpenAgreement={onOpen ? () => onOpen("agreement", attachTo.id) : undefined} />

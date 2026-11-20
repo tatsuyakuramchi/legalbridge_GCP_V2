@@ -652,9 +652,9 @@ export function createRoutes(database: Transactable) {
   router.post("/agreement-map/agreements/:id/replace-document", requireRole("admin", "legal"), requireWritable,
     asyncRoute(async (req, res) => {
       const body = z.object({
-        replacesId: z.coerce.number().int().positive(),
+        replacesIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
         documentId: z.coerce.number().int().positive(),
-        reason: z.string().max(500).nullable().optional()
+        reason: z.string().max(500)
       }).parse(req.body ?? {});
       res.json(await agreementMap.replaceDocument(Number(req.params.id), body, actor(res)));
     }));
