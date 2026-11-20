@@ -1456,6 +1456,91 @@ export class PartyAgreementMapService {
    * 登録せず、条件書の単体契約に文書だけ繋いでいることがある。ここから基本契約を起こす。
    */
   /**
+   * 契約の文書を、登録済みの別の文書で差し替える（署名済みの PDF を上げ直した・相手方の版を取り込んだなど）。
+   *
+   *   ・新しい文書をこの契約に繋ぎ（ほかの契約に繋がっていれば付け替え）、元の文書を指す（supersedes_id）
+   *   ・元の文書に載っていた条件明細を、新しい文書にも載せる（条件明細・計算書・支払はそのまま）
+   *   ・元の文書は「差し替え済み」にする（記録は残る）
+   *
+   * 契約の番号・締結日・条件明細の持ち主は変えない。元の文書がほかの契約の条件明細も載せている
+   * （作品ごとに番号の条件書で、別の作品も載っている）ときは断る。その場合は「巻き直す」で出し直す。
+   */
+  async replaceDocument(agreementId: number, input: { replacesId: number; documentId: number; reason?: string | null }, actor: string)
+    : Promise<{ documentNo: string | null; replacedNo: string | null; conditionsLinked: number; fromAgreementNo: string | null }> {
+    const { replacesId, documentId } = input;
+    if (replacesId === documentId) throw new DomainError("VALIDATION", "同じ文書どうしは差し替えられません");
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const ar = await client.query(
+          `SELECT a.id, a.agreement_no, a.parent_id, r.resolved_id
+             FROM agreements a JOIN v_party_resolved r ON r.party_id = a.counterparty_id WHERE a.id = $1`, [agreementId]);
+        const a = ar.rows[0] as any;
+        if (!a) throw new DomainError("NOT_FOUND", `契約 ${agreementId} が見つかりません`);
+        const dr = await client.query(
+          `SELECT d.id, d.document_no, d.status, d.agreement_id, d.supersedes_id, oa.agreement_no AS agreement_no, ar.resolved_id
+             FROM documents d
+             LEFT JOIN agreements oa ON oa.id = d.agreement_id
+             LEFT JOIN v_party_resolved ar ON ar.party_id = oa.counterparty_id
+            WHERE d.id = ANY($1::bigint[]) FOR UPDATE OF d`, [[replacesId, documentId]]);
+        const byId = new Map((dr.rows as any[]).map((d) => [Number(d.id), d]));
+        const old = byId.get(replacesId), next = byId.get(documentId);
+        if (!old) throw new DomainError("NOT_FOUND", `差し替える元の文書 ${replacesId} が見つかりません`);
+        if (!next) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        const oldNo = str(old.document_no) ?? `#${replacesId}`, nextNo = str(next.document_no) ?? `#${documentId}`;
+        if (old.status !== "issued") throw new DomainError("VALIDATION", `${oldNo} は決定済みではありません（差し替えられるのは決定済みの文書だけです）`);
+        if (next.status !== "issued") {
+          throw new DomainError("VALIDATION", `${nextNo} は決定済みではありません。取り込んだ文書はファイルを付けてから差し替えてください`);
+        }
+        const oldHome = int(old.agreement_id);
+        if (oldHome !== agreementId && oldHome !== int(a.parent_id)) {
+          throw new DomainError("VALIDATION", `${oldNo} はこの契約（${str(a.agreement_no) ?? `#${agreementId}`}）の文書ではありません`);
+        }
+        if (next.resolved_id != null && Number(next.resolved_id) !== Number(a.resolved_id)) {
+          throw new DomainError("VALIDATION", `${nextNo} はほかの取引先の契約に繋がっています`);
+        }
+        const nextParties = await client.query(
+          `SELECT DISTINCT r.resolved_id FROM document_conditions dc
+             JOIN conditions c ON c.id = dc.condition_id JOIN v_party_resolved r ON r.party_id = c.counterparty_id
+            WHERE dc.document_id = $1`, [documentId]);
+        if ((nextParties.rows as any[]).some((x) => Number(x.resolved_id) !== Number(a.resolved_id))) {
+          throw new DomainError("VALIDATION", `${nextNo} にはほかの取引先の条件明細が載っています`);
+        }
+        const oc = await client.query(
+          `SELECT dc.condition_id, c.condition_no, c.agreement_id FROM document_conditions dc JOIN conditions c ON c.id = dc.condition_id
+            WHERE dc.document_id = $1 ORDER BY dc.line_no, dc.condition_id`, [replacesId]);
+        const conds = oc.rows as any[];
+        const elsewhere = conds.filter((c) => int(c.agreement_id) !== agreementId);
+        if (elsewhere.length) {
+          throw new DomainError("VALIDATION",
+            `${oldNo} にはこの契約以外の条件明細も載っています（${elsewhere.slice(0, 5).map((c) => str(c.condition_no) ?? `#${c.condition_id}`).join("・")}${elsewhere.length > 5 ? " ほか" : ""}）。`
+            + "1 枚を丸ごと差し替えられないので、「巻き直す」で出し直してください");
+        }
+
+        await client.query(
+          `UPDATE documents SET agreement_id = $2, supersedes_id = $3, supersede_reason = $4 WHERE id = $1`,
+          [documentId, agreementId, replacesId, str(input.reason) ?? "登録済みの文書に差し替え"]);
+        const last = await client.query("SELECT COALESCE(max(line_no), 0) AS n FROM document_conditions WHERE document_id = $1", [documentId]);
+        let lineNo = Number((last.rows[0] as any)?.n ?? 0);
+        let linked = 0;
+        for (const c of conds) {
+          const r = await client.query(
+            `INSERT INTO document_conditions (document_id, condition_id, line_no) VALUES ($1, $2, $3)
+             ON CONFLICT (document_id, condition_id) DO NOTHING`, [documentId, Number(c.condition_id), lineNo + 1]);
+          if (r.rowCount) { lineNo += 1; linked += 1; }
+        }
+        await client.query("UPDATE documents SET status = 'superseded' WHERE id = $1", [replacesId]);
+        const fromAgreementNo = int(next.agreement_id) && int(next.agreement_id) !== agreementId ? str(next.agreement_no) : null;
+        await recordAudit(client, {
+          actor, action: "document.replace_with_existing", targetType: "document", targetId: documentId,
+          detail: { agreementId, agreementNo: str(a.agreement_no), replacesId, replacedNo: str(old.document_no),
+                    fromAgreementId: int(next.agreement_id), conditionIds: conds.map((c) => Number(c.condition_id)), reason: str(input.reason) }
+        });
+        return { documentNo: str(next.document_no), replacedNo: str(old.document_no), conditionsLinked: linked, fromAgreementNo };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
    * 契約に繋がっている文書ぜんぶ（無効・差し替え済みも。新しい順）。表の「文書」から開いて、
    * 重複や主旨に合わない文書を無効にする（無効化は documents/issue-service の void。記録は残る）。
    * 基本契約なら、その下の個別契約（条件書・発注書）の文書も出す（どの契約の文書かを添える）。

@@ -648,6 +648,16 @@ export function createRoutes(database: Transactable) {
   router.get("/agreement-map/agreements/:id/documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.agreementDocuments(Number(req.params.id)) });
   }));
+  // 契約の文書を、登録済みの別の文書で差し替える（元の文書は差し替え済み。条件明細は新しい文書にも載せる）。
+  router.post("/agreement-map/agreements/:id/replace-document", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const body = z.object({
+        replacesId: z.coerce.number().int().positive(),
+        documentId: z.coerce.number().int().positive(),
+        reason: z.string().max(500).nullable().optional()
+      }).parse(req.body ?? {});
+      res.json(await agreementMap.replaceDocument(Number(req.params.id), body, actor(res)));
+    }));
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
   }));
