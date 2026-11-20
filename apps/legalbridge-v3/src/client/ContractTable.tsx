@@ -134,10 +134,11 @@ export function ContractTable(
     if (!a || a.currentDocument || readOnly) { fallback?.(); return; }
     openAttach(nodeId);
   };
-  const openAttach = (nodeId: string) => {
+  const openAttach = (nodeId: string, replacesId?: number) => {
     const a = agreementOf(nodeId);
     if (!a) return;
     setAttachTo({
+      replacesId: replacesId ?? null,
       id: a.id, agreementNo: a.agreementNo, title: a.title, kind: a.kind, domain: a.domain, partyId: map.party.id,
       conditions: model.conds.filter((c) => c.agreementId === a.id).map((c) => ({ id: c.id, conditionNo: c.conditionNo, name: c.name }))
     });
@@ -475,7 +476,7 @@ export function ContractTable(
         }
       })()}
       {docsOf && <AgreementDocsDialog agreementId={docsOf.agreementId} title={docsOf.title} onChanged={onChanged} onClose={() => setDocsOf(null)}
-                                       onAttach={readOnly ? undefined : () => { const id = docsOf.agreementId; setDocsOf(null); openAttach(`a${id}`); }}
+                                       onAttach={readOnly ? undefined : (replacesId) => { const id = docsOf.agreementId; setDocsOf(null); openAttach(`a${id}`, replacesId); }}
                                        onOpenDocument={(id) => { setDocsOf(null); onOpen?.("document", id); }} />}
       {voiding && <VoidDialog doc={voiding} onDone={onChanged} onClose={() => setVoiding(null)} />}
       {repaper && (
