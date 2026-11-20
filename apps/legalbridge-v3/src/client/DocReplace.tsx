@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { Modal } from "./Modal.js";
 import { useDebounced } from "./ListTools.js";
 import { searchDocs, STATUS, type DocHit } from "./DocAttach.js";
+import { baseDocumentNumber } from "../server/documents/numbering.js";
 
 /**
  * 契約の文書を差し替える（POST /agreement-map/agreements/:id/replace-document）。
@@ -53,6 +54,8 @@ export function ReplaceDocDialog({ target, onDone, onClose }: {
   const [olds, setOlds] = useState<number[]>([]);
   const [next, setNext] = useState<number | null>(null);
   const [reason, setReason] = useState("");
+  // 契約番号を新しい文書の番号にそろえる（既定でそろえる。表・計算書の契約番号が紙と同じになる）。
+  const [alignNumber, setAlignNumber] = useState(true);
   const [q, setQ] = useState("");
   const query = useDebounced(q, 250);
   const [hits, setHits] = useState<DocHit[] | null>(null);
@@ -90,6 +93,9 @@ export function ReplaceDocDialog({ target, onDone, onClose }: {
     return d ? d.documentNo ?? `文書 #${next}` : `文書 #${next}`;
   })();
   const oldNos = olds.map((id) => byId.get(id)?.documentNo ?? `#${id}`);
+  const nextDocNo = next === null ? null : (byId.get(next)?.documentNo ?? hits?.find((h) => h.id === next)?.documentNo ?? null);
+  const newNo = nextDocNo ? baseDocumentNumber(nextDocNo) : null;
+  const renumber = alignNumber && newNo !== null && newNo !== target.agreementNo;
   const toggleOld = (id: number) => {
     setOlds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
     if (next === id) setNext(null);
@@ -100,10 +106,15 @@ export function ReplaceDocDialog({ target, onDone, onClose }: {
     if (next === null) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.post<{ documentNo: string | null; replacedNos: string[]; conditionsLinked: number; fromAgreementNo: string | null }>(
-        `/agreement-map/agreements/${target.id}/replace-document`, { replacesIds: olds, documentId: next, reason: reason.trim() });
+      const r = await api.post<{ documentNo: string | null; replacedNos: string[]; conditionsLinked: number; fromAgreementNo: string | null;
+                                 renumbered: { to: string; changed: boolean; reason: string | null } | null }>(
+        `/agreement-map/agreements/${target.id}/replace-document`,
+        { replacesIds: olds, documentId: next, reason: reason.trim(), alignNumber: renumber });
+      const num = r.renumbered
+        ? (r.renumbered.changed ? `・契約番号を ${r.renumbered.to} にそろえました` : `・契約番号はそのまま（${r.renumbered.reason}）`)
+        : "";
       onDone(`${no} の文書を ${r.documentNo ?? nextLabel} に差し替えました（${r.replacedNos.join("・")} は差し替え済み`
-        + `${r.conditionsLinked ? `・条件明細 ${r.conditionsLinked} 本を引き継ぎ` : ""}${r.fromAgreementNo ? `・${r.fromAgreementNo} から付け替え` : ""}）`);
+        + `${r.conditionsLinked ? `・条件明細 ${r.conditionsLinked} 本を引き継ぎ` : ""}${r.fromAgreementNo ? `・${r.fromAgreementNo} から付け替え` : ""}${num}）`);
       onClose();
     } catch (e) { setError((e as ApiError).message); }
     finally { setBusy(false); }
@@ -187,10 +198,17 @@ export function ReplaceDocDialog({ target, onDone, onClose }: {
               <small className="faint">まだ登録していない PDF は、先に「＋ 文書を足す」→「作成済みの文書を上げる」で登録してから選んでください。</small>
             </section>
 
+            {newNo && newNo !== target.agreementNo && (
+              <label className="row" style={{ gap: 6 }}>
+                <input type="checkbox" checked={alignNumber} onChange={(e) => setAlignNumber(e.target.checked)} />
+                <span>契約番号を新しい文書の番号にそろえる（<span className="code">{target.agreementNo ?? "—"}</span> → <span className="code">{newNo}</span>）</span>
+              </label>
+            )}
             {lacks.length === 0 && (
               <div className="note">
-                <b>{oldNos.join("・")}</b> を差し替え済みにして、<b>{nextLabel}</b> を {no} の文書にします。
-                条件明細は {nextLabel} に引き継ぎ、契約の番号・条件明細・計算書・支払は変わりません。
+                <b>{oldNos.join("・")}</b> を差し替え済みにして、<b>{nextLabel}</b> を この契約の文書にします。
+                {renumber ? <>契約番号は <b>{newNo}</b> になります。</> : <>契約番号（{target.agreementNo ?? "—"}）は変わりません。</>}
+                条件明細は {nextLabel} に引き継ぎ、条件明細・計算書・支払はそのままです。
               </div>
             )}
           </>

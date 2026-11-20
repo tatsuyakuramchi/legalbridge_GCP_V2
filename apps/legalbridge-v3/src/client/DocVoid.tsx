@@ -3,6 +3,7 @@ import { api, ApiError } from "./api.js";
 import { Modal } from "./Modal.js";
 import { DocViewButton } from "./DocPeek.js";
 import { useReadOnly } from "./read-only.js";
+import { baseDocumentNumber } from "../server/documents/numbering.js";
 
 /**
  * 文書を無効にする・無効を取り消す（ポップアップ。画面は切り替えない）。
@@ -90,6 +91,16 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
   const [docs, setDocs] = useState<AgreementDoc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  async function alignNo(d: AgreementDoc) {
+    setError(null);
+    try {
+      const r = await api.post<{ from: string | null; to: string; changed: boolean; reason: string | null }>(
+        `/agreement-map/agreements/${agreementId}/align-number`, { documentId: d.id });
+      if (r.changed) onChanged(`契約番号を ${r.from ?? "—"} から ${r.to} にそろえました`);
+      else setError(`契約番号はそのままです（${r.reason}）`);
+      setVersion((v) => v + 1);
+    } catch (e) { setError((e as ApiError).message); }
+  }
   const [target, setTarget] = useState<VoidTarget | null>(null);
   useEffect(() => {
     let alive = true;
@@ -134,6 +145,12 @@ export function AgreementDocsDialog({ agreementId, title, onChanged, onClose, on
                               ? <AttachFile documentId={d.id} onDone={() => { onChanged(`${d.documentNo ?? `文書 #${d.id}`} にファイルを付けました`); setVersion((v) => v + 1); }} />
                               : <span className="faint" title="ファイルなしで取り込んだ文書です">ファイルなし</span>)
                           : <DocViewButton id={d.id} documentNo={d.documentNo} imported={d.imported} storageUrl={d.storageUrl} />}
+                        {/* 差し替えたあと契約番号だけ古いまま、を直す。この契約の決定済みの文書で、番号が契約番号と違うとき。 */}
+                        {!readOnly && d.status === "issued" && d.agreementId === agreementId && d.documentNo
+                          && baseDocumentNumber(d.documentNo) !== d.agreementNo && (
+                          <button className="ct-act" title={`契約番号（${d.agreementNo ?? "—"}）をこの文書の番号にそろえる`}
+                                  onClick={() => void alignNo(d)}>契約番号を {baseDocumentNumber(d.documentNo)} に</button>
+                        )}
                         {!readOnly && onReplace && d.status === "issued" && (
                           <button className="ct-act" title="登録済みの別の文書（署名済みの PDF など）をこの文書の代わりにする。この文書は差し替え済みになり、条件明細は新しい文書に引き継ぐ"
                                   onClick={() => onReplace(d.id)}>差し替える</button>

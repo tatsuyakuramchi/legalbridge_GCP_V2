@@ -6,6 +6,7 @@ import { TERMS_IMPORT_KINDS, TERMS_TEMPLATES } from "../conditions/contracts.js"
 import { agreementDatedTitle } from "../documents/legacy-variables.js";
 import type { AgreementCsvRow } from "./csv.js";
 import { noteAgreementChange } from "./versions.js";
+import { baseDocumentNumber } from "../documents/numbering.js";
 import { rootAgreementJoin } from "../conditions/contracts.js";
 import { ensureAgreementForOrder } from "./order-agreement.js";
 import { SETTLEMENT_TEMPLATE_PATTERN } from "../documents/settlement-docs.js";
@@ -1465,8 +1466,10 @@ export class PartyAgreementMapService {
    * 契約の番号・締結日・条件明細の持ち主は変えない。元の文書がほかの契約の条件明細も載せている
    * （作品ごとに番号の条件書で、別の作品も載っている）ときは断る。その場合は「巻き直す」で出し直す。
    */
-  async replaceDocument(agreementId: number, input: { replacesIds: number[]; documentId: number; reason?: string | null }, actor: string)
-    : Promise<{ documentNo: string | null; replacedNos: string[]; conditionsLinked: number; fromAgreementNo: string | null }> {
+  async replaceDocument(agreementId: number,
+                        input: { replacesIds: number[]; documentId: number; reason?: string | null; alignNumber?: boolean }, actor: string)
+    : Promise<{ documentNo: string | null; replacedNos: string[]; conditionsLinked: number; fromAgreementNo: string | null;
+                renumbered: NumberAlignResult | null }> {
     const { documentId } = input;
     const replacesIds = [...new Set(input.replacesIds.map(Number))].filter((n) => n > 0);
     if (!replacesIds.length) throw new DomainError("VALIDATION", "差し替える（古い）文書を選んでください");
@@ -1548,7 +1551,28 @@ export class PartyAgreementMapService {
           detail: { agreementId, agreementNo: str(a.agreement_no), replacesIds, replacedNos: olds.map((o) => str(o.document_no)),
                     fromAgreementId: int(next.agreement_id), conditionIds: conds.map((c) => Number(c.condition_id)), reason }
         });
-        return { documentNo: str(next.document_no), replacedNos: olds.map((o) => str(o.document_no) ?? `#${o.id}`), conditionsLinked: linked, fromAgreementNo };
+        // 契約の番号を新しい文書の番号にそろえる（表・計算書の「契約番号」が紙と同じ番号になる）。
+        const renumbered = input.alignNumber && str(next.document_no)
+          ? await alignNumberToDocument(client, agreementId, String(next.document_no), actor, `文書の差し替え（${reason}）`)
+          : null;
+        return { documentNo: str(next.document_no), replacedNos: olds.map((o) => str(o.document_no) ?? `#${o.id}`), conditionsLinked: linked,
+                 fromAgreementNo, renumbered };
+      });
+    } catch (error) { throw translate(error); }
+  }
+
+  /**
+   * 契約の番号を、この契約の文書の番号にそろえる（「文書」の一覧から）。差し替えたあとに番号だけ古いまま、を直す。
+   * 文書はこの契約に繋がった決定済みのものだけ。番号は枝番（-R2 など）を外したもの。
+   */
+  async alignAgreementNumber(agreementId: number, documentId: number, actor: string): Promise<NumberAlignResult> {
+    try {
+      return await inTransaction(this.database, async (client) => {
+        const d = (await client.query("SELECT id, document_no, status, agreement_id FROM documents WHERE id = $1", [documentId])).rows[0] as any;
+        if (!d) throw new DomainError("NOT_FOUND", `文書 ${documentId} が見つかりません`);
+        if (int(d.agreement_id) !== agreementId) throw new DomainError("VALIDATION", "この契約の文書ではありません");
+        if (d.status !== "issued" || !str(d.document_no)) throw new DomainError("VALIDATION", "決定済みの文書の番号だけにそろえられます");
+        return await alignNumberToDocument(client, agreementId, String(d.document_no), actor, `文書 ${d.document_no} の番号にそろえる`);
       });
     } catch (error) { throw translate(error); }
   }
@@ -1996,4 +2020,28 @@ export class PartyAgreementMapService {
 function allocationsOf(v: unknown): Array<{ conditionId: number; eventId: number | null; amount: number }> {
   const list = (Array.isArray(v) ? v : v ? JSON.parse(String(v)) : []) as Array<Record<string, any>>;
   return list.map((a) => ({ conditionId: Number(a.conditionId), eventId: int(a.eventId), amount: Number(a.amount ?? 0) }));
+}
+
+export interface NumberAlignResult { from: string | null; to: string; changed: boolean; reason: string | null }
+
+/**
+ * 契約の番号を文書の番号（枝番を外したもの）にそろえる。別の契約がその番号を使っていればそろえない（reason に理由）。
+ * 版の記録（agreement_versions）に変更前を残す。
+ */
+async function alignNumberToDocument(client: Queryable, agreementId: number, documentNo: string, actor: string, why: string)
+  : Promise<NumberAlignResult> {
+  const to = baseDocumentNumber(documentNo);
+  const a = (await client.query("SELECT id, agreement_no FROM agreements WHERE id = $1 FOR UPDATE", [agreementId])).rows[0] as any;
+  if (!a) throw new DomainError("NOT_FOUND", `契約 ${agreementId} が見つかりません`);
+  const from = str(a.agreement_no);
+  if (from === to) return { from, to, changed: false, reason: "もう同じ番号です" };
+  const used = (await client.query("SELECT agreement_no FROM agreements WHERE agreement_no = $1 AND id <> $2 LIMIT 1", [to, agreementId])).rows[0];
+  if (used) return { from, to, changed: false, reason: `番号 ${to} はほかの契約が使っています` };
+  await noteAgreementChange(client, actor, `${why}（契約番号 ${from ?? "なし"} → ${to}）`);
+  await client.query("UPDATE agreements SET agreement_no = $2, updated_at = now() WHERE id = $1", [agreementId, to]);
+  await recordAudit(client, {
+    actor, action: "agreement.renumber", targetType: "agreement", targetId: agreementId,
+    detail: { from, to, reason: why }
+  });
+  return { from, to, changed: true, reason: null };
 }

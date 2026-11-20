@@ -654,9 +654,16 @@ export function createRoutes(database: Transactable) {
       const body = z.object({
         replacesIds: z.array(z.coerce.number().int().positive()).min(1).max(20),
         documentId: z.coerce.number().int().positive(),
-        reason: z.string().max(500)
+        reason: z.string().max(500),
+        alignNumber: z.boolean().optional()
       }).parse(req.body ?? {});
       res.json(await agreementMap.replaceDocument(Number(req.params.id), body, actor(res)));
+    }));
+  // 契約の番号を、この契約の文書の番号にそろえる（差し替えのあと番号だけ古いまま、を直す）。
+  router.post("/agreement-map/agreements/:id/align-number", requireRole("admin", "legal"), requireWritable,
+    asyncRoute(async (req, res) => {
+      const body = z.object({ documentId: z.coerce.number().int().positive() }).parse(req.body ?? {});
+      res.json(await agreementMap.alignAgreementNumber(Number(req.params.id), body.documentId, actor(res)));
     }));
   router.get("/agreement-map/agreements/:id/master-documents", asyncRoute(async (req, res) => {
     res.json({ documents: await agreementMap.masterDocuments(Number(req.params.id)) });
