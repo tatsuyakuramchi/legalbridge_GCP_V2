@@ -8,8 +8,7 @@ import { useDebounced } from "./ListTools.js";
  *
  *   ① 作成済みの文書（外で作った PDF など）を上げて登録  … POST /documents/import（agreementId・番号は契約番号と同じ）
  *   ② システムで作った文書をこの契約に繋ぐ              … GET /documents?partyId=&q= → POST /links/document/:id/agreement
- *      いまの文書と差し替えるなら                        … POST /agreement-map/agreements/:id/replace-document
- *      （元の文書は差し替え済み、載っていた条件明細は新しい文書に引き継ぐ。契約の番号・条件明細の持ち主は変えない）
+ *   差し替え（いまの文書を別の文書に置き換える）は DocReplace.tsx
  *   ③ この契約の条件明細で文書を作る                    … 文書の画面（作成）へ。条件を選んだ状態で開く
  */
 
@@ -17,11 +16,7 @@ export interface AttachTarget {
   id: number; agreementNo: string | null; title: string;
   kind: string; domain: string | null; partyId: number;
   conditions: Array<{ id: number; conditionNo: string | null; name: string }>;
-  /** この文書の差し替えとして開く（「文書」の一覧の「差し替える」から）。 */
-  replacesId?: number | null;
 }
-
-interface CurrentDoc { id: number; documentNo: string | null; label: string; title: string | null; status: string; agreementId: number | null; conditionCount: number }
 
 type Mode = "upload" | "link" | "compose";
 
@@ -39,12 +34,31 @@ function defaultKind(t: AttachTarget): string {
   return /秘密保持|NDA/i.test(t.title) ? "秘密保持契約書" : "覚書";
 }
 
-interface DocHit {
+export interface DocHit {
   id: number; documentNo: string | null; status: string; title: string | null; templateLabel: string | null;
   imported: boolean; agreementId: number | null; counterparty: string | null; issuedAt: string | null;
   conditions: Array<{ id: number; conditionNo: string | null }>;
 }
-const STATUS: Record<string, string> = { draft: "下書き", issued: "決定済み", superseded: "差し替え済み", void: "無効" };
+/**
+ * 文書を探す（この取引先の文書＋どこにも繋がっていない取込文書）。無効・差し替え済みは出さない。
+ * 取引先で絞ると、取引先も契約も条件も付いていない取込文書（PDF を上げただけ）が当たらないので、
+ * 語を打ったときはそれも探して足す。
+ */
+export async function searchDocs(partyId: number, query: string): Promise<DocHit[]> {
+  const q = query.trim();
+  const qs = new URLSearchParams({ partyId: String(partyId) });
+  if (q) qs.set("q", q);
+  const loose = q
+    ? api.get<{ documents: DocHit[] }>(`/documents?${new URLSearchParams({ q, unlinked: "1" })}`)
+        .then((r) => r.documents.filter((d) => !d.agreementId && !d.counterparty && !d.conditions.length)).catch(() => [] as DocHit[])
+    : Promise.resolve([] as DocHit[]);
+  const [r, extra] = await Promise.all([api.get<{ documents: DocHit[] }>(`/documents?${qs}`), loose]);
+  const seen = new Set(r.documents.map((d) => d.id));
+  return [...r.documents, ...extra.filter((d) => !seen.has(d.id))]
+    .filter((d) => d.status !== "void" && d.status !== "superseded").slice(0, 40);
+}
+
+export const STATUS: Record<string, string> = { draft: "下書き", issued: "決定済み", superseded: "差し替え済み", void: "無効" };
 
 export function AttachDocDialog({ target, onCompose, onOpenAgreement, onDone, onClose }: {
   target: AttachTarget;
@@ -55,7 +69,7 @@ export function AttachDocDialog({ target, onCompose, onOpenAgreement, onDone, on
   onDone: (msg: string) => void; onClose: () => void;
 }) {
   const no = target.agreementNo ?? `契約 #${target.id}`;
-  const [mode, setMode] = useState<Mode>(target.replacesId ? "link" : "upload");
+  const [mode, setMode] = useState<Mode>("upload");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,40 +87,11 @@ export function AttachDocDialog({ target, onCompose, onOpenAgreement, onDone, on
   const query = useDebounced(q, 250);
   const [hits, setHits] = useState<DocHit[] | null>(null);
   const [picked, setPicked] = useState<number | null>(null);
-  // 差し替え：この契約のいまの文書（決定済み）。個別契約なら、親の基本契約に付いた作品ごとに番号の条件書も出る。
-  const [current, setCurrent] = useState<CurrentDoc[]>([]);
-  const [replaceId, setReplaceId] = useState<number | null>(target.replacesId ?? null);
-  const [reason, setReason] = useState("署名済みの文書に差し替え");
   useEffect(() => {
     if (mode !== "link") return;
     let alive = true;
-    api.get<{ documents: CurrentDoc[] }>(`/agreement-map/agreements/${target.id}/documents`)
-      .then((r) => {
-        if (!alive) return;
-        setCurrent(r.documents.filter((d) => d.status === "issued" && (d.agreementId === target.id || target.kind === "supplement")));
-      })
-      .catch(() => undefined);
-    return () => { alive = false; };
-  }, [mode, target.id, target.kind]);
-  const replacing = current.find((d) => d.id === replaceId) ?? null;
-  useEffect(() => {
-    if (mode !== "link") return;
-    let alive = true;
-    const qs = new URLSearchParams({ partyId: String(target.partyId) });
-    if (query.trim()) qs.set("q", query.trim());
-    // 取引先で絞ると、取引先も契約も条件も付いていない取込文書（PDF を上げただけ）が当たらない。
-    // 語を打ったときは、そうした「どこにも繋がっていない文書」も探して足す。
-    const loose = query.trim()
-      ? api.get<{ documents: DocHit[] }>(`/documents?${new URLSearchParams({ q: query.trim(), unlinked: "1" })}`)
-          .then((r) => r.documents.filter((d) => !d.agreementId && !d.counterparty && !d.conditions.length)).catch(() => [] as DocHit[])
-      : Promise.resolve([] as DocHit[]);
-    Promise.all([api.get<{ documents: DocHit[] }>(`/documents?${qs}`), loose])
-      .then(([r, extra]) => {
-        if (!alive) return;
-        const seen = new Set(r.documents.map((d) => d.id));
-        const all = [...r.documents, ...extra.filter((d) => !seen.has(d.id))];
-        setHits(all.filter((d) => d.status !== "void" && d.status !== "superseded").slice(0, 40));
-      })
+    searchDocs(target.partyId, query)
+      .then((all) => { if (alive) setHits(all); })
       .catch((e: ApiError) => { if (alive) setError(e.message); });
     return () => { alive = false; };
   }, [mode, target.partyId, query]);
@@ -129,13 +114,6 @@ export function AttachDocDialog({ target, onCompose, onOpenAgreement, onDone, on
   const link = () => go(async () => {
     const d = hits?.find((x) => x.id === picked);
     if (!d) throw new ApiError(400, "繋ぐ文書を選んでください", "VALIDATION");
-    if (replacing) {
-      const r = await api.post<{ documentNo: string | null; replacedNo: string | null; conditionsLinked: number; fromAgreementNo: string | null }>(
-        `/agreement-map/agreements/${target.id}/replace-document`, { replacesId: replacing.id, documentId: d.id, reason: reason.trim() || null });
-      return `${no} の文書を ${r.replacedNo ?? "元の文書"} から ${r.documentNo ?? `文書 #${d.id}`} に差し替えました`
-        + `（元の文書は差し替え済み${r.conditionsLinked ? `・条件明細 ${r.conditionsLinked} 本を新しい文書に引き継ぎ` : ""}`
-        + `${r.fromAgreementNo ? `・${r.fromAgreementNo} から付け替え` : ""}）`;
-    }
     await api.post(`/links/document/${d.id}/agreement`, { targetId: target.id });
     return `${d.documentNo ?? `文書 #${d.id}`} を ${no} に繋ぎました`;
   });
@@ -190,31 +168,6 @@ export function AttachDocDialog({ target, onCompose, onOpenAgreement, onDone, on
         {mode === "link" && (
           <div className="stack" style={{ gap: 8 }}>
             <div className="faint">このシステムで作った文書（または取り込み済みの文書）を探して、この契約に繋ぎます。ほかの契約に繋がっていれば付け替えます。</div>
-            {current.length > 0 && (
-              <div className="stack" style={{ gap: 4 }}>
-                <b>繋ぎ方</b>
-                <label className="row" style={{ gap: 6 }}>
-                  <input type="radio" name="how" checked={replaceId === null} onChange={() => setReplaceId(null)} />
-                  <span>足すだけ（いまの文書はそのまま）</span>
-                </label>
-                {current.map((c) => (
-                  <label key={c.id} className="row" style={{ gap: 6 }}>
-                    <input type="radio" name="how" checked={replaceId === c.id} onChange={() => setReplaceId(c.id)} />
-                    <span>いまの <span className="code">{c.documentNo ?? `#${c.id}`}</span>（{c.label}{c.conditionCount ? `・条件 ${c.conditionCount} 本` : ""}）と<b>差し替える</b></span>
-                  </label>
-                ))}
-                {replacing && (
-                  <>
-                    <small className="faint">
-                      {replacing.documentNo ?? "元の文書"} は「差し替え済み」になり（記録は残る）、載っていた条件明細は選んだ文書に引き継ぎます。
-                      契約の番号（{target.agreementNo ?? "—"}）・条件明細・計算書・支払はそのままです。
-                    </small>
-                    <label className="fld"><span>差し替えの理由（履歴に残ります）</span>
-                      <input value={reason} onChange={(e) => setReason(e.target.value)} /></label>
-                  </>
-                )}
-              </div>
-            )}
             <input className="inline-input" type="search" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
                    placeholder="文書番号・件名・条件番号・作品" aria-label="文書を探す" style={{ width: "100%" }} />
             <div className="ct-pick">
@@ -241,7 +194,7 @@ export function AttachDocDialog({ target, onCompose, onOpenAgreement, onDone, on
             </div>
             <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
               <button className="btn" onClick={onClose} disabled={busy}>やめる</button>
-              <button className="btn primary" disabled={busy || picked === null} onClick={() => void link()}>{busy ? "繋いでいます…" : replacing ? "選んだ文書に差し替える" : "この契約に繋ぐ"}</button>
+              <button className="btn primary" disabled={busy || picked === null} onClick={() => void link()}>{busy ? "繋いでいます…" : "この契約に繋ぐ"}</button>
             </div>
           </div>
         )}

@@ -10,6 +10,7 @@ import { ConditionEntryForm } from "./ConditionEntryForm.js";
 import { useReadOnly } from "./read-only.js";
 import { LinkViewButton } from "./DocPeek.js";
 import { AgreementDocsDialog } from "./DocVoid.js";
+import { ReplaceDocDialog, type ReplaceTarget } from "./DocReplace.js";
 import { DOMAIN_OPTIONS, MASTER_PREFIX, STANDALONE_PREFIX } from "./agreement-domains.js";
 import { SignAfterField, useSignReady } from "./SignNext.js";
 import type { AgreementRow, AgreementKind, AgreementDomain, TerminatePlanLine } from "../server/agreements/service.js";
@@ -139,6 +140,7 @@ export function AgreementsWorkspace(
   const bump = () => setVersion((v) => v + 1);
   /** この契約に繋がっている文書の一覧（ポップアップ）。 */
   const [docsOpen, setDocsOpen] = useState(false);
+  const [replaceOf, setReplaceOf] = useState<ReplaceTarget | null>(null);
 
   useEffect(() => {
     api.get<{ agreements: AgreementRow[] }>(
@@ -289,7 +291,11 @@ export function AgreementsWorkspace(
                       : <span className="faint">リンクなし</span>}
                     {/* 契約に付けたリンクのほか、この契約に繋がっている文書（条件書・取り込んだ契約書など）もここから。 */}
                     <button className="ct-act" title="この契約に繋がっている文書（見る・ファイルを付ける・無効にする）"
-                            onClick={() => setDocsOpen(true)}>つながっている文書</button></span>
+                            onClick={() => setDocsOpen(true)}>つながっている文書</button>
+                    {!readOnly && (
+                      <button className="ct-act" title="いまの文書を、登録済みの別の文書（署名済みの PDF・作り直した版）に差し替える"
+                              onClick={() => setReplaceOf({ id: a.id, agreementNo: a.agreementNo, kind: a.kind, partyId: a.counterparty.id })}>文書を差し替え</button>
+                    )}</span>
                   {detail.parent && (
                     <span><span className="faint">親 </span>
                       <button className="linky" onClick={() => setSelected(detail.parent!.id)}>
@@ -505,8 +511,11 @@ export function AgreementsWorkspace(
             {docsOpen && (
               <AgreementDocsDialog agreementId={a.id} title={a.agreementNo ?? `#${a.id}`} onChanged={() => bump()}
                 onClose={() => setDocsOpen(false)}
+                onReplace={readOnly ? undefined : (oldId) => { setDocsOpen(false);
+                  setReplaceOf({ id: a.id, agreementNo: a.agreementNo, kind: a.kind, partyId: a.counterparty.id, oldId }); }}
                 onOpenDocument={(id) => { setDocsOpen(false); onOpen?.("document", id); }} />
             )}
+            {replaceOf && <ReplaceDocDialog target={replaceOf} onDone={() => bump()} onClose={() => setReplaceOf(null)} />}
           </>
         )}
       </div>
