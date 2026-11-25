@@ -27,15 +27,27 @@
 **途中で 1 つでも失敗すれば、本番は何も変わらない。**
 
 1. 本番が写しの時点から変わっていないかを確かめる（変わっていれば止まる）
-2. 表の列がローカルと本番で同じかを確かめる（004_amend の当て忘れなら止まる）
+2. 表の列がローカルと本番で同じかを確かめる（手順 4 の当て忘れなら、違う表.列を挙げて止まる）
 3. 外部キーを一時的に「最後に確かめる」にし、利用者の引き金を止める
    （Cloud SQL には superuser が無いので、ローカルの取り込みと同じ止め方はできない）
-4. v3 の全部の表を空にして、ローカルの中身を入れる（番号の採番表・連番も同じ値になる）
+4. v3 の全部の表を空にして、ローカルの中身を入れる（番号の採番表・連番も同じ値になる）。
+   空にしたあと、CHECK 制約をローカルの定義にそろえる（本番だけの CHECK は外し、無い・違うものは付け直す）。
+   190 の控えの表（`condition_holder_190_*`。202 で archive へ移すもの）は持ち帰らない
 5. ローカルにしか無い PDF の保存先（`/local-files/`）を消す（本番では文書の本文から作り直す）
 6. 外部キーを確かめて元に戻し、表ごとの行数がローカルと同じかを数える
 7. 入れ直した記録（`ops.push_from_local`）を audit_events に残す
 
 ---
+
+## 0. 最新のコードを本番に出す（Cloud Shell）
+
+止まっていた間に main へ入れた分を先に出す。デプロイは環境変数を入れ直すので、手順 1 より前に済ませる。
+
+```bash
+gcloud builds triggers run legalbridge-v3-deploy --branch=main
+```
+
+ビルドが成功で終わるのを待つ。
 
 ## 1. 本番を読み取り専用にする（Cloud Shell）
 
@@ -59,13 +71,7 @@ docker compose run --rm ops push-export
 > 起点を手で決めたいとき（取り込みを import-rows 以外で行った場合など）は
 > `docker compose run --rm -e PUSH_SINCE="2026-09-09T21:13:53+09" ops push-export`
 
-## 3. 本番の表をローカルと同じ形にする（Cloud SQL Studio）
-
-`infra/v3/004_amend_studio.sql` を Studio で流す。最後の確認一覧で **51 番が 11** なら OK。
-
-147・148（発注書のひな形）は流さなくてよい。ひな形もローカルの中身ごと入れ直す。
-
-## 4. Cloud Shell で本番につなぐ
+## 3. Cloud Shell で本番につなぐ
 
 `docs/v3-deploy-cloudshell.md` の B・C と同じ。
 
@@ -76,6 +82,18 @@ export PGHOST=127.0.0.1 PGPORT=5432 PGDATABASE=legalbridge PGUSER=postgres
 read -rsp "postgres のパスワード: " PGPASSWORD; echo; export PGPASSWORD
 psql -c "SELECT current_user, current_database();"
 ```
+
+## 4. 本番の表をローカルと同じ形にする（Cloud Shell）
+
+追加開発分（止まっていた間に足した表・列・制約・引き金・ビュー・権限）をまとめて当てる。
+どの番号まで本番に当たっているか分からなくてよい。何度流しても同じ結果。
+
+```bash
+psql -v ON_ERROR_STOP=1 -f infra/v3/catchup_schema.sql
+```
+
+最後に v3 の表と列の数が出る。中身（ひな形・文例を含む）は手順 7 でローカルの中身ごと入るので、
+ひな形の登録 SQL（206・212・219 など）は流さなくてよい。中身は `infra/v3/catchup_schema.sql` の頭書き。
 
 ## 5. 本番 V3 のバックアップを取る（Cloud Shell）
 
@@ -101,7 +119,7 @@ psql -v ON_ERROR_STOP=1 -v confirm_push=REPLACE_V3_WITH_LOCAL -f ~/v3_push_YYYYm
 | 出るエラー | 意味と対処 |
 |---|---|
 | 本番に写しの時点より後の操作が N 件あります | 本番で誰かが書き込んだ。入れ直すと消えるので止まった。中身を確かめてから相談 |
-| 列がローカルと本番で違います | 手順 3（004_amend）が本番に当たっていない。当ててからもう一度 |
+| 列がローカルと本番で違います | 手順 4（catchup_schema.sql）が当たっていないか、本番とローカルで作りが違う。出た表.列を貼って相談 |
 | 行数が合いません | 書き出しと流す間にローカルが変わった可能性。手順 2 からやり直す |
 | lock timeout / canceling statement due to lock timeout | 本番のアプリが表をつかんでいる。手順 1 を確かめ、少し待ってもう一度 |
 
