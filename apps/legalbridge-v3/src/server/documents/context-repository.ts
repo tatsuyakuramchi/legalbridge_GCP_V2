@@ -176,7 +176,7 @@ export class DocumentContextRepository {
               renewMonths: agreement?.renewalMonths ?? null, renewStoppedOn: null,
               notes: null, spec: null, deliverableOwnership: null, orderNo: null, usageType: null,
               agreementId: agreement?.id ?? null, counterpartyId: partyIdFallback, workId: matter?.workId ?? null, workPartId: null,
-              work: { title: null, code: null, part: null, kind: null, copyrightNotice: null, thirdPartyRights: null, sourceTitle: null, partType: null },
+              work: { title: null, code: null, part: null, kind: null, copyrightNotice: null, thirdPartyRights: null, publishedOn: null, sourceTitle: null, partType: null },
               scopes: { region: [] as string[], language: [] as string[], media: [] as string[] },
               shares: [] as ContextShare[], distribution: "direct" as "direct" | "representative",
               index: 1, total: 1,
@@ -676,6 +676,10 @@ export class DocumentContextRepository {
               -- クレジット表記は決定日時点の行（A-031）。無ければ作品の列。
               COALESCE(wc.copyright_notice, w.copyright_notice) AS work_copyright,
               COALESCE(wc.third_party_rights, w.third_party_rights) AS work_third_party,
+              -- 発行日（出版条件書の一覧を発行日順に並べる種）。生きた刊行物の刊行日のうち、自社刊行を先に、無ければいちばん早いもの。
+              (SELECT e.published_on FROM work_editions e
+                WHERE e.work_id = c.work_id AND e.status = 'active' AND e.published_on IS NOT NULL
+                ORDER BY (e.relation = 'own') DESC, e.published_on LIMIT 1) AS work_published_on,
               wp.name AS part_name,
               wp.part_type AS part_type,
               ${SOURCE_TITLES_SQL("c.work_id")} AS source_titles
@@ -788,6 +792,8 @@ export class DocumentContextRepository {
                 /** 著作権表示・第三者権利（A-027）。出版条件書の一覧の種。 */
                 copyrightNotice: str(row.work_copyright),
                 thirdPartyRights: str(row.work_third_party),
+                /** 発行日（刊行物の刊行日。自社刊行を先に）。出版条件書の一覧の並べ替えに使う。 */
+                publishedOn: dateStr(row.work_published_on),
                 /**
                  * 原作名。作品が原作ならその名前、当社作品なら系譜の親の原作名。
                  * 計算書の件名「◯◯ 利用許諾料のご報告」はこれを差す。

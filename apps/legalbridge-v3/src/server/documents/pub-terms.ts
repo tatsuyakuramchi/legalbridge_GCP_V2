@@ -361,6 +361,27 @@ export function sharesText(condition: Data | null | undefined): string {
   return `${text(condition?.distribution) === "representative" ? "代表が分配：" : ""}${body}`;
 }
 
+/** 備考に出す「だれが共著者等に分配するか」の文の頭。人が備考に書いた同じ文は、これで見分けて落とす。 */
+export const DISTRIBUTION_NOTE_HEAD = "分配：";
+export const DISTRIBUTION_NOTE = {
+  representative: `${DISTRIBUTION_NOTE_HEAD}代表者（許諾者）から分配`,
+  direct: `${DISTRIBUTION_NOTE_HEAD}被許諾者から直接分配`
+} as const;
+
+/**
+ * 備考の「分配：…」。共著の取り分がある条件だけを見る（取り分が無ければ空）。
+ * 紙・電子などで分け方が違えば「分配：紙は代表者（許諾者）から・電子は被許諾者から直接」のように媒体ごとに。
+ */
+export function distributionNoteOf(conditions: Array<{ media: string; condition: Data | undefined }>): string {
+  const withShares = conditions.filter((x) => x.condition && list(x.condition.shares).length > 0);
+  if (!withShares.length) return "";
+  const modeOf = (c: Data) => (text(c.distribution) === "representative" ? "representative" : "direct");
+  const modes = new Set(withShares.map((x) => modeOf(x.condition!)));
+  if (modes.size === 1) return DISTRIBUTION_NOTE[[...modes][0] as "representative" | "direct"];
+  const short = { representative: "代表者（許諾者）から", direct: "被許諾者から直接" } as const;
+  return `${DISTRIBUTION_NOTE_HEAD}${withShares.map((x) => `${x.media}は${short[modeOf(x.condition!)]}`).join("・")}`;
+}
+
 /**
  * 分配を受ける人の名前（作品ごとに番号を持つ条件書の「共著者等」欄）。割合は書かない
  * （配分割合は通知で変わりうるので、紙に固定しない）。許諾者（条件の相手先）その人は並べない。
@@ -558,6 +579,8 @@ export function pubTitleSeeds(context: Data): Data[] {
       // 作品の個別契約の番号（作品ごとに番号を持つ条件書の「条件書番号」欄）。紙・電子のどちらかが載っている個別契約。
       terms_no: text(print?.termsAgreementNo) || text(digital?.termsAgreementNo) || text(head.termsAgreementNo),
       third_party: text(head.work?.thirdPartyRights),
+      // 発行日（刊行物の刊行日）。紙には出さない。一覧を発行日順に並べる種。
+      published_on: text(head.work?.publishedOn),
       // 共同著作の取り分（A-068）。条件明細の写し。条件から出た行は紙に出すとき引き直す。
       co_authors: print || digital ? mediaSharesText(print, digital) : sharesText(head),
       note: notes,
@@ -903,6 +926,12 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
     // 共同著作の取り分。条件から出た行は条件の取り分（受取人宛てならその人の取り分も）。
     const coAuthors = fromLedger ? (print || digital ? mediaSharesText(print, digital) : sharesText(termHead)) : text(row.co_authors);
     const payeeShare = fromLedger ? payeeShareText(context.payee, print, digital) : "";
+    // だれが共著者等に分配するか（代表者＝許諾者か、被許諾者が直接か）。取り分のある作品だけ、備考に出す。
+    // 条件から出た行は条件の分配の方法から。手で足した行は「共同著作の取り分」の頭（代表が分配：）から。
+    const distributionNote = fromLedger
+      ? distributionNoteOf([{ media: "紙", condition: print }, { media: "電子", condition: digital },
+                            { media: "翻訳版（紙）", condition: transPrint }, { media: "翻訳版（電子）", condition: transDigital }])
+      : coAuthors ? (coAuthors.startsWith("代表が分配：") ? DISTRIBUTION_NOTE.representative : DISTRIBUTION_NOTE.direct) : "";
     // 備考のうち「初版分は支払済み（算定：…）」の自動の 1 文は、行を直していても条件から引き直す（A-109）。
     // 人が備考に書いた残りはそのまま。料率・独占区分と同じく、台帳の写しは台帳が正。
     // 作品ごとの許諾地域・許諾言語（V5 の備考の頭）。条件から引く（行を直していても条件が正）。
@@ -940,6 +969,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
     const { note, noteBrief } = (() => {
       const typed = text(row.note).split("／").map((s) => s.trim()).filter(Boolean)
         .filter((s) => !s.startsWith("初版の出版に係る利用許諾料は") && !s.startsWith(EXEMPT_NOTE_HEAD) && s !== RECEIPTS_NOTE)
+        .filter((s) => !s.startsWith(DISTRIBUTION_NOTE_HEAD))
         .filter((s) => !(showRowScope && (s.startsWith("許諾地域：") || s.startsWith("許諾言語："))))
         .filter((s) => !(options.v5 && (/^(再許諾|翻訳版の再許諾|再許諾（翻訳以外）)(：|のみ（)/.test(s) || s === "再許諾先ごとに甲乙の別途合意を要する")));
       const paidCond = fromLedger ? [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu") : null;
@@ -949,7 +979,7 @@ export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTerm
       // 増刷時の非加算と電子の料率の基準も台帳から引き直す（行を直していてもそちらが正）。
       const exempt = fromLedger ? exemptLaterNote(number(print?.royaltyExemptLaterPct)) : "";
       const receipts = !options.v5 && fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
-      const join = (sub: string) => [scopeNote, sub, fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
+      const join = (sub: string) => [scopeNote, distributionNote, sub, fresh, exempt, receipts, ...typed].filter(Boolean).join("／");
       return { note: join(subNote), noteBrief: join(subBrief) };
     })();
     // 作品の個別契約の番号。条件から出た行は条件の個別契約が正（決定のときに作品ごとに立てる）。
