@@ -1314,3 +1314,28 @@ tr.ledger-sec.band td{background:var(--accent)}
 .ct-master.loose{background:var(--warn-soft)}
 .ct-act.ct-danger{color:var(--out);border-color:var(--out-soft)}
 .ct-act.ct-danger:hover{background:var(--out-soft);border-color:var(--out)}
+
+/* 作品の条件をまとめて直す（WorkMatrixEditor） */
+.mx .tablewrap{overflow:auto}
+.mx-table{width:100%;border-collapse:collapse}
+.mx-table th,.mx-table td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.mx-table th{background:var(--sunken);font-size:12px;color:var(--muted);font-weight:600}
+.mx-table td.num,.mx-table th.num{text-align:right}
+.mx-work td{background:var(--sunken);border-top:2px solid var(--line-strong)}
+.mx-cell{cursor:pointer;border-radius:4px;padding:1px 4px;margin:-1px -4px;display:inline-block}
+.mx-cell:hover,.mx-cell:focus{background:var(--accent-soft);outline:1px dashed var(--accent)}
+.mx-cell.mono{font-family:var(--mono)}
+.mx-chg{background:var(--warn-soft);outline:1px solid var(--warn)}
+.mx-old{text-decoration:line-through;color:var(--faint);margin-right:6px}
+.mx-undo{margin-left:6px;color:var(--faint)}
+.mx-edit{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+.mx-pop{flex-direction:column;align-items:flex-start;background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;
+  padding:8px 10px;box-shadow:0 4px 16px rgba(0,0,0,.10);text-align:left}
+.mx-shares table td,.mx-shares table th{padding:2px 6px;border:0}
+.mx-hits{display:flex;flex-wrap:wrap;gap:6px}
+.mx-hit{border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;padding:3px 10px;cursor:pointer;font:inherit}
+.mx-hit.on{background:var(--accent-soft);border-color:var(--accent)}
+.mx-group{border:1px dashed var(--line-strong);border-radius:6px;padding:8px 10px}
+.mx-group ul{margin:6px 0 0;padding-left:18px}
+.mx-bar{position:sticky;bottom:0;background:var(--surface);border-top:2px solid var(--accent);padding:10px 14px;
+  display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:3}

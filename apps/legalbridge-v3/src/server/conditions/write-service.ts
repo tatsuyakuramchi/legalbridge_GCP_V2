@@ -2269,6 +2269,13 @@ export class ConditionWriteService {
        ON CONFLICT DO NOTHING`,
       [id, newId]
     );
+    // 共著の取り分も引き継ぐ。引き継がないと、新しい版の計算書・支払が相手先 1 件の全額になる。
+    await client.query(
+      `INSERT INTO condition_shares (condition_id, party_id, share_ppm, sort_order, note)
+       SELECT $2, party_id, share_ppm, sort_order, note FROM condition_shares WHERE condition_id = $1
+       ON CONFLICT (condition_id, party_id) DO NOTHING`,
+      [id, newId]
+    );
     // 案件の紐づけは新しい版へ移す。旧版に付いたままだと、案件から見える条件が
     // 古い版のまま止まり、案件の工程（実績・支払の数）も旧版だけを数えていた。
     await client.query(
