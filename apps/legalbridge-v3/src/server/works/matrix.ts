@@ -56,6 +56,8 @@ export interface MatrixConditionChange {
   name?: string;
   ratePpm?: number;
   shares?: Array<{ partyId: number; sharePpm: number; note?: string | null }>;
+  /** 分配方法。direct＝当社（被許諾者）から各人に直接、representative＝許諾者（代表者）が受け取って分配。 */
+  distribution?: "direct" | "representative";
 }
 export interface MatrixWorkChange { id: number; copyrightNotice?: string; thirdPartyRights?: string | null }
 
@@ -255,6 +257,7 @@ export class WorkMatrixService {
     if (c.name !== undefined) what.push("取引モデル名");
     if (c.ratePpm !== undefined) what.push("料率");
     if (c.shares !== undefined) what.push("取り分");
+    if (c.distribution !== undefined) what.push("分配方法");
     const result: MatrixItemResult = { target: "condition", id: c.id, label, what, ok: true, message: null, revisedTo: null };
     try {
       if (!head) throw new DomainError("NOT_FOUND", `条件 ${c.id} が見つかりません`);
@@ -281,29 +284,38 @@ export class WorkMatrixService {
         }
         // 2. 料率・取り分。
         let target = c.id;
-        if (c.ratePpm !== undefined || c.shares !== undefined) {
+        // 分配方法は取り分と組（condition_shares と conditions.distribution を一緒に書く）。
+        const touchesShares = c.shares !== undefined || c.distribution !== undefined;
+        if (c.ratePpm !== undefined || touchesShares) {
           // 取り分だけでも、改訂なら版を立てる（料率は今の値のまま渡す。updateEconomics が版の要否を決める）。
           const ratePpm = c.ratePpm !== undefined ? c.ratePpm : int(head.rate_ppm);
           const changesRate = c.ratePpm !== undefined && c.ratePpm !== int(head.rate_ppm);
           if (input.mode === "correct") {
             if (changesRate) await writes.updateEconomics(c.id, { ratePpm }, actor, null, { inPlace: true });
             // 取り分の訂正も、料率と同じく支払が立っていれば断る（払った額の分け方の根拠が書き換わる）。
-            if (c.shares !== undefined && await hasPayment(db, c.id)) {
+            if (touchesShares && await hasPayment(db, c.id)) {
               throw new DomainError("CONFLICT", "支払が立っているので取り分を訂正できません。「改訂」で適用日から直してください");
             }
-          } else if (changesRate || c.shares !== undefined) {
+          } else if (changesRate || touchesShares) {
             const r = await writes.updateEconomics(c.id, { ratePpm }, actor, input.effectiveFrom || null);
             if (r.revisedTo) target = r.revisedTo;
           }
-          if (c.shares !== undefined) {
-            const distribution = (str(head.distribution) as "direct" | "representative" | null) ?? null;
-            await writes.replaceShares(target, c.shares.map((s) => ({ partyId: s.partyId, sharePpm: s.sharePpm, note: s.note ?? null })),
-                                       actor, c.shares.length ? distribution : null);
+          if (touchesShares) {
+            // 取り分を直していなければ今の取り分のまま、分配方法だけを替える。
+            const shares = c.shares ?? ((await db.query(
+              "SELECT party_id, share_ppm, note FROM condition_shares WHERE condition_id = $1 ORDER BY sort_order, id", [c.id])).rows as any[])
+              .map((s) => ({ partyId: Number(s.party_id), sharePpm: Number(s.share_ppm), note: str(s.note) }));
+            if (c.distribution !== undefined && !shares.length) {
+              throw new DomainError("VALIDATION", "取り分の無い条件には分配方法を付けられません（相手先に全額）。先に共著者と取り分を入れてください");
+            }
+            const distribution = c.distribution ?? ((str(head.distribution) as "direct" | "representative" | null) ?? null);
+            await writes.replaceShares(target, shares.map((s) => ({ partyId: s.partyId, sharePpm: s.sharePpm, note: s.note ?? null })),
+                                       actor, shares.length ? distribution : null);
           }
           await recordAudit(db, {
             actor, action: "condition.matrix_update", targetType: "condition", targetId: c.id,
             detail: { reason, mode: input.mode, effectiveFrom: input.effectiveFrom, ratePpm: c.ratePpm ?? null,
-                      shares: c.shares ?? null, revisedTo: target !== c.id ? target : null }
+                      shares: c.shares ?? null, distribution: c.distribution ?? null, revisedTo: target !== c.id ? target : null }
           });
         }
         if (target !== c.id) {

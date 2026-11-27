@@ -4043,7 +4043,8 @@ export function createRoutes(database: Transactable) {
         partyId: z.coerce.number().int().positive(),
         sharePpm: z.coerce.number().int().min(1).max(1_000_000),
         note: z.string().trim().max(200).nullable().optional()
-      })).max(20).optional()
+      })).max(20).optional(),
+      distribution: z.enum(["direct", "representative"]).optional()
     })).max(500),
     works: z.array(z.object({
       id: z.coerce.number().int().positive(),
