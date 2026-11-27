@@ -1339,3 +1339,5 @@ tr.ledger-sec.band td{background:var(--accent)}
 .mx-group ul{margin:6px 0 0;padding-left:18px}
 .mx-bar{position:sticky;bottom:0;background:var(--surface);border-top:2px solid var(--accent);padding:10px 14px;
   display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:3}
+.mx-derived{color:var(--muted);background:var(--sunken)}
+.mx-shares td:nth-child(2),.mx-shares td:nth-child(3){white-space:nowrap}
