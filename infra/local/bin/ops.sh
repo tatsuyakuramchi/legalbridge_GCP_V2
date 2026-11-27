@@ -410,7 +410,8 @@ push_export() {
   # 「unrecognized configuration parameter」で止まるので外す（無くても動きは同じ）。
   # psql が古いと知らない命令で止まるので落とす。
   # 循環する外部キーの警告が出るが、流す側で外部キーを最後に確かめるので問題ない。
-  pg_dump --data-only --schema=v3 --no-owner --no-privileges 2>"$body.err" \
+  # 運用の控えの表（190 の退避・記録。202 で archive スキーマへ移す）は持ち帰らない。本番では移してあることがある。
+  pg_dump --data-only --schema=v3 --exclude-table='v3.condition_holder_190_*' --no-owner --no-privileges 2>"$body.err" \
     | grep -v -E '^\\(restrict|unrestrict) ' \
     | grep -v -E '^SET transaction_timeout ' > "$body"
   if grep -v -E 'circular foreign-key|^pg_dump: (detail|hint):' "$body.err" | grep -q .; then
@@ -418,20 +419,30 @@ push_export() {
   fi
   rm -f "$body.err"
 
-  local cols counts tables
+  local cols counts tables checks
+  # 持ち帰らない表（上の pg_dump と同じ）。列の比べ・行数・空にする表から外す。
+  local skip="NOT LIKE 'condition\\_holder\\_190\\_%'"
   cols=$(psql -Atq -c "
     SELECT string_agg(format('(%L,%L,%s)', c.table_name, c.column_name, c.ordinal_position), E',\n' ORDER BY c.table_name, c.ordinal_position)
       FROM information_schema.columns c
       JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-     WHERE c.table_schema = 'v3' AND t.table_type = 'BASE TABLE'")
+     WHERE c.table_schema = 'v3' AND t.table_type = 'BASE TABLE' AND c.table_name $skip")
+  # CHECK 制約の定義。本番の定義が古い（番号付きの SQL の当て順で狭いままなど）と、入れる行で止まる。
+  # 流す側で、空にしたあとにローカルの定義へそろえる。
+  checks=$(psql -Atq -c "
+    SELECT string_agg(format('(%L,%L,%L)', c.relname, con.conname, pg_get_constraintdef(con.oid)), E',\n' ORDER BY c.relname, con.conname)
+      FROM pg_constraint con
+      JOIN pg_class c ON c.oid = con.conrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'v3' AND con.contype = 'c' AND c.relkind = 'r' AND c.relname $skip")
   counts=$(psql -Atq -c "
     SELECT string_agg(format('(%L,%s)', t.tablename, x.n), E',\n' ORDER BY t.tablename)
       FROM pg_tables t
       CROSS JOIN LATERAL xmltable('/table/row'
         PASSING query_to_xml(format('SELECT count(*) AS n FROM v3.%I', t.tablename), false, false, '')
         COLUMNS n bigint PATH 'n') AS x
-     WHERE t.schemaname = 'v3'")
-  tables=$(psql -Atq -c "SELECT string_agg(format('v3.%I', tablename), ', ' ORDER BY tablename) FROM pg_tables WHERE schemaname = 'v3'")
+     WHERE t.schemaname = 'v3' AND t.tablename $skip")
+  tables=$(psql -Atq -c "SELECT string_agg(format('v3.%I', tablename), ', ' ORDER BY tablename) FROM pg_tables WHERE schemaname = 'v3' AND tablename $skip")
   local local_files
   local_files=$(psql -Atq -c "SELECT count(*) FROM v3.documents WHERE storage_url LIKE '%/local-files/%'")
 
@@ -496,6 +507,7 @@ BEGIN
         FROM information_schema.columns c
         JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
        WHERE c.table_schema = 'v3' AND t.table_type = 'BASE TABLE'
+         AND c.table_name NOT LIKE 'condition\\_holder\\_190\\_%'
          AND NOT EXISTS (SELECT 1 FROM push_local_columns l
                           WHERE l.table_name = c.table_name AND l.column_name = c.column_name)
     ) d;
@@ -547,6 +559,41 @@ END
 
 -- 4. 空にして入れる
 TRUNCATE ${tables};
+
+-- 4'. CHECK 制約をローカルの定義にそろえる（表は空なので、付け直しはすぐ済む）。
+--     本番だけにある CHECK は外し、無い・定義が違うものはローカルの定義で付け直す。
+CREATE TEMP TABLE push_local_checks (table_name text, conname text, def text) ON COMMIT DROP;
+INSERT INTO push_local_checks VALUES
+${checks};
+DO \$checks\$
+DECLARE r record; fixed int := 0;
+BEGIN
+  FOR r IN
+    SELECT c.relname AS table_name, con.conname
+      FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'v3' AND con.contype = 'c' AND c.relkind = 'r'
+       AND c.relname NOT LIKE 'condition\\_holder\\_190\\_%'
+       AND NOT EXISTS (SELECT 1 FROM push_local_checks l WHERE l.table_name = c.relname AND l.conname = con.conname)
+  LOOP
+    EXECUTE format('ALTER TABLE v3.%I DROP CONSTRAINT %I', r.table_name, r.conname);
+    RAISE NOTICE '  CHECK を外した（本番だけ）: %.%', r.table_name, r.conname;
+    fixed := fixed + 1;
+  END LOOP;
+  FOR r IN
+    SELECT l.* FROM push_local_checks l
+     WHERE NOT EXISTS (
+       SELECT 1 FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'v3' AND c.relname = l.table_name AND con.conname = l.conname
+          AND pg_get_constraintdef(con.oid) = l.def)
+  LOOP
+    EXECUTE format('ALTER TABLE v3.%I DROP CONSTRAINT IF EXISTS %I', r.table_name, r.conname);
+    EXECUTE format('ALTER TABLE v3.%I ADD CONSTRAINT %I %s', r.table_name, r.conname, r.def);
+    RAISE NOTICE '  CHECK をローカルの定義にした: %.%', r.table_name, r.conname;
+    fixed := fixed + 1;
+  END LOOP;
+  RAISE NOTICE 'CHECK 制約：% 件をローカルにそろえた', fixed;
+END
+\$checks\$;
 
 EOF
     cat "$body"
