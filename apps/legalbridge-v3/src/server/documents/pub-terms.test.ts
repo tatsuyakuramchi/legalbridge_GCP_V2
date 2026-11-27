@@ -721,8 +721,8 @@ test("備考の分配の文：取り分のある条件だけ。代表者から�
   const shares = [{ partyId: 1, sharePpm: 600000 }, { partyId: 2, sharePpm: 400000 }];
   assert.equal(distributionNoteOf([{ media: "紙", condition: { shares: [] } }]), "");
   assert.equal(distributionNoteOf([{ media: "紙", condition: { shares, distribution: "representative" } },
-                                   { media: "電子", condition: { shares, distribution: "representative" } }]), "分配：代表者（許諾者）から分配");
+                                   { media: "電子", condition: { shares, distribution: "representative" } }]), "分配：許諾者から分配");
   assert.equal(distributionNoteOf([{ media: "紙", condition: { shares } }, { media: "電子", condition: undefined }]), "分配：被許諾者から直接分配");
   assert.equal(distributionNoteOf([{ media: "紙", condition: { shares, distribution: "representative" } }, { media: "電子", condition: { shares } }]),
-    "分配：紙は代表者（許諾者）から・電子は被許諾者から直接");
+    "分配：紙は許諾者から・電子は被許諾者から直接");
 });

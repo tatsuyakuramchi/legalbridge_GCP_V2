@@ -364,13 +364,13 @@ export function sharesText(condition: Data | null | undefined): string {
 /** 備考に出す「だれが共著者等に分配するか」の文の頭。人が備考に書いた同じ文は、これで見分けて落とす。 */
 export const DISTRIBUTION_NOTE_HEAD = "分配：";
 export const DISTRIBUTION_NOTE = {
-  representative: `${DISTRIBUTION_NOTE_HEAD}代表者（許諾者）から分配`,
+  representative: `${DISTRIBUTION_NOTE_HEAD}許諾者から分配`,
   direct: `${DISTRIBUTION_NOTE_HEAD}被許諾者から直接分配`
 } as const;
 
 /**
  * 備考の「分配：…」。共著の取り分がある条件だけを見る（取り分が無ければ空）。
- * 紙・電子などで分け方が違えば「分配：紙は代表者（許諾者）から・電子は被許諾者から直接」のように媒体ごとに。
+ * 紙・電子などで分け方が違えば「分配：紙は許諾者から・電子は被許諾者から直接」のように媒体ごとに。
  */
 export function distributionNoteOf(conditions: Array<{ media: string; condition: Data | undefined }>): string {
   const withShares = conditions.filter((x) => x.condition && list(x.condition.shares).length > 0);
@@ -378,7 +378,7 @@ export function distributionNoteOf(conditions: Array<{ media: string; condition:
   const modeOf = (c: Data) => (text(c.distribution) === "representative" ? "representative" : "direct");
   const modes = new Set(withShares.map((x) => modeOf(x.condition!)));
   if (modes.size === 1) return DISTRIBUTION_NOTE[[...modes][0] as "representative" | "direct"];
-  const short = { representative: "代表者（許諾者）から", direct: "被許諾者から直接" } as const;
+  const short = { representative: "許諾者から", direct: "被許諾者から直接" } as const;
   return `${DISTRIBUTION_NOTE_HEAD}${withShares.map((x) => `${x.media}は${short[modeOf(x.condition!)]}`).join("・")}`;
 }
 

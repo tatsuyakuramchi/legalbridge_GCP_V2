@@ -352,10 +352,10 @@ test("作品ごとに番号を持つ条件書（207）：備考の頭に許諾�
   // 取り分のあとに、だれが分配するか（当社から直接）、そのあとに条件の備考。
   assert.ok(out.includes("紙 取り分 10.3125%（全体 11%）／電子 取り分 15%（全体 16%）／分配：被許諾者から直接分配／初版100部"),
     "取り分のあとに分配の方法と条件の備考");
-  // 代表者から分配する条件なら「代表者（許諾者）から分配」。
+  // 代表者から分配する条件なら「許諾者から分配」。
   const rep = { ...multiContext, conditions: multiContext.conditions.map((c: any) => ({ ...c, distribution: "representative" })) };
   const outRep = renderDocumentHtml(r2, { taxRate: 10, BANK_INFO: "", ...pubTermsPatch(rep, { ...defaults, "許諾者連絡先": "甲" }) });
-  assert.ok(outRep.includes("分配：代表者（許諾者）から分配"), "代表者から分配");
+  assert.ok(outRep.includes("分配：許諾者から分配"), "代表者から分配");
   assert.ok(out.includes("紙 取り分 0%（全体 11%）"), "許諾者のいない按分は 0%");
   assert.ok(!out.includes("ほかの会社"), "按分の相手の名前は出さない");
   const warns = pubTermsMultiWarnings(multiContext).map((w) => w.message);
