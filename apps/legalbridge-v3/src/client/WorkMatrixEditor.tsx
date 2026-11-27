@@ -18,7 +18,11 @@ import { roundToMillion, sharePpmFromEffective } from "../server/works/share-mat
  */
 
 type ShareEdit = { partyId: number; partyName: string; sharePpm: number; note: string | null };
-interface CondEdit { name?: string; ratePpm?: number; shares?: ShareEdit[] }
+type Distribution = "direct" | "representative";
+interface CondEdit { name?: string; ratePpm?: number; shares?: ShareEdit[]; distribution?: Distribution }
+/** 分配方法の呼び名（条件書の備考の「分配：…」と同じ言い方）。 */
+const DISTRIBUTION_LABEL: Record<Distribution, string> = { representative: "許諾者から分配", direct: "当社から直接分配" };
+const distOf = (v: string | null | undefined): Distribution => (v === "representative" ? "representative" : "direct");
 interface WorkEdit { copyrightNotice?: string; thirdPartyRights?: string | null }
 type Cell = { kind: "work"; id: number; field: "copyrightNotice" | "thirdPartyRights" }
   | { kind: "cond"; id: number; field: "name" | "ratePpm" | "shares" };
@@ -35,6 +39,9 @@ const toPpm = (text: string): number | null => {
 const sharesText = (s: ShareEdit[], ratePpm?: number | null) => (s.length
   ? s.map((x) => `${x.partyName} ${pct(x.sharePpm)}${ratePpm ? `（実質 ${pct(Math.round((ratePpm * x.sharePpm) / 1_000_000))}）` : ""}${x.note ? `［${x.note}］` : ""}`).join(" ／ ")
   : "（取り分なし＝相手先に全額）");
+/** 表のセル：取り分があれば頭に分配方法を付ける。 */
+const withDist = (s: ShareEdit[], d: Distribution, ratePpm?: number | null) =>
+  (s.length ? `【${DISTRIBUTION_LABEL[d]}】${sharesText(s, ratePpm)}` : sharesText(s, ratePpm));
 const sameShares = (a: ShareEdit[], b: ShareEdit[]) =>
   a.length === b.length && a.every((x, i) => x.partyId === b[i]!.partyId && x.sharePpm === b[i]!.sharePpm && (x.note ?? "") === (b[i]!.note ?? ""));
 const todayStr = () => {
@@ -95,6 +102,7 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
       if (e.name !== undefined && e.name.trim() && e.name.trim() !== base.name) out.name = e.name.trim();
       if (e.ratePpm !== undefined && e.ratePpm !== base.ratePpm) out.ratePpm = e.ratePpm;
       if (e.shares !== undefined && !sameShares(e.shares, base.shares)) out.shares = e.shares;
+      if (e.distribution !== undefined && e.distribution !== distOf(base.distribution)) out.distribution = e.distribution;
       if (Object.keys(out).length) c.push({ id, edit: out });
     }
     const w: Array<{ id: number; edit: WorkEdit }> = [];
@@ -111,7 +119,7 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
   const counts = {
     name: changes.conditions.filter((x) => x.edit.name !== undefined).length,
     rate: changes.conditions.filter((x) => x.edit.ratePpm !== undefined).length,
-    shares: changes.conditions.filter((x) => x.edit.shares !== undefined).length,
+    shares: changes.conditions.filter((x) => x.edit.shares !== undefined || x.edit.distribution !== undefined).length,
     credit: changes.works.length
   };
   const total = counts.name + counts.rate + counts.shares + counts.credit;
@@ -306,12 +314,16 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
                               <td className="faint">{BASIS_LABEL[c.priceBasis ?? ""] ?? "—"}</td>
                               <td>{sharesEditable ? shown({
                                 open: isOpen({ kind: "cond", id: c.id, field: "shares" }),
-                                changed: e.shares !== undefined && !sameShares(e.shares, c.shares), old: sharesText(c.shares, c.ratePpm), now: sharesText(nowShares, e.ratePpm ?? c.ratePpm),
+                                changed: (e.shares !== undefined && !sameShares(e.shares, c.shares))
+                                  || (e.distribution !== undefined && e.distribution !== distOf(c.distribution)),
+                                old: withDist(c.shares, distOf(c.distribution), c.ratePpm),
+                                now: withDist(nowShares, e.distribution ?? distOf(c.distribution), e.ratePpm ?? c.ratePpm),
                                 onOpen: () => setCell({ kind: "cond", id: c.id, field: "shares" }),
-                                onUndo: () => undoCond(c.id, "shares"),
+                                onUndo: () => { undoCond(c.id, "shares"); undoCond(c.id, "distribution"); },
                                 editor: () => <SharesEditor cond={c} initial={nowShares} conds={conds} ratePpm={e.ratePpm ?? c.ratePpm}
-                                  onDone={(list, ids) => { if (list) for (const id of ids) setCond(id, { shares: list }); setCell(null); }} />
-                              }) : <span className="faint">{c.shares.length ? sharesText(c.shares, c.ratePpm) : "—"}</span>}</td>
+                                  distribution={e.distribution ?? distOf(c.distribution)}
+                                  onDone={(list, ids, dist) => { if (list) for (const id of ids) setCond(id, { shares: list, distribution: dist }); setCell(null); }} />
+                              }) : <span className="faint">{c.shares.length ? withDist(c.shares, distOf(c.distribution), c.ratePpm) : "—"}</span>}</td>
                               <td>{c.hasDocument && <span className="tag ok">文書あり</span>}{c.hasEvents && <span className="tag">実績あり</span>}{c.hasPayment && <span className="tag warn">支払あり</span>}</td>
                             </tr>
                           );
@@ -381,7 +393,7 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
       {works.length > 0 && (
         <div className="mx-bar">
           <b>変更 {total} か所</b>
-          <span className="faint">（料率 {counts.rate}・取り分 {counts.shares}・取引モデル名 {counts.name}・クレジット {counts.credit}）</span>
+          <span className="faint">（料率 {counts.rate}・取り分と分配 {counts.shares}・取引モデル名 {counts.name}・クレジット {counts.credit}）</span>
           {touchesEconomics && (
             <label className="row" style={{ gap: 6 }}>料率・取り分の当て方
               <select value={mode} onChange={(e) => { setMode(e.target.value as "revise" | "correct"); setPreview(null); }}>
@@ -451,12 +463,15 @@ function RateEditor({ cond, initial, conds, onDone }: {
 }
 
 /** 共著者と取り分。共著者（取引先）を足す・外す、％と表記を入れる。同じ作品のほかの料率の条件にも入れられる。 */
-function SharesEditor({ cond, initial, conds, ratePpm, onDone }: {
+function SharesEditor({ cond, initial, conds, ratePpm, distribution, onDone }: {
   cond: MatrixCondition; initial: ShareEdit[]; conds: MatrixCondition[];
   /** 条件の料率（表で直していれば直した値）。実質料率で入れるときの割る数。 */
   ratePpm: number | null;
-  onDone: (list: ShareEdit[] | null, ids: number[]) => void;
+  /** 分配方法（表で直していれば直した値）。 */
+  distribution: Distribution;
+  onDone: (list: ShareEdit[] | null, ids: number[], distribution: Distribution) => void;
 }) {
+  const [dist, setDist] = useState<Distribution>(distribution);
   const rate = ratePpm && ratePpm > 0 ? ratePpm : null;
   const num = (ppm: number) => String(Number((ppm / 10_000).toFixed(4)));
   // 取り分がまだ無い条件は、相手先 100% から始める（共著者を足して分ける）。
@@ -485,6 +500,8 @@ function SharesEditor({ cond, initial, conds, ratePpm, onDone }: {
     ? [] : typed;
   const sum = typed.reduce((n, s) => n + s.sharePpm, 0);
   const effSum = rate ? typed.reduce((n, s) => n + (rate * s.sharePpm) / 1_000_000, 0) : 0;
+  // 許諾者から分配するときは、相手先（代表）が取り分の中にいること（サーバも同じ確かめ）。
+  const distOk = typed.some((s) => s.partyId === cond.counterpartyId);
   const ok = !typed.length || (sum === 1_000_000 && typed.every((s) => s.sharePpm > 0) && new Set(typed.map((s) => s.partyId)).size === typed.length);
 
   const setShare = (i: number, v: string) => setRows((x) => x.map((y, j) => {
@@ -535,14 +552,27 @@ function SharesEditor({ cond, initial, conds, ratePpm, onDone }: {
           取り分の合計 {pct(sum)}{rate ? `・実質料率の合計 ${pct(Math.round(effSum))}` : ""}
           {typed.length ? (ok ? " ✓" : rate ? `（取り分は 100%、実質料率は ${pct(rate)} にする）` : "（100% にする）") : "（空にすると相手先に全額）"}</span>
       </div>
+      {typed.length > 0 && list.length > 0 && (
+        <div className="stack" style={{ gap: 2 }}>
+          <b>分配方法</b>
+          <label className="row" style={{ gap: 4 }}><input type="radio" name={`dist-${cond.id}`} checked={dist === "direct"} onChange={() => setDist("direct")} />
+            当社から直接分配<span className="faint">（共著者等それぞれに当社が支払う。条件書の備考は「分配：被許諾者から直接分配」）</span></label>
+          <label className="row" style={{ gap: 4 }}><input type="radio" name={`dist-${cond.id}`} checked={dist === "representative"} onChange={() => setDist("representative")} />
+            許諾者から分配<span className="faint">（許諾者が全額を受け取り、共著者等に分配する。備考は「分配：許諾者から分配」）</span></label>
+          {dist === "representative" && !distOk && (
+            <span style={{ color: "var(--out)" }}>許諾者から分配するときは、相手先（{cond.counterpartyName ?? "許諾者"}）を共著者の中に入れてください</span>
+          )}
+        </div>
+      )}
       {siblings.length > 0 && (
         <label className="row" style={{ gap: 4 }}><input type="checkbox" checked={toWork} onChange={(e) => setToWork(e.target.checked)} />
           この作品のほかの料率の条件（{siblings.length} 本）にも同じ取り分
           <span className="faint">（入るのは取り分の比率。料率が違う条件では実質料率も変わる）</span></label>
       )}
       <div className="row" style={{ gap: 6 }}>
-        <button className="btn btn-sm primary" disabled={!ok} onClick={() => onDone(list, [cond.id, ...(toWork ? siblings.map((s) => s.id) : [])])}>入れる</button>
-        <button className="btn btn-sm" onClick={() => onDone(null, [])}>やめる</button>
+        <button className="btn btn-sm primary" disabled={!ok || (dist === "representative" && !distOk)}
+                onClick={() => onDone(list, [cond.id, ...(toWork ? siblings.map((s) => s.id) : [])], dist)}>入れる</button>
+        <button className="btn btn-sm" onClick={() => onDone(null, [], dist)}>やめる</button>
       </div>
     </div>
   );
