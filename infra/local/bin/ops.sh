@@ -350,10 +350,10 @@ INFO
 #   これをやらないと、アプリが新しい列を読もうとして「サーバ内部でエラー」になる。
 #   004 は何度流しても同じ結果になるように書いてある。
 upgrade() {
-  log "後追いの変更を当てる（004_amend.sql）"
-  psql_local -f "$V3/004_amend.sql" >/dev/null
-  log "ビューを作り直す"
-  psql_local -f "$V3/002_views.sql" >/dev/null
+  # 本番のデプロイ（Cloud Build の migrate の段）と同じものを流す：表の作り（catchup_schema.sql）と、
+  # 1 回だけ流す SQL（deploy-migrations.txt）。004_amend・番号付きの作りの変更・ビュー・権限を含む。
+  log "表の作りをそろえる・1 回だけ流す SQL を当てる（deploy-migrate.sh）"
+  bash "$V3/deploy-migrate.sh" >/dev/null
   apply_grants
   local rows
   rows=$(psql -Atq -c "SELECT count(*) FROM v3.matters" 2>/dev/null || echo '?')
