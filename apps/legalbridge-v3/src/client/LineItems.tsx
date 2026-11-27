@@ -267,7 +267,9 @@ export const PUB_TITLE_COLUMNS: Column[] = [
   { name: "third_party", label: "共同著作・第三者権利", helpText: "無ければ空。紙には「なし」と出る" },
   { name: "co_authors", label: "共同著作の取り分", helpText: "条件明細の取り分の写し（受取人宛てなら、その人の取り分も紙に出る）。条件から出た行はここでは直せない（直すなら条件の取り分）" },
   { name: "note", label: "備考", type: "textarea",
-    helpText: "初版部数・著作権表示の位置など、この作品だけの取り決め。条件明細の備考から写してある" }
+    helpText: "初版部数・著作権表示の位置など、この作品だけの取り決め。条件明細の備考から写してある" },
+  { name: "published_on", label: "発行日（並べ替え用）", type: "date",
+    helpText: "紙には出ない。作品の刊行物の刊行日（自社刊行を先に）から入る。無ければ入れると「発行日順に並べる」で使う" }
 ];
 
 /** 行の見出しの添え字。紙・電子の料率と独占区分（条件明細の写し）。 */
@@ -328,12 +330,32 @@ const sutUseSubtitle = (row: Row): string =>
    row.fee_type === "flat" ? (show(row.flat_amount) ? `定額 ${show(row.flat_amount)}円` : "定額") : (show(row.rate) ? `${show(row.rate)}%` : "料率 未入力"),
    Number(row.condition_id) > 0 ? "条件明細あり" : "決定のときに条件明細を作る"].filter(Boolean).join("・");
 
+/**
+ * 行を列の値で並べる（空の行は後ろ。同じ値・空どうしは今の順のまま）。行に値が無ければ、自動で出た行
+ * （seed）の同じ作品の値を使う（以前に手で直して保存した行には、あとから足した列が無い）。
+ */
+export function sortRows(rows: Row[], seed: Row[], key: string, desc = false): Row[] {
+  const nameOf = (r: Row) => String(r.title ?? r.item_name ?? "").trim();
+  const seedBy = new Map(seed.map((r) => [nameOf(r), r]));
+  const valueOf = (r: Row) => String(r[key] ?? seedBy.get(nameOf(r))?.[key] ?? "").trim();
+  return rows
+    .map((r, i) => ({ r: { ...r, [key]: valueOf(r) || null }, i, v: valueOf(r) }))
+    .sort((a, b) => {
+      if (!a.v || !b.v) return (a.v ? 0 : 1) - (b.v ? 0 : 1) || a.i - b.i;
+      return (desc ? b.v.localeCompare(a.v) : a.v.localeCompare(b.v)) || a.i - b.i;
+    })
+    .map((x) => x.r);
+}
+
 export const LINE_SECTIONS: Record<string, {
   title: string; columns: Column[]; intl?: Column[]; hint: string;
   /** 行の見出しに添える文字（条件から出た値の確認用）。 */
   subtitle?: (row: Row) => string;
+  /** 並べ替えのボタン（列の値で並べる。空の行は後ろ）。 */
+  sorters?: Array<{ key: string; label: string; desc?: boolean }>;
 }> = {
   pub_titles: { title: "対象著作物（出版条件書の一覧）", columns: PUB_TITLE_COLUMNS, subtitle: pubTitleSubtitle,
+           sorters: [{ key: "published_on", label: "発行日順に並べる" }, { key: "published_on", label: "新しい順", desc: true }],
            hint: "選んだ条件明細から、作品1点が1行。紙・電子の料率と独占区分は条件明細の写しで、"
                + "ここでは直せない（直すなら条件を直す）。著作権表示・共同著作・備考はここで入れる" },
   sut_uses: { title: "許諾する二次利用（決定のときに条件明細になる）", columns: SUT_USE_COLUMNS, subtitle: sutUseSubtitle,
@@ -420,6 +442,11 @@ export function LineItemsEditor(
           {edited && seed.length > 0 && (
             <button type="button" className="btn btn-sm" onClick={() => onChange(null)}>自動に戻す</button>
           )}
+          {(section.sorters ?? []).map((s) => (
+            <button key={s.label} type="button" className="btn btn-sm" disabled={current.length < 2}
+                    title="紙の並び（番号の振り直しも含む）がこの順になる。値の無い行は後ろに回る"
+                    onClick={() => onChange(sortRows(current, seed, s.key, s.desc === true))}>{s.label}</button>
+          ))}
           <button type="button" className="btn btn-sm"
                   onClick={() => onChange([...current, {}])}>行を足す</button>
         </span>

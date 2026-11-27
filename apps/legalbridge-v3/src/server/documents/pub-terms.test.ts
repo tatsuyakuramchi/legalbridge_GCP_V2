@@ -714,3 +714,15 @@ test("V5：作品ごとの許諾地域・言語を備考に出し、再許諾だ
   assert.equal((pubTermsPatch(plain, {}, { v5: true }).titles as any[])[0].note, "");
   assert.equal(pubTermsSuggestions(plain, {}, { v5: true })["許諾地域"], undefined);
 });
+
+
+test("備考の分配の文：取り分のある条件だけ。代表者から／被許諾者から直接、媒体で違えば媒体ごと", async () => {
+  const { distributionNoteOf } = await import("./pub-terms.js");
+  const shares = [{ partyId: 1, sharePpm: 600000 }, { partyId: 2, sharePpm: 400000 }];
+  assert.equal(distributionNoteOf([{ media: "紙", condition: { shares: [] } }]), "");
+  assert.equal(distributionNoteOf([{ media: "紙", condition: { shares, distribution: "representative" } },
+                                   { media: "電子", condition: { shares, distribution: "representative" } }]), "分配：許諾者から分配");
+  assert.equal(distributionNoteOf([{ media: "紙", condition: { shares } }, { media: "電子", condition: undefined }]), "分配：被許諾者から直接分配");
+  assert.equal(distributionNoteOf([{ media: "紙", condition: { shares, distribution: "representative" } }, { media: "電子", condition: { shares } }]),
+    "分配：紙は許諾者から・電子は被許諾者から直接");
+});
