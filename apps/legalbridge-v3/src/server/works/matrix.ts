@@ -25,6 +25,7 @@ import { ConditionWriteService } from "../conditions/write-service.js";
 import { conditionNameFor, NAME_SEPARATOR, USAGE_NAME_LABEL } from "../conditions/naming.js";
 import { readSublicenseKind, type ConditionUsageType } from "../core/condition-usage.js";
 import { upsertCredit } from "./credits.js";
+export { roundToMillion, sharePpmFromEffective } from "./share-math.js";
 
 export interface MatrixShare { partyId: number; partyName: string; sharePpm: number; note: string | null }
 

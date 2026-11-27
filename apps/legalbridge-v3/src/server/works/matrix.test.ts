@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matrixSuggestedName, shareProblem } from "./matrix.js";
+import { matrixSuggestedName, roundToMillion, shareProblem, sharePpmFromEffective } from "./matrix.js";
 
 test("取引モデル名：書き方の違いを規則の名前（作品名｜取引モデル）に寄せる", () => {
   assert.equal(matrixSuggestedName("星降る夜のはなし｜電子版", "星降る夜のはなし", "pub_digital", null, null), "星降る夜のはなし｜電子出版");
@@ -27,4 +27,15 @@ test("取り分：合計 100%・重なり・0 を確かめる", () => {
   assert.equal(shareProblem([{ partyId: 1, sharePpm: 700000 }, { partyId: 2, sharePpm: 300000 }]), null);
   assert.match(shareProblem([{ partyId: 1, sharePpm: 700000 }, { partyId: 2, sharePpm: 200000 }]) ?? "", /90%/);
   assert.match(shareProblem([{ partyId: 1, sharePpm: 500000 }, { partyId: 1, sharePpm: 500000 }]) ?? "", /2 回/);
+});
+
+test("取り分：実質料率から 100 分率を出し、端数のずれは合計 100% にそろえる", () => {
+  // 料率 11% を 10% と 1% に分ける
+  assert.deepEqual(sharePpmFromEffective([100000, 10000], 110000), [909091, 90909]);
+  // 料率 7% を 3 人で均等（割り切れない）
+  const three = sharePpmFromEffective([23333, 23333, 23334], 70000);
+  assert.equal(three.reduce((a, b) => a + b, 0), 1_000_000);
+  // 合計が料率と違う（入力違い）ならそろえない
+  assert.deepEqual(sharePpmFromEffective([50000, 10000], 110000), [454545, 90909]);
+  assert.deepEqual(roundToMillion([333333.4, 333333.3, 333333.3]).reduce((a, b) => a + b, 0), 1_000_000);
 });

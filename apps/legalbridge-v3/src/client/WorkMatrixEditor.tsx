@@ -4,6 +4,7 @@ import { useDebounced } from "./ListTools.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
 import type { MatrixApplyResult, MatrixCondition, MatrixSearchHit, MatrixWork } from "../server/works/matrix.js";
+import { roundToMillion, sharePpmFromEffective } from "../server/works/share-math.js";
 
 /**
  * 作品の条件をまとめて直す（作品の画面の「まとめて直す」）。サーバは works/matrix.ts。
@@ -30,7 +31,10 @@ const toPpm = (text: string): number | null => {
   const n = Number(String(text).replace(/[%％\s]/g, ""));
   return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n * 10_000) : null;
 };
-const sharesText = (s: ShareEdit[]) => (s.length ? s.map((x) => `${x.partyName} ${pct(x.sharePpm)}${x.note ? `（${x.note}）` : ""}`).join(" ／ ") : "（取り分なし＝相手先に全額）");
+/** 取り分の表示。料率が分かれば実質料率（料率 × 取り分）も添える。 */
+const sharesText = (s: ShareEdit[], ratePpm?: number | null) => (s.length
+  ? s.map((x) => `${x.partyName} ${pct(x.sharePpm)}${ratePpm ? `（実質 ${pct(Math.round((ratePpm * x.sharePpm) / 1_000_000))}）` : ""}${x.note ? `［${x.note}］` : ""}`).join(" ／ ")
+  : "（取り分なし＝相手先に全額）");
 const sameShares = (a: ShareEdit[], b: ShareEdit[]) =>
   a.length === b.length && a.every((x, i) => x.partyId === b[i]!.partyId && x.sharePpm === b[i]!.sharePpm && (x.note ?? "") === (b[i]!.note ?? ""));
 const todayStr = () => {
@@ -302,12 +306,12 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
                               <td className="faint">{BASIS_LABEL[c.priceBasis ?? ""] ?? "—"}</td>
                               <td>{sharesEditable ? shown({
                                 open: isOpen({ kind: "cond", id: c.id, field: "shares" }),
-                                changed: e.shares !== undefined && !sameShares(e.shares, c.shares), old: sharesText(c.shares), now: sharesText(nowShares),
+                                changed: e.shares !== undefined && !sameShares(e.shares, c.shares), old: sharesText(c.shares, c.ratePpm), now: sharesText(nowShares, e.ratePpm ?? c.ratePpm),
                                 onOpen: () => setCell({ kind: "cond", id: c.id, field: "shares" }),
                                 onUndo: () => undoCond(c.id, "shares"),
-                                editor: () => <SharesEditor cond={c} initial={nowShares} conds={conds}
+                                editor: () => <SharesEditor cond={c} initial={nowShares} conds={conds} ratePpm={e.ratePpm ?? c.ratePpm}
                                   onDone={(list, ids) => { if (list) for (const id of ids) setCond(id, { shares: list }); setCell(null); }} />
-                              }) : <span className="faint">{c.shares.length ? sharesText(c.shares) : "—"}</span>}</td>
+                              }) : <span className="faint">{c.shares.length ? sharesText(c.shares, c.ratePpm) : "—"}</span>}</td>
                               <td>{c.hasDocument && <span className="tag ok">文書あり</span>}{c.hasEvents && <span className="tag">実績あり</span>}{c.hasPayment && <span className="tag warn">支払あり</span>}</td>
                             </tr>
                           );
@@ -447,34 +451,69 @@ function RateEditor({ cond, initial, conds, onDone }: {
 }
 
 /** 共著者と取り分。共著者（取引先）を足す・外す、％と表記を入れる。同じ作品のほかの料率の条件にも入れられる。 */
-function SharesEditor({ cond, initial, conds, onDone }: {
+function SharesEditor({ cond, initial, conds, ratePpm, onDone }: {
   cond: MatrixCondition; initial: ShareEdit[]; conds: MatrixCondition[];
+  /** 条件の料率（表で直していれば直した値）。実質料率で入れるときの割る数。 */
+  ratePpm: number | null;
   onDone: (list: ShareEdit[] | null, ids: number[]) => void;
 }) {
+  const rate = ratePpm && ratePpm > 0 ? ratePpm : null;
+  const num = (ppm: number) => String(Number((ppm / 10_000).toFixed(4)));
   // 取り分がまだ無い条件は、相手先 100% から始める（共著者を足して分ける）。
   const start: ShareEdit[] = initial.length || !cond.counterpartyId ? initial
     : [{ partyId: cond.counterpartyId, partyName: cond.counterpartyName ?? `#${cond.counterpartyId}`, sharePpm: 1_000_000, note: null }];
-  const [rows, setRows] = useState(start.map((s) => ({ ...s, text: String(Number((s.sharePpm / 10_000).toFixed(4))) })));
+  // 1 行ずつ、取り分（100 分率）と実質料率のどちらで入れたかを持つ。打った方が正で、もう片方は計算して見せる。
+  type Line = ShareEdit & { share: string; eff: string; by: "share" | "eff" };
+  const [rows, setRows] = useState<Line[]>(start.map((s) => ({
+    ...s, share: num(s.sharePpm), eff: rate ? num(Math.round((rate * s.sharePpm) / 1_000_000)) : "", by: "share"
+  })));
   const [adding, setAdding] = useState("");
   const [toWork, setToWork] = useState(true);
   const siblings = conds.filter((c) => c.id !== cond.id && c.workId === cond.workId && c.direction === "in" && c.pricingModel === "revenue_rate");
-  const typed: ShareEdit[] = rows.map((r) => ({ partyId: r.partyId, partyName: r.partyName, sharePpm: toPpm(r.text) ?? 0, note: r.note?.trim() || null }));
+
+  // 取り分（百万分率）。実質料率で入れた行は 料率で割る。端数のずれだけなら合計を 100% にそろえる。
+  const raw = rows.map((r) => {
+    if (r.by === "eff" && rate) { const e = toPpm(r.eff); return e === null ? 0 : (e / rate) * 1_000_000; }
+    return toPpm(r.share) ?? 0;
+  });
+  const ppm = rows.some((r) => r.by === "eff") && rate
+    ? roundToMillion(raw)
+    : raw.map((v) => Math.round(v));
+  const typed: ShareEdit[] = rows.map((r, i) => ({ partyId: r.partyId, partyName: r.partyName, sharePpm: ppm[i]!, note: r.note?.trim() || null }));
   // 相手先 1 人の 100% だけなら、取り分なし（相手先に全額）と同じ。取り分の行は作らない。
   const list: ShareEdit[] = typed.length === 1 && typed[0]!.partyId === cond.counterpartyId && typed[0]!.sharePpm === 1_000_000 && !typed[0]!.note
     ? [] : typed;
   const sum = typed.reduce((n, s) => n + s.sharePpm, 0);
+  const effSum = rate ? typed.reduce((n, s) => n + (rate * s.sharePpm) / 1_000_000, 0) : 0;
   const ok = !typed.length || (sum === 1_000_000 && typed.every((s) => s.sharePpm > 0) && new Set(typed.map((s) => s.partyId)).size === typed.length);
+
+  const setShare = (i: number, v: string) => setRows((x) => x.map((y, j) => {
+    if (j !== i) return y;
+    const p = toPpm(v);
+    return { ...y, share: v, by: "share", eff: rate && p !== null ? num(Math.round((rate * p) / 1_000_000)) : y.eff };
+  }));
+  const setEff = (i: number, v: string) => setRows((x) => x.map((y, j) => {
+    if (j !== i) return y;
+    const e = toPpm(v);
+    return { ...y, eff: v, by: "eff", share: rate && e !== null ? num(sharePpmFromEffective([e], rate)[0]!) : y.share };
+  }));
+
   return (
     <div className="mx-edit mx-pop mx-shares">
+      <div className="faint">条件の料率 {rate ? <b>{pct(rate)}</b> : "—"}。取り分（100 分率）か実質料率（料率 × 取り分）のどちらかを入れる</div>
       <table>
-        <thead><tr><th>共著者</th><th>取り分</th><th>表記</th><th></th></tr></thead>
+        <thead><tr><th>共著者</th><th>取り分（100 分率）</th><th>実質料率</th><th>表記</th><th></th></tr></thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={r.partyId}>
               <td>{r.partyName}</td>
-              <td><input value={r.text} style={{ width: 64 }} aria-label={`${r.partyName} の取り分（%）`}
-                         onChange={(e) => setRows((x) => x.map((y, j) => (j === i ? { ...y, text: e.target.value } : y)))} /> %</td>
-              <td><input value={r.note ?? ""} style={{ width: 140 }} placeholder="例：原案" aria-label={`${r.partyName} の表記`}
+              <td><input value={r.by === "share" ? r.share : num(ppm[i]!)} style={{ width: 76 }} aria-label={`${r.partyName} の取り分（%）`}
+                         className={r.by === "eff" ? "mx-derived" : undefined} onChange={(e) => setShare(i, e.target.value)} /> %</td>
+              <td>{rate
+                ? <><input value={r.eff} style={{ width: 64 }} aria-label={`${r.partyName} の実質料率（%）`}
+                           className={r.by === "share" ? "mx-derived" : undefined} onChange={(e) => setEff(i, e.target.value)} /> %</>
+                : <span className="faint">料率なし</span>}</td>
+              <td><input value={r.note ?? ""} style={{ width: 120 }} placeholder="例：原案" aria-label={`${r.partyName} の表記`}
                          onChange={(e) => setRows((x) => x.map((y, j) => (j === i ? { ...y, note: e.target.value } : y)))} /></td>
               <td><button className="linky" onClick={() => setRows((x) => x.filter((_, j) => j !== i))} title="外す">×</button></td>
             </tr>
@@ -486,16 +525,20 @@ function SharesEditor({ cond, initial, conds, onDone }: {
           <SearchSelect value={adding} search={searchParties} placeholder="＋ 共著者を足す（取引先を探す）"
             onChange={(v, opt) => {
               const id = Number(v);
-              if (id && !rows.some((r) => r.partyId === id)) setRows((x) => [...x, { partyId: id, partyName: opt?.label ?? `#${id}`, sharePpm: 0, note: null, text: "" }]);
+              if (id && !rows.some((r) => r.partyId === id)) {
+                setRows((x) => [...x, { partyId: id, partyName: opt?.label ?? `#${id}`, sharePpm: 0, note: null, share: "", eff: "", by: "share" }]);
+              }
               setAdding("");
             }} />
         </span>
         <span className={ok ? "faint" : ""} style={ok ? undefined : { color: "var(--out)" }}>
-          合計 {pct(sum)}{typed.length ? (ok ? " ✓" : "（100% にする）") : "（空にすると相手先に全額）"}</span>
+          取り分の合計 {pct(sum)}{rate ? `・実質料率の合計 ${pct(Math.round(effSum))}` : ""}
+          {typed.length ? (ok ? " ✓" : rate ? `（取り分は 100%、実質料率は ${pct(rate)} にする）` : "（100% にする）") : "（空にすると相手先に全額）"}</span>
       </div>
       {siblings.length > 0 && (
         <label className="row" style={{ gap: 4 }}><input type="checkbox" checked={toWork} onChange={(e) => setToWork(e.target.checked)} />
-          この作品のほかの料率の条件（{siblings.length} 本）にも同じ取り分</label>
+          この作品のほかの料率の条件（{siblings.length} 本）にも同じ取り分
+          <span className="faint">（入るのは取り分の比率。料率が違う条件では実質料率も変わる）</span></label>
       )}
       <div className="row" style={{ gap: 6 }}>
         <button className="btn btn-sm primary" disabled={!ok} onClick={() => onDone(list, [cond.id, ...(toWork ? siblings.map((s) => s.id) : [])])}>入れる</button>
