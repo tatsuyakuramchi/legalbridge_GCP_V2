@@ -367,7 +367,11 @@ upgrade() {
 #   本番は写しを取った時点から変わっていないこと（確かめる SQL を先頭に入れる）が前提。
 #
 #   できるファイル（/dumps/push/v3_push_YYYYmmdd_HHMM.sql）は 1 トランザクションで:
-#     1. 本番が写しの時点から変わっていないか（audit_events）を確かめ、変わっていれば止める
+#     1. 本番が写しの時点から変わっていないか（audit_events）を確かめる。持ち帰れる操作（依頼の受付・取り込み、
+#        資料のアップロード、Backlog・Slack への送信、当たらなかった CloudSign の通知、定期実行）だけなら進み、
+#        それ以外があれば止める
+#     （4 の前後）本番だけで増えた・変わった行（依頼・依頼のつながり・作業・アップロード・設定・操作記録）を
+#        退避して、ローカルの中身を入れたあとに戻す。番号の採番表は大きい方を残す
 #     2. 列の並びがローカルと本番で同じかを確かめ、違えば止める（004 の当て忘れ）
 #     3. 外部キーを一時的に「最後に確かめる」にし、利用者の引き金を止める
 #        （Cloud SQL には superuser が無く、ローカルの取り込みと同じ止め方はできない）
@@ -419,7 +423,7 @@ push_export() {
   fi
   rm -f "$body.err"
 
-  local cols counts tables checks
+  local cols counts tables checks seqkeys
   # 持ち帰らない表（上の pg_dump と同じ）。列の比べ・行数・空にする表から外す。
   local skip="NOT LIKE 'condition\\_holder\\_190\\_%'"
   cols=$(psql -Atq -c "
@@ -443,6 +447,7 @@ push_export() {
         COLUMNS n bigint PATH 'n') AS x
      WHERE t.schemaname = 'v3' AND t.tablename $skip")
   tables=$(psql -Atq -c "SELECT string_agg(format('v3.%I', tablename), ', ' ORDER BY tablename) FROM pg_tables WHERE schemaname = 'v3' AND tablename $skip")
+  seqkeys=$(psql -Atq -c "SELECT COALESCE(string_agg(format('(%L,%s)', prefix, year), E',\\n'), '(NULL,NULL)') FROM v3.document_sequences")
   local local_files
   local_files=$(psql -Atq -c "SELECT count(*) FROM v3.documents WHERE storage_url LIKE '%/local-files/%'")
 
@@ -474,19 +479,33 @@ SELECT :'confirm_push' = 'REPLACE_V3_WITH_LOCAL' AS confirmed \\gset
 \\endif
 
 -- 1. 本番が写しの時点から変わっていないか
+-- 持ち帰れる操作だけなら進む（依頼の受付・取り込み・資料のアップロード・Backlog と Slack への送信・
+-- 当たらなかった CloudSign の通知・定期実行）。それらの行は 4 で退避して戻す。それ以外は止める。
 DO \$guard\$
-DECLARE n bigint;
+DECLARE n bigint; bad text;
 BEGIN
   IF current_database() <> 'legalbridge' THEN
     RAISE EXCEPTION 'legalbridge ではないデータベースにつながっています: %', current_database();
   END IF;
-  SELECT count(*) INTO n FROM v3.audit_events
-   WHERE occurred_at > TIMESTAMPTZ '${since}' AND action <> 'job.daily';
-  IF n > 0 THEN
-    RAISE EXCEPTION '本番に写しの時点（${since}）より後の操作が % 件あります。入れ直すと消えるので止めます', n;
+  SELECT sum(x.n), string_agg(format('%s %s 件', x.action, x.n), '、' ORDER BY x.n DESC) INTO n, bad
+    FROM (SELECT action, count(*) AS n FROM v3.audit_events
+           WHERE occurred_at > TIMESTAMPTZ '${since}'
+             AND NOT (action LIKE 'job.%'
+                      OR action IN ('intake.submit', 'intake.pull', 'backlog.send', 'slack.send', 'upload.store', 'cloudsign.receive')
+                      OR (action = 'cloudsign.applied' AND COALESCE(detail->>'applied', '') = 'false'))
+           GROUP BY action) x;
+  IF COALESCE(n, 0) > 0 THEN
+    RAISE EXCEPTION '本番に写しの時点（${since}）より後の、持ち帰れない操作があります（%）。入れ直すと消えるので止めます', bad;
   END IF;
 END
 \$guard\$;
+
+-- 退避した行がローカルでも写しの時点より後に直されていたとき：stop（止める・既定）／prod（本番を残す）／local（ローカルを残す）
+\if :{?carry_both}
+\else
+  \set carry_both stop
+\endif
+SELECT set_config('push.carry_both', :'carry_both', false);
 
 -- 2. 列の並びが同じか（本番に 004_amend を当て忘れていないか）
 CREATE TEMP TABLE push_local_columns (table_name text, column_name text, ordinal int);
@@ -520,6 +539,10 @@ END
 CREATE TEMP TABLE push_expected (table_name text, n bigint);
 INSERT INTO push_expected VALUES
 ${counts};
+-- ローカルの採番表の鍵（戻した本番の採番表で行が増えた数を数えるため）
+CREATE TEMP TABLE push_local_sequences (prefix text, year int);
+INSERT INTO push_local_sequences VALUES
+${seqkeys};
 
 BEGIN;
 SET LOCAL lock_timeout = '15s';
@@ -556,6 +579,24 @@ BEGIN
   END LOOP;
 END
 \$trg\$;
+
+-- 4. 本番だけで増えた・変わった行を退避する（写しの時点より後）。空にして入れたあとに戻す。
+CREATE TEMP TABLE carry_intake_requests ON COMMIT DROP AS
+  SELECT * FROM v3.intake_requests WHERE created_at > TIMESTAMPTZ '${since}' OR updated_at > TIMESTAMPTZ '${since}';
+CREATE TEMP TABLE carry_intake_request_links ON COMMIT DROP AS
+  SELECT * FROM v3.intake_request_links WHERE created_at > TIMESTAMPTZ '${since}';
+CREATE TEMP TABLE carry_requester_uploads ON COMMIT DROP AS
+  SELECT * FROM v3.requester_uploads WHERE uploaded_at > TIMESTAMPTZ '${since}';
+CREATE TEMP TABLE carry_tasks ON COMMIT DROP AS
+  SELECT * FROM v3.tasks WHERE created_at > TIMESTAMPTZ '${since}' OR updated_at > TIMESTAMPTZ '${since}';
+CREATE TEMP TABLE carry_settings ON COMMIT DROP AS
+  SELECT * FROM v3.settings WHERE updated_at > TIMESTAMPTZ '${since}';
+CREATE TEMP TABLE carry_sequences ON COMMIT DROP AS SELECT * FROM v3.document_sequences;
+CREATE TEMP TABLE carry_audit ON COMMIT DROP AS
+  SELECT * FROM v3.audit_events WHERE occurred_at > TIMESTAMPTZ '${since}' AND action NOT LIKE 'job.%';
+SELECT (SELECT count(*) FROM carry_intake_requests) AS 依頼, (SELECT count(*) FROM carry_intake_request_links) AS 依頼のつながり,
+       (SELECT count(*) FROM carry_requester_uploads) AS アップロード, (SELECT count(*) FROM carry_tasks) AS 作業,
+       (SELECT count(*) FROM carry_settings) AS 設定, (SELECT count(*) FROM carry_audit) AS 操作記録;
 
 -- 4. 空にして入れる
 TRUNCATE ${tables};
@@ -598,6 +639,85 @@ END
 EOF
     cat "$body"
     cat <<EOF
+
+-- 書き出しの頭で client_min_messages を warning に下げているので、知らせ（NOTICE）が出るよう戻す。
+SET client_min_messages = notice;
+
+-- 4'. 退避した本番の行を戻す。
+--   同じ ID・番号をローカルでも写しの時点より後に作っていたら止める（どちらが正か決められない）。
+--   写しの時点より前からある行を両方で直していたら、carry_both に従う（既定は止める）。
+DO \$carry\$
+DECLARE bad text; both text := current_setting('push.carry_both'); added bigint; gone bigint; S timestamptz := TIMESTAMPTZ '${since}';
+BEGIN
+  SELECT string_agg(DISTINCT format('依頼 %s（本番 #%s／ローカル #%s）', c.request_no, c.id, l.id), '、') INTO bad
+    FROM carry_intake_requests c JOIN v3.intake_requests l
+      ON l.id = c.id OR l.request_no = c.request_no OR l.backlog_issue_key = c.backlog_issue_key
+         OR l.backlog_issue_id = c.backlog_issue_id OR l.email_message_id = c.email_message_id
+   WHERE l.id <> c.id OR l.created_at > S;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION '本番とローカルで同じ番号の依頼を別々に作っています: %', bad; END IF;
+  SELECT string_agg(DISTINCT format('アップロード %s', c.upload_no), '、') INTO bad
+    FROM carry_requester_uploads c JOIN v3.requester_uploads l ON l.id = c.id OR l.upload_no = c.upload_no
+   WHERE l.id <> c.id OR l.uploaded_at > S;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION '本番とローカルで同じ番号のアップロードを別々に作っています: %', bad; END IF;
+  SELECT string_agg(DISTINCT format('作業 #%s', c.id), '、') INTO bad
+    FROM carry_tasks c JOIN v3.tasks l ON l.id = c.id WHERE l.created_at > S;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION '本番とローカルで同じ ID の作業を別々に作っています: %', bad; END IF;
+
+  -- 両方で直した行
+  SELECT string_agg(x, '、') INTO bad FROM (
+    SELECT format('依頼 %s', c.request_no) AS x FROM carry_intake_requests c JOIN v3.intake_requests l ON l.id = c.id WHERE l.updated_at > S
+    UNION ALL
+    SELECT format('作業 #%s', c.id) FROM carry_tasks c JOIN v3.tasks l ON l.id = c.id WHERE l.updated_at > S) y;
+  IF bad IS NOT NULL THEN
+    IF both = 'local' THEN
+      DELETE FROM carry_intake_requests c USING v3.intake_requests l WHERE l.id = c.id AND l.updated_at > S;
+      DELETE FROM carry_tasks c USING v3.tasks l WHERE l.id = c.id AND l.updated_at > S;
+      RAISE NOTICE '両方で直した行はローカルを残した: %', bad;
+    ELSIF both = 'prod' THEN
+      RAISE NOTICE '両方で直した行は本番を残した: %', bad;
+    ELSE
+      RAISE EXCEPTION '本番とローカルの両方で直した行があります: %。-v carry_both=prod（本番を残す）か carry_both=local（ローカルを残す）を付けて流し直す', bad;
+    END IF;
+  END IF;
+
+  -- 戻す（外部キーは最後に確かめる。同じ ID の行は入れ替える）
+  DELETE FROM v3.intake_requests t USING carry_intake_requests c WHERE t.id = c.id; GET DIAGNOSTICS gone = ROW_COUNT;
+  INSERT INTO v3.intake_requests SELECT * FROM carry_intake_requests; GET DIAGNOSTICS added = ROW_COUNT;
+  UPDATE push_expected SET n = n + added - gone WHERE table_name = 'intake_requests';
+  DELETE FROM v3.tasks t USING carry_tasks c WHERE t.id = c.id; GET DIAGNOSTICS gone = ROW_COUNT;
+  INSERT INTO v3.tasks SELECT * FROM carry_tasks; GET DIAGNOSTICS added = ROW_COUNT;
+  UPDATE push_expected SET n = n + added - gone WHERE table_name = 'tasks';
+  INSERT INTO v3.requester_uploads SELECT * FROM carry_requester_uploads c
+   WHERE NOT EXISTS (SELECT 1 FROM v3.requester_uploads t WHERE t.id = c.id); GET DIAGNOSTICS added = ROW_COUNT;
+  UPDATE push_expected SET n = n + added WHERE table_name = 'requester_uploads';
+  INSERT INTO v3.intake_request_links SELECT * FROM carry_intake_request_links ON CONFLICT DO NOTHING; GET DIAGNOSTICS added = ROW_COUNT;
+  UPDATE push_expected SET n = n + added WHERE table_name = 'intake_request_links';
+  -- 設定：ローカルでも直した鍵はローカルを残す。それ以外は本番（Backlog の取り込み位置など）
+  DELETE FROM v3.settings t USING carry_settings c WHERE t.key = c.key AND (t.updated_at IS NULL OR t.updated_at <= S); GET DIAGNOSTICS gone = ROW_COUNT;
+  INSERT INTO v3.settings SELECT * FROM carry_settings ON CONFLICT (key) DO NOTHING; GET DIAGNOSTICS added = ROW_COUNT;
+  UPDATE push_expected SET n = n + added - gone WHERE table_name = 'settings';
+  -- 番号の採番表は大きい方（本番で REQ・ATT が進んでいる）
+  INSERT INTO v3.document_sequences AS t SELECT * FROM carry_sequences
+  ON CONFLICT (prefix, year) DO UPDATE SET current_value = GREATEST(t.current_value, EXCLUDED.current_value);
+  SELECT count(*) INTO added FROM carry_sequences c
+   WHERE NOT EXISTS (SELECT 1 FROM push_local_sequences l WHERE l.prefix = c.prefix AND l.year = c.year);
+  UPDATE push_expected SET n = n + added WHERE table_name = 'document_sequences';
+  -- 操作記録は新しい ID で足す
+  INSERT INTO v3.audit_events (occurred_at, actor, action, target_type, target_id, detail)
+  SELECT occurred_at, actor, action, target_type, target_id, detail FROM carry_audit ORDER BY id; GET DIAGNOSTICS added = ROW_COUNT;
+  UPDATE push_expected SET n = n + added WHERE table_name = 'audit_events';
+  -- 連番を入れた行の続きへ
+  PERFORM setval(pg_get_serial_sequence('v3.intake_requests', 'id'), GREATEST(max(id), 1)) FROM v3.intake_requests
+   HAVING max(id) > COALESCE((SELECT last_value FROM pg_sequences WHERE schemaname = 'v3' AND sequencename = 'intake_requests_id_seq'), 0);
+  PERFORM setval(pg_get_serial_sequence('v3.tasks', 'id'), GREATEST(max(id), 1)) FROM v3.tasks
+   HAVING max(id) > COALESCE((SELECT last_value FROM pg_sequences WHERE schemaname = 'v3' AND sequencename = 'tasks_id_seq'), 0);
+  PERFORM setval(pg_get_serial_sequence('v3.requester_uploads', 'id'), GREATEST(max(id), 1)) FROM v3.requester_uploads
+   HAVING max(id) > COALESCE((SELECT last_value FROM pg_sequences WHERE schemaname = 'v3' AND sequencename = 'requester_uploads_id_seq'), 0);
+  RAISE NOTICE '本番の行を戻した（依頼 %・作業 %・アップロード %・依頼のつながり %・設定 %・操作記録 %）',
+    (SELECT count(*) FROM carry_intake_requests), (SELECT count(*) FROM carry_tasks), (SELECT count(*) FROM carry_requester_uploads),
+    (SELECT count(*) FROM carry_intake_request_links), (SELECT count(*) FROM carry_settings), (SELECT count(*) FROM carry_audit);
+END
+\$carry\$;
 
 -- 5. ローカルにしか無い PDF の保存先を消す（本番では文書の本文から作り直す）。${local_files} 件
 UPDATE v3.documents SET storage_url = NULL WHERE storage_url LIKE '%/local-files/%';
