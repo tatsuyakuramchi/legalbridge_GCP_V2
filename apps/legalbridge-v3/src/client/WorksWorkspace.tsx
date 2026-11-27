@@ -16,6 +16,7 @@ import { WorkLedger } from "./WorkLedger.js";
 import { WorkRightsFlow } from "./WorkRightsFlow.js";
 import { WorkRightsMatrix } from "./WorkRightsMatrix.js";
 import { RightsMatrixOverview } from "./RightsMatrixOverview.js";
+import { WorkMatrixEditor } from "./WorkMatrixEditor.js";
 import { WorkEditions, editionFamilyOf } from "./WorkEditions.js";
 import type { ImportPreset } from "./BulkRegister.js";
 import { ConditionShares } from "./ConditionShares.js";
@@ -272,6 +273,8 @@ export function WorksWorkspace(
   const [cleanupOpen, setCleanupOpen] = useState(false);
   /** 作品をまたぐ 地域×言語の一覧。 */
   const [overviewOpen, setOverviewOpen] = useState(false);
+  // 作品の条件をまとめて直す（料率・取り分・共著者・クレジット・取引モデル名）。
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -664,7 +667,11 @@ export function WorksWorkspace(
           {onOpenImport && <button className="btn btn-sm" onClick={() => onOpenImport({ kind: "license_conditions" })}
                   title="作品に紐づく利用許諾条件を CSV でまとめて登録する（一括処理 › まとめて登録・更新する）">↑ 条件を一括登録</button>}
         </>)}
-        <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={overviewOpen}
+        {editable && (
+          <button className="btn btn-sm" style={{ marginLeft: "auto" }} aria-pressed={bulkOpen} onClick={() => setBulkOpen((v) => !v)}
+                  title="作品を探して表に置き、料率・取り分・共著者・クレジット表記・取引モデル名をまとめて直す">まとめて直す</button>
+        )}
+        <button className="btn btn-sm" style={editable ? undefined : { marginLeft: "auto" }} aria-pressed={overviewOpen}
                 onClick={() => setOverviewOpen((v) => !v)}
                 title="作品をまたいで、どの言語をどこに許諾しているかを一覧で見る">地域×言語の一覧</button>
         <button className="btn btn-sm" aria-pressed={cleanupOpen}
@@ -680,6 +687,10 @@ export function WorksWorkspace(
       {creating === "derivative" && (
         <DerivativeWorkForm onDone={(r) => { setCreating(null); setNotice(`二次利用の作品「${r.title}」を作りました`); void reloadTree(r.id); }}
                             onCancel={() => setCreating(null)} />
+      )}
+      {bulkOpen && (
+        <WorkMatrixEditor onClose={() => setBulkOpen(false)} initialWorkIds={selected ? [selected] : []}
+          onOpenCondition={onOpenCondition} />
       )}
       {overviewOpen && (
         <RightsMatrixOverview onClose={() => setOverviewOpen(false)}

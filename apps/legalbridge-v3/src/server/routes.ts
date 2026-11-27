@@ -45,6 +45,7 @@ import { DriftService } from "./matters/drift-service.js";
 import { ConditionBundleService } from "./conditions/bundle-service.js";
 import { MatterGraphService } from "./matters/graph-service.js";
 import { WorkCreditService } from "./works/credits.js";
+import { WorkMatrixService } from "./works/matrix.js";
 import { settlesEvents } from "./documents/settlement-docs.js";
 import { settlementEventRows } from "./documents/settlement-conditions.js";
 import { draftInputFromOrder, OrderSettlementService } from "./documents/from-order.js";
@@ -4023,6 +4024,46 @@ export function createRoutes(database: Transactable) {
     asyncRoute(async (req, res) => {
       res.json(await ebookSales.unmapCode(String(req.params.cid), actor(res)));
     }));
+
+  // 作品の条件をまとめて直す（料率・取り分・共著者・クレジット・取引モデル名）。works/matrix.ts
+  const workMatrix = new WorkMatrixService(database);
+  router.get("/work-matrix/search", asyncRoute(async (req, res) => {
+    res.json({ works: await workMatrix.search(String(req.query.q ?? "")) });
+  }));
+  router.get("/work-matrix", asyncRoute(async (req, res) => {
+    const ids = String(req.query.ids ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 100);
+    res.json({ works: await workMatrix.load(ids) });
+  }));
+  const matrixSchema = z.object({
+    conditions: z.array(z.object({
+      id: z.coerce.number().int().positive(),
+      name: z.string().trim().min(1).max(300).optional(),
+      ratePpm: z.coerce.number().int().min(0).max(1_000_000).optional(),
+      shares: z.array(z.object({
+        partyId: z.coerce.number().int().positive(),
+        sharePpm: z.coerce.number().int().min(1).max(1_000_000),
+        note: z.string().trim().max(200).nullable().optional()
+      })).max(20).optional()
+    })).max(500),
+    works: z.array(z.object({
+      id: z.coerce.number().int().positive(),
+      copyrightNotice: z.string().trim().min(1).max(300).optional(),
+      thirdPartyRights: z.string().trim().max(600).nullable().optional()
+    })).max(100),
+    mode: z.enum(["revise", "correct"]),
+    effectiveFrom: z.string().date().nullable().optional(),
+    creditFrom: z.string().date().nullable().optional(),
+    reason: z.string().trim().max(500)
+  });
+  // 試算（何も変えない）と確定。確定は 1 本のトランザクションで、1 つでも断られたら何も変えない。
+  router.post("/work-matrix/preview", requireRole("admin", "legal"), asyncRoute(async (req, res) => {
+    const b = matrixSchema.parse(req.body ?? {});
+    res.json(await workMatrix.apply({ ...b, effectiveFrom: b.effectiveFrom ?? null, creditFrom: b.creditFrom ?? null }, actor(res), { dryRun: true }));
+  }));
+  router.post("/work-matrix/apply", requireRole("admin", "legal"), requireWritable, asyncRoute(async (req, res) => {
+    const b = matrixSchema.parse(req.body ?? {});
+    res.json(await workMatrix.apply({ ...b, effectiveFrom: b.effectiveFrom ?? null, creditFrom: b.creditFrom ?? null }, actor(res)));
+  }));
 
   router.get("/works/:id/credits", asyncRoute(async (req, res) => {
     res.json(await workCredits.list(Number(req.params.id)));
