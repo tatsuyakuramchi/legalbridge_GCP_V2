@@ -18,6 +18,10 @@ test("算定方法と算定の基礎の文：非加算があるときだけ「�
     "算定の基礎（見込み）：本体価格 1,000円（税抜）× 初版 3,000部 × 10%");
   assert.equal(firstEditionBasisText({ price: 1000, copies: 3200, ratePct: 10, exemptCopies: 100 }, "確定"),
     "算定の基礎（確定）：本体価格 1,000円（税抜）× （初版 3,200部 − 献本等 100部） × 10%");
+  assert.equal(firstEditionBasisText({ price: 1000, copies: 3000, ratePct: 10.9091 }),
+    "算定の基礎（見込み）：本体価格 1,000円（税抜）× 初版 3,000部 × 10.9091%", "料率は第2位で切らない");
+  assert.equal(firstEditionBasisText({ price: 1000, copies: 3000, ratePct: 10.9091 }, "見込み", 3),
+    "算定の基礎（見込み）：本体価格 1,000円（税抜）× 初版 3,000部 × 10.909%", "V5 の出版は第3位まで");
   assert.equal(inLieuShortNote(100, 1, "原稿制作"), "初版は明細の原稿制作報酬で支払済み（非加算 100部）／2版以降は発行部数の1%を非加算");
   assert.equal(inLieuShortNote(null, null), "初版は明細の制作報酬で支払済み");
 });

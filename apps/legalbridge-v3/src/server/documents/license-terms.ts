@@ -173,7 +173,8 @@ const number = (value: unknown): number | null => {
   const parsed = Number.parseFloat(String(value).replace(/[^0-9.-]/g, ""));
   return Number.isFinite(parsed) ? parsed : null;
 };
-const percent = (value: number | null) => (value == null ? "—" : `${+value.toFixed(2)}%`);
+// 料率は百万分率で持つので、第4位まで出せば切れない（10.9091%）。末尾の 0 は書かない。
+const percent = (value: number | null) => (value == null ? "—" : `${+value.toFixed(4)}%`);
 /** 2026-10-01 → 2026年10月1日。日付でなければそのまま。 */
 const japanese = (iso: string): string => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);

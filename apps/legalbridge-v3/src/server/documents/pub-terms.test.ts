@@ -321,7 +321,7 @@ test("受取人（共著者の一人）宛て：甲がその人になり、料�
   assert.equal(payeeRateText({ partyId: 21 }, undefined), "—");
 });
 
-test("V5 の出版の条件書は料率を小数点第3位まで（末尾の 0 は書かない）。V3 などは従来どおり", () => {
+test("V5 の出版の条件書は料率を小数点第3位まで（末尾の 0 は書かない）。V3 などは第4位まで（切らない）", () => {
   const ctx = { ...sharedContext(), payee: { partyId: 21, name: "作家B" } };
   ctx.condition = { ...ctx.condition, counterparty: { ...ctx.condition.counterparty, name: "作家B" } };
   const v5 = pubTermsPatch(ctx, { [PUB_TITLES_FIELD]: pubTitleSeeds(ctx) }, { v5: true }).titles as Array<Record<string, any>>;
@@ -332,7 +332,8 @@ test("V5 の出版の条件書は料率を小数点第3位まで（末尾の 0 �
   assert.equal(withPubRateDigits(true, () => percentText(0.90909)), "0.909%");
   assert.equal(withPubRateDigits(true, () => percentText(10.3125)), "10.313%");
   assert.equal(withPubRateDigits(true, () => percentText(1)), "1%");
-  assert.equal(percentText(0.90909), "0.91%", "V5 の外は従来の第2位");
+  assert.equal(percentText(0.909091), "0.9091%", "V5 の外は第4位まで（第2位で切らない）");
+  assert.equal(percentText(10.9091), "10.9091%");
 });
 
 test("紙と電子で按分が違う作品：共同著作の行に両方、受取人の取り分も媒体ごと", () => {

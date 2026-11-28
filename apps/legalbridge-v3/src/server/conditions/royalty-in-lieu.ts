@@ -78,7 +78,7 @@ export function firstEditionFormulaText(basis: Pick<FirstEditionBasis, "ratePct"
 }
 
 /** 算定の基礎の短い言い方（明細の仕様・検収の内訳に出す）。「本体価格 1,000円 ×（初版 3,000部 − 献本等 100部）× 10%」 */
-export function firstEditionBasisText(basis: FirstEditionBasis, label: "見込み" | "確定" = "見込み"): string {
+export function firstEditionBasisText(basis: FirstEditionBasis, label: "見込み" | "確定" = "見込み", rateDigits?: number): string {
   const exempt = Math.floor(basis.exemptCopies ?? 0);
   const copies = exempt > 0
     ? `（初版 ${basis.copies.toLocaleString("ja-JP")}部 − 献本等 ${exempt.toLocaleString("ja-JP")}部）`
@@ -87,9 +87,9 @@ export function firstEditionBasisText(basis: FirstEditionBasis, label: "見込�
     ? `卸価格 ${basis.price.toLocaleString("ja-JP")}円（${String(basis.partyName ?? "").trim() ? `${String(basis.partyName).trim()} への` : "再許諾先への"}供給価格・税抜）`
     : `本体価格 ${basis.price.toLocaleString("ja-JP")}円（税抜）`;
   if (basis.priceBasis === "receipts") {
-    return `算定の基礎（${label}）：受領する再許諾料 ${basis.price.toLocaleString("ja-JP")}円（税抜）× ${pct(basis.ratePct)}%`;
+    return `算定の基礎（${label}）：受領する再許諾料 ${basis.price.toLocaleString("ja-JP")}円（税抜）× ${pct(basis.ratePct, rateDigits)}%`;
   }
-  return `算定の基礎（${label}）：${price}× ${copies} × ${pct(basis.ratePct)}%`;
+  return `算定の基礎（${label}）：${price}× ${copies} × ${pct(basis.ratePct, rateDigits)}%`;
 }
 
 /** 2 版目以降の非加算（発行部数の %）の文。空か 0 なら空文字。 */
@@ -109,7 +109,11 @@ export function inLieuShortNote(firstExempt: number | null | undefined, laterPct
   return [first, later].filter(Boolean).join("／");
 }
 
-const pct = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
+/**
+ * 率の表記。料率は百万分率で持つので、第4位まで出せば切れない（10.9091）。digits を渡せばその桁まで（V5 の出版は 3）。
+ * 末尾の 0 は書かない。
+ */
+const pct = (n: number, digits = 4) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(digits))));
 const yen = (n: number) => Math.round(n).toLocaleString("ja-JP");
 
 /** 2 版目以降・電子の算定式。 */
@@ -175,12 +179,12 @@ function periodText(p: { start?: string | null; end?: string | null } | null | u
  * 条件書（出版等利用許諾条件書・個別利用許諾条件書）の備考に写す 1 文（A-089）。
  * 初版分は発注書の報酬として支払済みで、条件書の対象は第2版以降・電子だと分かるようにする。
  */
-export function inLieuPaidNote(basis: Partial<FirstEditionBasis> | null | undefined): string {
+export function inLieuPaidNote(basis: Partial<FirstEditionBasis> | null | undefined, rateDigits?: number): string {
   const fe = basis && basis.price && basis.copies && basis.ratePct
     ? { price: Number(basis.price), copies: Number(basis.copies), ratePct: Number(basis.ratePct), exemptCopies: basis.exemptCopies ?? null,
         priceBasis: basis.priceBasis ?? null, partyName: basis.partyName ?? null }
     : null;
-  const calc = fe ? `（算定：${firstEditionBasisText(fe, "見込み").replace(/^算定の基礎（見込み）：/, "")}）` : "";
+  const calc = fe ? `（算定：${firstEditionBasisText(fe, "見込み", rateDigits).replace(/^算定の基礎（見込み）：/, "")}）` : "";
   return `初版の出版に係る利用許諾料は、発注書の制作報酬（初版利用許諾料）として支払済み${calc}。本条件書の料率は第2版以降の出版および電子版に適用する。`;
 }
 

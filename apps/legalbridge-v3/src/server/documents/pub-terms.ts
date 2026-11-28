@@ -96,14 +96,14 @@ const number = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 /**
- * 料率の桁（小数点以下）。null は従来の表記（全体の率は第2位・実質の率は第4位まで）。
- * V5 の出版の条件書は第3位まで（pubTermsPatch の中だけ 3 にする。同期の処理なので呼び出しをまたがない）。
+ * 料率の桁（小数点以下）。null は第4位まで（料率は百万分率で持つので、第4位まで出せば切れない）。
+ * V5 の出版の条件書は第3位まで（pubTermsPatch・行の種の中だけ 3 にする。同期の処理なので呼び出しをまたがない）。
  */
 let rateDigits: number | null = null;
-/** 料率の表記。小数は残す（8.5%）。末尾の 0 は書かない。無ければ「—」。 */
+/** 料率の表記。小数は残す（8.5%・10.9091%）。末尾の 0 は書かない。無ければ「—」。 */
 export const percentText = (value: unknown): string => {
   const n = number(value);
-  return n == null ? "—" : `${+n.toFixed(rateDigits ?? 2)}%`;
+  return n == null ? "—" : `${+n.toFixed(rateDigits ?? 4)}%`;
 };
 
 // ---------------------------------------------------------------------------
@@ -589,7 +589,7 @@ export function pubTitleSeeds(context: Data): Data[] {
     // 初版分を発注書の報酬で払った作品（A-077/A-089）：条件の備考に書いていなくても、備考に 1 文を写す。
     const paid = [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu");
     const paidNote = paid ? inLieuPaidNote({ price: paid.firstEditionPrice, copies: paid.firstEditionCopies,
-                                             ratePct: paid.firstEditionRatePct, exemptCopies: paid.royaltyExemptFirstCopies }) : "";
+                                             ratePct: paid.firstEditionRatePct, exemptCopies: paid.royaltyExemptFirstCopies }, rateDigits ?? undefined) : "";
     const exemptNote = exemptLaterNote(number(print?.royaltyExemptLaterPct));
     const receiptsNote = digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
     const notes = [...new Set([paidNote, exemptNote, receiptsNote, ...group.map((c) => text(c.notes))].filter(Boolean))].join("／");
@@ -1003,7 +1003,7 @@ function pubTermsPatchBody(context: Data, manual: Data, options: PubTermsOptions
       const paidCond = fromLedger ? [print, digital].find((c) => c && String(c.licenseFeeBasis) === "in_lieu") : null;
       const fresh = paidCond ? inLieuPaidNote({ price: paidCond.firstEditionPrice, copies: paidCond.firstEditionCopies,
                                                ratePct: paidCond.firstEditionRatePct, exemptCopies: paidCond.royaltyExemptFirstCopies,
-                                               priceBasis: paidCond.priceBasis, partyName: paidCond.targetPartyName }) : "";
+                                               priceBasis: paidCond.priceBasis, partyName: paidCond.targetPartyName }, rateDigits ?? undefined) : "";
       // 増刷時の非加算と電子の料率の基準も台帳から引き直す（行を直していてもそちらが正）。
       const exempt = fromLedger ? exemptLaterNote(number(print?.royaltyExemptLaterPct)) : "";
       const receipts = !options.v5 && fromLedger && digital && String(digital.priceBasis) === "receipts" ? RECEIPTS_NOTE : "";
