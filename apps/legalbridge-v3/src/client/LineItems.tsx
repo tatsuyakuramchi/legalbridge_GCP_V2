@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { PubTitlesTable } from "./PubTitlesTable.js";
+import { PubTitlesTable, type LedgerPending } from "./PubTitlesTable.js";
 import { SearchSelect, searchWorks } from "./SearchSelect.js";
 import { DerivativeWorkForm } from "./DerivativeWorkForm.js";
 import { SnippetPicker } from "./SnippetPicker.js";
@@ -379,10 +379,10 @@ export const LINE_SECTIONS: Record<string, {
 const num = (v: unknown) => { const n = Number(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? n : null; };
 
 export function LineItemsEditor(
-  { name, seed, rows, intl, onChange, covers, onLedgerApplied }: {
+  { name, seed, rows, intl, onChange, covers, ledger }: {
     name: string;
-    /** 出版条件書の対象著作物を表で直したとき、台帳（条件明細）も直した（改訂なら 旧 id → 新 id）。 */
-    onLedgerApplied?: (revised: Record<number, number>) => void;
+    /** 出版条件書の対象著作物を表で直したときの、台帳（条件明細）の保留中の変更。下書き保存・決定で当てる。 */
+    ledger?: { pending: LedgerPending | null; set: (pending: LedgerPending | null) => void };
     /**
      * 発注明細の行ごとの「初版利用許諾料の対象」（A-085）。発注書で「初版…支払済み」の利用許諾条件を
      * 載せているときだけ渡す。条件から出た行（condition_id あり）にチェックを出す。
@@ -440,7 +440,7 @@ export function LineItemsEditor(
     <div className="panel fsec">
       {table && (
         <PubTitlesTable rows={current} seed={seed} onClose={() => setTable(false)} onApply={(r) => onChange(r)}
-          onLedgerApplied={(m) => onLedgerApplied?.(m)} />
+          pending={ledger?.pending ?? null} onLedgerPending={(p) => ledger?.set(p)} />
       )}
       <div className="panel-hd">
         <h2>{section.title}</h2>
@@ -465,6 +465,16 @@ export function LineItemsEditor(
       </div>
       <div className="panel-bd stack" style={{ gap: 10 }}>
         <div className="faint">{section.hint}</div>
+        {ledger?.pending && (
+          <div className="note warn">
+            台帳（条件明細）の変更を保留しています：<b>{ledger.pending.summary}</b>。
+            「下書きを保存」か「決定」を押したときに確定します（プレビューは確定したあとに変わります）。
+            <span className="row" style={{ gap: 6, marginTop: 4 }}>
+              <button type="button" className="btn btn-sm" onClick={() => setTable(true)}>表で見る・直す</button>
+              <button type="button" className="btn btn-sm" onClick={() => ledger.set(null)}>保留を取り消す</button>
+            </span>
+          </div>
+        )}
         {/* 手入力で固定された明細は、条件を直しても紙に反映されない。訂正版や開き直した下書きで
             「条件を直したのに金額が変わらない」と迷うので、ここで言って戻す口を出す（A-087）。 */}
         {edited && seed.length > 0 && (

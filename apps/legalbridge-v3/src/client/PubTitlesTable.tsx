@@ -13,7 +13,9 @@ import type { MatrixApplyResult, MatrixCondition } from "../server/works/matrix.
  *   条件明細（台帳）             … 料率（紙・電子・翻訳版）・共著者と取り分・分配方法。作品の「まとめて直す」と同じ
  *                                  処理（POST /work-matrix/apply）で、理由・改訂／訂正・適用日を付けて当てる
  *
- * 台帳を改訂して新しい版ができたら、文書が載せる条件を新しい版に付け替える（onLedgerApplied に 旧 id → 新 id を返す）。
+ * 台帳の変更はここでは当てない。確かめて（試算）よければ「保留」として文書の画面へ渡し（onLedgerPending）、
+ * 文書の「下書きを保存」か「決定」のときに当てる（DocumentsWorkspace）。改訂で新しい版ができたら、そこで
+ * 文書が載せる条件と行の条件 id を新しい版に付け替える。
  * 著作権表示・共同著作は「作品のクレジット表記にも反映」を選ぶと、作品の台帳（クレジット表記の履歴）にも入れる。
  */
 
@@ -34,6 +36,19 @@ const LEDGER_COLS: Array<{ key: LedgerKey; label: string; text: string; excl: st
   { key: "trans_digital_condition_id", label: "翻訳版（電子）", text: "trans_digital_rate", excl: "" }
 ];
 interface CondEdit { ratePpm?: number; shares?: ShareEdit[]; distribution?: Distribution }
+
+/** 保留中の台帳の変更（POST /work-matrix/apply にそのまま渡す形）。文書の下書き保存・決定で当てる。 */
+export interface LedgerPending {
+  conditions: Array<{ id: number; ratePpm?: number; shares?: Array<{ partyId: number; sharePpm: number; note: string | null }>; distribution?: Distribution }>;
+  works: Array<{ id: number; copyrightNotice?: string; thirdPartyRights?: string | null }>;
+  mode: "revise" | "correct";
+  effectiveFrom: string | null;
+  reason: string;
+  /** 画面に出す要約（「料率 2・取り分 1・作品のクレジット 3」など）。 */
+  summary: string;
+  /** 表に戻したときに入力欄へ戻すための、取り分の名前つきの値。 */
+  edits: Record<number, CondEdit>;
+}
 type Editing = { k: number; col: DocCol } | { k: number; ledger: LedgerKey } | { k: number; shares: true } | null;
 
 const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -51,19 +66,22 @@ export function remapRowIds(row: Row, map: Record<number, number>): Row {
   return out;
 }
 
-export function PubTitlesTable({ rows, seed, onClose, onApply, onLedgerApplied }: {
+export function PubTitlesTable({ rows, seed, pending, onClose, onApply, onLedgerPending }: {
   /** いまの一覧（手で直していなければ自動の行）。 */
   rows: Row[]; seed: Row[];
   onClose: () => void;
   /** 文書の一覧を置き換える（直していなければ呼ばない）。 */
   onApply: (rows: Row[]) => void;
-  /** 台帳を直した（改訂なら 旧 id → 新 id）。文書の条件の付け替えと、自動の行・プレビューの読み直しに使う。 */
-  onLedgerApplied: (revised: Record<number, number>) => void;
+  /** いま保留している台帳の変更（表を開き直したとき、入力欄へ戻す）。 */
+  pending: LedgerPending | null;
+  /** 台帳の変更を保留にする（null は保留を取り消す）。当てるのは文書の下書き保存・決定のとき。 */
+  onLedgerPending: (pending: LedgerPending | null) => void;
 }) {
   const base = useMemo<Row[]>(() => rows.map((r, k) => ({ ...r, __k: k })), [rows]);
   const [work, setWork] = useState<Row[]>(base);
   const [conds, setConds] = useState<MatrixCondition[]>([]);
-  const [condEdits, setCondEdits] = useState<Map<number, CondEdit>>(new Map());
+  const [condEdits, setCondEdits] = useState<Map<number, CondEdit>>(
+    () => new Map(Object.entries(pending?.edits ?? {}).map(([k, v]) => [Number(k), v])));
   const [editing, setEditing] = useState<Editing>(null);
   const [q, setQ] = useState("");
   const [only, setOnly] = useState<"all" | "noCopyright" | "shares" | "noDate" | "changed">("all");
@@ -71,9 +89,9 @@ export function PubTitlesTable({ rows, seed, onClose, onApply, onLedgerApplied }
   const [bulkCol, setBulkCol] = useState<DocCol>("copyright");
   const [bulkValue, setBulkValue] = useState("");
   const [paste, setPaste] = useState<string | null>(null);
-  const [mode, setMode] = useState<"revise" | "correct">("revise");
-  const [effectiveFrom, setEffectiveFrom] = useState("");
-  const [reason, setReason] = useState("");
+  const [mode, setMode] = useState<"revise" | "correct">(pending?.mode ?? "revise");
+  const [effectiveFrom, setEffectiveFrom] = useState(pending?.effectiveFrom ?? "");
+  const [reason, setReason] = useState(pending?.reason ?? "");
   const [creditToWork, setCreditToWork] = useState(true);
   const [preview, setPreview] = useState<MatrixApplyResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -126,8 +144,10 @@ export function PubTitlesTable({ rows, seed, onClose, onApply, onLedgerApplied }
       if (tc) e.thirdPartyRights = s(r.third_party).trim() || null;
       byWork.set(wid, e);
     }
+    // 前に保留した作品のクレジットの反映（一覧にはもう入っているので、ここでは差として出ない）も残す。
+    for (const w of pending?.works ?? []) if (!byWork.has(w.id)) byWork.set(w.id, w);
     return [...byWork.values()].filter((w) => w.copyrightNotice !== undefined || w.thirdPartyRights !== undefined);
-  }, [work, creditToWork, condById]);
+  }, [work, creditToWork, condById, pending]);
   const touchesLedger = ledgerChanges.length > 0 || workChanges.length > 0;
 
   // 絞り込み
@@ -185,27 +205,36 @@ export function PubTitlesTable({ rows, seed, onClose, onApply, onLedgerApplied }
     setBusy(true); setError(null);
     try { setPreview(await confirmLedger(true)); } catch (e) { setError((e as ApiError).message); } finally { setBusy(false); }
   }
-  async function finish() {
-    setBusy(true); setError(null);
-    try {
-      let map: Record<number, number> = {};
-      if (touchesLedger) {
-        const r = await confirmLedger(false);
-        if (!r || !r.applied) { setPreview(r); setError("台帳に当てられない項目があります。下の結果を見て直してください"); return; }
-        for (const i of r.items) if (i.target === "condition" && i.revisedTo) map[i.id] = i.revisedTo.id;
-      }
-      const remapped = Object.keys(map).length ? work.map((r) => remapRowIds(r, map)) : work;
-      if (docEdits.length || Object.keys(map).length) {
-        onApply(remapped.map(({ __k, ...r }) => r));
-      }
-      if (touchesLedger) onLedgerApplied(map);
-      onClose();
-    } catch (e) { setError((e as ApiError).message); }
-    finally { setBusy(false); }
+  /** 一覧に入れて閉じる。台帳の変更は保留として渡す（当てるのは文書の下書き保存・決定のとき）。 */
+  function finish() {
+    if (docEdits.length) onApply(work.map(({ __k, ...r }) => r));
+    if (touchesLedger) {
+      const n = (f: (x: typeof ledgerChanges[number]) => boolean) => ledgerChanges.filter(f).length;
+      const parts = [
+        n((x) => x.ratePpm !== undefined) ? `料率 ${n((x) => x.ratePpm !== undefined)}` : "",
+        n((x) => x.shares !== undefined) ? `取り分 ${n((x) => x.shares !== undefined)}` : "",
+        n((x) => x.distribution !== undefined) ? `分配方法 ${n((x) => x.distribution !== undefined)}` : "",
+        workChanges.length ? `作品のクレジット ${workChanges.length}` : ""
+      ].filter(Boolean);
+      onLedgerPending({
+        conditions: ledgerChanges.map((x) => ({
+          id: x.id, ...(x.ratePpm !== undefined ? { ratePpm: x.ratePpm } : {}),
+          ...(x.shares ? { shares: x.shares.map((v) => ({ partyId: v.partyId, sharePpm: v.sharePpm, note: v.note })) } : {}),
+          ...(x.distribution ? { distribution: x.distribution } : {})
+        })),
+        works: workChanges, mode, effectiveFrom: effectiveFrom || null, reason: reason.trim(),
+        summary: `${parts.join("・")}${ledgerChanges.length ? `（${mode === "revise" ? `改訂${effectiveFrom ? `・${effectiveFrom} から` : "・今日から"}` : "訂正"}）` : ""}`,
+        edits: Object.fromEntries(ledgerChanges.map((x) => [x.id, condEdits.get(x.id) ?? {}]))
+      });
+    } else if (pending) {
+      onLedgerPending(null);
+    }
+    onClose();
   }
 
   const ready = !touchesLedger || (reason.trim() && preview && preview.items.every((i) => i.ok));
-  const total = docEdits.length + ledgerChanges.length;
+  // 前に保留した変更を全部戻したときも、閉じて保留を取り消せるように数える。
+  const total = docEdits.length + ledgerChanges.length + (pending && !touchesLedger ? 1 : 0);
 
   return (
     <div className="pt-overlay" role="dialog" aria-label="対象著作物を表で直す">
@@ -361,6 +390,8 @@ export function PubTitlesTable({ rows, seed, onClose, onApply, onLedgerApplied }
         )}
 
         <div className="pt-ft">
+          {touchesLedger && <span className="faint" style={{ flexBasis: "100%" }}>
+            台帳（条件明細・作品のクレジット）の変更は、文書の「下書きを保存」か「決定」を押したときに確定します。それまでは保留です。</span>}
           <span><b>直したところ {total}</b>
             <span className="faint">（文書の文 {docEdits.length}・台帳 {ledgerChanges.length}{workChanges.length ? `・作品のクレジット ${workChanges.length}` : ""}）</span></span>
           {(docEdits.some((d) => d.col === "copyright" || d.col === "third_party")) && (
@@ -384,7 +415,7 @@ export function PubTitlesTable({ rows, seed, onClose, onApply, onLedgerApplied }
           )}
           <button className="btn primary" style={{ marginLeft: "auto" }} disabled={busy || !ready || total + workChanges.length === 0}
                   title={touchesLedger && !preview ? "先に「台帳を確かめる」で結果を見てください" : undefined}
-                  onClick={() => void finish()}>{busy ? "反映しています…" : touchesLedger ? "台帳に当てて一覧に入れる" : "一覧に入れて閉じる"}</button>
+                  onClick={() => finish()}>{touchesLedger ? "一覧に入れて閉じる（台帳は保存で確定）" : "一覧に入れて閉じる"}</button>
         </div>
       </div>
     </div>
