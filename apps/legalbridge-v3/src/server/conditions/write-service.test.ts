@@ -455,6 +455,7 @@ const shareRows = (over: { counterparty?: number; mg?: number | null } = {}) => 
     return [{ condition_no: "CL-1", direction: "in", kind: "license", pricing_model: "revenue_rate",
               mg_amount: over.mg ?? null, ag_amount: null, work_id: 7 }];
   }
+  if (text.includes("SELECT counterparty_id FROM conditions WHERE id = $1")) return [{ counterparty_id: over.counterparty ?? 21 }];
   if (text.includes("c.work_id = $2 AND c.id <> $1")) return [{ id: 2, condition_no: "CL-2" }];
   if (text.includes("SELECT id FROM parties WHERE id = ANY")) return [{ id: 21 }, { id: 22 }];
   if (text.includes("AS documents")) return [{ documents: 0, payments: 0, matters: 0, children: 0 }];
@@ -482,11 +483,11 @@ test("取り分の置き換え：行を入れ直し、分配を誰がするか�
   assert.deepEqual(db2.find("UPDATE conditions SET distribution")!.params, [1, null]);
 });
 
-test("代表が分配する契約：相手先が取り分に無ければ断る。MG があってもよい", async () => {
-  await assert.rejects(
-    () => new ConditionWriteService(new FakeDatabase(shareRows({ counterparty: 99 }))).replaceShares(1,
-      [{ partyId: 21, sharePpm: 500000 }, { partyId: 22, sharePpm: 500000 }], "tester", "representative"),
-    (e: unknown) => e instanceof DomainError && /相手先（代表）を取り分の中に/.test(e.message));
+test("代表が分配する契約：相手先が取り分に無くてよい（全額を分配）。MG があってもよい", async () => {
+  const db0 = new FakeDatabase(shareRows({ counterparty: 99 }));
+  await new ConditionWriteService(db0).replaceShares(1,
+    [{ partyId: 21, sharePpm: 500000 }, { partyId: 22, sharePpm: 500000 }], "tester", "representative");
+  assert.deepEqual(db0.find("UPDATE conditions SET distribution")!.params, [1, "representative"]);
   const db = new FakeDatabase(shareRows({ mg: 100000 }));
   await new ConditionWriteService(db).replaceShares(1,
     [{ partyId: 21, sharePpm: 500000 }, { partyId: 22, sharePpm: 500000 }], "tester", "representative");

@@ -614,13 +614,8 @@ export class PubWorksImportService {
     const anyShares = [...(shares ?? []), ...(perMedia?.print ?? []), ...(perMedia?.digital ?? [])];
     if (anyShares.length && !distribution) distribution = "direct";
     const representative = createParty ?? (shareTarget ? { id: shareTarget.counterpartyId, name: shareTarget.partyName } : null);
-    if (distribution === "representative" && representative) {
-      for (const set of [shares, perMedia?.print, perMedia?.digital]) {
-        if (set && set.length && !set.some((s) => s.partyId === representative.id)) {
-          throw new DomainError("VALIDATION", "代表が分配する契約では、相手先（代表）を取り分の中に入れてください");
-        }
-      }
-    }
+    // 代表が取り分に入っていなくてよい（代表は全額を受け取り、全額を共著者等に分配する）。
+    void representative;
     if ((shares || perMedia) && !shareTarget && !creates.length) {
       throw new DomainError("VALIDATION", `${who} に紙・電子の条件が無いので取り分は入れられません。料率も入れて条件を作ってください`);
     }
@@ -876,13 +871,7 @@ export class PubWorksImportService {
     if (digitalShares && digital === null) throw new DomainError("VALIDATION", "電子取り分を入れるなら電子料率も入れてください");
     const anyShares = [...shares, ...(printShares ?? []), ...(digitalShares ?? [])];
     const distribution = anyShares.length ? (distText ? DISTRIBUTION[distText] : "direct") : null;
-    if (distribution === "representative") {
-      for (const set of [shares, printShares, digitalShares]) {
-        if (set && set.length && !set.some((s) => s.partyId === party.id)) {
-          throw new DomainError("VALIDATION", "代表が分配する契約では、相手先（代表）を取り分の中に入れてください");
-        }
-      }
-    }
+    // 代表が取り分に入っていなくてよい（代表は全額を受け取り、全額を共著者等に分配する）。
     if (!anyShares.length && distText) {
       throw new DomainError("VALIDATION", "分配を入れるなら取り分も入れてください");
     }

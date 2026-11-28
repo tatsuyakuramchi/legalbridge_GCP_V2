@@ -582,7 +582,7 @@ export function SharesEditor({ cond, initial, conds, ratePpm, distribution, onDo
     ? [] : typed;
   const sum = typed.reduce((n, s) => n + s.sharePpm, 0);
   const effSum = rate ? typed.reduce((n, s) => n + (rate * s.sharePpm) / 1_000_000, 0) : 0;
-  // 許諾者から分配するときは、相手先（代表）が取り分の中にいること（サーバも同じ確かめ）。
+  // 許諾者から分配で相手先（代表）が取り分に入っていなければ、代表は全額を分配する（条件書に代表の取り分を書かない）。
   const distOk = typed.some((s) => s.partyId === cond.counterpartyId);
   const ok = !typed.length || (sum === 1_000_000 && typed.every((s) => s.sharePpm > 0) && new Set(typed.map((s) => s.partyId)).size === typed.length);
 
@@ -642,7 +642,8 @@ export function SharesEditor({ cond, initial, conds, ratePpm, distribution, onDo
           <label className="row" style={{ gap: 4 }}><input type="radio" name={`dist-${cond.id}`} checked={dist === "representative"} onChange={() => setDist("representative")} />
             許諾者から分配<span className="faint">（許諾者が全額を受け取り、共著者等に分配する。備考は「分配：許諾者から分配」）</span></label>
           {dist === "representative" && !distOk && (
-            <span style={{ color: "var(--out)" }}>許諾者から分配するときは、相手先（{cond.counterpartyName ?? "許諾者"}）を共著者の中に入れてください</span>
+            <span className="faint">相手先（{cond.counterpartyName ?? "許諾者"}）を入れていないので、許諾者は全額を受け取り、全額を共著者等に分配します。
+              条件書には許諾者の取り分を書きません（「0%」とは出ません）</span>
           )}
         </div>
       )}
@@ -652,7 +653,7 @@ export function SharesEditor({ cond, initial, conds, ratePpm, distribution, onDo
           <span className="faint">（入るのは取り分の比率。料率が違う条件では実質料率も変わる）</span></label>
       )}
       <div className="row" style={{ gap: 6 }}>
-        <button className="btn btn-sm primary" disabled={!ok || (dist === "representative" && !distOk)}
+        <button className="btn btn-sm primary" disabled={!ok}
                 onClick={() => onDone(list, [cond.id, ...(toWork ? siblings.map((s) => s.id) : [])], dist)}>入れる</button>
         <button className="btn btn-sm" onClick={() => onDone(null, [], dist)}>やめる</button>
       </div>

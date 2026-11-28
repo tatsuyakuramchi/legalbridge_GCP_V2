@@ -726,3 +726,16 @@ test("備考の分配の文：取り分のある条件だけ。代表者から�
   assert.equal(distributionNoteOf([{ media: "紙", condition: { shares, distribution: "representative" } }, { media: "電子", condition: { shares } }]),
     "分配：紙は許諾者から・電子は被許諾者から直接");
 });
+
+
+test("許諾者から分配で許諾者が取り分に無い（全額を分配）：許諾者の取り分を書かず、警告もしない", async () => {
+  const { licensorShareNote, licensorShareMissing } = await import("./pub-terms.js");
+  const hv = [{ partyId: 9, name: "合同会社ハーベストバレー", sharePpm: 1000000 }];
+  const rep = { counterpartyId: 5, ratePct: 1, shares: hv, distribution: "representative" };
+  assert.equal(licensorShareNote(rep, undefined), "", "「取り分 0%」と書かない");
+  assert.equal(licensorShareMissing(rep), false);
+  // 当社から直接分配で許諾者がいないのは、これまでどおり 0% と警告
+  const direct = { ...rep, distribution: "direct" };
+  assert.equal(licensorShareNote(direct, undefined), "紙 取り分 0%（全体 1%）");
+  assert.equal(licensorShareMissing(direct), true);
+});
