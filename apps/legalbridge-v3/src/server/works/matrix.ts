@@ -171,6 +171,20 @@ export class WorkMatrixService {
     return loadMatrix(this.database, ids);
   }
 
+  /**
+   * 条件明細（id で指定）の表の行。文書の作成画面（対象著作物を表で直す）が、文書に載せた条件の料率・取り分を
+   * 出して直すのに使う。今の版・予約の版のライセンスの条件だけ（それ以外の id は返さない）。
+   */
+  async conditions(conditionIds: number[]): Promise<MatrixCondition[]> {
+    const ids = [...new Set(conditionIds.map(Number))].filter((n) => n > 0);
+    if (!ids.length) return [];
+    const works = (await this.database.query(
+      "SELECT DISTINCT work_id FROM conditions WHERE id = ANY($1::bigint[]) AND work_id IS NOT NULL", [ids])).rows as any[];
+    const all = await loadMatrix(this.database, works.map((w) => Number(w.work_id)));
+    const want = new Set(ids);
+    return all.flatMap((w) => w.conditions).filter((c) => want.has(c.id));
+  }
+
   /** まとめて当てる。dryRun は同じ処理を流して取り消す（試算）。 */
   async apply(input: MatrixApplyInput, actor: string, options: { dryRun?: boolean } = {}): Promise<MatrixApplyResult> {
     const reason = String(input.reason ?? "").trim();

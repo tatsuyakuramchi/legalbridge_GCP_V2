@@ -246,6 +246,8 @@ export function DocumentsWorkspace(
   const [templateKey, setTemplateKey] = useState("");
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
   const [picked, setPicked] = useState<number[]>(start?.conditionIds ?? []);
+  // 対象著作物を表で直して台帳（条件明細）を直したら、自動の行とプレビューを読み直す。
+  const [ledgerTick, setLedgerTick] = useState(0);
   const [manual, setManual] = useState<Record<string, string>>({});
   /**
    * 人が直した明細の行（items / other_fees / expenses / delivery_line_items）。
@@ -841,7 +843,7 @@ export function DocumentsWorkspace(
       .then((r) => { if (live) { setSpec(r); setSpecKey(templateKey); } })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id, chosenJson]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id, chosenJson, ledgerTick]);
 
   // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
   useEffect(() => {
@@ -853,7 +855,7 @@ export function DocumentsWorkspace(
       .then((r) => { if (live) setRendered({ html: r.html, templateLabel: r.templateLabel, warnings: r.warnings }); })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson, matterId, requestId]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson, matterId, requestId, ledgerTick]);
 
   async function runPreview() {
     setError(null); setIssued(null); setBusy(true); setPreviewedAt(null);
@@ -1247,6 +1249,11 @@ export function DocumentsWorkspace(
   const formFields = (spec?.fields ?? []).filter((f) => sutRows === null || secondaryUseFieldShown(f.name, sutRows));
   const lineEditors = !isLicenseTerms && (spec?.lines ?? []).map((l) => (
     <LineItemsEditor key={l.name} name={l.name} seed={l.rows}
+      onLedgerApplied={(revised) => {
+        // 改訂で新しい版ができた条件は、この文書も新しい版を載せる（古い版の料率のまま紙にしない）。
+        if (Object.keys(revised).length) setPicked((prev) => [...new Set(prev.map((id) => revised[id] ?? id))]);
+        setLedgerTick((t) => t + 1);
+      }}
       rows={lines[l.name] ?? null} intl={templateKey === "intl_purchase_order"}
       covers={isPurchaseOrder && feeCovers.length > 0 ? { selected: effectiveCovers, toggle: toggleCover } : null}
       onChange={(rows) => setLines((prev) => {

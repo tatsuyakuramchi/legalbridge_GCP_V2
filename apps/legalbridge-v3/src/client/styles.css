@@ -1341,3 +1341,20 @@ tr.ledger-sec.band td{background:var(--accent)}
   display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:3}
 .mx-derived{color:var(--muted);background:var(--sunken)}
 .mx-shares td:nth-child(2),.mx-shares td:nth-child(3){white-space:nowrap}
+
+/* 対象著作物を表で直す（PubTitlesTable） */
+.pt-overlay{position:fixed;inset:0;background:rgba(22,32,42,.35);z-index:50;display:flex}
+.pt-sheet{margin:14px;flex:1;background:var(--ground);border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden}
+.pt-hd{padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+.pt-hd h2{font-size:16px;margin:0}
+.pt-tools,.pt-paste{padding:8px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--surface);border-bottom:1px solid var(--line)}
+.pt-sep{border-left:1px solid var(--line);height:22px}
+.pt-body{flex:1;overflow:auto;padding:0 16px 12px}
+.pt-table th{position:sticky;top:0;z-index:2}
+.pt-table td{cursor:text}
+.pt-table th.pt-ledger,.pt-table td.pt-led{background:#F4F7FB}
+.pt-table td.pt-ro{background:var(--sunken);color:var(--muted);cursor:default}
+.pt-table tr.pt-picked td{background:var(--accent-soft)}
+.pt-result{padding:8px 16px;background:var(--surface);border-top:1px solid var(--line);max-height:22vh;overflow:auto}
+.pt-result ul{margin:4px 0 0;padding-left:18px}
+.pt-ft{padding:10px 16px;background:var(--surface);border-top:2px solid var(--accent);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
