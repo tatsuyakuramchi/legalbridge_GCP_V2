@@ -17,19 +17,19 @@ import { roundToMillion, sharePpmFromEffective } from "../server/works/share-mat
  *   4. 理由を入れて「確かめる」（試算。何も変えない）→「この内容で変更する」
  */
 
-type ShareEdit = { partyId: number; partyName: string; sharePpm: number; note: string | null };
-type Distribution = "direct" | "representative";
+export type ShareEdit = { partyId: number; partyName: string; sharePpm: number; note: string | null };
+export type Distribution = "direct" | "representative";
 interface CondEdit { name?: string; ratePpm?: number; shares?: ShareEdit[]; distribution?: Distribution }
 /** 分配方法の呼び名（条件書の備考の「分配：…」と同じ言い方）。 */
 const DISTRIBUTION_LABEL: Record<Distribution, string> = { representative: "許諾者から分配", direct: "当社から直接分配" };
-const distOf = (v: string | null | undefined): Distribution => (v === "representative" ? "representative" : "direct");
+export const distOf = (v: string | null | undefined): Distribution => (v === "representative" ? "representative" : "direct");
 interface WorkEdit { copyrightNotice?: string; thirdPartyRights?: string | null }
 type Cell = { kind: "work"; id: number; field: "copyrightNotice" | "thirdPartyRights" }
   | { kind: "cond"; id: number; field: "name" | "ratePpm" | "shares" };
 
 const USAGE_LABEL = Object.fromEntries(CONDITION_USAGE_TYPES.map((u) => [u.value, u.label])) as Record<string, string>;
 const BASIS_LABEL: Record<string, string> = { list: "定価・本体価格", supply: "卸価格", receipts: "受領額" };
-const pct = (ppm: number | null | undefined) =>
+export const pct = (ppm: number | null | undefined) =>
   ppm === null || ppm === undefined ? "—" : `${String(Number((ppm / 10_000).toFixed(4)))}%`;
 const toPpm = (text: string): number | null => {
   const n = Number(String(text).replace(/[%％\s]/g, ""));
@@ -40,9 +40,9 @@ const sharesText = (s: ShareEdit[], ratePpm?: number | null) => (s.length
   ? s.map((x) => `${x.partyName} ${pct(x.sharePpm)}${ratePpm ? `（実質 ${pct(Math.round((ratePpm * x.sharePpm) / 1_000_000))}）` : ""}${x.note ? `［${x.note}］` : ""}`).join(" ／ ")
   : "（取り分なし＝相手先に全額）");
 /** 表のセル：取り分があれば頭に分配方法を付ける。 */
-const withDist = (s: ShareEdit[], d: Distribution, ratePpm?: number | null) =>
+export const withDist = (s: ShareEdit[], d: Distribution, ratePpm?: number | null) =>
   (s.length ? `【${DISTRIBUTION_LABEL[d]}】${sharesText(s, ratePpm)}` : sharesText(s, ratePpm));
-const sameShares = (a: ShareEdit[], b: ShareEdit[]) =>
+export const sameShares = (a: ShareEdit[], b: ShareEdit[]) =>
   a.length === b.length && a.every((x, i) => x.partyId === b[i]!.partyId && x.sharePpm === b[i]!.sharePpm && (x.note ?? "") === (b[i]!.note ?? ""));
 const todayStr = () => {
   const d = new Date();
@@ -436,7 +436,7 @@ function TextEditor({ initial, onDone, width, placeholder }: {
 }
 
 /** 料率。同じ取引モデルの表示中の行にもまとめて入れられる。 */
-function RateEditor({ cond, initial, conds, onDone }: {
+export function RateEditor({ cond, initial, conds, onDone }: {
   cond: MatrixCondition; initial: number | null; conds: MatrixCondition[];
   onDone: (ppm: number | null, ids: number[]) => void;
 }) {
@@ -463,7 +463,7 @@ function RateEditor({ cond, initial, conds, onDone }: {
 }
 
 /** 共著者と取り分。共著者（取引先）を足す・外す、％と表記を入れる。同じ作品のほかの料率の条件にも入れられる。 */
-function SharesEditor({ cond, initial, conds, ratePpm, distribution, onDone }: {
+export function SharesEditor({ cond, initial, conds, ratePpm, distribution, onDone }: {
   cond: MatrixCondition; initial: ShareEdit[]; conds: MatrixCondition[];
   /** 条件の料率（表で直していれば直した値）。実質料率で入れるときの割る数。 */
   ratePpm: number | null;

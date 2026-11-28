@@ -11,6 +11,7 @@
  */
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import { PubTitlesTable, type LedgerPending } from "./PubTitlesTable.js";
 import { SearchSelect, searchWorks } from "./SearchSelect.js";
 import { DerivativeWorkForm } from "./DerivativeWorkForm.js";
 import { SnippetPicker } from "./SnippetPicker.js";
@@ -378,8 +379,10 @@ export const LINE_SECTIONS: Record<string, {
 const num = (v: unknown) => { const n = Number(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? n : null; };
 
 export function LineItemsEditor(
-  { name, seed, rows, intl, onChange, covers }: {
+  { name, seed, rows, intl, onChange, covers, ledger }: {
     name: string;
+    /** 出版条件書の対象著作物を表で直したときの、台帳（条件明細）の保留中の変更。下書き保存・決定で当てる。 */
+    ledger?: { pending: LedgerPending | null; set: (pending: LedgerPending | null) => void };
     /**
      * 発注明細の行ごとの「初版利用許諾料の対象」（A-085）。発注書で「初版…支払済み」の利用許諾条件を
      * 載せているときだけ渡す。条件から出た行（condition_id あり）にチェックを出す。
@@ -400,6 +403,7 @@ export function LineItemsEditor(
   const current = rows ?? seed;
   /** 二次利用の作品をその場で作っている行（作ったらその行の作品にする）。 */
   const [derivingRow, setDerivingRow] = useState<number | null>(null);
+  const [table, setTable] = useState(false);
   /** 作品を選んだ：id と作品名を行に入れ、著作権表示が空なら作品の登録から写す。 */
   const pickWork = (i: number, col: Column, value: string, picked?: string | null) => {
     const id = Number(value) || null;
@@ -434,6 +438,10 @@ export function LineItemsEditor(
 
   return (
     <div className="panel fsec">
+      {table && (
+        <PubTitlesTable rows={current} seed={seed} onClose={() => setTable(false)} onApply={(r) => onChange(r)}
+          pending={ledger?.pending ?? null} onLedgerPending={(p) => ledger?.set(p)} />
+      )}
       <div className="panel-hd">
         <h2>{section.title}</h2>
         <span className={`src ${edited ? "manual" : "auto"}`}>{edited ? "手入力" : "自動"}</span>
@@ -441,6 +449,10 @@ export function LineItemsEditor(
         <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
           {edited && seed.length > 0 && (
             <button type="button" className="btn btn-sm" onClick={() => onChange(null)}>自動に戻す</button>
+          )}
+          {name === "pub_titles" && current.length > 0 && (
+            <button type="button" className="btn btn-sm primary" onClick={() => setTable(true)}
+                    title="作品を 1 行ずつの表で直す（料率・取り分・分配は台帳＝条件明細も直せる）">表で直す</button>
           )}
           {(section.sorters ?? []).map((s) => (
             <button key={s.label} type="button" className="btn btn-sm" disabled={current.length < 2}
@@ -453,6 +465,16 @@ export function LineItemsEditor(
       </div>
       <div className="panel-bd stack" style={{ gap: 10 }}>
         <div className="faint">{section.hint}</div>
+        {ledger?.pending && (
+          <div className="note warn">
+            台帳（条件明細）の変更を保留しています：<b>{ledger.pending.summary}</b>。
+            「下書きを保存」か「決定」を押したときに確定します（プレビューは確定したあとに変わります）。
+            <span className="row" style={{ gap: 6, marginTop: 4 }}>
+              <button type="button" className="btn btn-sm" onClick={() => setTable(true)}>表で見る・直す</button>
+              <button type="button" className="btn btn-sm" onClick={() => ledger.set(null)}>保留を取り消す</button>
+            </span>
+          </div>
+        )}
         {/* 手入力で固定された明細は、条件を直しても紙に反映されない。訂正版や開き直した下書きで
             「条件を直したのに金額が変わらない」と迷うので、ここで言って戻す口を出す（A-087）。 */}
         {edited && seed.length > 0 && (

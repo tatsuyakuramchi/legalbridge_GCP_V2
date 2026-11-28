@@ -4030,6 +4030,10 @@ export function createRoutes(database: Transactable) {
   router.get("/work-matrix/search", asyncRoute(async (req, res) => {
     res.json({ works: await workMatrix.search(String(req.query.q ?? "")) });
   }));
+  router.get("/work-matrix/conditions", asyncRoute(async (req, res) => {
+    const ids = String(req.query.ids ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 1000);
+    res.json({ conditions: await workMatrix.conditions(ids) });
+  }));
   router.get("/work-matrix", asyncRoute(async (req, res) => {
     const ids = String(req.query.ids ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 100);
     res.json({ works: await workMatrix.load(ids) });

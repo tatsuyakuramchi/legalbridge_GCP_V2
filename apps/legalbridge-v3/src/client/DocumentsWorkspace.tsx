@@ -10,6 +10,7 @@ import { DetailBack } from "./DetailBack.js";
 import { FlowBar, type DocFlow, type FlowPhase } from "./FlowBar.js";
 import { DocumentFields, kindFor, type Candidate, type FormField } from "./DocumentFields.js";
 import { LineItemsEditor, type Row } from "./LineItems.js";
+import { remapRowIds, type LedgerPending } from "./PubTitlesTable.js";
 import { BulkOrders } from "./BulkOrders.js";
 import { SettledImport } from "./SettledImport.js";
 import { DocumentImport } from "./DocumentImport.js";
@@ -246,6 +247,10 @@ export function DocumentsWorkspace(
   const [templateKey, setTemplateKey] = useState("");
   // 条件の画面から来たときは、その条件と実績を選んだ状態で開く。
   const [picked, setPicked] = useState<number[]>(start?.conditionIds ?? []);
+  // 対象著作物を表で直したときの、台帳（条件明細・作品のクレジット）の保留中の変更。下書き保存・決定で当てる。
+  const [ledgerPending, setLedgerPending] = useState<LedgerPending | null>(null);
+  // 台帳を当てたら、自動の行とプレビューを読み直す。
+  const [ledgerTick, setLedgerTick] = useState(0);
   const [manual, setManual] = useState<Record<string, string>>({});
   /**
    * 人が直した明細の行（items / other_fees / expenses / delivery_line_items）。
@@ -841,7 +846,7 @@ export function DocumentsWorkspace(
       .then((r) => { if (live) { setSpec(r); setSpecKey(templateKey); } })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id, chosenJson]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), agreementId, matterId, requestId, draft?.id, chosenJson, ledgerTick]);
 
   // 本文は打った値で作り直す。iframe の中身が変わるだけで、入力欄には触らない。
   useEffect(() => {
@@ -853,7 +858,7 @@ export function DocumentsWorkspace(
       .then((r) => { if (live) setRendered({ html: r.html, templateLabel: r.templateLabel, warnings: r.warnings }); })
       .catch(() => undefined);
     return () => { live = false; };
-  }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson, matterId, requestId]);
+  }, [templateKey, picked.join(","), pickedEvents.join(","), manualJson, matterId, requestId, ledgerTick]);
 
   async function runPreview() {
     setError(null); setIssued(null); setBusy(true); setPreviewedAt(null);
@@ -893,7 +898,7 @@ export function DocumentsWorkspace(
    * 下書きを開いているときは保存した中身との比較で見る。
    */
   const [touched, setTouched] = useState(false);
-  const snapshot = () => JSON.stringify({ templateKey, picked, pickedEvents, inputs });
+  const snapshot = () => JSON.stringify({ templateKey, picked, pickedEvents, inputs, ledgerPending });
   const dirty = (composing || draft) && Boolean(templateKey)
     && (draft || savedAt ? snapshot() !== savedAt : touched);
 
@@ -904,23 +909,53 @@ export function DocumentsWorkspace(
    * 実績の選択は下書きの列に無いので、手入力の中に _eventIds として持たせて
    * 開き直したときに戻す。
    */
+  /**
+   * 保留中の台帳の変更（対象著作物を表で直したもの）を当てる。下書き保存・決定の最初に呼ぶ。
+   * 改訂で新しい版ができたら、載せる条件と対象著作物の行の条件 id を新しい版に付け替えた値を返す
+   * （state の更新を待たずに、そのまま保存・決定に使う）。当てられなければ例外（保存も決定もしない）。
+   */
+  async function commitLedger(): Promise<{ conditionIds: number[]; inputs: Record<string, unknown> }> {
+    const base = { conditionIds: picked, inputs: inputsWithPayee as Record<string, unknown> };
+    if (!ledgerPending) return base;
+    setWorking({ action: "save", what: "台帳（条件明細）の変更を確定しています" });
+    const { summary: _s, edits: _e, ...payload } = ledgerPending;
+    const r = await api.post<{ applied: boolean; items: Array<{ ok: boolean; message: string | null; label: string; target: string; id: number; revisedTo: { id: number } | null }> }>(
+      "/work-matrix/apply", { ...payload, creditFrom: null });
+    if (!r.applied) {
+      const bad = r.items.filter((i) => !i.ok).map((i) => `${i.label}：${i.message}`).join("／");
+      throw new ApiError(409, `台帳の変更を当てられませんでした。保存も決定もしていません（${bad}）。「表で直す」で直してください`, "CONFLICT");
+    }
+    const map: Record<number, number> = {};
+    for (const i of r.items) if (i.target === "condition" && i.revisedTo) map[i.id] = i.revisedTo.id;
+    const conditionIds = [...new Set(picked.map((id) => map[id] ?? id))];
+    const titles = lines.pub_titles;
+    const nextTitles = Object.keys(map).length && Array.isArray(titles) ? titles.map((row) => remapRowIds(row, map)) : titles;
+    setLedgerPending(null);
+    setPicked(conditionIds);
+    if (nextTitles !== titles) setLines((prev) => ({ ...prev, pub_titles: nextTitles as Row[] }));
+    setLedgerTick((t) => t + 1);
+    return { conditionIds, inputs: nextTitles !== titles ? { ...base.inputs, pub_titles: nextTitles } : base.inputs };
+  }
+
   async function saveDraft(): Promise<number | null> {
     if (!templateKey) return null;
     setError(null); setIssued(null); setStored(null); setBusy(true); setPreviewedAt(null);
     setWorking({ action: "save", what: "下書きを保存しています" });
     try {
-      const manualInputs = { ...inputsWithPayee, _eventIds: pickedEvents };
+      const committed = await commitLedger();
+      setWorking({ action: "save", what: "下書きを保存しています" });
+      const manualInputs = { ...committed.inputs, _eventIds: pickedEvents };
       let id: number;
       if (draft) {
-        await api.patch(`/documents/${draft.id}/draft`, { manualInputs, conditionIds: picked, agreementId });
+        await api.patch(`/documents/${draft.id}/draft`, { manualInputs, conditionIds: committed.conditionIds, agreementId });
         id = draft.id;
       } else {
         const r = await api.post<{ id: number }>("/documents",
-          { templateKey, conditionIds: picked, manualInputs, matterId, agreementId, requestId });
+          { templateKey, conditionIds: committed.conditionIds, manualInputs, matterId, agreementId, requestId });
         id = r.id;
         setDraft({ id, no: null });
       }
-      setSavedAt(snapshot());
+      setSavedAt(JSON.stringify({ templateKey, picked: committed.conditionIds, pickedEvents, inputs: { ...inputs, ...(committed.inputs.pub_titles ? { pub_titles: committed.inputs.pub_titles } : {}) }, ledgerPending: null }));
       setStored(`下書き #${id} を保存しました。一覧の「下書き」から開き直せます`);
       await reload();
       setSelected(id);
@@ -968,17 +1003,25 @@ export function DocumentsWorkspace(
         }
       } else if (draft) {
         // 開いている下書きを直してから発行する。発行は下書きに保存された
-        // 手入力しか見ないので、先に書き戻す。
+        // 手入力しか見ないので、先に書き戻す。保留中の台帳の変更があれば、その前に当てる。
+        const committed = await commitLedger();
+        setWorking({ action: "issue", what: "直して決定しています", hint: "番号を振り、文書を作って保存しています" });
         await api.patch(`/documents/${draft.id}/draft`,
-          { manualInputs: { ...inputsWithPayee, _eventIds: pickedEvents }, conditionIds: picked, agreementId });
+          { manualInputs: { ...committed.inputs, _eventIds: pickedEvents }, conditionIds: committed.conditionIds, agreementId });
         const r = await api.post<{ id: number; documentNo: string; writeBack?: WriteBack }>(
           `/documents/${draft.id}/issue`, { eventIds: pickedEvents });
         done = { id: r.id, documentNo: r.documentNo, writeBack: r.writeBack ?? null };
       } else {
         // 下書き→発行→実績への紐づけをサーバ側で1本にしてある。
         // 途中で落ちたときは下書きごと捨てられる。
+        // 保留中の台帳の変更があれば先に当てる（改訂で新しい版ができたら、載せる条件をそちらに付け替える）。
+        const committed = await commitLedger();
+        setWorking({ action: "issue", what: "決定しています", hint: "番号を振り、文書を作って保存しています" });
         const result = await api.post<{ document: { id: number; documentNo: string; writeBack?: WriteBack } }>(
-          "/documents/compose", body);
+          "/documents/compose", ledgerPending
+            ? { ...body, conditionIds: committed.conditionIds,
+                manualInputs: committed.inputs.pub_titles ? { ...body.manualInputs, pub_titles: committed.inputs.pub_titles } : body.manualInputs }
+            : body);
         done = { id: result.document.id, documentNo: result.document.documentNo, writeBack: result.document.writeBack ?? null };
       }
       setIssued({ ...done, again: true });
@@ -1247,6 +1290,7 @@ export function DocumentsWorkspace(
   const formFields = (spec?.fields ?? []).filter((f) => sutRows === null || secondaryUseFieldShown(f.name, sutRows));
   const lineEditors = !isLicenseTerms && (spec?.lines ?? []).map((l) => (
     <LineItemsEditor key={l.name} name={l.name} seed={l.rows}
+      ledger={l.name === "pub_titles" ? { pending: ledgerPending, set: (p) => { setLedgerPending(p); setTouched(true); } } : undefined}
       rows={lines[l.name] ?? null} intl={templateKey === "intl_purchase_order"}
       covers={isPurchaseOrder && feeCovers.length > 0 ? { selected: effectiveCovers, toggle: toggleCover } : null}
       onChange={(rows) => setLines((prev) => {
