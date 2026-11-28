@@ -1750,7 +1750,8 @@ export class ConditionWriteService {
       return await inTransaction(this.database, async (client) => {
         const rows = shares.map((s) => ({ partyId: Number(s.partyId), sharePpm: Number(s.sharePpm),
                                           note: String(s.note ?? "").trim() || null }));
-        validateShareInput(rows);
+        const cp = (await client.query("SELECT counterparty_id FROM conditions WHERE id = $1", [id])).rows[0] as { counterparty_id?: number } | undefined;
+        validateShareInput(rows, cp?.counterparty_id ?? null);
         if (rows.length) {
           const found = await client.query(
             "SELECT id FROM parties WHERE id = ANY($1::bigint[])", [rows.map((r) => r.partyId)]);
@@ -1801,9 +1802,8 @@ export class ConditionWriteService {
       if (distribution !== "representative" && (Number(head.mg_amount ?? 0) > 0 || Number(head.ag_amount ?? 0) > 0)) {
         throw new DomainError("VALIDATION", `${tag}MG・AG のある条件には取り分を付けられません。先に MG・AG を外してください`);
       }
-      if (distribution === "representative" && !rows.some((r) => r.partyId === Number(existing.counterparty_id))) {
-        throw new DomainError("VALIDATION", `${tag}代表が分配する契約では、条件の相手先（代表）を取り分の中に入れてください`);
-      }
+      // 代表（条件の相手先）が取り分に入っていなくてよい：代表は全額を受け取り、全額を共著者等に分配する
+      // （例：許諾者 1% をそのまま編集者に払う）。条件書には代表の取り分を書かない（pub-terms.ts licensorShareNote）。
     }
     const removed = await client.query("DELETE FROM condition_shares WHERE condition_id = $1", [id]);
     const mode = rows.length ? (distribution === "representative" ? "representative" : "direct") : null;

@@ -502,7 +502,10 @@ export function licensorShareNote(print: Data | undefined, digital: Data | undef
     const whole = number(c.ratePct);
     if (whole == null) return "";
     const partyId = number(c.counterpartyId);
-    const ppm = number(list(c.shares).find((s) => number(s.partyId) === partyId)?.sharePpm) ?? 0;
+    const own = list(c.shares).find((s) => number(s.partyId) === partyId);
+    // 許諾者（代表）が全額を共著者等に分配する条件は、許諾者の取り分を書かない（「0%」と書かない）。
+    if (!own && text(c.distribution) === "representative") return "";
+    const ppm = number(own?.sharePpm) ?? 0;
     return `${label} 取り分 ${ppmPct(Math.round((whole * ppm) / 100))}%（全体 ${percentText(whole)}）`;
   };
   return [one("紙", print), one("電子", digital)].filter(Boolean).join("／");
@@ -511,6 +514,8 @@ export function licensorShareNote(print: Data | undefined, digital: Data | undef
 /** 按分があるのに、許諾者（条件の相手先）の取り分が無い条件（取り分 0% で出る）。 */
 export function licensorShareMissing(c: Data | undefined): boolean {
   if (!c || !list(c.shares).length) return false;
+  // 許諾者から分配する条件で許諾者が入っていないのは、全額を分配する意図（警告しない）。
+  if (text(c.distribution) === "representative") return false;
   const partyId = number(c.counterpartyId);
   return !list(c.shares).some((s) => number(s.partyId) === partyId);
 }

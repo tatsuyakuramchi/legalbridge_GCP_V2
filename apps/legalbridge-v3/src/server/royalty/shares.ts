@@ -108,10 +108,15 @@ export function pickShare(shares: ConditionShareRow[], payeePartyId: number | nu
 
 /** 取り分の入力の検証。合計 100%、同じ権利者は 1 回、2 者以上（1 者なら取り分は要らない）。 */
 export function validateShareInput(
-  rows: Array<{ partyId: number; sharePpm: number }>
+  rows: Array<{ partyId: number; sharePpm: number }>,
+  /**
+   * 条件の相手先。分かっていれば、相手先以外の 1 者だけ（100%）を認める：相手先の取り分は無く、全額がその人に
+   * 渡る（例：許諾者 1% を編集者に。許諾者から分配なら許諾者が全額を払う、当社から直接なら当社がその人に払う）。
+   */
+  counterpartyId?: number | null
 ): void {
   if (!rows.length) return;
-  if (rows.length < 2) {
+  if (rows.length < 2 && !(counterpartyId && Number(rows[0]!.partyId) !== Number(counterpartyId))) {
     throw new DomainError("VALIDATION", "取り分は 2 者以上で入れてください（1 者なら条件の相手先だけで足ります）");
   }
   const seen = new Set<number>();

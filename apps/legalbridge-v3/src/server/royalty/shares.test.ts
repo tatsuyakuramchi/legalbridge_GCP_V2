@@ -42,6 +42,9 @@ test("1 者 100% はそのまま、空なら空", () => {
 test("取り分の検証：合計 100%・2 者以上・重複なし", () => {
   validateShareInput([]);
   validateShareInput([{ partyId: 1, sharePpm: 600000 }, { partyId: 2, sharePpm: 400000 }]);
+  // 相手先以外の 1 者だけ（100%）は認める（相手先の取り分なし・全額をその人に）。相手先 1 者だけは要らない
+  validateShareInput([{ partyId: 9, sharePpm: 1000000 }], 5);
+  assert.throws(() => validateShareInput([{ partyId: 5, sharePpm: 1000000 }], 5), /2 者以上/);
   assert.throws(() => validateShareInput([{ partyId: 1, sharePpm: 1000000 }]),
     (e: unknown) => e instanceof DomainError && /2 者以上/.test(e.message));
   assert.throws(() => validateShareInput([{ partyId: 1, sharePpm: 600000 }, { partyId: 2, sharePpm: 300000 }]),

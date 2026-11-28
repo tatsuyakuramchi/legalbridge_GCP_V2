@@ -116,7 +116,7 @@ test("既存の作品に当たれば作らない。同じ相手先の紙・電�
   assert.match(dup.rows[0].message ?? "", /電子（CL-9）が既にあります/);
 });
 
-test("止める：相手先なし・料率なし・代表が取り分に無い・知らないコード・コードと名前が合わない・コードなし", async () => {
+test("止める：相手先なし・料率なし・知らないコード・コードと名前が合わない・コードなし（代表が取り分に無いのは通す）", async () => {
   const svc = new PubWorksImportService(db({ parties: PARTIES }), deps());
   const r = await svc.run([
     { ...ROW, "相手先": "" },
@@ -126,10 +126,10 @@ test("止める：相手先なし・料率なし・代表が取り分に無い�
     { ...ROW, "取り分": "作家B（V-21） 10／作家X（V-22） 5" },
     { ...ROW, "取り分": "作家B（V-21） 10／作家C 5" }
   ], true, "tester");
-  assert.equal(r.error, 6);
+  assert.equal(r.error, 5);
   assert.match(r.rows[0].message ?? "", /相手先が空/);
   assert.match(r.rows[1].message ?? "", /紙料率か電子料率/);
-  assert.match(r.rows[2].message ?? "", /相手先（代表）を取り分の中に/);
+  assert.doesNotMatch(r.rows[2].message ?? "", /相手先（代表）を取り分の中に/, "代表が取り分に無くても止めない（全額を分配）");
   assert.match(r.rows[3].message ?? "", /取引先コード「V-99」が見つかりません/);
   assert.match(r.rows[4].message ?? "", /「作家X」と取引先コード「V-22」が合いません（コード V-22 は「作家C」です）/);
   assert.match(r.rows[5].message ?? "", /「作家C」に取引先コードがありません/);
@@ -173,13 +173,13 @@ test("更新：取り分は新しい電子料率が無ければ、いまの料�
       { "作品名": "新しい作品", "取り分": "なし" },
       { "作品名": "新しい作品", "分配": "代表" }
     ], false, "tester", "update");
-  assert.equal(r.ok, 2, JSON.stringify(r.rows));
-  assert.equal(r.error, 1);
+  assert.equal(r.ok, 3, JSON.stringify(r.rows));
+  assert.equal(r.error, 0);
   assert.deepEqual(d.calls[0].args[1], [{ partyId: 21, sharePpm: 750000 }, { partyId: 22, sharePpm: 250000 }]);
   assert.deepEqual(d.calls[1].args[1], [], "「なし」で消す");
   assert.match(r.rows[1].message ?? "", /取り分を消す/);
-  // 代表（相手先 #11）が取り分に無いので止まる。
-  assert.match(r.rows[2].message ?? "", /相手先（代表）を取り分の中に/);
+  // 代表（相手先 #11）が取り分に無くても止めない（代表が全額を分配する）。
+  assert.doesNotMatch(r.rows[2].message ?? "", /相手先（代表）を取り分の中に/);
 });
 
 test("更新：条件が無い媒体に料率があれば、その媒体の条件を作る。作品が無ければ止める。当てる列が無ければ変更なし", async () => {
