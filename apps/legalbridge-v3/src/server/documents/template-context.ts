@@ -22,7 +22,7 @@ import { SUT_USES_FIELD, isSecondaryUseTemplate, secondaryUsePatch, secondaryUse
 import { isLicenseTermsTemplate, licenseTermsPatch, licenseTermsSeeds,
          licenseTermsSuggestions } from "./license-terms.js";
 import { PUB_TITLES_FIELD, isPubTermsMulti, isPubTermsTemplate, isPubTermsV5, pubTermsMultiWarnings, pubTermsPatch, pubTermsSuggestions,
-         pubTermsWarnings, pubTitleSeeds } from "./pub-terms.js";
+         pubTermsWarnings, pubTitleSeeds, withPubRateDigits } from "./pub-terms.js";
 import type { Warning } from "./preflight.js";
 import { expenseLinesFrom, feeLinesFrom, isSettlementKind } from "./settlement-conditions.js";
 import { baseDocumentNumber } from "./numbering.js";
@@ -102,7 +102,9 @@ export function lineFieldsFor(templateKey: string): string[] {
 /** 条件・予定・実績から組んだ「種」の行。画面の編集欄の初期値。 */
 export function seedLines(templateKey: string, context: Ctx): Record<string, Row[]> {
   if (isLicenseTermsTemplate(templateKey)) return licenseTermsSeeds(context) as Record<string, Row[]>;
-  if (isPubTermsTemplate(templateKey)) return { [PUB_TITLES_FIELD]: pubTitleSeeds(context) as Row[] };
+  if (isPubTermsTemplate(templateKey)) {
+    return { [PUB_TITLES_FIELD]: withPubRateDigits(isPubTermsV5(templateKey), () => pubTitleSeeds(context)) as Row[] };
+  }
   const out: Record<string, Row[]> = {};
   // 海外版の発注書は行の契約種別も英語で持たせる（編集欄にも英語で出る）。
   const intl = templateKey === "intl_purchase_order";

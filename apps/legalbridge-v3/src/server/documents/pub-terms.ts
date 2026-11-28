@@ -95,10 +95,15 @@ const number = (value: unknown): number | null => {
   const parsed = Number.parseFloat(String(value).replace(/[^0-9.-]/g, ""));
   return Number.isFinite(parsed) ? parsed : null;
 };
-/** 料率の表記。小数は残す（8.5%）。無ければ「—」。 */
+/**
+ * 料率の桁（小数点以下）。null は従来の表記（全体の率は第2位・実質の率は第4位まで）。
+ * V5 の出版の条件書は第3位まで（pubTermsPatch の中だけ 3 にする。同期の処理なので呼び出しをまたがない）。
+ */
+let rateDigits: number | null = null;
+/** 料率の表記。小数は残す（8.5%）。末尾の 0 は書かない。無ければ「—」。 */
 export const percentText = (value: unknown): string => {
   const n = number(value);
-  return n == null ? "—" : `${+n.toFixed(2)}%`;
+  return n == null ? "—" : `${+n.toFixed(rateDigits ?? 2)}%`;
 };
 
 // ---------------------------------------------------------------------------
@@ -352,6 +357,8 @@ export function latestRenewedEnd(conditions: Data[], asOf: string): string {
 
 /** 百万分率を %（小数 4 桁まで、末尾の 0 なし）に。 */
 const ppmPct = (ppm: number) => String(Number((ppm / 10000).toFixed(4)));
+/** 百万分率の料率（実質の料率）の表記。V5 は第3位まで。取り分（按分の比率）は ppmPct のまま。 */
+const ppmRatePct = (ppm: number) => String(Number((ppm / 10000).toFixed(rateDigits ?? 4)));
 
 /** 共同著作の取り分の文（「作家B 66.67%・作家C 33.33%」。代表が分配なら頭に付す）。取り分が無ければ空。 */
 export function sharesText(condition: Data | null | undefined): string {
@@ -506,7 +513,7 @@ export function licensorShareNote(print: Data | undefined, digital: Data | undef
     // 許諾者（代表）が全額を共著者等に分配する条件は、許諾者の取り分を書かない（「0%」と書かない）。
     if (!own && text(c.distribution) === "representative") return "";
     const ppm = number(own?.sharePpm) ?? 0;
-    return `${label} 取り分 ${ppmPct(Math.round((whole * ppm) / 100))}%（全体 ${percentText(whole)}）`;
+    return `${label} 取り分 ${ppmRatePct(Math.round((whole * ppm) / 100))}%（全体 ${percentText(whole)}）`;
   };
   return [one("紙", print), one("電子", digital)].filter(Boolean).join("／");
 }
@@ -543,7 +550,18 @@ export function payeeRateText(payee: Data | null | undefined, condition: Data | 
   if (whole == null) return "—";
   const ppm = payeeShareOf(payee, condition);
   if (ppm == null) return percentText(whole);
-  return `${ppmPct(Math.round((whole * ppm) / 100))}%（全体 ${percentText(whole)}）`;
+  return `${ppmRatePct(Math.round((whole * ppm) / 100))}%（全体 ${percentText(whole)}）`;
+}
+
+/** V5 の料率の桁（第3位まで）で fn を動かす。v5 でなければ従来の桁。 */
+export function withPubRateDigits<T>(v5: boolean, fn: () => T): T {
+  const previous = rateDigits;
+  rateDigits = v5 ? 3 : null;
+  try {
+    return fn();
+  } finally {
+    rateDigits = previous;
+  }
 }
 
 export function pubTitleSeeds(context: Data): Data[] {
@@ -854,6 +872,11 @@ export interface PubTermsOptions {
 }
 
 export function pubTermsPatch(context: Data, manual: Data = {}, options: PubTermsOptions = {}): Data {
+  // V5 の料率は小数点第3位まで（10.313%・0.909%）。末尾の 0 は書かない（1%・8.5%）。
+  return withPubRateDigits(Boolean(options.v5), () => pubTermsPatchBody(context, manual, options));
+}
+
+function pubTermsPatchBody(context: Data, manual: Data, options: PubTermsOptions): Data {
   const pick = (...keys: string[]): string => {
     for (const key of keys) {
       const value = manual[key] ?? context[key];
