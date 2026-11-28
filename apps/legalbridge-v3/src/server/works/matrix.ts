@@ -33,6 +33,12 @@ export interface MatrixCondition {
   id: number; conditionNo: string | null; name: string; workId: number;
   direction: string; kind: string; usageType: string | null; pricingModel: string;
   ratePpm: number | null; flatAmount: number | null; priceBasis: string | null; currency: string;
+  /** 卸単価（自社製造・他社販売など、単価で受け取る・払う条件）。最小通貨単位。 */
+  unitAmount: number | null;
+  mgAmount: number | null; agAmount: number | null;
+  exclusivity: "exclusive" | "non_exclusive" | null;
+  /** 自動更新（終了日は当初の満了日。表では直さない）。 */
+  autoRenew: boolean;
   status: string; effectiveFrom: string | null; termStart: string | null; termEnd: string | null;
   counterpartyId: number | null; counterpartyName: string | null;
   distribution: string | null; shares: MatrixShare[];
@@ -55,6 +61,14 @@ export interface MatrixConditionChange {
   id: number;
   name?: string;
   ratePpm?: number;
+  /** 定額（fixed の条件）・卸単価（unit_rate の条件）・MG・AG。最小通貨単位。 */
+  flatAmount?: number;
+  unitAmount?: number;
+  mgAmount?: number | null;
+  agAmount?: number | null;
+  termStart?: string | null;
+  termEnd?: string | null;
+  exclusivity?: "exclusive" | "non_exclusive" | null;
   shares?: Array<{ partyId: number; sharePpm: number; note?: string | null }>;
   /** 分配方法。direct＝当社（被許諾者）から各人に直接、representative＝許諾者（代表者）が受け取って分配。 */
   distribution?: "direct" | "representative";
@@ -264,12 +278,18 @@ export class WorkMatrixService {
     db: PinnedDatabase, writes: ConditionWriteService, c: MatrixConditionChange, input: MatrixApplyInput, reason: string, actor: string
   ): Promise<MatrixItemResult> {
     const head = (await db.query(
-      `SELECT c.id, c.condition_no, c.name, c.status, c.rate_ppm, c.pricing_model, c.distribution
+      `SELECT c.id, c.condition_no, c.name, c.status, c.rate_ppm, c.pricing_model, c.distribution,
+              c.flat_amount, c.unit_amount, c.mg_amount, c.ag_amount, c.term_start, c.term_end, c.exclusivity, c.auto_renew
          FROM conditions c WHERE c.id = $1`, [c.id])).rows[0] as any;
     const label = head ? `${head.condition_no ?? `#${c.id}`} ${head.name}` : `条件 #${c.id}`;
     const what: string[] = [];
     if (c.name !== undefined) what.push("取引モデル名");
     if (c.ratePpm !== undefined) what.push("料率");
+    if (c.unitAmount !== undefined) what.push("卸単価");
+    if (c.flatAmount !== undefined) what.push("定額");
+    if (c.mgAmount !== undefined || c.agAmount !== undefined) what.push("MG・AG");
+    if (c.termStart !== undefined || c.termEnd !== undefined) what.push("期間");
+    if (c.exclusivity !== undefined) what.push("独占性");
     if (c.shares !== undefined) what.push("取り分");
     if (c.distribution !== undefined) what.push("分配方法");
     const result: MatrixItemResult = { target: "condition", id: c.id, label, what, ok: true, message: null, revisedTo: null };
@@ -284,6 +304,24 @@ export class WorkMatrixService {
       }
       if (c.ratePpm !== undefined && head.pricing_model !== "revenue_rate") {
         throw new DomainError("VALIDATION", "料率で計算する条件ではありません");
+      }
+      if (c.unitAmount !== undefined && head.pricing_model !== "unit_rate") {
+        throw new DomainError("VALIDATION", "単価で計算する条件ではありません");
+      }
+      if (c.flatAmount !== undefined && head.pricing_model !== "fixed") {
+        throw new DomainError("VALIDATION", "定額の条件ではありません");
+      }
+      for (const [k, v] of [["卸単価", c.unitAmount], ["定額", c.flatAmount], ["MG", c.mgAmount], ["AG", c.agAmount]] as const) {
+        if (v !== undefined && v !== null && !(Number.isInteger(v) && v >= 0)) throw new DomainError("VALIDATION", `${k}は 0 以上の整数（最小通貨単位）で入れてください`);
+      }
+      // 自動更新の条件は終了日（当初の満了日）を書き換えない。書き換えると更新回数が 0 回に戻る（#482 と同じ理由）。
+      if (c.termEnd !== undefined && head.auto_renew === true && c.termEnd !== dateStr(head.term_end)) {
+        throw new DomainError("VALIDATION", "自動更新の条件は、終了日を表では直せません（更新回数が 0 回に戻るため）。期間を延ばすのは「契約期間を更新」で");
+      }
+      {
+        const start = c.termStart !== undefined ? c.termStart : dateStr(head.term_start);
+        const end = c.termEnd !== undefined ? c.termEnd : dateStr(head.term_end);
+        if (start && end && end < start) throw new DomainError("VALIDATION", `期間の終了（${end}）が開始（${start}）より前です`);
       }
       await savepoint(db, async () => {
         // 1. 名前はその場で（版を立てない。支払があっても直せる）。改訂する前に直すので、新しい版にも写る。
@@ -300,18 +338,29 @@ export class WorkMatrixService {
         let target = c.id;
         // 分配方法は取り分と組（condition_shares と conditions.distribution を一緒に書く）。
         const touchesShares = c.shares !== undefined || c.distribution !== undefined;
-        if (c.ratePpm !== undefined || touchesShares) {
+        // 条件の値（料率・卸単価・定額・MG・AG・期間・独占性）のうち、今と違うものだけ。
+        const econ: Parameters<ConditionWriteService["updateEconomics"]>[1] = {};
+        if (c.ratePpm !== undefined && c.ratePpm !== int(head.rate_ppm)) econ.ratePpm = c.ratePpm;
+        if (c.unitAmount !== undefined && c.unitAmount !== int(head.unit_amount)) econ.unitAmount = c.unitAmount;
+        if (c.flatAmount !== undefined && c.flatAmount !== int(head.flat_amount)) econ.flatAmount = c.flatAmount;
+        if (c.mgAmount !== undefined && c.mgAmount !== int(head.mg_amount)) econ.mgAmount = c.mgAmount;
+        if (c.agAmount !== undefined && c.agAmount !== int(head.ag_amount)) econ.agAmount = c.agAmount;
+        if (c.termStart !== undefined && c.termStart !== dateStr(head.term_start)) econ.termStart = c.termStart;
+        if (c.termEnd !== undefined && c.termEnd !== dateStr(head.term_end)) econ.termEnd = c.termEnd;
+        if (c.exclusivity !== undefined && c.exclusivity !== (str(head.exclusivity) ?? null)) econ.exclusivity = c.exclusivity;
+        const changesEcon = Object.keys(econ).length > 0;
+        if (changesEcon || touchesShares || c.ratePpm !== undefined) {
           // 取り分だけでも、改訂なら版を立てる（料率は今の値のまま渡す。updateEconomics が版の要否を決める）。
           const ratePpm = c.ratePpm !== undefined ? c.ratePpm : int(head.rate_ppm);
-          const changesRate = c.ratePpm !== undefined && c.ratePpm !== int(head.rate_ppm);
+          const changesRate = changesEcon;
           if (input.mode === "correct") {
-            if (changesRate) await writes.updateEconomics(c.id, { ratePpm }, actor, null, { inPlace: true });
+            if (changesEcon) await writes.updateEconomics(c.id, econ, actor, null, { inPlace: true });
             // 取り分の訂正も、料率と同じく支払が立っていれば断る（払った額の分け方の根拠が書き換わる）。
             if (touchesShares && await hasPayment(db, c.id)) {
               throw new DomainError("CONFLICT", "支払が立っているので取り分を訂正できません。「改訂」で適用日から直してください");
             }
           } else if (changesRate || touchesShares) {
-            const r = await writes.updateEconomics(c.id, { ratePpm }, actor, input.effectiveFrom || null);
+            const r = await writes.updateEconomics(c.id, changesEcon ? econ : { ratePpm }, actor, input.effectiveFrom || null);
             if (r.revisedTo) target = r.revisedTo;
           }
           if (touchesShares) {
@@ -328,7 +377,7 @@ export class WorkMatrixService {
           }
           await recordAudit(db, {
             actor, action: "condition.matrix_update", targetType: "condition", targetId: c.id,
-            detail: { reason, mode: input.mode, effectiveFrom: input.effectiveFrom, ratePpm: c.ratePpm ?? null,
+            detail: { reason, mode: input.mode, effectiveFrom: input.effectiveFrom, ratePpm: c.ratePpm ?? null, economics: econ,
                       shares: c.shares ?? null, distribution: c.distribution ?? null, revisedTo: target !== c.id ? target : null }
           });
         }
@@ -370,6 +419,7 @@ async function loadMatrix(db: Queryable, ids: number[]): Promise<MatrixWork[]> {
     const conds = (await db.query(
       `SELECT c.id, c.condition_no, c.name, c.work_id, c.direction, c.kind, c.usage_type, c.pricing_model, c.rate_ppm,
               c.flat_amount, c.price_basis, c.currency, c.status, c.effective_from, c.term_start, c.term_end,
+              c.unit_amount, c.mg_amount, c.ag_amount, c.exclusivity, c.auto_renew,
               c.counterparty_id, p.name AS counterparty_name, c.distribution, c.sublicense_kind, wp.name AS part_name,
               EXISTS (SELECT 1 FROM document_conditions dc JOIN documents d ON d.id = dc.document_id
                        WHERE dc.condition_id = c.id AND d.status IN ('issued', 'superseded')) AS has_document,
@@ -401,6 +451,9 @@ async function loadMatrix(db: Queryable, ids: number[]): Promise<MatrixWork[]> {
           id: Number(c.id), conditionNo: str(c.condition_no), name: String(c.name ?? ""), workId: id,
           direction: String(c.direction), kind: String(c.kind), usageType: str(c.usage_type), pricingModel: String(c.pricing_model),
           ratePpm: int(c.rate_ppm), flatAmount: int(c.flat_amount), priceBasis: str(c.price_basis), currency: String(c.currency ?? "JPY"),
+          unitAmount: int(c.unit_amount), mgAmount: int(c.mg_amount), agAmount: int(c.ag_amount),
+          exclusivity: str(c.exclusivity) === "exclusive" ? "exclusive" : str(c.exclusivity) === "non_exclusive" ? "non_exclusive" : null,
+          autoRenew: c.auto_renew === true,
           status: String(c.status), effectiveFrom: dateStr(c.effective_from), termStart: dateStr(c.term_start), termEnd: dateStr(c.term_end),
           counterpartyId: int(c.counterparty_id), counterpartyName: str(c.counterparty_name),
           distribution: str(c.distribution),

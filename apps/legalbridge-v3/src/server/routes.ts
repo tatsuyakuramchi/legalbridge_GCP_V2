@@ -4048,7 +4048,14 @@ export function createRoutes(database: Transactable) {
         sharePpm: z.coerce.number().int().min(1).max(1_000_000),
         note: z.string().trim().max(200).nullable().optional()
       })).max(20).optional(),
-      distribution: z.enum(["direct", "representative"]).optional()
+      distribution: z.enum(["direct", "representative"]).optional(),
+      flatAmount: z.coerce.number().int().min(0).optional(),
+      unitAmount: z.coerce.number().int().min(0).optional(),
+      mgAmount: z.coerce.number().int().min(0).nullable().optional(),
+      agAmount: z.coerce.number().int().min(0).nullable().optional(),
+      termStart: z.string().date().nullable().optional(),
+      termEnd: z.string().date().nullable().optional(),
+      exclusivity: z.enum(["exclusive", "non_exclusive"]).nullable().optional()
     })).max(500),
     works: z.array(z.object({
       id: z.coerce.number().int().positive(),

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type ReactElement } from "react";
-import { api, ApiError } from "./api.js";
+import { api, ApiError, money } from "./api.js";
 import { useDebounced } from "./ListTools.js";
 import { SearchSelect, searchParties } from "./SearchSelect.js";
 import { CONDITION_USAGE_TYPES } from "../server/core/condition-usage.js";
@@ -19,13 +19,30 @@ import { roundToMillion, sharePpmFromEffective } from "../server/works/share-mat
 
 export type ShareEdit = { partyId: number; partyName: string; sharePpm: number; note: string | null };
 export type Distribution = "direct" | "representative";
-interface CondEdit { name?: string; ratePpm?: number; shares?: ShareEdit[]; distribution?: Distribution }
+interface CondEdit {
+  name?: string; ratePpm?: number; shares?: ShareEdit[]; distribution?: Distribution;
+  /** 定額・卸単価・MG・AG（最小通貨単位）。期間・独占性。IN・OUT とも同じ。 */
+  flatAmount?: number; unitAmount?: number; mgAmount?: number | null; agAmount?: number | null;
+  termStart?: string | null; termEnd?: string | null; exclusivity?: "exclusive" | "non_exclusive" | null;
+}
+type EconKey = "flatAmount" | "unitAmount" | "mgAmount" | "agAmount" | "termStart" | "termEnd" | "exclusivity";
+const ECON_KEYS: EconKey[] = ["flatAmount", "unitAmount", "mgAmount", "agAmount", "termStart", "termEnd", "exclusivity"];
+const EXCL_LABEL: Record<string, string> = { exclusive: "独占", non_exclusive: "非独占" };
+/** 最小通貨単位 ⇔ 画面の数（円はそのまま、ドルなどは 1/100）。 */
+const minorOf = (currency: string) => (["JPY", "KRW", "VND"].includes(currency) ? 1 : 100);
+const toMinor = (text: string, currency: string): number | null => {
+  const t = String(text).replace(/[,，\s¥$]/g, "");
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * minorOf(currency)) : NaN;
+};
+const fromMinor = (v: number | null | undefined, currency: string) => (v === null || v === undefined ? "" : String(v / minorOf(currency)));
 /** 分配方法の呼び名（条件書の備考の「分配：…」と同じ言い方）。 */
 const DISTRIBUTION_LABEL: Record<Distribution, string> = { representative: "許諾者から分配", direct: "当社から直接分配" };
 export const distOf = (v: string | null | undefined): Distribution => (v === "representative" ? "representative" : "direct");
 interface WorkEdit { copyrightNotice?: string; thirdPartyRights?: string | null }
 type Cell = { kind: "work"; id: number; field: "copyrightNotice" | "thirdPartyRights" }
-  | { kind: "cond"; id: number; field: "name" | "ratePpm" | "shares" };
+  | { kind: "cond"; id: number; field: "name" | "ratePpm" | "shares" | "amount" | "mgag" | "term" | "excl" };
 
 const USAGE_LABEL = Object.fromEntries(CONDITION_USAGE_TYPES.map((u) => [u.value, u.label])) as Record<string, string>;
 const BASIS_LABEL: Record<string, string> = { list: "定価・本体価格", supply: "卸価格", receipts: "受領額" };
@@ -89,6 +106,9 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
   }, [placed, version]);
 
   const conds = useMemo(() => works.flatMap((w) => w.conditions.map((c) => ({ ...c, workTitle: w.title }))), [works]);
+  // IN（作家などから取得）／OUT（許諾先・販売先へ許諾）の出し分け。既定は両方。
+  const [dir, setDir] = useState<"both" | "in" | "out">("both");
+  const dirOk = (c: MatrixCondition) => dir === "both" || c.direction === dir;
   const condById = useMemo(() => new Map(conds.map((c) => [c.id, c])), [conds]);
   const workById = useMemo(() => new Map(works.map((w) => [w.id, w])), [works]);
 
@@ -103,6 +123,10 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
       if (e.ratePpm !== undefined && e.ratePpm !== base.ratePpm) out.ratePpm = e.ratePpm;
       if (e.shares !== undefined && !sameShares(e.shares, base.shares)) out.shares = e.shares;
       if (e.distribution !== undefined && e.distribution !== distOf(base.distribution)) out.distribution = e.distribution;
+      for (const k of ECON_KEYS) {
+        const v = e[k];
+        if (v !== undefined && v !== (base[k] ?? null)) (out as Record<string, unknown>)[k] = v;
+      }
       if (Object.keys(out).length) c.push({ id, edit: out });
     }
     const w: Array<{ id: number; edit: WorkEdit }> = [];
@@ -120,10 +144,11 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
     name: changes.conditions.filter((x) => x.edit.name !== undefined).length,
     rate: changes.conditions.filter((x) => x.edit.ratePpm !== undefined).length,
     shares: changes.conditions.filter((x) => x.edit.shares !== undefined || x.edit.distribution !== undefined).length,
+    other: changes.conditions.filter((x) => ECON_KEYS.some((k) => x.edit[k] !== undefined)).length,
     credit: changes.works.length
   };
-  const total = counts.name + counts.rate + counts.shares + counts.credit;
-  const touchesEconomics = counts.rate + counts.shares > 0;
+  const total = counts.name + counts.rate + counts.shares + counts.other + counts.credit;
+  const touchesEconomics = counts.rate + counts.shares + counts.other > 0;
 
   const setCond = (id: number, patch: CondEdit) => {
     setCondEdits((m) => { const n = new Map(m); n.set(id, { ...(n.get(id) ?? {}), ...patch }); return n; });
@@ -242,17 +267,25 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
         {/* 2. 表 */}
         {works.length > 0 && (
           <section className="stack" style={{ gap: 6 }}>
+            <div className="row" style={{ gap: 6 }}>
+              <span className="faint">出す条件</span>
+              {([["both", "IN・OUT 両方"], ["in", "IN（作家などから取得）"], ["out", "OUT（許諾先・販売先）"]] as const).map(([k, label]) => (
+                <button key={k} type="button" className="chip" aria-pressed={dir === k} onClick={() => setDir(k)}>
+                  {label}（{conds.filter((c) => k === "both" || c.direction === k).length}）</button>
+              ))}
+            </div>
             <b>2. 表（{works.length} 作品・条件明細 {conds.length} 本）<span className="faint" style={{ fontWeight: 400 }}>　値を押すと入力欄。直したところは黄色で「旧 → 新」。保存は下の「まとめて変更する」まで行いません</span></b>
             <div className="tablewrap">
               <table className="mx-table">
-                <thead><tr><th>条件番号</th><th>取引モデル名（条件名）</th><th>利用区分</th><th className="num">料率</th><th>算定の基礎</th><th>共著者と取り分</th><th>状態</th></tr></thead>
+                <thead><tr><th>条件番号</th><th>取引モデル名（条件名）</th><th>利用区分・相手先</th><th className="num">料率・単価・定額</th><th>算定の基礎</th>
+                  <th className="num">MG／AG</th><th>期間</th><th>独占性</th><th>共著者と取り分</th><th>状態</th></tr></thead>
                 <tbody>
                   {works.map((w) => {
                     const we = workEdits.get(w.id) ?? {};
                     return (
                       <Fragment key={w.id}>
                         <tr className="mx-work">
-                          <td colSpan={7}>
+                          <td colSpan={10}>
                             <div className="row" style={{ gap: 14, alignItems: "baseline", flexWrap: "wrap" }}>
                               <span><b>{w.title}</b> {w.workCode && <span className="code faint">{w.workCode}</span>}</span>
                               <span><span className="faint">著作権表示 </span>
@@ -281,8 +314,8 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
                             </div>
                           </td>
                         </tr>
-                        {!w.conditions.length && <tr><td colSpan={7} className="faint">ライセンスの条件明細がありません</td></tr>}
-                        {w.conditions.map((c) => {
+                        {!w.conditions.filter(dirOk).length && <tr><td colSpan={10} className="faint">{dir === "both" ? "ライセンスの条件明細がありません" : `${dir === "in" ? "IN" : "OUT"} の条件明細がありません`}</td></tr>}
+                        {w.conditions.filter(dirOk).map((c) => {
                           const e = condEdits.get(c.id) ?? {};
                           const rateEditable = c.pricingModel === "revenue_rate";
                           const sharesEditable = rateEditable && c.direction === "in";
@@ -310,8 +343,57 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
                                 onUndo: () => undoCond(c.id, "ratePpm"),
                                 editor: () => <RateEditor cond={c} initial={e.ratePpm ?? c.ratePpm} conds={conds}
                                   onDone={(ppm, ids) => { if (ppm !== null) for (const id of ids) setCond(id, { ratePpm: ppm }); setCell(null); }} />
-                              }) : <span className="faint">{c.flatAmount !== null ? `定額 ${c.flatAmount.toLocaleString("ja-JP")}` : "—"}</span>}</td>
+                              }) : (c.pricingModel === "unit_rate" || c.pricingModel === "fixed") ? (() => {
+                                const key = c.pricingModel === "unit_rate" ? "unitAmount" : "flatAmount";
+                                const label = c.pricingModel === "unit_rate" ? "卸単価" : "定額";
+                                const cur = (e[key] ?? c[key]) as number | null;
+                                return shown({
+                                  open: isOpen({ kind: "cond", id: c.id, field: "amount" }), mono: true,
+                                  changed: e[key] !== undefined && e[key] !== c[key],
+                                  old: `${label} ${money(c[key], c.currency)}`, now: `${label} ${money(cur, c.currency)}`,
+                                  onOpen: () => setCell({ kind: "cond", id: c.id, field: "amount" }),
+                                  onUndo: () => undoCond(c.id, key),
+                                  editor: () => <FieldsEditor cond={c} conds={conds} title={label}
+                                    fields={[{ key, label: `${label}（${c.currency}）`, type: "money" }]} edit={e}
+                                    onDone={(v, ids) => { if (v) for (const id of ids) setCond(id, v); setCell(null); }} />
+                                });
+                              })() : <span className="faint">—</span>}</td>
                               <td className="faint">{BASIS_LABEL[c.priceBasis ?? ""] ?? "—"}</td>
+                              <td className="num">{shown({
+                                open: isOpen({ kind: "cond", id: c.id, field: "mgag" }), mono: true,
+                                changed: (e.mgAmount !== undefined && e.mgAmount !== c.mgAmount) || (e.agAmount !== undefined && e.agAmount !== c.agAmount),
+                                old: `${money(c.mgAmount, c.currency)}／${money(c.agAmount, c.currency)}`,
+                                now: `${money(e.mgAmount !== undefined ? e.mgAmount : c.mgAmount, c.currency)}／${money(e.agAmount !== undefined ? e.agAmount : c.agAmount, c.currency)}`,
+                                onOpen: () => setCell({ kind: "cond", id: c.id, field: "mgag" }),
+                                onUndo: () => { undoCond(c.id, "mgAmount"); undoCond(c.id, "agAmount"); },
+                                editor: () => <FieldsEditor cond={c} conds={conds} title="MG・AG"
+                                  fields={[{ key: "mgAmount", label: `MG 最低保証（${c.currency}）`, type: "money", nullable: true },
+                                           { key: "agAmount", label: `AG 前払保証（${c.currency}）`, type: "money", nullable: true }]} edit={e}
+                                  onDone={(v, ids) => { if (v) for (const id of ids) setCond(id, v); setCell(null); }} />
+                              })}</td>
+                              <td>{shown({
+                                open: isOpen({ kind: "cond", id: c.id, field: "term" }), mono: true,
+                                changed: (e.termStart !== undefined && e.termStart !== c.termStart) || (e.termEnd !== undefined && e.termEnd !== c.termEnd),
+                                old: `${c.termStart ?? "—"}〜${c.termEnd ?? "—"}`,
+                                now: `${(e.termStart !== undefined ? e.termStart : c.termStart) ?? "—"}〜${(e.termEnd !== undefined ? e.termEnd : c.termEnd) ?? "—"}${c.autoRenew ? "（自動更新）" : ""}`,
+                                onOpen: () => setCell({ kind: "cond", id: c.id, field: "term" }),
+                                onUndo: () => { undoCond(c.id, "termStart"); undoCond(c.id, "termEnd"); },
+                                editor: () => <FieldsEditor cond={c} conds={conds} title="期間"
+                                  fields={[{ key: "termStart", label: "開始", type: "date", nullable: true },
+                                           { key: "termEnd", label: "終了", type: "date", nullable: true,
+                                             disabled: c.autoRenew ? "自動更新の条件は終了日を表では直せません（更新回数が 0 回に戻るため）。延ばすのは「契約期間を更新」で" : undefined }]} edit={e}
+                                  onDone={(v, ids) => { if (v) for (const id of ids) setCond(id, v); setCell(null); }} />
+                              })}</td>
+                              <td>{shown({
+                                open: isOpen({ kind: "cond", id: c.id, field: "excl" }),
+                                changed: e.exclusivity !== undefined && e.exclusivity !== c.exclusivity,
+                                old: EXCL_LABEL[c.exclusivity ?? ""] ?? "—", now: EXCL_LABEL[(e.exclusivity !== undefined ? e.exclusivity : c.exclusivity) ?? ""] ?? "—",
+                                onOpen: () => setCell({ kind: "cond", id: c.id, field: "excl" }),
+                                onUndo: () => undoCond(c.id, "exclusivity"),
+                                editor: () => <FieldsEditor cond={c} conds={conds} title="独占性"
+                                  fields={[{ key: "exclusivity", label: "独占性", type: "excl" }]} edit={e}
+                                  onDone={(v, ids) => { if (v) for (const id of ids) setCond(id, v); setCell(null); }} />
+                              })}</td>
                               <td>{sharesEditable ? shown({
                                 open: isOpen({ kind: "cond", id: c.id, field: "shares" }),
                                 changed: (e.shares !== undefined && !sameShares(e.shares, c.shares))
@@ -393,10 +475,10 @@ export function WorkMatrixEditor({ onClose, onOpenCondition, initialWorkIds }: {
       {works.length > 0 && (
         <div className="mx-bar">
           <b>変更 {total} か所</b>
-          <span className="faint">（料率 {counts.rate}・取り分と分配 {counts.shares}・取引モデル名 {counts.name}・クレジット {counts.credit}）</span>
+          <span className="faint">（料率 {counts.rate}・単価／定額／MG・AG／期間／独占 {counts.other}・取り分と分配 {counts.shares}・取引モデル名 {counts.name}・クレジット {counts.credit}）</span>
           {touchesEconomics && (
-            <label className="row" style={{ gap: 6 }}>料率・取り分の当て方
-              <select value={mode} onChange={(e) => { setMode(e.target.value as "revise" | "correct"); setPreview(null); }}>
+            <label className="row" style={{ gap: 6 }}>条件の値の当て方
+              <select value={mode} onChange={(e) => { setMode(e.target.value as "revise" | "correct"); setPreview(null); }} aria-label="当て方">
                 <option value="revise">改訂する（適用日から新しい版。旧版と文書はそのまま）</option>
                 <option value="correct">訂正する（その場で直す。最初から間違っていたとき）</option>
               </select>
@@ -575,5 +657,70 @@ export function SharesEditor({ cond, initial, conds, ratePpm, distribution, onDo
         <button className="btn btn-sm" onClick={() => onDone(null, [], dist)}>やめる</button>
       </div>
     </div>
+  );
+}
+
+/**
+ * 条件の値（卸単価・定額・MG・AG・期間・独占性）の入力欄。表示中の同じ取引モデル（同じ向き）の行にもまとめて入れられる。
+ * money は画面の数（円はそのまま、ドルなどは小数 2 桁）で受け、最小通貨単位にして返す。
+ */
+function FieldsEditor({ cond, conds, title, fields, edit, onDone }: {
+  cond: MatrixCondition; conds: MatrixCondition[]; title: string;
+  fields: Array<{ key: EconKey; label: string; type: "money" | "date" | "excl"; nullable?: boolean; disabled?: string }>;
+  edit: CondEdit;
+  onDone: (values: Partial<CondEdit> | null, ids: number[]) => void;
+}) {
+  const now = (k: EconKey) => (edit[k] !== undefined ? edit[k] : (cond as unknown as Record<string, unknown>)[k]);
+  const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(fields.map((f) => {
+    const v = now(f.key);
+    return [f.key, f.type === "money" ? fromMinor(v as number | null, cond.currency) : String(v ?? "")];
+  })));
+  const [all, setAll] = useState(false);
+  const same = conds.filter((c) => c.id !== cond.id && c.usageType === cond.usageType && c.direction === cond.direction
+    && c.pricingModel === cond.pricingModel);
+  const out: Partial<CondEdit> = {};
+  let bad = "";
+  for (const f of fields) {
+    if (f.disabled) continue;
+    const t = (vals[f.key] ?? "").trim();
+    if (f.type === "money") {
+      const v = toMinor(t, cond.currency);
+      if (v === null) { if (f.nullable) (out as Record<string, unknown>)[f.key] = null; else bad = `${f.label}を入れてください`; }
+      else if (Number.isNaN(v)) bad = `${f.label}は 0 以上の数で`;
+      else (out as Record<string, unknown>)[f.key] = v;
+    } else if (f.type === "date") {
+      (out as Record<string, unknown>)[f.key] = t || null;
+    } else {
+      (out as Record<string, unknown>)[f.key] = t === "exclusive" || t === "non_exclusive" ? t : null;
+    }
+  }
+  if (!bad && out.termStart && out.termEnd && out.termEnd < out.termStart) bad = "終了が開始より前です";
+  const done = () => onDone(out, [cond.id, ...(all ? same.map((c) => c.id) : [])]);
+  return (
+    <span className="mx-edit mx-pop">
+      <b>{title}</b>
+      {fields.map((f) => (
+        <label key={f.key} className="row" style={{ gap: 6 }}>
+          <span style={{ minWidth: 120 }}>{f.label}</span>
+          {f.disabled
+            ? <span className="faint" style={{ maxWidth: 280 }}>{String(now(f.key) ?? "—")}　{f.disabled}</span>
+            : f.type === "excl"
+              ? <select value={vals[f.key] ?? ""} onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))} aria-label={f.label}>
+                  <option value="">（未設定）</option><option value="exclusive">独占</option><option value="non_exclusive">非独占</option>
+                </select>
+              : <input type={f.type === "date" ? "date" : "text"} value={vals[f.key] ?? ""} style={{ width: f.type === "date" ? 150 : 130 }}
+                       aria-label={f.label} placeholder={f.nullable ? "空＝なし" : undefined}
+                       onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))}
+                       onKeyDown={(e) => { if (e.key === "Enter" && !bad) done(); if (e.key === "Escape") onDone(null, []); }} />}
+        </label>
+      ))}
+      {same.length > 0 && (
+        <label className="row" style={{ gap: 4 }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
+          表示中の同じ取引モデル（{cond.direction === "in" ? "IN" : "OUT"}・{USAGE_LABEL[cond.usageType ?? ""] ?? "—"}）{same.length} 本にも入れる</label>
+      )}
+      {bad && <span style={{ color: "var(--out)" }}>{bad}</span>}
+      <span><button className="btn btn-sm primary" disabled={Boolean(bad)} onClick={done}>入れる</button>
+        <button className="btn btn-sm" onClick={() => onDone(null, [])}>やめる</button></span>
+    </span>
   );
 }
